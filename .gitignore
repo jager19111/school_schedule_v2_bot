@@ -1,0 +1,36 @@
+# Database
+*.db
+*.db-journal
+schedule_bot.db
+schedule_bot.db.backup
+
+# Config with secrets
+.env
+
+# Virtual Environment
+venv/
+env/
+.venv/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Logs
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Repomix outputs
+repomix-output.txt
+*.xml
