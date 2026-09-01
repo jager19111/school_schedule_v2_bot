@@ -31,6 +31,15 @@ __pycache__/
 .DS_Store
 Thumbs.db
 
+# Backup files
+*.backup
+*.bak
+
+promt/
+*.sh
+backups/
+tests/
+
 # Repomix outputs
 repomix-output.txt
 *.xml
