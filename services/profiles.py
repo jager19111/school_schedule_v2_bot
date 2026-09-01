@@ -2,6 +2,7 @@ import aiosqlite
 import logging
 from typing import Dict, Any, List, Optional
 import uuid
+from core.models.dto import UserProfileDTO
 
 logger = logging.getLogger(__name__)
 
@@ -82,3 +83,39 @@ class ProfileService:
             ''', (int(locked), child_user_id))
             await db.commit()
             return True
+        
+        # Добавьте эти методы в существующий класс ProfileService:
+
+    async def register_user_initial(self, user_id: int) -> None:
+        """Создает пользователя, если его нет, и обновляет активность (Инкапсуляция БД)."""
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute("INSERT OR IGNORE INTO users (user_id) VALUES (?)", (user_id,))
+            await db.execute("UPDATE users SET last_active_at = CURRENT_TIMESTAMP WHERE user_id = ?", (user_id,))
+            await db.commit()
+
+    async def update_user_role(self, user_id: int, role: str) -> None:
+        """Безопасное обновление роли пользователя через Сервис."""
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute("UPDATE users SET role = ? WHERE user_id = ?", (role, user_id))
+            await db.commit()
+
+    async def get_user_profile_dto(self, user_id: int) -> UserProfileDTO:
+        """Возвращает DTO с информацией о пользователе и статусе его регистрации."""
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute("SELECT role, class_id, family_id FROM users WHERE user_id = ?", (user_id,))
+            row = await cursor.fetchone()
+            
+            if not row or not row['role']:
+                return UserProfileDTO(user_id=user_id, role=None, is_fully_registered=False)
+                
+            role = row['role']
+            is_registered = False
+            
+            # Проверка завершенности регистрации в зависимости от роли
+            if role == 'child' and row['class_id']:
+                is_registered = True
+            elif role in ('parent', 'observer') and row['family_id']:
+                is_registered = True
+                
+            return UserProfileDTO(user_id=user_id, role=role, is_fully_registered=is_registered)
