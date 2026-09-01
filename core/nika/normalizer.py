@@ -1,4 +1,4 @@
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any, Tuple, Optional
 import datetime
 import re
 from core.models.domain import Class, Teacher, Room, Subject, Period, LessonInstance
