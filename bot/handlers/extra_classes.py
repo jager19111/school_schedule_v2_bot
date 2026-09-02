@@ -1,4 +1,5 @@
 import logging
+from typing import List, Dict, Any
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
@@ -21,6 +22,9 @@ class ExtraClassStates(StatesGroup):
     waiting_for_location = State()   # <-- НОВЫЙ ЭТАП[cite: 2]
     waiting_for_reminder = State()   # <-- НОВЫЙ ЭТАП[cite: 2]
     waiting_for_delete_id = State()
+    waiting_for_edit_id = State()
+    waiting_for_edit_value = State()
+    waiting_for_edit_time_end = State()
 
 # === ГЛАВНОЕ МЕНЮ И ОТМЕНА ===
 
@@ -197,7 +201,7 @@ async def process_reminder(message: Message, state: FSMContext, extra_classes_se
         
     await finalize_extra_class(message, message.from_user.id, state, extra_classes_service, profile_service, reminder_minutes=int(reminder_text))
 
-async def finalize_extra_class(message, user_id, state, extra_classes_service, profile_service, reminder_minutes):
+async def finalize_extra_class(message: Message, user_id, state: FSMContext, extra_classes_service:ExtraClassesService, profile_service:ProfileService, reminder_minutes):
     """Общая функция финализации сохранения для избежания дублирования кода."""
     data = await state.get_data()
     
@@ -216,12 +220,10 @@ async def finalize_extra_class(message, user_id, state, extra_classes_service, p
         reminder_minutes=reminder_minutes
     )
 
-    # 3. Маршрутизация ответа[cite: 9]
-    if getattr(message, 'edit_text', None):
-        # Если вызов пришел из CallbackQuery (skip_reminder)
-        msg_func = message.edit_text
+# Защита: Если пришел CallbackQuery - редактируем, если Message - отправляем новое
+    if isinstance(message, CallbackQuery):
+        msg_func = message.message.edit_text
     else:
-        # Если вызов пришел из обычного сообщения
         msg_func = message.answer
 
     if not response.success:
@@ -237,3 +239,114 @@ async def finalize_extra_class(message, user_id, state, extra_classes_service, p
         reply_markup=Keyboards.get_extra_classes_menu(), 
         parse_mode="HTML"
     )
+    
+    
+# === ИЗМЕНЕНИЕ ЗАНЯТИЯ ===
+
+@router.callback_query(F.data == "extra:edit")
+async def start_edit_extra(callback: CallbackQuery, state: FSMContext, extra_classes_service: ExtraClassesService):
+    dto_list = await extra_classes_service.get_user_extra_classes(callback.from_user.id)
+    
+    if not dto_list.items:
+        text, _ = UIRenderer.render_extra_class_edit_prompt(dto_list)
+        return await callback.message.edit_text(text, reply_markup=Keyboards.get_back_to_extra_menu(), parse_mode="HTML")
+
+    text, _ = UIRenderer.render_extra_class_edit_prompt(dto_list)
+    await callback.message.edit_text(text, reply_markup=Keyboards.get_cancel_keyboard(), parse_mode="HTML")
+    await state.set_state(ExtraClassStates.waiting_for_edit_id)
+    await callback.answer()
+
+@router.message(ExtraClassStates.waiting_for_edit_id)
+async def process_edit_id(message: Message, state: FSMContext):
+    if not message.text.strip().isdigit():
+        text, _ = UIRenderer.render_extra_class_not_found()
+        return await message.answer(text, reply_markup=Keyboards.get_cancel_keyboard(), parse_mode="HTML")
+
+    class_id = int(message.text.strip())
+    await state.update_data(edit_id=class_id)
+    
+    text, _ = UIRenderer.render_extra_class_edit_field_select()
+    await message.answer(text, reply_markup=Keyboards.get_extra_edit_fields_kb(class_id), parse_mode="HTML")
+
+@router.callback_query(F.data.startswith("edit_ext:"))
+async def choose_edit_field(callback: CallbackQuery, state: FSMContext):
+    _, field, class_id = callback.data.split(":")
+    await state.update_data(edit_field=field)
+    
+    # Динамически просим нужное значение
+    if field == "time":
+        text, _ = UIRenderer.render_extra_class_time_start()
+    elif field == "loc":
+        text, _ = UIRenderer.render_extra_class_location()
+    elif field == "rem":
+        text, _ = UIRenderer.render_extra_class_reminder()
+    else:
+        text, _ = UIRenderer.render_extra_class_title()
+        
+    await callback.message.edit_text(text, reply_markup=Keyboards.get_cancel_keyboard(), parse_mode="HTML")
+    await state.set_state(ExtraClassStates.waiting_for_edit_value)
+    await callback.answer()
+
+@router.message(ExtraClassStates.waiting_for_edit_value)
+async def process_edit_value(message: Message, state: FSMContext, time_service: TimeService, extra_classes_service: ExtraClassesService):
+    data = await state.get_data()
+    field = data["edit_field"]
+    class_id = data["edit_id"]
+    val = message.text.strip()
+    
+    kwargs = {}
+    
+    if field == "time":
+        norm_time = time_service.normalize_time(val)
+        if not norm_time:
+            text, _ = UIRenderer.render_extra_class_invalid_time()
+            return await message.answer(text, reply_markup=Keyboards.get_cancel_keyboard())
+        await state.update_data(time_start=norm_time)
+        text, _ = UIRenderer.render_extra_class_time_end()
+        await message.answer(text, reply_markup=Keyboards.get_cancel_keyboard(), parse_mode="HTML")
+        return await state.set_state(ExtraClassStates.waiting_for_edit_time_end)
+        
+    elif field == "rem":
+        if not val.isdigit():
+            text, _ = UIRenderer.render_extra_class_invalid_reminder()
+            return await message.answer(text, reply_markup=Keyboards.get_cancel_keyboard())
+        kwargs["reminder_minutes"] = int(val)
+        
+    elif field == "loc":
+        kwargs["location"] = None if val == "-" else val
+    else:
+        kwargs["title"] = val
+
+    # Выполняем апдейт в БД[cite: 8]
+    await extra_classes_service.update_extra_class(user_id=message.from_user.id, extra_id=class_id, **kwargs)
+    
+    await state.clear()
+    text_updated, _ = UIRenderer.render_extra_class_updated()
+    text_menu, _ = UIRenderer.render_extra_classes_menu()
+    await message.answer(f"{text_updated}\n\n{text_menu}", reply_markup=Keyboards.get_extra_classes_menu(), parse_mode="HTML")
+
+@router.message(ExtraClassStates.waiting_for_edit_time_end)
+async def process_edit_time_end(message: Message, state: FSMContext, time_service: TimeService, extra_classes_service: ExtraClassesService):
+    data = await state.get_data()
+    norm_time = time_service.normalize_time(message.text)
+    
+    if not norm_time:
+        text, _ = UIRenderer.render_extra_class_invalid_time()
+        return await message.answer(text, reply_markup=Keyboards.get_cancel_keyboard())
+        
+    if not time_service.validate_time_range(data["time_start"], norm_time):
+        text, _ = UIRenderer.render_extra_class_invalid_range()
+        return await message.answer(text, reply_markup=Keyboards.get_cancel_keyboard())
+
+    # Апдейт обоих полей времени
+    await extra_classes_service.update_extra_class(
+        user_id=message.from_user.id, 
+        extra_id=data["edit_id"], 
+        time_start=data["time_start"], 
+        time_end=norm_time
+    )
+    
+    await state.clear()
+    text_updated, _ = UIRenderer.render_extra_class_updated()
+    text_menu, _ = UIRenderer.render_extra_classes_menu()
+    await message.answer(f"{text_updated}\n\n{text_menu}", reply_markup=Keyboards.get_extra_classes_menu(), parse_mode="HTML")

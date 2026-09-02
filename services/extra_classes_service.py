@@ -55,11 +55,19 @@ class ExtraClassesService:
                 time_start=r['time_start'],
                 time_end=r['time_end'],
                 title=r['title'],
-                location=r.get('location')
+                location=r.get('location'),
+                reminder_minutes=r['reminder_minutes'] # <-- ДОБАВЛЕНО
             )
             for r in rows
         ]
         return ExtraClassListDTO(items=items)
+
+    async def update_extra_class(self, user_id: int, extra_id: int, **kwargs) -> ActionResponseDTO:
+        """Метод для частичного обновления доп. занятия."""
+        success = await self.repo.update_extra_class(user_id=user_id, extra_id=extra_id, **kwargs)
+        if success:
+            return ActionResponseDTO(success=True)
+        return ActionResponseDTO(success=False, error_code="not_found")
 
     async def delete_extra_class(self, user_id: int, extra_id: int) -> ActionResponseDTO:
         """Безопасное удаление: репозиторий удалит запись, только если она принадлежит user_id."""

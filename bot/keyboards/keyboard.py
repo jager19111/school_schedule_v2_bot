@@ -102,12 +102,30 @@ class Keyboards:
     @staticmethod
     def get_extra_classes_menu() -> InlineKeyboardMarkup:
         """Клавиатура управления доп. занятиями."""
-        buttons = [
+        return InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="➕ Добавить занятие", callback_data="extra:add")],
             [InlineKeyboardButton(text="📋 Список занятий", callback_data="extra:list")],
+            [InlineKeyboardButton(text="✏️ Изменить занятие", callback_data="extra:edit")], # <-- ДОБАВЛЕНО
             [InlineKeyboardButton(text="🗑 Удалить занятие", callback_data="extra:delete")]
-        ]
-        return InlineKeyboardMarkup(inline_keyboard=buttons)
+        ])
+ #       ]
+ #       return InlineKeyboardMarkup(inline_keyboard=buttons)
+ 
+    @staticmethod
+    def get_extra_edit_fields_kb(class_id: int) -> InlineKeyboardMarkup:
+        """Клавиатура выбора поля для правки занятия."""
+        return InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(text="Название", callback_data=f"edit_ext:title:{class_id}"),
+                InlineKeyboardButton(text="Время", callback_data=f"edit_ext:time:{class_id}")
+            ],
+            [
+                InlineKeyboardButton(text="Место", callback_data=f"edit_ext:loc:{class_id}"),
+                InlineKeyboardButton(text="Напоминание", callback_data=f"edit_ext:rem:{class_id}")
+            ],
+            [InlineKeyboardButton(text="❌ Отмена", callback_data="extra:cancel")]
+        ])
+
     
     @staticmethod
     def get_cancel_keyboard() -> InlineKeyboardMarkup:

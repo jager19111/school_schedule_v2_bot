@@ -95,16 +95,43 @@ class UIRenderer:
         return "❌ Произошла ошибка при сохранении.", None
 
     @staticmethod
-    def render_extra_classes_list(dto: ExtraClassListDTO) -> tuple[str, None]:
+    def render_extra_classes_list(dto: ExtraClassListDTO, show_id: bool = False) -> tuple[str, None]:
         if not dto.items:
             return "📋 <b>Список дополнительных занятий пуст.</b>", None
 
         text = "📋 <b>Ваши дополнительные занятия:</b>\n\n"
         for item in dto.items:
             day_str = UIRenderer.DAYS_MAP.get(item.day_of_week, "Неизвестно")
-            text += f"ID: <code>{item.id}</code> | {day_str} {item.time_start}-{item.time_end}\n"
-            text += f"Название: <b>{item.title}</b>\n"
+            loc_str = item.location if item.location else "Не указано"
+            
+            # Формирование заголовка с/без ID
+            if show_id:
+                text += f"ID: {item.id} | {day_str} {item.time_start}-{item.time_end}\n"
+            else:
+                text += f"{day_str} {item.time_start}-{item.time_end}\n"
+                
+            text += f"Занятие: <b>{item.title}</b>\n"
+            text += f"Место: {loc_str}\n"
+            text += f"Напоминание: {item.reminder_minutes}мин\n"
             text += "───────────────\n"
+
+        return text, None
+
+    @staticmethod
+    def render_extra_class_edit_prompt(dto: ExtraClassListDTO) -> tuple[str, None]:
+        if not dto.items:
+            return "Список пуст. Изменять нечего.", None
+        text, _ = UIRenderer.render_extra_classes_list(dto, show_id=True)
+        text += "\n✏️ <b>Введите ID занятия для изменения:</b>"
+        return text, None
+
+    @staticmethod
+    def render_extra_class_edit_field_select() -> tuple[str, None]:
+        return "Что именно вы хотите изменить?", None
+
+    @staticmethod
+    def render_extra_class_updated() -> tuple[str, None]:
+        return "✅ Занятие успешно обновлено.", None
 
         return text, None
 
@@ -112,8 +139,7 @@ class UIRenderer:
     def render_extra_class_delete_prompt(dto: ExtraClassListDTO) -> tuple[str, None]:
         if not dto.items:
             return "Список пуст. Удалять нечего.", None
-        
-        text, _ = UIRenderer.render_extra_classes_list(dto)
+        text, _ = UIRenderer.render_extra_classes_list(dto, show_id=True) # <-- ИЗМЕНЕНО
         text += "\n🗑 <b>Введите ID занятия для удаления:</b>"
         return text, None
         

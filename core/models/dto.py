@@ -77,6 +77,7 @@ class ExtraClassItemDTO:
     time_end: str
     title: str
     location: Optional[str]
+    reminder_minutes: int  # <-- НОВОЕ ПОЛЕ
 
 @dataclass
 class ExtraClassListDTO:
