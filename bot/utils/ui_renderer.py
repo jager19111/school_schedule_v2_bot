@@ -269,10 +269,42 @@ class UIRenderer:
                 f"{num}. {l['start_time']}-{l['end_time']} | <b>{l['subject_name']}{label}</b> {room} {status}"
             )
         return "\n".join(text_lines)
-
+# под вопросом
     @staticmethod
     def render_parent_children_menu(dto: ChildrenListDTO) -> str:
         if not dto.children:
             return "К вашему профилю пока не привязан ни один ребенок. Используйте настройки семьи."
         return "Выберите ребенка для просмотра расписания:"
     
+# Меню
+
+    @staticmethod
+    def render_school_search_menu() -> str:
+        return "🏫 <b>Поиск по школе</b>\n\nВыберите нужный раздел:"
+
+    @staticmethod
+    def render_parent_settings_menu(family_code: str) -> str:
+        code_text = f"<code>{family_code}</code>" if family_code else "Не в семье"
+        return f"⚙️ <b>Ваши настройки и семья</b>\n\nКод вашей семьи: {code_text}\nВыберите действие:"
+
+    @staticmethod
+    def render_family_management_menu() -> str:
+        return "👨‍👩‍👧 <b>Управление семьей</b>\n\nВыберите ребенка для настройки:"
+
+    @staticmethod
+    def render_child_settings_menu(name: str, class_id: str) -> str:
+        cls_text = class_id if class_id else "Не выбран"
+        return f"⚙️ <b>Настройки профиля:</b> {name} ({cls_text})"
+    
+    
+# Сводка@staticmethod
+    def render_summary_time_prompt(name: str | None = None) -> str:
+        target = f" для {name}" if name else " вашей"
+        return (
+            f"⏰ Введите желаемое время{target} утренней сводки (например, 07:00, 7.30 или 715).\n\n"
+            f"<i>Вы также можете полностью отключить утреннюю сводку кнопкой ниже.</i>"
+        )
+
+    @staticmethod
+    def render_invalid_time_format() -> str:
+        return "❌ Не удалось распознать время. Пожалуйста, введите в формате ЧЧ:ММ (например, 07:00)."

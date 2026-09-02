@@ -49,33 +49,68 @@ class Keyboards:
             
         return InlineKeyboardMarkup(inline_keyboard=buttons)
 
+# Основное меню
+
     @staticmethod
     def get_main_menu() -> ReplyKeyboardMarkup:
-        """Отрисовка постоянной нижней клавиатуры."""
+        """Универсальная нижняя клавиатура для всех ролей."""
         kb = [
-            [KeyboardButton(text="👦 Ребенок")], # Динамическая подмена имени вместо ребенок из конфига семьи
-            [KeyboardButton(text="📅 Сегодня"), KeyboardButton(text="🗓 Завтра"), KeyboardButton(text="📆 Неделя")],
-            [KeyboardButton(text="➕ Доп. занятия"), KeyboardButton(text="⚙️ Функции")]
+            [KeyboardButton(text="📅 Мое расписание (сегодня)"), KeyboardButton(text="🗓 Завтра")],
+            [KeyboardButton(text="📆 Моя неделя"), KeyboardButton(text="➕ Доп. занятия")],
+            [KeyboardButton(text="🏫 Поиск по школе"), KeyboardButton(text="⚙️ Настройки")]
         ]
-       # kb = [
-        #    [KeyboardButton(text="📅 Сегодня"), KeyboardButton(text="🗓 Завтра")],
-        #    [KeyboardButton(text="📆 Неделя")],
-        #    [KeyboardButton(text="➕ Доп. занятия"), KeyboardButton(text="⚙️ Настройки")]
-        #]
         return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
 
     @staticmethod
-    def get_parent_children_menu(dto: ChildrenListDTO) -> InlineKeyboardMarkup | None:
-        if not dto.children:
-            return None
-            
+    def get_school_search_kb() -> InlineKeyboardMarkup:
+        """Меню поиска по школе."""
+        return InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🎓 Расписание классов", callback_data="search:classes")],
+            [InlineKeyboardButton(text="👨‍🏫 Расписание учителей", callback_data="search:teachers")]
+        ])
+
+    @staticmethod
+    def get_parent_settings_kb(user_dto: 'UserProfileDTO') -> InlineKeyboardMarkup:
+        """Настройки родителя."""
+        summary_time = user_dto.morning_summary_time if user_dto.morning_summary_time else "ВЫКЛ"
+        changes_status = "ВКЛ 🟢" if user_dto.is_notifications_enabled else "ВЫКЛ 🔴"
+
+        return InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="👨‍👩‍👧 Управление семьей", callback_data="settings:family")],
+            [InlineKeyboardButton(text=f"⏰ Время моей утренней сводки: {summary_time}", callback_data="settings:my_summary_time")],
+            [InlineKeyboardButton(text=f"🔔 Мои уведомления об изменениях: {changes_status}", callback_data="settings:my_notifications")],
+            [InlineKeyboardButton(text="🔄 Перерегистрироваться / Выйти", callback_data="auth:restart")]
+        ])
+
+    @staticmethod
+    def get_family_management_kb(dto: 'ChildrenListDTO') -> InlineKeyboardMarkup:
+        """Список детей для управления."""
         buttons = []
-        for child in dto.children:
-            btn_text = f"👦/👧 {child.name} ({child.class_id})"
-            buttons.append([InlineKeyboardButton(text=btn_text, callback_data=f"p_{dto.action}:{child.user_id}")])
-            
+        if dto.children:
+            for child in dto.children:
+                btn_text = f"👦/👧 {child.name} ({child.class_id or '?'})"
+                buttons.append([InlineKeyboardButton(text=btn_text, callback_data=f"family:child_settings:{child.user_id}")])
+        buttons.append([InlineKeyboardButton(text="⬅️ Назад к настройкам", callback_data="settings:main")])
         return InlineKeyboardMarkup(inline_keyboard=buttons)
-    
+
+    @staticmethod
+    def get_child_settings_kb(child_dto: 'UserProfileDTO') -> InlineKeyboardMarkup:
+        """Точечные настройки конкретного ребенка."""
+        notif_status = "ВКЛ 🟢" if child_dto.is_notifications_enabled else "ВЫКЛ 🔴"
+        summary_time = child_dto.morning_summary_time if child_dto.morning_summary_time else "ВЫКЛ"
+        parent_notif = "ВКЛ 🟢" if child_dto.notify_parent_about_me else "ВЫКЛ 🔴"
+        lock_status = "ВКЛ 🔴" if child_dto.parent_control_notifications else "ВЫКЛ 🟢"
+
+        return InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🎓 Изменить класс/группу", callback_data=f"child_set:class:{child_dto.user_id}")],
+            [InlineKeyboardButton(text=f"🔔 Уведомления {child_dto.name}: {notif_status}", callback_data=f"child_set:notif:{child_dto.user_id}")],
+            [InlineKeyboardButton(text=f"⏰ Время сводки {child_dto.name}: {summary_time}", callback_data=f"child_set:time:{child_dto.user_id}")],
+            [InlineKeyboardButton(text=f"📱 Присылать сводки мне: {parent_notif}", callback_data=f"child_set:parent_notif:{child_dto.user_id}")],
+            [InlineKeyboardButton(text=f"🔒 Запрет изменения настроек: {lock_status}", callback_data=f"child_set:lock:{child_dto.user_id}")],
+            [InlineKeyboardButton(text="⬅️ Назад к составу семьи", callback_data="settings:family")]
+        ])
+#-----------------------
+
     @staticmethod
     def get_settings_menu(user_dto: UserProfileDTO) -> InlineKeyboardMarkup:
         """Динамическая клавиатура настроек на основе DTO[cite: 4]."""
@@ -168,4 +203,13 @@ class Keyboards:
         return InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="⏭ Пропустить", callback_data=skip_callback)],
             [InlineKeyboardButton(text="❌ Отмена", callback_data="extra:cancel")]
+        ])
+        
+    # Сводка
+    @staticmethod
+    def get_summary_time_prompt_kb() -> InlineKeyboardMarkup:
+        """Клавиатура при запросе времени для сводки."""
+        return InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔕 Выключить сводку", callback_data="set_time:off")],
+            [InlineKeyboardButton(text="❌ Отмена", callback_data="settings:cancel_input")]
         ])

@@ -176,3 +176,26 @@ class ProfileRepository(BaseRepository):
             "UPDATE users SET name = ? WHERE user_id = ?",
             (name, user_id),
         )
+# для переключения флагов (toggles) и получения family_code по ID, чтобы изолировать SQL от хендлеров.
+
+    async def get_family_code_by_id(self, family_id: int) -> str | None:
+        row = await self._fetch_one("SELECT family_code FROM families WHERE id = ?", (family_id,))
+        return row["family_code"] if row else None
+
+    async def toggle_boolean_flag(self, user_id: int, field_name: str) -> None:
+        """Универсальный метод переключения boolean-флагов для защиты от инъекций валидируем field_name."""
+        allowed_fields = {"is_notifications_enabled", "notify_parent_about_me", "parent_control_notifications"}
+        if field_name not in allowed_fields:
+            return
+        await self._execute(
+            f"UPDATE users SET {field_name} = CASE WHEN {field_name} = 1 THEN 0 ELSE 1 END WHERE user_id = ?",
+            (user_id,)
+        )
+        
+ # Сводка       
+    async def update_morning_summary_time(self, user_id: int, time_str: str | None) -> None:
+        """Обновляет время утренней сводки. Если None - сводка выключена."""
+        await self._execute(
+            "UPDATE users SET morning_summary_time = ? WHERE user_id = ?",
+            (time_str, user_id),
+        )

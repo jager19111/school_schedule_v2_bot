@@ -158,3 +158,15 @@ class ProfileService:
             )
             for r in rows
         ]
+        
+# для переключения флагов (toggles) и получения family_code по ID, чтобы изолировать SQL от хендлеров.
+    async def get_family_code(self, family_id: int) -> str | None:
+        return await self.repo.get_family_code_by_id(family_id)
+
+    async def toggle_user_flag(self, user_id: int, flag_name: str) -> None:
+        await self.repo.toggle_boolean_flag(user_id, flag_name)
+        
+  # Сводка      
+    async def update_morning_summary_time(self, user_id: int, time_str: str | None) -> None:
+        """Обновляет индивидуальное время утренней рассылки."""
+        await self.repo.update_morning_summary_time(user_id, time_str)
