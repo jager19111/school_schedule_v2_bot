@@ -54,7 +54,7 @@ class Keyboards:
         """Отрисовка постоянной нижней клавиатуры."""
         kb = [
             [KeyboardButton(text="📅 Сегодня"), KeyboardButton(text="🗓 Завтра")],
-            [KeyboardButton(text="📆 Вся неделя")],
+            [KeyboardButton(text="📆 Неделя")],
             [KeyboardButton(text="➕ Доп. занятия"), KeyboardButton(text="⚙️ Настройки")]
         ]
         return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
