@@ -51,6 +51,22 @@ class UIRenderer:
         return "🎨 <b>Дополнительные занятия</b>\n\nУправление кружками и секциями:", None
 
     @staticmethod
+    def render_extra_class_day() -> tuple[str, None]:
+        return "📅 Выберите день недели для занятия:", None
+
+    @staticmethod
+    def render_extra_class_location() -> tuple[str, None]:
+        return "📍 Введите место проведения (или отправьте '-' чтобы пропустить):\nНапример: Спорткомплекс, ул. Ленина 5", None
+
+    @staticmethod
+    def render_extra_class_reminder() -> tuple[str, None]:
+        return "⏰ За сколько минут напомнить ребёнку?\nВведите число (например: 50) или отправьте '-' для 30 минут по умолчанию", None
+
+    @staticmethod
+    def render_extra_class_invalid_reminder() -> tuple[str, None]:
+        return "❌ Неверный формат! Введите число (например, 15) или '-':", None
+    
+    @staticmethod
     def render_extra_class_time_start() -> tuple[str, None]:
         return "Введите время начала занятия (ЧЧ:ММ):", None
 

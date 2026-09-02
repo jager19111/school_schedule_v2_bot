@@ -120,3 +120,18 @@ class Keyboards:
         return InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="⬅️ Назад", callback_data="extra:menu")]
         ])
+        
+    @staticmethod
+    def get_day_selection_kb() -> InlineKeyboardMarkup:
+        """Клавиатура выбора дня недели для доп. занятий[cite: 2]."""
+        days = [
+            ("Пн", 1), ("Вт", 2), ("Ср", 3), 
+            ("Чт", 4), ("Пт", 5), ("Сб", 6), ("Вс", 7)
+        ]
+        buttons = [
+            [InlineKeyboardButton(text=name, callback_data=f"extraday:{num}") for name, num in days[i:i+3]] 
+            for i in range(0, 7, 3)
+        ]
+        # Добавляем кнопку отмены вниз
+        buttons.append([InlineKeyboardButton(text="❌ Отмена", callback_data="extra:cancel")])
+        return InlineKeyboardMarkup(inline_keyboard=buttons)

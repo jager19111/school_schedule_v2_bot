@@ -14,9 +14,12 @@ logger = logging.getLogger(__name__)
 router = Router()
 
 class ExtraClassStates(StatesGroup):
+    waiting_for_day = State()        # <-- НОВЫЙ ЭТАП[cite: 2]
     waiting_for_time_start = State()
     waiting_for_time_end = State()
     waiting_for_title = State()
+    waiting_for_location = State()   # <-- НОВЫЙ ЭТАП[cite: 2]
+    waiting_for_reminder = State()   # <-- НОВЫЙ ЭТАП[cite: 2]
     waiting_for_delete_id = State()
 
 # === ГЛАВНОЕ МЕНЮ И ОТМЕНА ===
@@ -91,6 +94,18 @@ async def process_delete_id(message: Message, state: FSMContext, extra_classes_s
 
 @router.callback_query(F.data == "extra:add")
 async def start_add_extra(callback: CallbackQuery, state: FSMContext):
+    """Шаг 1: Запрос дня недели."""
+    text, _ = UIRenderer.render_extra_class_day()
+    await callback.message.edit_text(text, reply_markup=Keyboards.get_day_selection_kb())
+    await state.set_state(ExtraClassStates.waiting_for_day)
+    await callback.answer()
+
+@router.callback_query(ExtraClassStates.waiting_for_day, F.data.startswith("extraday:"))
+async def process_day(callback: CallbackQuery, state: FSMContext):
+    """Шаг 2: Обработка дня недели и запрос времени начала[cite: 2]."""
+    day_num = int(callback.data.split(":")[1])
+    await state.update_data(day_of_week=day_num)
+    
     text, _ = UIRenderer.render_extra_class_time_start()
     await callback.message.edit_text(text, reply_markup=Keyboards.get_cancel_keyboard())
     await state.set_state(ExtraClassStates.waiting_for_time_start)
@@ -98,6 +113,7 @@ async def start_add_extra(callback: CallbackQuery, state: FSMContext):
 
 @router.message(ExtraClassStates.waiting_for_time_start)
 async def process_time_start(message: Message, state: FSMContext, time_service: TimeService):
+    """Шаг 3: Обработка времени начала и запрос времени окончания."""
     time_str = message.text.strip()
     
     if not time_service.validate_time_format(time_str):
@@ -112,15 +128,14 @@ async def process_time_start(message: Message, state: FSMContext, time_service: 
 
 @router.message(ExtraClassStates.waiting_for_time_end)
 async def process_time_end(message: Message, state: FSMContext, time_service: TimeService):
+    """Шаг 4: Обработка времени окончания и запрос названия."""
     time_end = message.text.strip()
     data = await state.get_data()
     
-    # 1. Проверка правильного формата
     if not time_service.validate_time_format(time_end):
         text, _ = UIRenderer.render_extra_class_invalid_time()
         return await message.answer(text, reply_markup=Keyboards.get_cancel_keyboard())
 
-    # 2. Проверка диапазона (начало строго раньше конца)
     if not time_service.validate_time_range(data["time_start"], time_end):
         text, _ = UIRenderer.render_extra_class_invalid_range()
         return await message.answer(text, reply_markup=Keyboards.get_cancel_keyboard())
@@ -132,33 +147,75 @@ async def process_time_end(message: Message, state: FSMContext, time_service: Ti
     await state.set_state(ExtraClassStates.waiting_for_title)
 
 @router.message(ExtraClassStates.waiting_for_title)
-async def process_title(
+async def process_title(message: Message, state: FSMContext):
+    """Шаг 5: Обработка названия и запрос локации."""
+    title = message.text.strip()
+    await state.update_data(title=title)
+    
+    text, _ = UIRenderer.render_extra_class_location()
+    await message.answer(text, reply_markup=Keyboards.get_cancel_keyboard())
+    await state.set_state(ExtraClassStates.waiting_for_location)
+
+@router.message(ExtraClassStates.waiting_for_location)
+async def process_location(message: Message, state: FSMContext):
+    """Шаг 6: Обработка локации и запрос напоминания[cite: 2]."""
+    location = message.text.strip()
+    if location == "-":
+        location = None
+        
+    await state.update_data(location=location)
+    
+    text, _ = UIRenderer.render_extra_class_reminder()
+    await message.answer(text, reply_markup=Keyboards.get_cancel_keyboard())
+    await state.set_state(ExtraClassStates.waiting_for_reminder)
+
+@router.message(ExtraClassStates.waiting_for_reminder)
+async def process_reminder(
     message: Message,
     state: FSMContext,
     extra_classes_service: ExtraClassesService,
     profile_service: ProfileService,
 ):
+    """Шаг 7: Обработка напоминания и финальное сохранение."""
+    reminder_text = message.text.strip()
     data = await state.get_data()
-    title = message.text.strip()
     user_id = message.from_user.id
+    
+    # Обработка ручного ввода или глобального значения по умолчанию
+    if reminder_text == "-":
+        # Дефолтное глобальное значение, если пропущено
+        reminder_minutes = 30
+    else:
+        if not reminder_text.isdigit():
+            text, _ = UIRenderer.render_extra_class_invalid_reminder()
+            return await message.answer(text, reply_markup=Keyboards.get_cancel_keyboard())
+        reminder_minutes = int(reminder_text)
 
+    # 1. Получаем DTO профиля (чтобы извлечь family_id)
     profile_dto = await profile_service.get_user_profile_dto(user_id)
+
+    # 2. Передаем все собранные данные в сервис (Правило 6)[cite: 12]
     response = await extra_classes_service.add_extra_class(
         user_id=user_id,
         family_id=profile_dto.family_id,
+        day_of_week=data["day_of_week"],
         time_start=data["time_start"],
         time_end=data["time_end"],
-        title=title
+        title=data["title"],
+        location=data["location"],
+        reminder_minutes=reminder_minutes
     )
 
+    # 3. Маршрутизация ответа
     if not response.success:
-        if response.error_code == "invalid_time":
-            text, _ = UIRenderer.render_extra_class_invalid_time()
-        else:
-            text, _ = UIRenderer.render_extra_class_error()
+        text, _ = UIRenderer.render_extra_class_error()
         return await message.answer(text, reply_markup=Keyboards.get_cancel_keyboard())
 
     await state.clear()
     text_success, _ = UIRenderer.render_extra_class_success()
     text_menu, _ = UIRenderer.render_extra_classes_menu()
-    await message.answer(f"{text_success}\n\n{text_menu}", reply_markup=Keyboards.get_extra_classes_menu(), parse_mode="HTML")
+    await message.answer(
+        f"{text_success}\n\n{text_menu}", 
+        reply_markup=Keyboards.get_extra_classes_menu(), 
+        parse_mode="HTML"
+    )
