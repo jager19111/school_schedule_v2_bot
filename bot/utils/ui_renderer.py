@@ -55,32 +55,32 @@ class UIRenderer:
         return "📅 Выберите день недели для занятия:", None
 
     @staticmethod
-    def render_extra_class_location() -> tuple[str, None]:
-        return "📍 Введите место проведения (или отправьте '-' чтобы пропустить):\nНапример: Спорткомплекс, ул. Ленина 5", None
-
-    @staticmethod
-    def render_extra_class_reminder() -> tuple[str, None]:
-        return "⏰ За сколько минут напомнить ребёнку?\nВведите число (например: 50) или отправьте '-' для 30 минут по умолчанию", None
-
-    @staticmethod
     def render_extra_class_invalid_reminder() -> tuple[str, None]:
         return "❌ Неверный формат! Введите число (например, 15) или '-':", None
     
     @staticmethod
     def render_extra_class_time_start() -> tuple[str, None]:
-        return "Введите время начала занятия (ЧЧ:ММ):", None
+        return "⏳ Введите время начала занятия:\n<i>💡 Можно вводить 16:00, 16.00, 1600 или 16</i>", None
 
     @staticmethod
     def render_extra_class_time_end() -> tuple[str, None]:
-        return "Введите время окончания занятия (ЧЧ:ММ):", None
+        return "⏳ Введите время окончания занятия:\n<i>💡 Например: 17:30, 17.30 или 1730</i>", None
 
     @staticmethod
-    def render_extra_class_title() -> tuple[str, None]:
-        return "Введите название занятия (например, \"Футбол\"):", None
+    def render_extra_class_location() -> tuple[str, None]:
+        return "📍 Введите место проведения:\n<i>Например: Спорткомплекс, ул. Ленина 5</i>", None
+
+    @staticmethod
+    def render_extra_class_reminder() -> tuple[str, None]:
+        return "⏰ За сколько минут напомнить ребёнку?\n<i>Введите число (например: 45)</i>:", None
 
     @staticmethod
     def render_extra_class_invalid_time() -> tuple[str, None]:
-        return "❌ Неверный формат! Введите время в формате ЧЧ:ММ (например, 15:30).", None
+        return "❌ Не удалось распознать время!\nПожалуйста, введите в формате ЧЧ:ММ (например, 15:30 или 1530).", None
+        
+    @staticmethod
+    def render_extra_class_title() -> tuple[str, None]:
+        return "Введите название занятия (например, \"Футбол\"):", None
 
     @staticmethod
     def render_extra_class_invalid_range() -> tuple[str, None]:

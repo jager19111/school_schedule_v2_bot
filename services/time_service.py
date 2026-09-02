@@ -1,6 +1,6 @@
 # services/time_service.py
 from __future__ import annotations
-
+import re
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone, date
@@ -171,3 +171,44 @@ class TimeService:
             return t_start < t_end
         except ValueError:
             return False
+        
+    # Умный валидатор
+    @staticmethod
+    def normalize_time(time_str: str) -> Optional[str]:
+        """
+        Умный валидатор и нормализатор времени.
+        Преобразует 21.00, 21-00, 21 00, 2100, 21:5, 2:00, 15 в строгий формат HH:MM.
+        """
+        if not time_str:
+            return None
+        
+        time_str = time_str.strip()
+        # Разделяем по любым нецифровым символам (точка, запятая, двоеточие, пробел, дефис)
+        parts = [p for p in re.split(r'\D+', time_str) if p]
+        
+        try:
+            if len(parts) == 1:
+                digits = parts[0]
+                if len(digits) <= 2:
+                    hour, minute = int(digits), 0
+                elif len(digits) == 3:
+                    hour, minute = int(digits[0:1]), int(digits[1:3])
+                elif len(digits) == 4:
+                    hour, minute = int(digits[0:2]), int(digits[2:4])
+                else:
+                    return None
+            elif len(parts) >= 2:
+                hour = int(parts[0])
+                min_str = parts[1]
+                # Автодополнение: 21:5 -> 21:50, 16:0 -> 16:00
+                if len(min_str) == 1:
+                    min_str += "0"
+                minute = int(min_str[:2])
+            else:
+                return None
+
+            if 0 <= hour <= 23 and 0 <= minute <= 59:
+                return f"{hour:02d}:{minute:02d}"
+            return None
+        except ValueError:
+            return None

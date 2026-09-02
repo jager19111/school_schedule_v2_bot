@@ -135,3 +135,11 @@ class Keyboards:
         # Добавляем кнопку отмены вниз
         buttons.append([InlineKeyboardButton(text="❌ Отмена", callback_data="extra:cancel")])
         return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+    @staticmethod
+    def get_skip_cancel_keyboard(skip_callback: str) -> InlineKeyboardMarkup:
+        """Клавиатура с кнопками Пропустить и Отмена."""
+        return InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="⏭ Пропустить", callback_data=skip_callback)],
+            [InlineKeyboardButton(text="❌ Отмена", callback_data="extra:cancel")]
+        ])
