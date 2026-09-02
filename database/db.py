@@ -10,10 +10,11 @@ class Database:
     async def init_db(self):
         """Инициализация денормализованных таблиц БД согласно ТЗ v2[cite: 1, 2]."""
         async with aiosqlite.connect(self.db_path) as db:
-            # Таблица пользователей с полями настроек окон уведомлений[cite: 1, 4]
+            # Таблица пользователей с полями настроек окон уведомлений и семейного доступа
             await db.execute('''
                 CREATE TABLE IF NOT EXISTS users (
                     user_id INTEGER PRIMARY KEY,
+                    name TEXT,                                  -- НОВОЕ: Имя пользователя/ребенка
                     role TEXT NOT NULL DEFAULT 'child',
                     family_id INTEGER,
                     class_id TEXT,
@@ -22,6 +23,8 @@ class Database:
                     pre_lesson_offset_minutes INTEGER NOT NULL DEFAULT 15,
                     changes_window_days INTEGER NOT NULL DEFAULT 3,
                     parent_control_notifications INTEGER NOT NULL DEFAULT 0,
+                    notify_parent_about_me INTEGER NOT NULL DEFAULT 1, -- НОВОЕ: Отправлять ли сводку родителю
+                    morning_summary_time TEXT DEFAULT NULL,            -- НОВОЕ: Время сводки (например, '07:30')
                     last_active_at TIMESTAMP,
                     is_notifications_enabled INTEGER NOT NULL DEFAULT 1,
                     is_admin INTEGER NOT NULL DEFAULT 0,

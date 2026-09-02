@@ -2,10 +2,15 @@ from typing import Any, Dict, List, Optional, Set
 from core.models.dto import ClassListDTO, FamilyCreatedDTO, AdminStatsDTO, DayScheduleDTO, ChildrenListDTO, ExtraClassListDTO
 
 class UIRenderer:
+    
     @staticmethod
     def render_role_selection() -> str:
         return "Добро пожаловать! Выберите вашу роль:"
 
+    @staticmethod
+    def render_name_prompt() -> str:
+        return "Как к вам обращаться? Введите ваше имя (например, Иван или Лиза):"
+    
     @staticmethod
     def render_unregistered_error() -> str:
         return "Пожалуйста, сначала пройдите регистрацию (/start) или выберите класс в настройках."
@@ -174,14 +179,51 @@ class UIRenderer:
         return "❌ Занятие с таким ID не найдено или вам не принадлежит. Введите правильный ID:", None
  # ---------------   
     @staticmethod
-    def render_family_created(dto: FamilyCreatedDTO) -> str:
+    def render_already_registered(name: str | None) -> str:
+        greeting = f", {name}" if name else ""
         return (
-            f"✅ <b>Семья успешно создана!</b>\n\n"
-            f"🔑 Ваш код семьи: <code>{dto.family_code}</code>\n\n"
-            f"Передайте этот код детям или родственникам для присоединения.\n"
-            f"Настройка завершена. Вы можете просматривать расписание через меню."
+            f"👋 С возвращением{greeting}!\n\n"
+            f"Вы уже зарегистрированы. Воспользуйтесь меню ниже:"
         )
 
+    @staticmethod
+    def render_final_success(name: str | None) -> str:
+        greeting = f", {name}" if name else ""
+        return (
+            f"✅ Привет{greeting}! Регистрация завершена!\n\n"
+            f"🤖 <b>Что я умею:</b>\n"
+            f"• Показывать твое расписание на день и неделю\n"
+            f"• Уведомлять о заменах и отменах уроков\n"
+            f"• Напоминать о кружках и доп. занятиях\n\n"
+            f"Расписание доступно через главное меню ⬇️"
+        )
+
+    @staticmethod
+    def render_success_join(name: str | None) -> str:
+        greeting = f", {name}" if name else ""
+        return (
+            f"✅ Привет{greeting}! Вы успешно присоединены к семье!\n\n"
+            f"🤖 <b>Что я умею:</b>\n"
+            f"• Отображать расписание детей\n"
+            f"• Присылать уведомления об изменениях в уроках\n"
+            f"• Помогать в управлении дополнительными занятиями\n\n"
+            f"Настройка завершена. Расписание доступно через меню ⬇️"
+        )
+
+    @staticmethod
+    def render_family_created(dto: FamilyCreatedDTO, name: str | None) -> str:
+        greeting = f", {name}" if name else ""
+        return (
+            f"✅ Привет{greeting}! <b>Семья успешно создана!</b>\n\n"
+            f"🔑 Ваш код семьи: <code>{dto.family_code}</code>\n\n"
+            f"Передайте этот код детям или родственникам для присоединения.\n\n"
+            f"🤖 <b>Что я умею:</b>\n"
+            f"• Показывать актуальное расписание ваших детей\n"
+            f"• Держать вас в курсе отмен и замен уроков\n"
+            f"• Контролировать внеурочные занятия\n\n"
+            f"Настройка завершена. Вы можете просматривать расписание через меню ⬇️"
+        )
+        
     @staticmethod
     def render_class_selection(dto: ClassListDTO) -> str:
         if not dto.classes:
@@ -193,25 +235,13 @@ class UIRenderer:
         return "Выберите вашу группу (или 'Весь класс'):"
 
     @staticmethod
-    def render_success_join() -> str:
-        return "✅ Вы успешно присоединены к семье!"
-
-    @staticmethod
     def render_error_join() -> str:
         return "❌ Код не найден. Проверьте правильность и отправьте его снова, либо нажмите /start."
-
-    @staticmethod
-    def render_final_success() -> str:
-        return "✅ Регистрация завершена! Расписание доступно через меню."
 
     @staticmethod
     def render_main_menu() -> str:
         return "Главное меню:"
 
-    @staticmethod
-    def render_already_registered() -> str:
-        return "Вы уже зарегистрированы! Воспользуйтесь меню ниже:"
-    
     @staticmethod
     def render_admin_stats(dto: AdminStatsDTO) -> str:
         text = f"📊 <b>Статистика пользователей (Всего: {dto.total_users}):</b>\n\n"

@@ -53,10 +53,15 @@ class Keyboards:
     def get_main_menu() -> ReplyKeyboardMarkup:
         """Отрисовка постоянной нижней клавиатуры."""
         kb = [
-            [KeyboardButton(text="📅 Сегодня"), KeyboardButton(text="🗓 Завтра")],
-            [KeyboardButton(text="📆 Неделя")],
-            [KeyboardButton(text="➕ Доп. занятия"), KeyboardButton(text="⚙️ Настройки")]
+            [KeyboardButton(text="👦 Ребенок")], # Динамическая подмена имени вместо ребенок из конфига семьи
+            [KeyboardButton(text="📅 Сегодня"), KeyboardButton(text="🗓 Завтра"), KeyboardButton(text="📆 Неделя")],
+            [KeyboardButton(text="➕ Доп. занятия"), KeyboardButton(text="⚙️ Функции")]
         ]
+       # kb = [
+        #    [KeyboardButton(text="📅 Сегодня"), KeyboardButton(text="🗓 Завтра")],
+        #    [KeyboardButton(text="📆 Неделя")],
+        #    [KeyboardButton(text="➕ Доп. занятия"), KeyboardButton(text="⚙️ Настройки")]
+        #]
         return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
 
     @staticmethod

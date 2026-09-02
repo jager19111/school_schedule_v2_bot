@@ -25,10 +25,13 @@ class UserProfileDTO:
     user_id: int
     role: Optional[str]
     is_fully_registered: bool
-    family_id: Optional[int] = None       # <-- ДОБАВЛЕНО
+    name: Optional[str] = None               # <-- ДОБАВЛЕНО
+    family_id: Optional[int] = None
     class_id: Optional[str] = None
     group_id: Optional[str] = None
     parent_control_notifications: bool = False
+    notify_parent_about_me: bool = True      # <-- ДОБАВЛЕНО
+    morning_summary_time: Optional[str] = None # <-- ДОБАВЛЕНО
     pre_lesson_offset_minutes: int = 15
     changes_window_days: int = 3
     is_notifications_enabled: bool = True

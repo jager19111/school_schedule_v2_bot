@@ -19,7 +19,10 @@ class ProfileService:
         self.repo = repo
 
     # ========== БАЗОВЫЕ ОПЕРАЦИИ ==========
-
+    async def update_user_name(self, user_id: int, name: str) -> None:
+        """Обновляет имя пользователя."""
+        await self.repo.update_user_name(user_id, name)
+        
     async def register_user_initial(self, user_id: int) -> None:
         """
         Создаёт пользователя, если его нет, и обновляет last_active_at.
@@ -53,7 +56,7 @@ class ProfileService:
     async def get_user_profile_dto(self, user_id: int) -> UserProfileDTO:
         """
         Возвращает DTO с информацией о пользователе. 
-        Логика SQL полностью изолирована в ProfileRepository [Бот школьное расписание, cite: 4].
+        Логика SQL полностью изолирована в ProfileRepository.
         """
         row = await self.repo.get_user_profile_for_dto(user_id)
 
@@ -77,10 +80,13 @@ class ProfileService:
             user_id=user_id,
             role=role,
             is_fully_registered=is_registered,
+            name=row.get("name"),
             family_id=row.get("family_id"),
             class_id=row.get("class_id"),
             group_id=row.get("group_id"),
             parent_control_notifications=bool(row.get("parent_control_notifications")),
+            notify_parent_about_me=bool(row.get("notify_parent_about_me", True)),
+            morning_summary_time=row.get("morning_summary_time"),
             pre_lesson_offset_minutes=row.get("pre_lesson_offset_minutes", 15),
             changes_window_days=row.get("changes_window_days", 3),
             is_notifications_enabled=bool(row.get("is_notifications_enabled", True))

@@ -65,13 +65,12 @@ class ProfileRepository(BaseRepository):
         )
 
     async def get_user_profile_for_dto(self, user_id: int) -> Optional[Dict[str, Any]]:
-        """
-        Возвращает только нужные поля для UserProfileDTO. Никакой бизнес-логики, только SQL[cite: 1].
-        """
+        """Возвращает только нужные поля для UserProfileDTO."""
         return await self._fetch_one(
             """
-            SELECT role, class_id, group_id, family_id, 
-                   parent_control_notifications, pre_lesson_offset_minutes, 
+            SELECT role, name, class_id, group_id, family_id, 
+                   parent_control_notifications, notify_parent_about_me,
+                   morning_summary_time, pre_lesson_offset_minutes, 
                    changes_window_days, is_notifications_enabled
             FROM users WHERE user_id = ?
             """,
@@ -162,10 +161,18 @@ class ProfileRepository(BaseRepository):
         """
         return await self._fetch_all(
             """
-            SELECT user_id, class_id
+            SELECT user_id, name, class_id
             FROM users
             WHERE family_id = (SELECT family_id FROM users WHERE user_id = ?)
               AND role = 'child'
             """,
             (parent_user_id,),
+        )
+        
+        
+    async def update_user_name(self, user_id: int, name: str) -> None:
+        """Сохраняет имя пользователя."""
+        await self._execute(
+            "UPDATE users SET name = ? WHERE user_id = ?",
+            (name, user_id),
         )
