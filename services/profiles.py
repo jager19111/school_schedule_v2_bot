@@ -2,7 +2,7 @@ import aiosqlite
 import logging
 from typing import Dict, Any, List, Optional
 import uuid
-from core.models.dto import UserProfileDTO
+from core.models.dto import UserProfileDTO, ChildInfoDTO
 
 logger = logging.getLogger(__name__)
 
@@ -103,11 +103,19 @@ class ProfileService:
         """Возвращает DTO с информацией о пользователе и статусе его регистрации."""
         async with aiosqlite.connect(self.db_path) as db:
             db.row_factory = aiosqlite.Row
-            cursor = await db.execute("SELECT role, class_id, family_id FROM users WHERE user_id = ?", (user_id,))
+            # Запрашиваем дополнительные поля: group_id и parent_control_notifications[cite: 13]
+            cursor = await db.execute(
+                "SELECT role, class_id, group_id, family_id, parent_control_notifications FROM users WHERE user_id = ?", 
+                (user_id,)
+            )
             row = await cursor.fetchone()
             
             if not row or not row['role']:
-                return UserProfileDTO(user_id=user_id, role=None, is_fully_registered=False)
+                return UserProfileDTO(
+                    user_id=user_id, 
+                    role=None, 
+                    is_fully_registered=False
+                )
                 
             role = row['role']
             is_registered = False
@@ -118,4 +126,28 @@ class ProfileService:
             elif role in ('parent', 'observer') and row['family_id']:
                 is_registered = True
                 
-            return UserProfileDTO(user_id=user_id, role=role, is_fully_registered=is_registered)
+            return UserProfileDTO(
+                user_id=user_id, 
+                role=role, 
+                is_fully_registered=is_registered,
+                class_id=row['class_id'],
+                group_id=row['group_id'],
+                parent_control_notifications=bool(row['parent_control_notifications'])
+            )
+        
+    async def get_children_for_parent(self, parent_user_id: int) -> List[ChildInfoDTO]:
+        """Возвращает список детей для родителя в виде DTO."""
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute('''
+                SELECT user_id, class_id FROM users 
+                WHERE family_id = (SELECT family_id FROM users WHERE user_id = ?) AND role = 'child'
+            ''', (parent_user_id,))
+            rows = await cursor.fetchall()
+            
+            # Формируем список DTO (в будущем имя будет браться из БД, пока генерируем заглушку или берем из row)
+            return [ChildInfoDTO(
+                user_id=r['user_id'], 
+                name=f"Ребёнок {r['user_id']}", # TODO: Добавить колонку 'name' в схему БД
+                class_id=r['class_id'] or "—"
+            ) for r in rows]

@@ -88,6 +88,7 @@ async def main():
         profile_service=profile_service,
         schedule_service=schedule_service,
         admin_service=admin_service,
+        time_service=time_service,
         schedule_repo=repo,
         user_repository=user_repository,
         admin_repository=admin_repository,

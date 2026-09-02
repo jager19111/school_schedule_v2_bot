@@ -130,3 +130,18 @@ class TimeService:
         start = now.date()
         end = (now + timedelta(days=days)).date()
         return start, end
+    
+    @staticmethod
+    def validate_time_format(time_str: str) -> bool:
+        """
+        Строгая валидация ввода времени в формате ЧЧ:ММ.
+        Используется для проверки ввода при добавлении доп. занятий
+        """
+        if not time_str:
+            return False
+            
+        try:
+            datetime.strptime(time_str.strip(), "%H:%M")
+            return True
+        except ValueError:
+            return False

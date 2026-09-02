@@ -1,42 +1,30 @@
 import logging
 from aiogram import Router, F
-from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import Message, CallbackQuery
 from services.profiles import ProfileService
 from core.repository.schedule_repository import ScheduleRepository
+from core.models.dto import ClassListDTO
+from bot.utils.ui_renderer import UIRenderer
+from bot.keyboards.keyboard import Keyboards
 
 logger = logging.getLogger(__name__)
 router = Router()
 
 @router.message(F.text == "⚙️ Настройки")
 async def settings_menu(message: Message, profile_service: ProfileService):
-    user = await profile_service.get_user_profile(message.from_user.id)
-    if not user:
-        return await message.answer("Сначала пройдите регистрацию (/start).")
+    user_dto = await profile_service.get_user_profile_dto(message.from_user.id)
+    if not user_dto or not user_dto.is_fully_registered:
+        return await message.answer(UIRenderer.render_unregistered_error())
     
-    kb_lines = [
-        [InlineKeyboardButton(text="🎓 Сменить класс", callback_data="settings:change_class")],
-        [InlineKeyboardButton(text="📚 Сменить группу", callback_data="settings:change_group")]
-    ]
-    
-    # Блокировка настроек уведомлений для ребенка, если включен родительский контроль[cite: 7]
-    if not (user['role'] == 'child' and user['parent_control_notifications'] == 1):
-        kb_lines.append([InlineKeyboardButton(text="🔔 Настройки уведомлений", callback_data="settings:notifications")])
-        
-    await message.answer("⚙️ Меню настроек:", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_lines))
+    text = UIRenderer.render_settings_menu()
+    kb = Keyboards.get_settings_menu(user_dto)
+    await message.answer(text, reply_markup=kb)
 
 @router.callback_query(F.data == "settings:change_class")
 async def change_class_start(callback: CallbackQuery, schedule_repo: ScheduleRepository):
-    # Динамическая подгрузка классов из базы/парсера без хардкода[cite: 7]
     metadata = await schedule_repo.get_metadata()
-    classes = metadata.get('classes', {})
+    class_dto = ClassListDTO(classes={k: v.name for k, v in metadata.get('classes', {}).items()})
     
-    buttons = []
-    row = []
-    for c_id, c_data in classes.items():
-        row.append(InlineKeyboardButton(text=c_data.name, callback_data=f"set_class:{c_id}"))
-        if len(row) == 3:
-            buttons.append(row)
-            row = []
-    if row: buttons.append(row)
-    
-    await callback.message.edit_text("Выберите новый класс:", reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
+    text = UIRenderer.render_class_selection(class_dto)
+    kb = Keyboards.get_class_selection(class_dto)
+    await callback.message.edit_text(text, reply_markup=kb)

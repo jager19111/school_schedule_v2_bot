@@ -1,111 +1,108 @@
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-from core.models.dto import ClassListDTO, GroupListDTO, FamilyCreatedDTO, AdminStatsDTO
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
+from core.models.dto import ClassListDTO, FamilyCreatedDTO, AdminStatsDTO, DayScheduleDTO, ChildrenListDTO
 
 class UIRenderer:
     @staticmethod
-    def render_role_selection() -> tuple[str, InlineKeyboardMarkup]:
-        text = "Добро пожаловать! Выберите вашу роль:"
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="👶 Ребёнок", callback_data="role:child")],
-            [InlineKeyboardButton(text="👨‍👩‍👧 Родитель", callback_data="role:parent")],
-            [InlineKeyboardButton(text="👁 Наблюдатель", callback_data="role:observer")]
-        ])
-        return text, kb
+    def render_role_selection() -> str:
+        return "Добро пожаловать! Выберите вашу роль:"
 
     @staticmethod
-    def render_parent_family_action() -> tuple[str, InlineKeyboardMarkup]:
-        text = "Вы хотите создать новую семью или присоединиться к уже существующей?"
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🆕 Создать новую семью", callback_data="family:create")],
-            [InlineKeyboardButton(text="🔗 Присоединиться по коду", callback_data="family:join")]
-        ])
-        return text, kb
+    def render_unregistered_error() -> str:
+        return "Пожалуйста, сначала пройдите регистрацию (/start) или выберите класс в настройках."
 
     @staticmethod
-    def render_child_family_action() -> tuple[str, InlineKeyboardMarkup]:
-        text = "Вы можете присоединиться к семье (чтобы родители помогали с настройками) или продолжить самостоятельно:"
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🔗 Присоединиться к семье", callback_data="family:join")],
-            [InlineKeyboardButton(text="▶️ Продолжить без семьи", callback_data="family:skip")]
-        ])
-        return text, kb
+    def render_access_denied() -> str:
+        return "Эта команда доступна только для вашей текущей роли."
+
+    @staticmethod
+    def render_settings_menu() -> str:
+        return "⚙️ Меню настроек:"
+
+    @staticmethod
+    def render_extra_class_time_start() -> str:
+        return "Введите время начала занятия (ЧЧ:ММ):"
+
+    @staticmethod
+    def render_extra_class_time_end() -> str:
+        return "Введите время окончания занятия (ЧЧ:ММ):"
+
+    @staticmethod
+    def render_extra_class_invalid_time() -> str:
+        return "❌ Неверный формат! Введите время в формате ЧЧ:ММ (например, 15:30)."
+    
+    @staticmethod
+    def render_parent_family_action() -> str:
+        return "Вы хотите создать новую семью или присоединиться к уже существующей?"
+
+    @staticmethod
+    def render_child_family_action() -> str:
+        return "Вы можете присоединиться к семье (чтобы родители помогали с настройками) или продолжить самостоятельно:"
         
     @staticmethod
-    def render_family_code_prompt() -> tuple[str, None]:
-        return "Введите код семьи (family_code) для подключения:", None
+    def render_family_code_prompt() -> str:
+        return "Введите код семьи (family_code) для подключения:"
 
     @staticmethod
-    def render_family_created(dto: FamilyCreatedDTO) -> tuple[str, None]:
-        text = (
+    def render_family_created(dto: FamilyCreatedDTO) -> str:
+        return (
             f"✅ <b>Семья успешно создана!</b>\n\n"
             f"🔑 Ваш код семьи: <code>{dto.family_code}</code>\n\n"
             f"Передайте этот код детям или родственникам для присоединения.\n"
             f"Настройка завершена. Вы можете просматривать расписание через меню."
         )
-        return text, None
 
     @staticmethod
-    def render_class_selection(dto: ClassListDTO) -> tuple[str, InlineKeyboardMarkup]:
+    def render_class_selection(dto: ClassListDTO) -> str:
         if not dto.classes:
-            return "❌ Расписание еще не загружено. Подождите и нажмите /start.", None
-            
-        text = "Выберите ваш класс:"
-        buttons = []
-        row = []
-        for c_id, c_name in dto.classes.items():
-            row.append(InlineKeyboardButton(text=c_name, callback_data=f"class:{c_id}"))
-            if len(row) == 3:
-                buttons.append(row)
-                row = []
-        if row: buttons.append(row)
-        return text, InlineKeyboardMarkup(inline_keyboard=buttons)
+            return "❌ Расписание еще не загружено. Подождите и нажмите /start."
+        return "Выберите ваш класс:"
 
     @staticmethod
-    def render_group_selection(dto: GroupListDTO) -> tuple[str, InlineKeyboardMarkup]:
-        text = "Выберите вашу группу (или 'Весь класс'):"
-        buttons = [[InlineKeyboardButton(text="Весь класс (без групп)", callback_data="group:ALL")]]
-        for g_id, g_name in dto.groups.items():
-            buttons.append([InlineKeyboardButton(text=g_name, callback_data=f"group:{g_id}")])
-        return text, InlineKeyboardMarkup(inline_keyboard=buttons)
+    def render_group_selection() -> str:
+        return "Выберите вашу группу (или 'Весь класс'):"
 
     @staticmethod
-    def render_success_join() -> tuple[str, None]:
-        return "✅ Вы успешно присоединены к семье!", None
+    def render_success_join() -> str:
+        return "✅ Вы успешно присоединены к семье!"
 
     @staticmethod
-    def render_error_join() -> tuple[str, None]:
-        return "❌ Код не найден. Проверьте правильность и отправьте его снова, либо нажмите /start.", None
+    def render_error_join() -> str:
+        return "❌ Код не найден. Проверьте правильность и отправьте его снова, либо нажмите /start."
 
     @staticmethod
-    def render_final_success() -> tuple[str, None]:
-        return "✅ Регистрация завершена! Расписание доступно через меню.", None
-    
+    def render_final_success() -> str:
+        return "✅ Регистрация завершена! Расписание доступно через меню."
 
     @staticmethod
-    def render_main_menu() -> tuple[str, ReplyKeyboardMarkup]:
-        """Отрисовка постоянной нижней клавиатуры[cite: 1, 2]."""
-        kb = ReplyKeyboardMarkup(
-            keyboard=[
-                [KeyboardButton(text="📅 Сегодня"), KeyboardButton(text="🗓 Завтра")],
-                [KeyboardButton(text="📆 Вся неделя")],
-                [KeyboardButton(text="➕ Доп. занятия"), KeyboardButton(text="⚙️ Настройки")]
-            ],
-            resize_keyboard=True
-        )
-        return "Главное меню:", kb
+    def render_main_menu() -> str:
+        return "Главное меню:"
 
     @staticmethod
-    def render_already_registered() -> tuple[str, ReplyKeyboardMarkup]:
-        text, kb = UIRenderer.render_main_menu()
-        return "Вы уже зарегистрированы! Воспользуйтесь меню ниже:", kb
+    def render_already_registered() -> str:
+        return "Вы уже зарегистрированы! Воспользуйтесь меню ниже:"
     
     @staticmethod
-    def render_admin_stats(dto: AdminStatsDTO) -> tuple[str, None]:
-        """UI Renderer превращает DTO в HTML-текст[cite: 1]."""
+    def render_admin_stats(dto: AdminStatsDTO) -> str:
         text = f"📊 <b>Статистика пользователей (Всего: {dto.total_users}):</b>\n\n"
         for role, count in dto.role_distribution.items():
             text += f"- {role}: {count}\n"
-        return text, None    
-    
+        return text
+ 
+    @staticmethod
+    def render_child_day_schedule(dto: DayScheduleDTO) -> str:
+        if not dto.lessons:
+            return f"На сегодня ({dto.date_iso}) уроков не найдено или расписание еще не загружено."
+            
+        text_lines = [f"📅 <b>Расписание на сегодня ({dto.date_iso})</b>\n"]
+        for l in dto.lessons:
+            status = "🚫 ОТМЕНЕН" if l.is_cancelled else ("🔄 (Замена)" if l.is_exchange else "")
+            room = f"каб. {l.room_name}" 
+            text_lines.append(f"{l.lesson_num}. {l.start_time}-{l.end_time} | <b>{l.subject_name}</b> {room} {status}")
+            
+        return "\n".join(text_lines)
+
+    @staticmethod
+    def render_parent_children_menu(dto: ChildrenListDTO) -> str:
+        if not dto.children:
+            return "К вашему профилю пока не привязан ни один ребенок. Используйте настройки семьи."
+        return "Выберите ребенка для просмотра расписания:"
     
