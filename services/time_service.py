@@ -26,7 +26,12 @@ class TimeService:
     - Сервер/школа работает в одном timezone из конфига (например, Asia/Novosibirsk).
     - Нет пользовательских сдвигов; все пользователи считаются в одной зоне.
     """
-
+    
+    @property
+    def base_tz(self) -> ZoneInfo:
+        """Публичный доступ к базовой таймзоне школы."""
+        return self._base_tz
+    
     def __init__(self, cfg: TimeServiceConfig):
         self.cfg = cfg
         self._base_tz = ZoneInfo(cfg.timezone)
@@ -145,3 +150,13 @@ class TimeService:
             return True
         except ValueError:
             return False
+
+    @staticmethod
+    def date_from_iso(iso_date: str) -> datetime.date:
+        """
+        Преобразует строку YYYY-MM-DD в datetime.date.
+
+        Пример:
+            "2026-09-02" -> datetime.date(2026, 9, 2)
+        """
+        return datetime.fromisoformat(iso_date).date()

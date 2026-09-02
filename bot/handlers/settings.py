@@ -1,7 +1,7 @@
 import logging
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
-from services.profiles import ProfileService
+from services.profiles_service import ProfileService
 from core.repository.schedule_repository import ScheduleRepository
 from core.models.dto import ClassListDTO
 from bot.utils.ui_renderer import UIRenderer

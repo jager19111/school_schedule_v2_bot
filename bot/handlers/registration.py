@@ -5,7 +5,7 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
 
-from services.profiles import ProfileService
+from services.profiles_service import ProfileService
 from core.repository.schedule_repository import ScheduleRepository
 from bot.utils.ui_renderer import UIRenderer
 from bot.keyboards.keyboard import Keyboards  # <-- ДОБАВЛЕН ИМПОРТ КЛАВИАТУР

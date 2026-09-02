@@ -1,3 +1,4 @@
+from typing import Any, Dict, List, Optional, Set
 from core.models.dto import ClassListDTO, FamilyCreatedDTO, AdminStatsDTO, DayScheduleDTO, ChildrenListDTO
 
 class UIRenderer:
@@ -94,10 +95,18 @@ class UIRenderer:
             
         text_lines = [f"📅 <b>Расписание на сегодня ({dto.date_iso})</b>\n"]
         for l in dto.lessons:
-            status = "🚫 ОТМЕНЕН" if l.is_cancelled else ("🔄 (Замена)" if l.is_exchange else "")
-            room = f"каб. {l.room_name}" 
-            text_lines.append(f"{l.lesson_num}. {l.start_time}-{l.end_time} | <b>{l.subject_name}</b> {room} {status}")
-            
+            if l.get("is_extra"):
+                label = " (Доп. занятие)"
+            else:
+                label = ""
+
+            status = "🚫 ОТМЕНЕН" if l['is_cancelled'] else ("🔄 (Замена)" if l['is_exchange'] else "")
+            room = f"каб. {l.get('room_name', '—')}"
+            num = l['lesson_num'] if l['lesson_num'] is not None else "•"
+
+            text_lines.append(
+                f"{num}. {l['start_time']}-{l['end_time']} | <b>{l['subject_name']}{label}</b> {room} {status}"
+            )
         return "\n".join(text_lines)
 
     @staticmethod

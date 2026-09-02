@@ -1,14 +1,19 @@
-import aiosqlite
-from typing import Dict, Any
+# core/repository/admin_repository.py
+from typing import List, Dict, Any
 
-class AdminRepository:
-    def __init__(self, db_path: str):
-        self.db_path = db_path
+from core.repository.base_repository import BaseRepository
 
-    async def get_role_statistics(self) -> list[dict]:
-        """Возвращает сырые данные по ролям (Plain data)."""
-        async with aiosqlite.connect(self.db_path) as db:
-            db.row_factory = aiosqlite.Row
-            cursor = await db.execute("SELECT role, COUNT(*) as count FROM users GROUP BY role")
-            rows = await cursor.fetchall()
-            return [dict(row) for row in rows]
+
+class AdminRepository(BaseRepository):
+    """
+    Репозиторий административной статистики.
+
+    Делегирует все низкоуровневые операции BaseRepository.
+    """
+
+    async def get_role_statistics(self) -> List[Dict[str, Any]]:
+        """
+        Возвращает список {role, count}.
+        """
+        query = "SELECT role, COUNT(*) as count FROM users GROUP BY role"
+        return await self._fetch_all(query)

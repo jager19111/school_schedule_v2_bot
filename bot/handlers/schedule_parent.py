@@ -1,8 +1,8 @@
 import logging
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
-from services.profiles import ProfileService
-from services.schedule_v2 import ScheduleServiceV2
+from services.profiles_service import ProfileService
+from services.schedule_service import ScheduleService
 from services.time_service import TimeService
 from bot.utils.ui_renderer import UIRenderer
 from bot.keyboards.keyboard import Keyboards
@@ -29,7 +29,7 @@ async def parent_schedule_menu(message: Message, profile_service: ProfileService
         await message.answer(text)
 
 @router.callback_query(F.data.startswith("p_sched:"))
-async def show_child_schedule_today(callback: CallbackQuery, profile_service: ProfileService, schedule_service: ScheduleServiceV2, time_service: TimeService):
+async def show_child_schedule_today(callback: CallbackQuery, profile_service: ProfileService, schedule_service: ScheduleService, time_service: TimeService):
     child_user_id = int(callback.data.split(":")[1])
     child_dto = await profile_service.get_user_profile_dto(child_user_id)
     
@@ -41,7 +41,8 @@ async def show_child_schedule_today(callback: CallbackQuery, profile_service: Pr
     day_dto = await schedule_service.get_daily_schedule_for_child(
         class_id=child_dto.class_id, 
         group_id=child_dto.group_id, 
-        date_iso=today_iso
+        date_iso=today_iso,
+        user_id=child_user_id
     )
     
     text = UIRenderer.render_child_day_schedule(day_dto)

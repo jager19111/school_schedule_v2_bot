@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from typing import Dict, Optional, Any, List
+from dataclasses import dataclass, field
 
 @dataclass
 class ClassListDTO:
@@ -45,8 +46,11 @@ class LessonDTO:
 
 @dataclass
 class DayScheduleDTO:
-    date_iso: str
-    lessons: List[LessonDTO]
+    """
+    DTO для расписания на один день.
+    """
+    date_iso: str  # YYYY-MM-DD
+    lessons: List[Dict[str, Any]] = field(default_factory=list)
 
 @dataclass
 class ChildInfoDTO:

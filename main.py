@@ -12,11 +12,14 @@ from database.db import Database
 from core.repository.schedule_repository import ScheduleRepository
 from core.repository.user_repository import UserRepository
 from core.repository.admin_repository import AdminRepository
+from core.repository.profile_repository import ProfileRepository
+from core.repository.notification_repository import NotificationRepository
+from core.repository.extra_classes_repository import ExtraClassesRepository
 
-from services.profiles import ProfileService
-from services.schedule_v2 import ScheduleServiceV2
-from services.notifications import NotificationService
-from services.cleanup import UserCleanupJob
+from services.profiles_service import ProfileService
+from services.schedule_service import ScheduleService
+from services.notifications_service import NotificationService
+from services.cleanup_service import UserCleanupJob
 from services.time_service import TimeService, TimeServiceConfig
 from services.admin_service import AdminService
 from bot.handlers import (
@@ -61,19 +64,24 @@ async def main():
     await database.init_db()
 
     
-    # 3. Инициализация слоев приложения
-    # Инициализация TimeService
-    time_cfg = TimeServiceConfig(timezone=config.TIMEZONE)
-    time_service = TimeService(cfg=time_cfg)
+    # 3. Сервисы времени
+    time_service = TimeService(TimeServiceConfig(timezone=config.TIMEZONE))
+    
+    # 4. Репозитории
     # PROXY_URL передается как None, если отключен в .env[cite: 2, 8]
-    repo = ScheduleRepository(db_path=config.DB_PATH, proxy=config.PROXY_URL)
-    user_repository = UserRepository(db_path=config.DB_PATH)
-    admin_repository = AdminRepository(db_path=config.DB_PATH)
-    schedule_service = ScheduleServiceV2(repo)
-    profile_service = ProfileService(config.DB_PATH)
-    notification_service = NotificationService(bot, config.DB_PATH, time_service)
-    cleanup_job = UserCleanupJob(config.DB_PATH, time_service, dormant_days=60)
-    admin_service = AdminService(repo)
+    schedule_repo = ScheduleRepository(db_path=config.DB_PATH, proxy=config.PROXY_URL, time_service=time_service)
+    user_repo = UserRepository(db_path=config.DB_PATH, time_service=time_service)
+    admin_repo = AdminRepository(db_path=config.DB_PATH, time_service=time_service)
+    profile_repo = ProfileRepository(db_path=config.DB_PATH, time_service=time_service)
+    notification_repo = NotificationRepository(db_path=config.DB_PATH, time_service=time_service)
+    extra_classes_repo = ExtraClassesRepository(db_path=config.DB_PATH)
+    
+    # 5. Сервисы
+    schedule_service = ScheduleService(schedule_repo=schedule_repo, extra_classes_repo=extra_classes_repo, time_service=time_service)
+    profile_service = ProfileService(profile_repo)
+    notification_service = NotificationService(bot, notification_repo, time_service)
+    cleanup_job = UserCleanupJob(user_repo, time_service=time_service, dormant_days=60)
+    admin_service = AdminService(admin_repo)
     
     # 4. Регистрация роутеров команд
     dp.include_router(registration.router)
@@ -89,16 +97,19 @@ async def main():
         schedule_service=schedule_service,
         admin_service=admin_service,
         time_service=time_service,
-        schedule_repo=repo,
-        user_repository=user_repository,
-        admin_repository=admin_repository,
+        schedule_repo=schedule_repo,
+        user_repository=user_repo,
+        profile_repo=profile_repo,
+        notification_repo=notification_repo,
+        extra_classes_repo=extra_classes_repo,
+        admin_repo=admin_repo,
         db_path=config.DB_PATH,
         config=config
     )
 
     # 5. Первоначальная синхронизация кэша при старте
     logger.info("Синхронизация первичного кэша расписания...")
-    await scheduled_schedule_refresh(repo, tz)
+    await scheduled_schedule_refresh(schedule_repo, tz)
 
     # 6. Настройка планировщика задач (APScheduler)
     scheduler = AsyncIOScheduler(timezone=tz)
@@ -126,7 +137,7 @@ async def main():
         scheduled_schedule_refresh,
         trigger='interval',
         minutes=45,
-        args=[repo, tz],
+        args=[schedule_repo, tz],
         id='nika_refresh',
         replace_existing=True
     )
