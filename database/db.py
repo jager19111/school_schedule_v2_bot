@@ -22,11 +22,11 @@ class Database:
                     pre_lesson_offset_minutes INTEGER NOT NULL DEFAULT 15,
                     changes_window_days INTEGER NOT NULL DEFAULT 3,
                     parent_control_notifications INTEGER NOT NULL DEFAULT 0,
-                    last_active_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    last_active_at TIMESTAMP,
                     is_notifications_enabled INTEGER NOT NULL DEFAULT 1,
                     is_admin INTEGER NOT NULL DEFAULT 0,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    created_at TIMESTAMP,
+                    updated_at TIMESTAMP
                 )
             ''')
             
@@ -36,7 +36,7 @@ class Database:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     family_code TEXT UNIQUE NOT NULL,
                     admin_user_id INTEGER NOT NULL,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    created_at TIMESTAMP
                 )
             ''')
             
@@ -62,7 +62,7 @@ class Database:
                     is_cancelled INTEGER NOT NULL DEFAULT 0,
                     is_notified INTEGER NOT NULL DEFAULT 0,
                     is_change_notified INTEGER NOT NULL DEFAULT 0,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    created_at TIMESTAMP
                 )
             ''')
             
@@ -70,7 +70,7 @@ class Database:
             await db.execute('''
                 CREATE TABLE IF NOT EXISTS raw_nika_cache (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    fetched_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    fetched_at TIMESTAMP,
                     content TEXT NOT NULL
                 )
             ''')

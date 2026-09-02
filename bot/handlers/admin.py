@@ -2,20 +2,15 @@ import logging
 from aiogram import Router
 from aiogram.types import Message
 from aiogram.filters import Command
-import aiosqlite
+from services.admin_service import AdminService
+from bot.utils.ui_renderer import UIRenderer
 
 logger = logging.getLogger(__name__)
 router = Router()
 
 @router.message(Command("stats"))
-async def cmd_stats(message: Message, db_path: str):
-    """Вывод статистики по пользователям и ролям[cite: 4]."""
-    async with aiosqlite.connect(db_path) as db:
-        cursor = await db.execute("SELECT role, COUNT(*) FROM users GROUP BY role")
-        rows = await cursor.fetchall()
-        
-        stats_text = "📊 <b>Статистика пользователей:</b>\n\n"
-        for role, count in rows:
-            stats_text += f"- {role}: {count}\n"
-            
-        await message.answer(stats_text, parse_mode="HTML")
+async def cmd_stats(message: Message, admin_service: AdminService):
+    # Rule 2 & 8: Никаких SQL и проверок. Только вызов сервиса -> DTO -> Renderer[cite: 1].
+    dto = await admin_service.get_statistics()
+    text, kb = UIRenderer.render_admin_stats(dto)
+    await message.answer(text, reply_markup=kb, parse_mode="HTML")

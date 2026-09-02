@@ -1,5 +1,5 @@
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-from core.models.dto import ClassListDTO, GroupListDTO, FamilyCreatedDTO
+from core.models.dto import ClassListDTO, GroupListDTO, FamilyCreatedDTO, AdminStatsDTO
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 
 class UIRenderer:
@@ -99,3 +99,13 @@ class UIRenderer:
     def render_already_registered() -> tuple[str, ReplyKeyboardMarkup]:
         text, kb = UIRenderer.render_main_menu()
         return "Вы уже зарегистрированы! Воспользуйтесь меню ниже:", kb
+    
+    @staticmethod
+    def render_admin_stats(dto: AdminStatsDTO) -> tuple[str, None]:
+        """UI Renderer превращает DTO в HTML-текст[cite: 1]."""
+        text = f"📊 <b>Статистика пользователей (Всего: {dto.total_users}):</b>\n\n"
+        for role, count in dto.role_distribution.items():
+            text += f"- {role}: {count}\n"
+        return text, None    
+    
+    

@@ -4,21 +4,24 @@ from zoneinfo import ZoneInfo
 import aiosqlite
 from aiogram import Bot
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from services.time_service import TimeService
 
 logger = logging.getLogger(__name__)
 
 class NotificationService:
-    def __init__(self, bot: Bot, db_path: str, timezone: str = "Asia/Novosibirsk"):
+    def __init__(self, bot: Bot, db_path: str, time_service: TimeService):
+        """Инжектим TimeService вместо сырой строки таймзоны."""
         self.bot = bot
         self.db_path = db_path
-        self.tz = ZoneInfo(timezone)
+        self.time_service = time_service
 
     async def send_pre_lesson_reminders(self) -> None:
         """
         Предурочные оповещения. Проверяет дельту времени до начала урока.
         Запускается каждые 5 минут. Защита от дублей через is_notified[cite: 1, 4].
         """
-        now = datetime.datetime.now(self.tz)
+        # Получаем время сервера через TimeService
+        now = self.time_service.get_now_base()
         today_iso = now.date().isoformat()
 
         async with aiosqlite.connect(self.db_path) as db:
@@ -33,9 +36,11 @@ class NotificationService:
             lessons = await cursor.fetchall()
 
             for lesson in lessons:
-                # Преобразуем строковое время "08:15" в timezone-aware datetime[cite: 4, 7]
                 start_time_str = lesson['start_time']
-                lesson_dt = datetime.datetime.strptime(f"{today_iso} {start_time_str}", "%Y-%m-%d %H:%M").replace(tzinfo=self.tz)
+                # Собираем aware datetime урока, используя таймзону из TimeService
+                lesson_dt = datetime.datetime.strptime(
+                    f"{today_iso} {start_time_str}", "%Y-%m-%d %H:%M"
+                ).replace(tzinfo=self.time_service._base_tz)
                 
                 delta_minutes = (lesson_dt - now).total_seconds() / 60.0
 
@@ -72,7 +77,8 @@ class NotificationService:
         Рассылка замен и отмен. Отправляется только если дата урока попадает 
         в окно changes_window_days пользователя[cite: 1, 5].
         """
-        now = datetime.datetime.now(self.tz)
+        # Получаем время сервера через TimeService[cite: 5]
+        now = self.time_service.get_now_base()
         
         async with aiosqlite.connect(self.db_path) as db:
             db.row_factory = aiosqlite.Row

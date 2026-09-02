@@ -19,9 +19,13 @@ class ActionResponseDTO:
     error_code: Optional[str] = None
     data: Optional[Any] = None
 
-# Добавить к существующим импортам в core/models/dto.py
 @dataclass
 class UserProfileDTO:
     user_id: int
     role: Optional[str]
     is_fully_registered: bool
+    
+@dataclass
+class AdminStatsDTO:
+    total_users: int
+    role_distribution: Dict[str, int]

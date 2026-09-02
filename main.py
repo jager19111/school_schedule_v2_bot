@@ -10,10 +10,15 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from config import config
 from database.db import Database
 from core.repository.schedule_repository import ScheduleRepository
+from core.repository.user_repository import UserRepository
+from core.repository.admin_repository import AdminRepository
+
 from services.profiles import ProfileService
 from services.schedule_v2 import ScheduleServiceV2
 from services.notifications import NotificationService
 from services.cleanup import UserCleanupJob
+from services.time_service import TimeService, TimeServiceConfig
+from services.admin_service import AdminService
 from bot.handlers import (
     registration,
     schedule_child,
@@ -55,14 +60,21 @@ async def main():
     database = Database(config.DB_PATH)
     await database.init_db()
 
+    
     # 3. Инициализация слоев приложения
+    # Инициализация TimeService
+    time_cfg = TimeServiceConfig(timezone=config.TIMEZONE)
+    time_service = TimeService(cfg=time_cfg)
     # PROXY_URL передается как None, если отключен в .env[cite: 2, 8]
     repo = ScheduleRepository(db_path=config.DB_PATH, proxy=config.PROXY_URL)
+    user_repository = UserRepository(db_path=config.DB_PATH)
+    admin_repository = AdminRepository(db_path=config.DB_PATH)
     schedule_service = ScheduleServiceV2(repo)
     profile_service = ProfileService(config.DB_PATH)
-    notification_service = NotificationService(bot, config.DB_PATH, timezone=config.TIMEZONE)
-    cleanup_job = UserCleanupJob(config.DB_PATH, dormant_days=60)
-
+    notification_service = NotificationService(bot, config.DB_PATH, time_service)
+    cleanup_job = UserCleanupJob(config.DB_PATH, time_service, dormant_days=60)
+    admin_service = AdminService(repo)
+    
     # 4. Регистрация роутеров команд
     dp.include_router(registration.router)
     dp.include_router(schedule_child.router)
@@ -75,7 +87,10 @@ async def main():
     dp.workflow_data.update(
         profile_service=profile_service,
         schedule_service=schedule_service,
+        admin_service=admin_service,
         schedule_repo=repo,
+        user_repository=user_repository,
+        admin_repository=admin_repository,
         db_path=config.DB_PATH,
         config=config
     )

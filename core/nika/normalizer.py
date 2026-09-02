@@ -30,21 +30,39 @@ class NikaNormalizer:
         
         return classes, teachers, rooms, subjects
 
+    def _get_active_period(self, target_date: datetime.date, periods: dict) -> str | None:
+        """Поиск активного учебного периода для заданной даты."""
+        for p_id, p_data in periods.items():
+            try:
+                # В NIKA даты в формате "DD.MM.YYYY"
+                b_date = datetime.datetime.strptime(p_data["b"], "%d.%m.%Y").date()
+                e_date = datetime.datetime.strptime(p_data["e"], "%d.%m.%Y").date()
+                if b_date <= target_date <= e_date:
+                    return p_id
+            except (ValueError, KeyError):
+                continue
+        
+        # Если период не найден (например, каникулы), отдаем первый доступный как fallback
+        return list(periods.keys())[0] if periods else None
+    
     def build_class_lessons(self, target_dates: List[datetime.date]) -> List[LessonInstance]:
         """Генерирует LessonInstance на основе CLASS_SCHEDULE и CLASS_EXCHANGE для заданных дат[cite: 1, 2]."""
         lessons = []
         classes, teachers, rooms, subjects = self.build_metadata()
         class_groups = self.data.get("CLASSGROUPS", {})
         lesson_times = self.data.get("LESSON_TIMES", {})
+        periods = self.data.get("PERIODS", {})
         
         for t_date in target_dates:
             date_str = t_date.strftime("%d.%m.%Y")
             iso_date = t_date.isoformat()
             weekday = t_date.isoweekday()
             
-            # Поиск активного периода (упрощенно: считаем, что первый подошедший период наш)
+            # Поиск активного периода по дате
             # В реальных данных PERIODS = {"109": {"b": "01.09.2025", "e": "31.12.2025", "name": "1 полугодие"}}
-            period_id = list(self.data.get("PERIODS", {}).keys())[0] 
+            period_id = self._get_active_period(t_date, periods)
+            if not period_id:
+                continue
             
             for class_id in classes.keys():
                 schedule_base = self.data.get("CLASS_SCHEDULE", {}).get(period_id, {}).get(class_id, {})
