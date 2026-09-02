@@ -44,7 +44,7 @@ class UIRenderer:
 # ---------------
 # Доп занятия # handlers/extra_classes
 # ---------------
-    DAYS_MAP = {1: "Пн", 2: "Вт", 3: "Ср", 4: "Чт", 5: "Пт", 6: "Сб", 7: "Вс"}
+    DAYS_MAP_SHORT = {1: "Пн", 2: "Вт", 3: "Ср", 4: "Чт", 5: "Пт", 6: "Сб", 7: "Вс"}
     # Клавиатура
     @staticmethod
     def render_extra_classes_menu() -> tuple[str, None]:
@@ -54,6 +54,10 @@ class UIRenderer:
     def render_extra_class_day() -> tuple[str, None]:
         return "📅 Выберите день недели для занятия:", None
 
+    @staticmethod
+    def render_extra_class_edit_day() -> tuple[str, None]:
+        return "📅 Выберите новый день недели:", None
+    
     @staticmethod
     def render_extra_class_invalid_reminder() -> tuple[str, None]:
         return "❌ Неверный формат! Введите число (например, 15) или '-':", None
@@ -80,8 +84,8 @@ class UIRenderer:
         
     @staticmethod
     def render_extra_class_title() -> tuple[str, None]:
-        return "Введите название занятия (например, \"Футбол\"):", None
-
+        return "✏️ Введите название занятия:\n<i>Например: Футбол, Шахматы, Английский</i>", None
+    
     @staticmethod
     def render_extra_class_invalid_range() -> tuple[str, None]:
         return "❌ Ошибка: Время начала не может быть позже или равно времени окончания. Введите корректное время (ЧЧ:ММ):", None
@@ -93,30 +97,48 @@ class UIRenderer:
     @staticmethod
     def render_extra_class_error() -> tuple[str, None]:
         return "❌ Произошла ошибка при сохранении.", None
-
+# Словарь с полными названиями дней недели
+    FULL_DAYS_MAP = {
+        1: "Понедельник", 2: "Вторник", 3: "Среда", 
+        4: "Четверг", 5: "Пятница", 6: "Суббота", 7: "Воскресенье"
+    }
+   
     @staticmethod
-    def render_extra_classes_list(dto: ExtraClassListDTO, show_id: bool = False) -> tuple[str, None]:
+    def render_extra_classes_list(dto: 'ExtraClassListDTO', show_id: bool = False) -> tuple[str, None]:
         if not dto.items:
             return "📋 <b>Список дополнительных занятий пуст.</b>", None
 
         text = "📋 <b>Ваши дополнительные занятия:</b>\n\n"
-        for item in dto.items:
-            day_str = UIRenderer.DAYS_MAP.get(item.day_of_week, "Неизвестно")
-            loc_str = item.location if item.location else "Не указано"
+        current_day = None
+
+        # Гарантируем сортировку по дню недели и времени начала
+        sorted_items = sorted(dto.items, key=lambda x: (x.day_of_week, x.time_start))
+
+        for item in sorted_items:
+            # 1. Группировка: выводим заголовок дня только при его смене
+            if item.day_of_week != current_day:
+                current_day = item.day_of_week
+                day_name = UIRenderer.FULL_DAYS_MAP.get(current_day, "Неизвестно")
+                text += "───────────────\n"
+                text += f"📅 <b>{day_name}</b>\n"
+                text += "───────────────\n"
+            # 2. Очистка локации от технических дефисов
+            loc_str = item.location if item.location and str(item.location).strip() != "-" else "Не указано"
             
-            # Формирование заголовка с/без ID
+            # 3. Вывод строки времени (без дублирования дня недели)
             if show_id:
-                text += f"ID: {item.id} | {day_str} {item.time_start}-{item.time_end}\n"
+                # Используем тег <code> для удобного копирования ID на телефонах
+                text += f"ID: <code>{item.id}</code> | 🕐 {item.time_start}-{item.time_end}\n"
             else:
-                text += f"{day_str} {item.time_start}-{item.time_end}\n"
+                text += f"🕐 {item.time_start}-{item.time_end}\n"
                 
-            text += f"Занятие: <b>{item.title}</b>\n"
-            text += f"Место: {loc_str}\n"
-            text += f"Напоминание: {item.reminder_minutes}мин\n"
-            text += "───────────────\n"
+            text += f"📝 Занятие: <b>{item.title}</b>\n"
+            text += f"📍 Место: {loc_str}\n"
+            text += f"⏰ Напоминание: {item.reminder_minutes}мин\n"
+            text += " \n"
 
         return text, None
-
+    
     @staticmethod
     def render_extra_class_edit_prompt(dto: ExtraClassListDTO) -> tuple[str, None]:
         if not dto.items:

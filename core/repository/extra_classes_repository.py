@@ -127,6 +127,7 @@ class ExtraClassesRepository:
         *,
         extra_id: int,
         user_id: int,
+        day_of_week: Optional[int] = None, # <-- ДОБАВЛЕНО
         time_start: Optional[str] = None,
         time_end: Optional[str] = None,
         title: Optional[str] = None,
@@ -140,7 +141,10 @@ class ExtraClassesRepository:
         """
         fields = []
         params: list[Any] = []
-
+        
+        if day_of_week is not None:
+            fields.append("day_of_week = ?")
+            params.append(day_of_week)
         if time_start is not None:
             fields.append("time_start = ?")
             params.append(time_start)

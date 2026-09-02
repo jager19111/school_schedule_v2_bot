@@ -123,6 +123,9 @@ class Keyboards:
                 InlineKeyboardButton(text="Место", callback_data=f"edit_ext:loc:{class_id}"),
                 InlineKeyboardButton(text="Напоминание", callback_data=f"edit_ext:rem:{class_id}")
             ],
+            [
+                InlineKeyboardButton(text="День недели", callback_data=f"edit_ext:day:{class_id}") # <-- ДОБАВЛЕНО
+            ],
             [InlineKeyboardButton(text="❌ Отмена", callback_data="extra:cancel")]
         ])
 
