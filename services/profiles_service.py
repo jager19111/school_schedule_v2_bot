@@ -52,7 +52,8 @@ class ProfileService:
 
     async def get_user_profile_dto(self, user_id: int) -> UserProfileDTO:
         """
-        Возвращает DTO с информацией о пользователе и статусе регистрации.
+        Возвращает DTO с информацией о пользователе. 
+        Логика SQL полностью изолирована в ProfileRepository [Бот школьное расписание, cite: 4].
         """
         row = await self.repo.get_user_profile_for_dto(user_id)
 
@@ -66,18 +67,23 @@ class ProfileService:
         role = row["role"]
         is_registered = False
 
-        if role == "child" and row["class_id"]:
+        # Проверка завершенности регистрации
+        if role == "child" and row.get("class_id"):
             is_registered = True
-        elif role in ("parent", "observer") and row["family_id"]:
+        elif role in ("parent", "observer") and row.get("family_id"):
             is_registered = True
 
         return UserProfileDTO(
             user_id=user_id,
             role=role,
             is_fully_registered=is_registered,
-            class_id=row["class_id"],
-            group_id=row["group_id"],
-            parent_control_notifications=bool(row["parent_control_notifications"]),
+            family_id=row.get("family_id"),
+            class_id=row.get("class_id"),
+            group_id=row.get("group_id"),
+            parent_control_notifications=bool(row.get("parent_control_notifications")),
+            pre_lesson_offset_minutes=row.get("pre_lesson_offset_minutes", 15),
+            changes_window_days=row.get("changes_window_days", 3),
+            is_notifications_enabled=bool(row.get("is_notifications_enabled", True))
         )
 
     # ========== СЕМЬИ ==========

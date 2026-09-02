@@ -1,5 +1,5 @@
 from typing import Any, Dict, List, Optional, Set
-from core.models.dto import ClassListDTO, FamilyCreatedDTO, AdminStatsDTO, DayScheduleDTO, ChildrenListDTO
+from core.models.dto import ClassListDTO, FamilyCreatedDTO, AdminStatsDTO, DayScheduleDTO, ChildrenListDTO, ExtraClassListDTO
 
 class UIRenderer:
     @staticmethod
@@ -41,7 +41,74 @@ class UIRenderer:
     @staticmethod
     def render_family_code_prompt() -> str:
         return "Введите код семьи (family_code) для подключения:"
+# ---------------
+# Доп занятия # handlers/extra_classes
+# ---------------
+    DAYS_MAP = {1: "Пн", 2: "Вт", 3: "Ср", 4: "Чт", 5: "Пт", 6: "Сб", 7: "Вс"}
+    # Клавиатура
+    @staticmethod
+    def render_extra_classes_menu() -> tuple[str, None]:
+        return "🎨 <b>Дополнительные занятия</b>\n\nУправление кружками и секциями:", None
 
+    @staticmethod
+    def render_extra_class_time_start() -> tuple[str, None]:
+        return "Введите время начала занятия (ЧЧ:ММ):", None
+
+    @staticmethod
+    def render_extra_class_time_end() -> tuple[str, None]:
+        return "Введите время окончания занятия (ЧЧ:ММ):", None
+
+    @staticmethod
+    def render_extra_class_title() -> tuple[str, None]:
+        return "Введите название занятия (например, \"Футбол\"):", None
+
+    @staticmethod
+    def render_extra_class_invalid_time() -> tuple[str, None]:
+        return "❌ Неверный формат! Введите время в формате ЧЧ:ММ (например, 15:30).", None
+
+    @staticmethod
+    def render_extra_class_invalid_range() -> tuple[str, None]:
+        return "❌ Ошибка: Время начала не может быть позже или равно времени окончания. Введите корректное время (ЧЧ:ММ):", None
+
+    @staticmethod
+    def render_extra_class_success() -> tuple[str, None]:
+        return "✅ Доп. занятие сохранено и будет учитываться в расписании.", None
+
+    @staticmethod
+    def render_extra_class_error() -> tuple[str, None]:
+        return "❌ Произошла ошибка при сохранении.", None
+
+    @staticmethod
+    def render_extra_classes_list(dto: ExtraClassListDTO) -> tuple[str, None]:
+        if not dto.items:
+            return "📋 <b>Список дополнительных занятий пуст.</b>", None
+
+        text = "📋 <b>Ваши дополнительные занятия:</b>\n\n"
+        for item in dto.items:
+            day_str = UIRenderer.DAYS_MAP.get(item.day_of_week, "Неизвестно")
+            text += f"ID: <code>{item.id}</code> | {day_str} {item.time_start}-{item.time_end}\n"
+            text += f"Название: <b>{item.title}</b>\n"
+            text += "───────────────\n"
+
+        return text, None
+
+    @staticmethod
+    def render_extra_class_delete_prompt(dto: ExtraClassListDTO) -> tuple[str, None]:
+        if not dto.items:
+            return "Список пуст. Удалять нечего.", None
+        
+        text, _ = UIRenderer.render_extra_classes_list(dto)
+        text += "\n🗑 <b>Введите ID занятия для удаления:</b>"
+        return text, None
+        
+    @staticmethod
+    def render_extra_class_deleted() -> tuple[str, None]:
+        return "✅ Занятие успешно удалено.", None
+        
+    @staticmethod
+    def render_extra_class_not_found() -> tuple[str, None]:
+        return "❌ Занятие с таким ID не найдено или вам не принадлежит. Введите правильный ID:", None
+ # ---------------   
     @staticmethod
     def render_family_created(dto: FamilyCreatedDTO) -> str:
         return (

@@ -66,11 +66,13 @@ class ProfileRepository(BaseRepository):
 
     async def get_user_profile_for_dto(self, user_id: int) -> Optional[Dict[str, Any]]:
         """
-        Возвращает только нужные поля для UserProfileDTO.
+        Возвращает только нужные поля для UserProfileDTO. Никакой бизнес-логики, только SQL[cite: 1].
         """
         return await self._fetch_one(
             """
-            SELECT role, class_id, group_id, family_id, parent_control_notifications
+            SELECT role, class_id, group_id, family_id, 
+                   parent_control_notifications, pre_lesson_offset_minutes, 
+                   changes_window_days, is_notifications_enabled
             FROM users WHERE user_id = ?
             """,
             (user_id,),

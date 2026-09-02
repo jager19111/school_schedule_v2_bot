@@ -160,3 +160,14 @@ class TimeService:
             "2026-09-02" -> datetime.date(2026, 9, 2)
         """
         return datetime.fromisoformat(iso_date).date()
+    
+    @staticmethod
+    def validate_time_range(start_time: str, end_time: str) -> bool:
+        """Проверяет, что время окончания строго позже времени начала."""
+        try:
+            from datetime import datetime
+            t_start = datetime.strptime(start_time.strip(), "%H:%M")
+            t_end = datetime.strptime(end_time.strip(), "%H:%M")
+            return t_start < t_end
+        except ValueError:
+            return False

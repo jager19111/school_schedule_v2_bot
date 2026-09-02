@@ -97,3 +97,26 @@ class Keyboards:
             buttons.append([InlineKeyboardButton(text=btn_text, callback_data=f"p_{dto.action}:{child.user_id}")])
             
         return InlineKeyboardMarkup(inline_keyboard=buttons)
+    
+    # Доп занятия  ExtraClassesService
+    @staticmethod
+    def get_extra_classes_menu() -> InlineKeyboardMarkup:
+        """Клавиатура управления доп. занятиями."""
+        buttons = [
+            [InlineKeyboardButton(text="➕ Добавить занятие", callback_data="extra:add")],
+            [InlineKeyboardButton(text="📋 Список занятий", callback_data="extra:list")],
+            [InlineKeyboardButton(text="🗑 Удалить занятие", callback_data="extra:delete")]
+        ]
+        return InlineKeyboardMarkup(inline_keyboard=buttons)
+    
+    @staticmethod
+    def get_cancel_keyboard() -> InlineKeyboardMarkup:
+        return InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="❌ Отмена", callback_data="extra:cancel")]
+        ])
+
+    @staticmethod
+    def get_back_to_extra_menu() -> InlineKeyboardMarkup:
+        return InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data="extra:menu")]
+        ])

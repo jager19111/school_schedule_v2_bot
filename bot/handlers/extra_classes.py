@@ -1,14 +1,14 @@
-# bot/handlers/extra_classes.py (фрагмент)
 import logging
-from aiogram import Router
-from aiogram.types import Message
+from aiogram import Router, F
+from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
 
-from services.time_service import TimeService
-from core.repository.extra_classes_repository import ExtraClassesRepository
-from services.profiles_service import ProfileService
 from bot.utils.ui_renderer import UIRenderer
+from bot.keyboards.keyboard import Keyboards
+from services.time_service import TimeService
+from services.extra_classes_service import ExtraClassesService
+from services.profiles_service import ProfileService
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -17,57 +17,148 @@ class ExtraClassStates(StatesGroup):
     waiting_for_time_start = State()
     waiting_for_time_end = State()
     waiting_for_title = State()
+    waiting_for_delete_id = State()
+
+# === ГЛАВНОЕ МЕНЮ И ОТМЕНА ===
+
+@router.message(F.text == "➕ Доп. занятия")
+async def show_extra_menu(message: Message):
+    text, _ = UIRenderer.render_extra_classes_menu()
+    await message.answer(text, reply_markup=Keyboards.get_extra_classes_menu(), parse_mode="HTML")
+
+@router.callback_query(F.data == "extra:menu")
+async def show_extra_menu_cb(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
+    text, _ = UIRenderer.render_extra_classes_menu()
+    await callback.message.edit_text(text, reply_markup=Keyboards.get_extra_classes_menu(), parse_mode="HTML")
+    await callback.answer()
+
+@router.callback_query(F.data == "extra:cancel")
+async def cancel_action(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
+    text, _ = UIRenderer.render_extra_classes_menu()
+    await callback.message.edit_text(f"❌ Действие отменено.\n\n{text}", reply_markup=Keyboards.get_extra_classes_menu(), parse_mode="HTML")
+    await callback.answer()
+
+
+# === СПИСОК ЗАНЯТИЙ ===
+
+@router.callback_query(F.data == "extra:list")
+async def show_extra_list(callback: CallbackQuery, extra_classes_service: ExtraClassesService):
+    dto_list = await extra_classes_service.get_user_extra_classes(callback.from_user.id)
+    text, _ = UIRenderer.render_extra_classes_list(dto_list)
+    await callback.message.edit_text(text, reply_markup=Keyboards.get_back_to_extra_menu(), parse_mode="HTML")
+    await callback.answer()
+
+
+# === УДАЛЕНИЕ ЗАНЯТИЯ ===
+
+@router.callback_query(F.data == "extra:delete")
+async def start_delete_extra(callback: CallbackQuery, state: FSMContext, extra_classes_service: ExtraClassesService):
+    dto_list = await extra_classes_service.get_user_extra_classes(callback.from_user.id)
+    
+    # Если список пуст, рендерим возврат
+    if not dto_list.items:
+        text, _ = UIRenderer.render_extra_class_delete_prompt(dto_list)
+        await callback.message.edit_text(text, reply_markup=Keyboards.get_back_to_extra_menu(), parse_mode="HTML")
+        return await callback.answer()
+
+    text, _ = UIRenderer.render_extra_class_delete_prompt(dto_list)
+    await callback.message.edit_text(text, reply_markup=Keyboards.get_cancel_keyboard(), parse_mode="HTML")
+    await state.set_state(ExtraClassStates.waiting_for_delete_id)
+    await callback.answer()
+
+@router.message(ExtraClassStates.waiting_for_delete_id)
+async def process_delete_id(message: Message, state: FSMContext, extra_classes_service: ExtraClassesService):
+    if not message.text.strip().isdigit():
+        text, _ = UIRenderer.render_extra_class_not_found()
+        return await message.answer(text, reply_markup=Keyboards.get_cancel_keyboard(), parse_mode="HTML")
+
+    class_id = int(message.text.strip())
+    response = await extra_classes_service.delete_extra_class(user_id=message.from_user.id, extra_id=class_id)
+
+    if not response.success:
+        text, _ = UIRenderer.render_extra_class_not_found()
+        return await message.answer(text, reply_markup=Keyboards.get_cancel_keyboard(), parse_mode="HTML")
+
+    await state.clear()
+    text_deleted, _ = UIRenderer.render_extra_class_deleted()
+    text_menu, _ = UIRenderer.render_extra_classes_menu()
+    await message.answer(f"{text_deleted}\n\n{text_menu}", reply_markup=Keyboards.get_extra_classes_menu(), parse_mode="HTML")
+
+
+# === ДОБАВЛЕНИЕ ЗАНЯТИЯ ===
+
+@router.callback_query(F.data == "extra:add")
+async def start_add_extra(callback: CallbackQuery, state: FSMContext):
+    text, _ = UIRenderer.render_extra_class_time_start()
+    await callback.message.edit_text(text, reply_markup=Keyboards.get_cancel_keyboard())
+    await state.set_state(ExtraClassStates.waiting_for_time_start)
+    await callback.answer()
 
 @router.message(ExtraClassStates.waiting_for_time_start)
 async def process_time_start(message: Message, state: FSMContext, time_service: TimeService):
     time_str = message.text.strip()
+    
     if not time_service.validate_time_format(time_str):
-        return await message.answer("❌ Неверный формат! Введите время в формате ЧЧ:ММ (например, 15:30).")
+        text, _ = UIRenderer.render_extra_class_invalid_time()
+        return await message.answer(text, reply_markup=Keyboards.get_cancel_keyboard())
 
     await state.update_data(time_start=time_str)
-    await message.answer("Введите время окончания занятия (ЧЧ:ММ):")
+    
+    text, _ = UIRenderer.render_extra_class_time_end()
+    await message.answer(text, reply_markup=Keyboards.get_cancel_keyboard())
     await state.set_state(ExtraClassStates.waiting_for_time_end)
 
 @router.message(ExtraClassStates.waiting_for_time_end)
 async def process_time_end(message: Message, state: FSMContext, time_service: TimeService):
-    time_str = message.text.strip()
-    if not time_service.validate_time_format(time_str):
-        return await message.answer("❌ Неверный формат! Введите время в формате ЧЧ:ММ (например, 16:15).")
+    time_end = message.text.strip()
+    data = await state.get_data()
+    
+    # 1. Проверка правильного формата
+    if not time_service.validate_time_format(time_end):
+        text, _ = UIRenderer.render_extra_class_invalid_time()
+        return await message.answer(text, reply_markup=Keyboards.get_cancel_keyboard())
 
-    await state.update_data(time_end=time_str)
-    await message.answer("Введите название занятия (например, \"Футбол\"):")
+    # 2. Проверка диапазона (начало строго раньше конца)
+    if not time_service.validate_time_range(data["time_start"], time_end):
+        text, _ = UIRenderer.render_extra_class_invalid_range()
+        return await message.answer(text, reply_markup=Keyboards.get_cancel_keyboard())
+
+    await state.update_data(time_end=time_end)
+    
+    text, _ = UIRenderer.render_extra_class_title()
+    await message.answer(text, reply_markup=Keyboards.get_cancel_keyboard())
     await state.set_state(ExtraClassStates.waiting_for_title)
 
 @router.message(ExtraClassStates.waiting_for_title)
 async def process_title(
     message: Message,
     state: FSMContext,
-    extra_classes_repo: ExtraClassesRepository,
+    extra_classes_service: ExtraClassesService,
     profile_service: ProfileService,
-    time_service: TimeService,
 ):
     data = await state.get_data()
     title = message.text.strip()
-
-    # Профиль пользователя: берём user_id / family_id / class_id
-    profile = await profile_service.get_user_profile(message.from_user.id)
-    family_id = profile.get("family_id")
     user_id = message.from_user.id
 
-    # Текущий день недели по базовой таймзоне (1..7)
-    now = time_service.get_now_base()
-    day_of_week = now.isoweekday()
-
-    await extra_classes_repo.create_extra_class(
+    profile_dto = await profile_service.get_user_profile_dto(user_id)
+    response = await extra_classes_service.add_extra_class(
         user_id=user_id,
-        family_id=family_id,
-        day_of_week=day_of_week,
+        family_id=profile_dto.family_id,
         time_start=data["time_start"],
         time_end=data["time_end"],
-        title=title,
-        location=None,
-        reminder_minutes=30,  # либо взять из настроек профиля
+        title=title
     )
 
-    await message.answer("✅ Доп. занятие сохранено и будет учитываться в расписании.")
+    if not response.success:
+        if response.error_code == "invalid_time":
+            text, _ = UIRenderer.render_extra_class_invalid_time()
+        else:
+            text, _ = UIRenderer.render_extra_class_error()
+        return await message.answer(text, reply_markup=Keyboards.get_cancel_keyboard())
+
     await state.clear()
+    text_success, _ = UIRenderer.render_extra_class_success()
+    text_menu, _ = UIRenderer.render_extra_classes_menu()
+    await message.answer(f"{text_success}\n\n{text_menu}", reply_markup=Keyboards.get_extra_classes_menu(), parse_mode="HTML")

@@ -25,9 +25,13 @@ class UserProfileDTO:
     user_id: int
     role: Optional[str]
     is_fully_registered: bool
+    family_id: Optional[int] = None       # <-- ДОБАВЛЕНО
     class_id: Optional[str] = None
     group_id: Optional[str] = None
     parent_control_notifications: bool = False
+    pre_lesson_offset_minutes: int = 15
+    changes_window_days: int = 3
+    is_notifications_enabled: bool = True
     
 @dataclass
 class AdminStatsDTO:
@@ -62,3 +66,18 @@ class ChildInfoDTO:
 class ChildrenListDTO:
     children: List[ChildInfoDTO]
     action: str
+    
+# Доп задания
+
+@dataclass
+class ExtraClassItemDTO:
+    id: int
+    day_of_week: int
+    time_start: str
+    time_end: str
+    title: str
+    location: Optional[str]
+
+@dataclass
+class ExtraClassListDTO:
+    items: List[ExtraClassItemDTO]

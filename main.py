@@ -19,6 +19,7 @@ from core.repository.extra_classes_repository import ExtraClassesRepository
 from services.profiles_service import ProfileService
 from services.schedule_service import ScheduleService
 from services.notifications_service import NotificationService
+from services.extra_classes_service import ExtraClassesService
 from services.cleanup_service import UserCleanupJob
 from services.time_service import TimeService, TimeServiceConfig
 from services.admin_service import AdminService
@@ -82,6 +83,7 @@ async def main():
     notification_service = NotificationService(bot, notification_repo, time_service)
     cleanup_job = UserCleanupJob(user_repo, time_service=time_service, dormant_days=60)
     admin_service = AdminService(admin_repo)
+    extra_classes_service = ExtraClassesService(extra_classes_repo=extra_classes_repo, time_service=time_service)
     
     # 4. Регистрация роутеров команд
     dp.include_router(registration.router)
@@ -97,6 +99,7 @@ async def main():
         schedule_service=schedule_service,
         admin_service=admin_service,
         time_service=time_service,
+        extra_classes_service=extra_classes_service,
         schedule_repo=schedule_repo,
         user_repository=user_repo,
         profile_repo=profile_repo,
