@@ -183,6 +183,15 @@ class UIRenderer:
     @staticmethod
     def render_extra_class_not_found() -> tuple[str, None]:
         return "❌ Занятие с таким ID не найдено или вам не принадлежит. Введите правильный ID:", None
+    
+    @staticmethod
+    def render_extra_child_select() -> tuple[str, None]:
+        return "👥 <b>Выберите ребенка</b>\n\nДля кого вы хотите настроить дополнительные занятия?", None
+
+    @staticmethod
+    def render_extra_no_children() -> tuple[str, None]:
+        return "❌ У вас нет привязанных детей. Сначала добавьте ребенка в семью через меню настроек.", None
+    
  # ---------------   
     @staticmethod
     def render_already_registered(name: str | None) -> str:

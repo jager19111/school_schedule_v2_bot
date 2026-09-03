@@ -193,18 +193,15 @@ class Keyboards:
     
     # Доп занятия  ExtraClassesService
     @staticmethod
-    def get_extra_classes_menu(can_edit: bool = True) -> InlineKeyboardMarkup:
-        """Клавиатура управления доп. занятиями (динамическая)."""
+    def get_extra_classes_menu(target_user_id: int, can_edit: bool = True) -> InlineKeyboardMarkup:
+        """Динамическая клавиатура с привязкой к ID целевого ребенка."""
         buttons = [
-            [InlineKeyboardButton(text="➕ Добавить занятие", callback_data="extra:add")],
-            [InlineKeyboardButton(text="📋 Список занятий", callback_data="extra:list")]
+            [InlineKeyboardButton(text="➕ Добавить занятие", callback_data=f"extra:add:{target_user_id}")],
+            [InlineKeyboardButton(text="📋 Список занятий", callback_data=f"extra:list:{target_user_id}")]
         ]
-        
-        # Скрываем кнопки, если редактирование запрещено
         if can_edit:
-            buttons.append([InlineKeyboardButton(text="✏️ Изменить занятие", callback_data="extra:edit")])
-            buttons.append([InlineKeyboardButton(text="🗑 Удалить занятие", callback_data="extra:delete")])
-            
+            buttons.append([InlineKeyboardButton(text="✏️ Изменить занятие", callback_data=f"extra:edit:{target_user_id}")])
+            buttons.append([InlineKeyboardButton(text="🗑 Удалить занятие", callback_data=f"extra:delete:{target_user_id}")])
         return InlineKeyboardMarkup(inline_keyboard=buttons)
  
     @staticmethod
@@ -233,9 +230,9 @@ class Keyboards:
         ])
 
     @staticmethod
-    def get_back_to_extra_menu() -> InlineKeyboardMarkup:
+    def get_back_to_extra_menu(target_user_id: int) -> InlineKeyboardMarkup:
         return InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="⬅️ Назад", callback_data="extra:menu")]
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"extra:menu:{target_user_id}")]
         ])
         
     @staticmethod
@@ -420,3 +417,11 @@ class Keyboards:
                     
         buttons.append([InlineKeyboardButton(text="⬅️ Назад к настройкам", callback_data="settings:main")])
         return InlineKeyboardMarkup(inline_keyboard=buttons)    
+
+    @staticmethod
+    def get_extra_children_select_kb(children: list) -> InlineKeyboardMarkup:
+        """Клавиатура выбора ребенка для родителя."""
+        buttons = []
+        for child in children:
+            buttons.append([InlineKeyboardButton(text=f"👦/👧 {child.name}", callback_data=f"extra:menu:{child.user_id}")])
+        return InlineKeyboardMarkup(inline_keyboard=buttons)
