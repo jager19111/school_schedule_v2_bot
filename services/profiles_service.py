@@ -153,9 +153,9 @@ class ProfileService:
         return [
             ChildInfoDTO(
                 user_id=r["user_id"],
-                # TODO: когда добавишь колонку name, заменить на r["name"]
-                name=f"Ребёнок {r['user_id']}",
+                name=r["name"] if r["name"] else f"Ученик {r['user_id']}",
                 class_id=r["class_id"] or "—",
+                group_id=r["group_id"] or "ALL"
             )
             for r in rows
         ]

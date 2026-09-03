@@ -161,7 +161,7 @@ class ProfileRepository(BaseRepository):
         """
         return await self._fetch_all(
             """
-            SELECT user_id, name, class_id
+            SELECT user_id, name, class_id, group_id
             FROM users
             WHERE family_id = (SELECT family_id FROM users WHERE user_id = ?)
               AND role = 'child'

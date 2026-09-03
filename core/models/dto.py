@@ -16,12 +16,15 @@ class FamilyCreatedDTO:
 
 @dataclass
 class ActionResponseDTO:
+    """ DTO для ответа на действие (например, создание семьи, обновление профиля и т.п.). 
+    """
     success: bool
     error_code: Optional[str] = None
     data: Optional[Any] = None
 
 @dataclass
 class UserProfileDTO:
+    """ DTO для профиля пользователя. """
     user_id: int
     role: Optional[str]
     is_fully_registered: bool
@@ -39,11 +42,14 @@ class UserProfileDTO:
     
 @dataclass
 class AdminStatsDTO:
+    """ DTO для статистики по пользователям. """
     total_users: int
     role_distribution: Dict[str, int]
     
 @dataclass
 class LessonDTO:
+    """ DTO для одного урока. 
+    """
     lesson_num: int
     start_time: str
     end_time: str
@@ -65,6 +71,7 @@ class DayScheduleDTO:
 
 @dataclass
 class DaySummaryDTO:
+    """ DTO для сводки по одному дню. """
     date_iso: str
     lesson_count: int
     extra_count: int
@@ -72,22 +79,30 @@ class DaySummaryDTO:
 
 @dataclass
 class WeekSummaryDTO:
+    """ DTO для сводки по неделе. """
     week_start_iso: str
     days: List[DaySummaryDTO]
 
 @dataclass
 class FullWeekScheduleDTO:
+    """ DTO для полного расписания на неделю. """
     week_start_iso: str
     days: List['DayScheduleDTO']
     
 @dataclass
 class ChildInfoDTO:
+    """
+    DTO для информации о ребёнке в списке детей родителя. 
+    """
     user_id: int
     name: str
     class_id: str
+    group_id: str  # <-- Обязательно добавляем поле
 
 @dataclass
 class ChildrenListDTO:
+    """ DTO для списка детей родителя. 
+    """
     children: List[ChildInfoDTO]
     action: str
     
@@ -95,6 +110,9 @@ class ChildrenListDTO:
 
 @dataclass
 class ExtraClassItemDTO:
+    """ 
+    DTO для одного доп. занятия ребёнка.
+    """
     id: int
     day_of_week: int
     time_start: str
@@ -105,6 +123,8 @@ class ExtraClassItemDTO:
 
 @dataclass
 class ExtraClassListDTO:
+    """ DTO для списка доп. занятий ребёнка.
+    """
     items: List[ExtraClassItemDTO]
     
     

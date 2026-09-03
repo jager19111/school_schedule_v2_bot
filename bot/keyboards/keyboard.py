@@ -96,13 +96,17 @@ class Keyboards:
         ])
 
     @staticmethod
-    def get_family_management_kb(dto: 'ChildrenListDTO') -> InlineKeyboardMarkup:
-        """Список детей для управления."""
+    def get_family_management_kb(dto: ChildrenListDTO, classes_dict: dict) -> InlineKeyboardMarkup:
         buttons = []
-        if dto.children:
-            for child in dto.children:
-                btn_text = f"👦/👧 {child.name} ({child.class_id or '?'})"
-                buttons.append([InlineKeyboardButton(text=btn_text, callback_data=f"family:child_settings:{child.user_id}")])
+        for child in dto.children:
+            # Защита от пустого имени
+            name = child.name if child.name else f"Ученик {child.user_id}"
+            # Расшифровка класса (например, "016" -> "6А")
+            class_name = classes_dict.get(child.class_id, child.class_id) if child.class_id else "Класс не выбран"
+            
+            btn_text = f"🧒 {name} ({class_name})"
+            buttons.append([InlineKeyboardButton(text=btn_text, callback_data=f"family:child_settings:{child.user_id}")])
+            
         buttons.append([InlineKeyboardButton(text="⬅️ Назад к настройкам", callback_data="settings:main")])
         return InlineKeyboardMarkup(inline_keyboard=buttons)
 

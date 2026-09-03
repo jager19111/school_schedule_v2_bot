@@ -93,22 +93,24 @@ async def process_restart(callback: CallbackQuery, state: FSMContext, profile_se
 # ================= 3. УПРАВЛЕНИЕ СЕМЬЕЙ =================
 
 @router.callback_query(F.data == "settings:family")
-async def show_family_management(callback: CallbackQuery, profile_service: ProfileService):
+async def show_family_management(callback: CallbackQuery, profile_service: ProfileService, schedule_service: ScheduleService):
     user_dto = await profile_service.get_user_profile_dto(callback.from_user.id)
     
-    # Заглушка для одинокого ребёнка
-    if user_dto.role == "child" and not user_dto.family_id:
+    # Жесткая изоляция: ребенок не управляет семьей
+    if user_dto.role == "child":
         text = UIRenderer.render_family_management_error()
-        kb = Keyboards.get_family_management_error_kb()
-        
+        kb = Keyboards.get_settings_main_kb(user_dto)
         await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
         return await callback.answer()
 
     children_dtos = await profile_service.get_children_for_parent(callback.from_user.id)
     list_dto = ChildrenListDTO(children=children_dtos, action="settings")
     
+    # Запрашиваем классы для расшифровки ID (например, 016 -> 6а)
+    class_dto = await schedule_service.get_classes_list()
+    
     text = UIRenderer.render_family_management_menu()
-    kb = Keyboards.get_family_management_kb(list_dto)
+    kb = Keyboards.get_family_management_kb(list_dto, class_dto.classes)
     
     await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
     await callback.answer()
@@ -155,6 +157,11 @@ async def _refresh_child_settings(callback: CallbackQuery, child_user_id: int, p
 # Настройки самого родителя
 @router.callback_query(F.data == "settings:my_notifications")
 async def toggle_my_notifications(callback: CallbackQuery, profile_service: ProfileService):
+    user_dto = await profile_service.get_user_profile_dto(callback.from_user.id)
+    
+    # Блокировка: если это ребенок и родитель включил контроль
+    if user_dto.role == "child" and user_dto.parent_control_notifications:
+        return await callback.answer("🔒 Ваши настройки уведомлений заблокированы родителем.", show_alert=True)
     await profile_service.toggle_user_flag(callback.from_user.id, "is_notifications_enabled")
     await settings_main_menu_cb(callback, profile_service)
     
@@ -186,7 +193,12 @@ async def prompt_child_summary_time(callback: CallbackQuery, state: FSMContext, 
     await callback.answer()
 
 @router.message(SettingsStates.waiting_for_my_time)
-async def process_my_time(message: Message, state: FSMContext, time_service: TimeService, profile_service: ProfileService, schedule_service: ScheduleService):
+async def process_my_time(callback: CallbackQuery, message: Message, state: FSMContext, time_service: TimeService, profile_service: ProfileService, schedule_service: ScheduleService):
+    user_dto = await profile_service.get_user_profile_dto(callback.from_user.id)
+    
+    # Блокировка: если это ребенок и родитель включил контроль
+    if user_dto.role == "child" and user_dto.parent_control_notifications:
+        return await callback.answer("🔒 Ваши настройки уведомлений заблокированы родителем.", show_alert=True)
     # Умная нормализация ввода (понимает "715", "7.15", "07:15")
     norm_time = time_service.normalize_time(message.text)
     
@@ -270,12 +282,21 @@ async def show_notifications_menu(callback: CallbackQuery, profile_service: Prof
     
 @router.callback_query(F.data == "set_notif:changes")
 async def toggle_changes_notif(callback: CallbackQuery, profile_service: ProfileService):
+
+    user_dto = await profile_service.get_user_profile_dto(callback.from_user.id)
+    if user_dto.role == "child" and user_dto.parent_control_notifications:
+        return await callback.answer("🔒 Ваши настройки заблокированы родителем.", show_alert=True)
+    
     await profile_service.toggle_user_flag(callback.from_user.id, "is_notifications_enabled")
     await show_notifications_menu(callback, profile_service)
 
 @router.callback_query(F.data == "set_notif:prelesson")
 async def toggle_prelesson_notif(callback: CallbackQuery, profile_service: ProfileService):
+
     user_dto = await profile_service.get_user_profile_dto(callback.from_user.id)
+    if user_dto.role == "child" and user_dto.parent_control_notifications:
+        return await callback.answer("🔒 Ваши настройки заблокированы родителем.", show_alert=True)
+    
     # Переключаем между 0 (ВЫКЛ) и 10 (ВКЛ)
     new_val = 0 if user_dto.pre_lesson_offset_minutes > 0 else 10
     await profile_service.update_integer_setting(callback.from_user.id, "pre_lesson_offset_minutes", new_val)
@@ -283,7 +304,10 @@ async def toggle_prelesson_notif(callback: CallbackQuery, profile_service: Profi
 
 @router.callback_query(F.data == "set_notif:extra")
 async def toggle_extra_notif(callback: CallbackQuery, profile_service: ProfileService):
+    # Добавь этот блок в самое начало хендлеров toggle_changes_notif, toggle_prelesson_notif и toggle_extra_notif:
     user_dto = await profile_service.get_user_profile_dto(callback.from_user.id)
+    if user_dto.role == "child" and user_dto.parent_control_notifications:
+        return await callback.answer("🔒 Ваши настройки заблокированы родителем.", show_alert=True)
     # Переключаем между 0 (ВЫКЛ) и 30 (ВКЛ)
     new_val = 0 if user_dto.global_extra_reminder > 0 else 30
     await profile_service.update_integer_setting(callback.from_user.id, "global_extra_reminder", new_val)
