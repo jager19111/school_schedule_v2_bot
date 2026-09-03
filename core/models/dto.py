@@ -51,6 +51,7 @@ class LessonDTO:
     is_cancelled: bool
     is_exchange: bool
 
+# Возможно не нужно
 @dataclass
 class DayScheduleDTO:
     """
@@ -59,6 +60,25 @@ class DayScheduleDTO:
     date_iso: str  # YYYY-MM-DD
     lessons: List[Dict[str, Any]] = field(default_factory=list)
 
+# для недельной сводки
+
+@dataclass
+class DaySummaryDTO:
+    date_iso: str
+    lesson_count: int
+    extra_count: int
+    exchange_count: int
+
+@dataclass
+class WeekSummaryDTO:
+    week_start_iso: str
+    days: List[DaySummaryDTO]
+
+@dataclass
+class FullWeekScheduleDTO:
+    week_start_iso: str
+    days: List['DayScheduleDTO']
+    
 @dataclass
 class ChildInfoDTO:
     user_id: int

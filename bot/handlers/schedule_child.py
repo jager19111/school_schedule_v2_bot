@@ -1,31 +1,114 @@
 import logging
 from aiogram import Router, F
-from aiogram.types import Message
+from aiogram.types import Message, CallbackQuery
+
 from services.profiles_service import ProfileService
 from services.schedule_service import ScheduleService
-from services.time_service import TimeService
 from bot.utils.ui_renderer import UIRenderer
+from bot.keyboards.keyboard import Keyboards
 
 logger = logging.getLogger(__name__)
 router = Router()
 
-@router.message(F.text == "📅 Сегодня")
-async def show_today(message: Message, profile_service: ProfileService, schedule_service: ScheduleService, time_service: TimeService):
-    user_dto = await profile_service.get_user_profile_dto(message.from_user.id)
-    if not user_dto or not user_dto.class_id:
-        return await message.answer(UIRenderer.render_unregistered_error())
+# ================= 1. ТОЧКИ ВХОДА (ИЗ ГЛАВНОГО МЕНЮ) =================
+
+@router.message(F.text == "📅 Мое расписание")
+async def show_smart_today(message: Message, profile_service: ProfileService, schedule_service: ScheduleService):
+    user_id = message.from_user.id
+    user_dto = await profile_service.get_user_profile_dto(user_id)
     
-    # Правило 5: Работаем с временем только через TimeService[cite: 1]
-    today_iso = time_service.get_now_base().date().isoformat()
-    
-    # Сервис возвращает готовый DTO[cite: 1]
-    day_dto = await schedule_service.get_daily_schedule_for_child(
-        class_id=user_dto.class_id, 
-        group_id=user_dto.group_id, 
-        date_iso=today_iso,
-        user_id=message.from_user.id,
+    # 1. Получаем умную дату (если вечер - будет завтра)
+    target_date_iso = await schedule_service.get_smart_target_date(
+        class_id=user_dto.class_id, group_id=user_dto.group_id, user_id=user_id
     )
     
-    # Рендерер формирует текст расписания[cite: 1]
-    text = UIRenderer.render_child_day_schedule(day_dto)
-    await message.answer(text, parse_mode="HTML")
+    # 2. Рендерим день
+    day_dto = await schedule_service.get_daily_schedule_for_child(
+        class_id=user_dto.class_id, group_id=user_dto.group_id, 
+        date_iso=target_date_iso, user_id=user_id
+    )
+    
+    text, _ = UIRenderer.render_child_day_schedule(day_dto)
+    kb = Keyboards.get_day_nav_kb(target_date_iso)
+    
+    await message.answer(text, reply_markup=kb, parse_mode="HTML")
+
+
+@router.message(F.text == "📆 Моя неделя")
+async def show_smart_week(message: Message, profile_service: ProfileService, schedule_service: ScheduleService):
+    user_id = message.from_user.id
+    user_dto = await profile_service.get_user_profile_dto(user_id)
+    
+    # 1. Получаем умную неделю (если выходные - покажет следующую)
+    week_start_iso = await schedule_service.get_smart_week_start()
+    
+    # 2. Рендерим сводку
+    week_dto = await schedule_service.get_week_schedule_summary(
+        class_id=user_dto.class_id, group_id=user_dto.group_id, 
+        week_start_iso=week_start_iso, user_id=user_id
+    )
+    
+    text, _ = UIRenderer.render_week_summary(week_dto)
+    kb = Keyboards.get_week_nav_kb(week_start_iso, is_full=False)
+    
+    await message.answer(text, reply_markup=kb, parse_mode="HTML")
+
+# ================= 2. КОЛЛБЭКИ ПАГИНАЦИИ (СДВИГ) =================
+
+@router.callback_query(F.data.startswith("sched:day:"))
+async def nav_day_schedule(callback: CallbackQuery, profile_service: ProfileService, schedule_service: ScheduleService):
+    target_date_iso = callback.data.split(":")[2]
+    user_id = callback.from_user.id
+    user_dto = await profile_service.get_user_profile_dto(user_id)
+    
+    day_dto = await schedule_service.get_daily_schedule_for_child(
+        class_id=user_dto.class_id, group_id=user_dto.group_id, 
+        date_iso=target_date_iso, user_id=user_id
+    )
+    
+    text, _ = UIRenderer.render_child_day_schedule(day_dto)
+    kb = Keyboards.get_day_nav_kb(target_date_iso)
+    
+    await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    await callback.answer()
+
+@router.callback_query(F.data.startswith("sched:week:"))
+async def nav_week_summary(callback: CallbackQuery, profile_service: ProfileService, schedule_service: ScheduleService):
+    week_start_iso = callback.data.split(":")[2]
+    user_id = callback.from_user.id
+    user_dto = await profile_service.get_user_profile_dto(user_id)
+    
+    week_dto = await schedule_service.get_week_schedule_summary(
+        class_id=user_dto.class_id, group_id=user_dto.group_id, 
+        week_start_iso=week_start_iso, user_id=user_id
+    )
+    
+    text, _ = UIRenderer.render_week_summary(week_dto)
+    kb = Keyboards.get_week_nav_kb(week_start_iso, is_full=False)
+    
+    await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    await callback.answer()
+
+@router.callback_query(F.data.startswith("sched:fullweek:"))
+async def nav_full_week(callback: CallbackQuery, profile_service: ProfileService, schedule_service: ScheduleService):
+    week_start_iso = callback.data.split(":")[2]
+    user_id = callback.from_user.id
+    user_dto = await profile_service.get_user_profile_dto(user_id)
+    
+    full_dto = await schedule_service.get_full_week_schedule(
+        class_id=user_dto.class_id, group_id=user_dto.group_id, 
+        week_start_iso=week_start_iso, user_id=user_id
+    )
+    
+    text, _ = UIRenderer.render_full_week_schedule(full_dto)
+    kb = Keyboards.get_week_nav_kb(week_start_iso, is_full=True)
+    
+    # Telegram имеет лимит на 4096 символов. Если расписание очень длинное, лучше резать, 
+    # но для недели обычно хватает 2500-3500 символов.
+    try:
+        await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    except Exception as e:
+        logger.error(f"Ошибка вывода полной недели (возможно превышен лимит символов): {e}")
+        await callback.answer("Ошибка: текст слишком длинный", show_alert=True)
+        
+    await callback.answer()

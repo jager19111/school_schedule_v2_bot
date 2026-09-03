@@ -1,5 +1,6 @@
 from typing import Any, Dict, List, Optional, Set
-from core.models.dto import ClassListDTO, FamilyCreatedDTO, AdminStatsDTO, DayScheduleDTO, ChildrenListDTO, ExtraClassListDTO
+from datetime import datetime, timedelta, timezone, date
+from core.models.dto import ClassListDTO, FamilyCreatedDTO, AdminStatsDTO, DayScheduleDTO, ChildrenListDTO, ExtraClassListDTO, WeekSummaryDTO, FullWeekScheduleDTO
 
 class UIRenderer:
     
@@ -297,7 +298,8 @@ class UIRenderer:
         return f"⚙️ <b>Настройки профиля:</b> {name} ({cls_text})"
     
     
-# Сводка@staticmethod
+# Сводка
+    @staticmethod
     def render_summary_time_prompt(name: str | None = None) -> str:
         target = f" для {name}" if name else " вашей"
         return (
@@ -308,3 +310,70 @@ class UIRenderer:
     @staticmethod
     def render_invalid_time_format() -> str:
         return "❌ Не удалось распознать время. Пожалуйста, введите в формате ЧЧ:ММ (например, 07:00)."
+    
+    
+    # Меню расписаний
+    
+
+    MONTHS_MAP_GEN = {
+        1: "января", 2: "февраля", 3: "марта", 4: "апреля", 5: "мая", 6: "июня",
+        7: "июля", 8: "августа", 9: "сентября", 10: "октября", 11: "ноября", 12: "декабря"
+    }
+
+    @staticmethod
+    def _format_date_header(date_iso: str) -> str:
+        date_obj = datetime.fromisoformat(date_iso)
+        day_name = UIRenderer.FULL_DAYS_MAP.get(date_obj.isoweekday(), "")
+        return f"━━━━━━━━━━━━━━━━━\n📅 {day_name}, {date_obj.strftime('%d.%m.%Y')}\n━━━━━━━━━━━━━━━━━\n"
+
+    @staticmethod
+    def render_child_day_schedule(dto: 'DayScheduleDTO', name: str | None = None) -> tuple[str, None]:
+        if not dto.lessons:
+            return f"{UIRenderer._format_date_header(dto.date_iso)}\n🏖 <b>Занятий нет</b>", None
+
+        main_lessons = [l for l in dto.lessons if not l.get("is_extra")]
+        extra_lessons = [l for l in dto.lessons if l.get("is_extra")]
+
+        text = UIRenderer._format_date_header(dto.date_iso)
+
+        if main_lessons:
+            text += "\n📚 <b>Основное расписание</b>\n\n"
+            for l in main_lessons:
+                icon = "🔄" if l['is_exchange'] else ("🚫" if l['is_cancelled'] else "📚")
+                room = f" → {l.get('room_name')}" if l.get('room_name') and l.get('room_name') != "—" else ""
+                num = l['lesson_num'] if l['lesson_num'] else "•"
+                name_str = "ОТМЕНА" if l['is_cancelled'] else l['subject_name']
+                text += f"{icon} {num}. {l['start_time']} - {l['end_time']} | {name_str}{room}\n"
+
+        if extra_lessons:
+            text += "\n🎨 <b>Доп. занятия</b>\n\n"
+            for i, l in enumerate(extra_lessons, 1):
+                room = f" → {l.get('room_name')}" if l.get('room_name') and l.get('room_name') != "—" else ""
+                text += f"{i}. {l['start_time']} - {l['end_time']} | 🎸 {l['subject_name']}{room}\n"
+
+        return text, None
+
+    @staticmethod
+    def render_week_summary(dto: 'WeekSummaryDTO') -> tuple[str, None]:
+        text = "📆 <b>Расписание на неделю</b>\n\n"
+        for day in dto.days:
+            date_obj = datetime.fromisoformat(day.date_iso)
+            day_short = UIRenderer.DAYS_MAP_SHORT.get(date_obj.isoweekday(), "").upper()
+            date_str = date_obj.strftime('%d.%m.%Y')
+            
+            extras = f" 🎨{day.extra_count}" if day.extra_count > 0 else ""
+            exchanges = f" 🔄{day.exchange_count}" if day.exchange_count > 0 else ""
+            
+            text += f"{day_short} {date_str} | {day.lesson_count} уроков{extras}{exchanges}\n"
+            
+        text += "\n<i>Нажмите на день для подробностей</i>"
+        return text, None
+
+    @staticmethod
+    def render_full_week_schedule(dto: 'FullWeekScheduleDTO') -> tuple[str, None]:
+        text = "📆 <b>Расписание на всю неделю</b>\n\n"
+        for day_dto in dto.days:
+            if day_dto.lessons:
+                day_text, _ = UIRenderer.render_child_day_schedule(day_dto)
+                text += day_text + "\n"
+        return text, None   
