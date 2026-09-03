@@ -233,8 +233,13 @@ class UIRenderer:
         return "Выберите ваш класс:"
 
     @staticmethod
-    def render_group_selection() -> str:
-        return "Выберите вашу группу (или 'Весь класс'):"
+    def render_main_group_selection() -> tuple[str, None]:
+        text = (
+            "👥 <b>Выберите вашу основную подгруппу</b>\n\n"
+            "Укажите группу для базовых предметов (например, английский или математика).\n"
+            "<i>(Группы по технологии добавятся в ваше расписание автоматически)</i>"
+        )
+        return text, None
 
     @staticmethod
     def render_error_join() -> str:
@@ -281,18 +286,31 @@ class UIRenderer:
     # В классе UIRenderer:
 
     @staticmethod
-    def render_settings_main(user_dto: 'UserProfileDTO', family_code: str | None) -> str:
+    def render_settings_main(
+        user_dto: 'UserProfileDTO', 
+        family_code: str | None,
+        class_name: str | None = None,
+        group_names: str | None = None
+    ) -> str:
         role_map = {"parent": "👨‍👩‍👧 Родитель", "child": "👶 Ребёнок", "observer": "👁 Наблюдатель"}
         role_name = role_map.get(user_dto.role, "Неизвестно")
         name_str = user_dto.name if user_dto.name else "Не указано"
         code_str = f"<code>{family_code}</code>" if family_code else "Не в семье"
         
-        return (
-            f"⚙️ <b>Ваши настройки профиля, <b>{name_str}</b></b>\n\n"
-            f"👤 Роль: {role_name}\n"
-            f"👨‍👩‍👧 Код семьи: {code_str}\n\n"
-            f"Выберите действие:"
-        )
+        text = f"⚙️ <b>Ваши настройки профиля, {name_str}</b>\n\n"
+        text += f"👤 Роль: {role_name}\n"
+        
+        # Динамический вывод класса и групп только если они переданы
+        if class_name:
+            text += f"🎓 Класс: <b>{class_name}</b>\n"
+            
+        if group_names:
+            text += f"👥 Группы: <b>{group_names}</b>\n"
+            
+        text += f"👨‍👩‍👧 Код семьи: {code_str}\n\n"
+        text += "Выберите действие:"
+        
+        return text
 
     @staticmethod
     def render_family_management_error() -> str:
@@ -437,3 +455,14 @@ class UIRenderer:
     @staticmethod
     def render_search_day_select(name: str) -> str:
         return f"📅 Выберите день недели для: <b>{name}</b>"
+    
+    # Выбор групп
+    @staticmethod
+    def render_group_selection_multi() -> tuple[str, None]:
+        text = (
+            "👥 <b>Выберите все ваши подгруппы</b>\n\n"
+            "Отметьте группы по всем предметам (например, <i>1 группа</i> для английского "
+            "и <i>Группа 3</i> для технологии).\n\n"
+            "Когда отметите все нужные, нажмите <b>«💾 Подтвердить выбор»</b>."
+        )
+        return text, None

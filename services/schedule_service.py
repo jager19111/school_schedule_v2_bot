@@ -26,7 +26,7 @@ class ScheduleService:
         user_id: int | None = None,
     ) -> DayScheduleDTO:
         """
-        Возвращает расписание для ребёнка на день в виде DayScheduleDTO.
+        Возвращает расписание для ребёнка на день (основное + доп. занятия).
         """
         # 1. Базовые уроки по классу
         base_lessons = await self.schedule_repo.get_lessons_for_class(
@@ -34,20 +34,23 @@ class ScheduleService:
             date_iso=date_iso,
         )
 
-        # 2. Умная фильтрация по группе
+        # 2. Умная фильтрация по группе и исключениям
+        user_groups = group_id.split(",") if group_id and group_id != "ALL" else ["ALL"]
         filtered_base = []
+        
         for lesson in base_lessons:
             l_group = lesson.get("group_id")
-            # Если пользователь выбрал "Весь класс", он видит все уроки
-            if group_id == "ALL":
+            subj_name = lesson.get("subject_name", "").lower()
+            
+            # Перехватываем номинальные предметы, чтобы вывести их деревом для всех
+            is_nominal_tree = "труд" in subj_name or "технологи" in subj_name
+            
+            # Пропускаем урок, если совпала основная группа, ИЛИ это предмет-исключение
+            if "ALL" in user_groups or l_group == "ALL" or l_group in user_groups or is_nominal_tree:
                 filtered_base.append(lesson)
-            # Иначе он видит общие уроки класса И уроки своей группы
-            elif l_group == "ALL" or l_group == group_id:
-                filtered_base.append(lesson)
-
-        extra_lessons: list[dict] = []
 
         # 3. Доп. занятия пользователя
+        extra_lessons: list[dict] = []
         if user_id is not None:
             date_obj = self.time_service.date_from_iso(date_iso)
             weekday = date_obj.isoweekday()
@@ -56,21 +59,33 @@ class ScheduleService:
                 user_id=user_id,
                 day_of_week=weekday,
             )
-
             extra_lessons = [self._map_extra_to_lesson(row, date_iso) for row in extra_rows]
 
-        # 4. Мердж и сортировка
+        # 4. Мердж и безопасная сортировка
         combined = filtered_base + extra_lessons
-        combined.sort(
-            key=lambda l: (
-                l.get("start_time") or "",
-                l.get("lesson_num") or 0,
-            )
-        )
-
-        metadata = await self.schedule_repo.get_metadata()
-        self._enrich_display_numbers(combined, metadata)
         
+        def safe_sort_key(l):
+            safe_time = str(l.get("start_time") or "").zfill(5)
+            num = l.get("lesson_num")
+            safe_num = int(num) if num not in (None, "") else 99
+            return (safe_time, safe_num)
+
+        combined.sort(key=safe_sort_key)
+
+        # 5. Обогащение данных (названия групп и смены)
+        metadata = await self.schedule_repo.get_metadata()
+        groups_dict = metadata.get("groups", {})
+        
+        for l in combined:
+            g_id = l.get("group_id")
+            # Назначаем имена подгруппам (игнорируя доп. занятия, у них group_id="ALL")
+            if g_id and g_id != "ALL" and not l.get("is_extra"):
+                l["group_name"] = groups_dict.get(g_id, f"Группа {g_id}")
+
+        # Метод _enrich_display_numbers безопасно проигнорирует extra_lessons, 
+        # так как у них is_extra=True, и поставит им display_num = "•"
+        self._enrich_display_numbers(combined, metadata)
+
         return DayScheduleDTO(date_iso=date_iso, lessons=combined)
 
     def _map_extra_to_lesson(self, row: Dict[str, Any], date_iso: str) -> Dict[str, Any]:

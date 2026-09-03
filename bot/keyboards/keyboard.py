@@ -43,13 +43,25 @@ class Keyboards:
         return InlineKeyboardMarkup(inline_keyboard=buttons)
 
     @staticmethod
-    def get_group_selection(dto: GroupListDTO) -> InlineKeyboardMarkup:
-        buttons = [[InlineKeyboardButton(text="Весь класс (без групп)", callback_data="group:ALL")]]
+    def get_main_group_selection(dto: 'GroupListDTO') -> InlineKeyboardMarkup:
+        """Отображает только чистые основные группы (ID 0 и 1)."""
+        buttons = [[InlineKeyboardButton(text="Весь класс (без подгрупп)", callback_data="group:ALL")]]
+        
+        main_ids = {"0", "1"}
+        added_count = 0
+        
         for g_id, g_name in dto.groups.items():
-            buttons.append([InlineKeyboardButton(text=g_name, callback_data=f"group:{g_id}")])
-            
+            if g_id in main_ids:
+                buttons.append([InlineKeyboardButton(text=g_name, callback_data=f"group:{g_id}")])
+                added_count += 1
+                
+        # Фолбэк: если у старших классов нет ID 0 и 1, выводим те, где есть цифры 1 или 2 (исключая 3)
+        if added_count == 0:
+            for g_id, g_name in dto.groups.items():
+                if "1" in g_name or "2" in g_name:
+                    buttons.append([InlineKeyboardButton(text=g_name, callback_data=f"group:{g_id}")])
+                    
         return InlineKeyboardMarkup(inline_keyboard=buttons)
-
 # Основное меню
 
     @staticmethod
@@ -379,3 +391,4 @@ class Keyboards:
             [InlineKeyboardButton(text="🔄 Перерегистрироваться", callback_data="auth:restart")],
             [InlineKeyboardButton(text="⬅️ Назад", callback_data="settings:main")]
         ])
+        

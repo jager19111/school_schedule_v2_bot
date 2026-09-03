@@ -36,20 +36,45 @@ async def show_school_search(message: Message):
 # ================= 2. ГЛАВНЫЕ НАСТРОЙКИ =================
 
 @router.message(F.text == "⚙️ Настройки")
-async def settings_main_menu(message: Message, profile_service: ProfileService):
-    await _show_settings_menu(message, message.from_user.id, profile_service, is_callback=False)
+async def settings_main_menu(message: Message, profile_service: ProfileService, schedule_service: ScheduleService):
+    """Главное меню настроек. Вызывается из главного меню и после изменения настроек."""
+    await _show_settings_menu(message, message.from_user.id, profile_service, schedule_service, is_callback=False)
 
 @router.callback_query(F.data == "settings:main")
-async def settings_main_menu_cb(callback: CallbackQuery, profile_service: ProfileService):
-    await _show_settings_menu(callback.message, callback.from_user.id, profile_service, is_callback=True)
+async def settings_main_menu_cb(callback: CallbackQuery, profile_service: ProfileService, schedule_service: ScheduleService):
+    """Главное меню настроек. Вызывается из коллбэка после изменения настроек."""
+    await _show_settings_menu(callback.message, callback.from_user.id, profile_service, schedule_service, is_callback=True)
     await callback.answer()
 
-async def _show_settings_menu(message_obj: Message, user_id: int, profile_service: ProfileService, is_callback: bool):
+async def _show_settings_menu(
+    message_obj: Message, 
+    user_id: int, 
+    profile_service: ProfileService, 
+    schedule_service: ScheduleService,  # <-- Сервис расписания обязателен
+    is_callback: bool
+):
     user_dto = await profile_service.get_user_profile_dto(user_id)
     family_code = await profile_service.get_family_code(user_dto.family_id) if user_dto.family_id else None
     
-    # Новые методы из рендерера и клавиатур
-    text = UIRenderer.render_settings_main(user_dto, family_code)
+    # Запрашиваем красивые имена из сервиса расписания
+    class_name = None
+    group_names = None
+    
+    if user_dto.class_id:
+        class_dto = await schedule_service.get_classes_list()
+        class_name = class_dto.classes.get(user_dto.class_id, user_dto.class_id)
+        
+    if user_dto.group_id:
+        if user_dto.group_id == "ALL":
+            group_names = "Весь класс (без групп)"
+        else:
+            groups_dto = await schedule_service.get_groups_list()
+            # Превращаем "4,0,1,2" в "2 группа, Группа 1, Группа 2, Группа 3"
+            names = [groups_dto.groups.get(g, f"Группа {g}") for g in user_dto.group_id.split(",")]
+            group_names = ", ".join(names)
+            
+    # Передаем подготовленные строки в рендерер
+    text = UIRenderer.render_settings_main(user_dto, family_code, class_name, group_names)
     kb = Keyboards.get_settings_main_kb(user_dto)
     
     if is_callback:
@@ -161,7 +186,7 @@ async def prompt_child_summary_time(callback: CallbackQuery, state: FSMContext, 
     await callback.answer()
 
 @router.message(SettingsStates.waiting_for_my_time)
-async def process_my_time(message: Message, state: FSMContext, time_service: TimeService, profile_service: ProfileService):
+async def process_my_time(message: Message, state: FSMContext, time_service: TimeService, profile_service: ProfileService, schedule_service: ScheduleService):
     # Умная нормализация ввода (понимает "715", "7.15", "07:15")
     norm_time = time_service.normalize_time(message.text)
     
@@ -174,7 +199,7 @@ async def process_my_time(message: Message, state: FSMContext, time_service: Tim
     await state.clear()
     
     # Возвращаем пользователя в главное меню настроек
-    await _show_settings_menu(message, message.from_user.id, profile_service, is_callback=False)
+    await _show_settings_menu(message, message.from_user.id, profile_service, schedule_service, is_callback=False)
 
 @router.message(SettingsStates.waiting_for_child_time)
 async def process_child_time(message: Message, state: FSMContext, time_service: TimeService, profile_service: ProfileService):
@@ -202,7 +227,7 @@ async def process_child_time(message: Message, state: FSMContext, time_service: 
 
 # Отключение сводки и Отмена ввода
 @router.callback_query(F.data == "set_time:off")
-async def turn_off_summary_time(callback: CallbackQuery, state: FSMContext, profile_service: ProfileService):
+async def turn_off_summary_time(callback: CallbackQuery, state: FSMContext, profile_service: ProfileService, schedule_service: ScheduleService):
     current_state = await state.get_state()
     
     if current_state == SettingsStates.waiting_for_child_time.state:
@@ -214,7 +239,7 @@ async def turn_off_summary_time(callback: CallbackQuery, state: FSMContext, prof
     else:
         await profile_service.update_morning_summary_time(callback.from_user.id, None)
         await state.clear()
-        await settings_main_menu_cb(callback, profile_service)
+        await settings_main_menu_cb(callback, profile_service, schedule_service)
 
 @router.callback_query(F.data == "settings:cancel_input")
 async def cancel_time_input(callback: CallbackQuery, state: FSMContext, profile_service: ProfileService):
@@ -277,8 +302,10 @@ async def settings_change_class(callback: CallbackQuery, state: FSMContext, sche
     text = UIRenderer.render_class_selection(class_dto)
     kb = Keyboards.get_class_selection(class_dto)
     
+    # НОВОЕ: Устанавливаем флаг, что это редактирование из настроек, а не новая регистрация
+    await state.update_data(is_settings_edit=True)
+    
     await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
-    # Отправляем в FSM регистрации выбирать класс
     await state.set_state(RegistrationStates.waiting_for_class)
     await callback.answer()
 

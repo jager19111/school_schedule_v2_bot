@@ -1,9 +1,11 @@
 import logging
+import contextlib
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
+from aiogram.exceptions import TelegramBadRequest
 
 from services.profiles_service import ProfileService
 from core.repository.schedule_repository import ScheduleRepository
@@ -145,27 +147,68 @@ async def process_class(callback: CallbackQuery, state: FSMContext, schedule_ser
     await state.update_data(class_id=class_id)
     
     group_dto = await schedule_service.get_groups_list()
+    text, _ = UIRenderer.render_main_group_selection()
+    kb = Keyboards.get_main_group_selection(group_dto)
     
-    text = UIRenderer.render_group_selection()
-    kb = Keyboards.get_group_selection(group_dto)
-    await callback.message.edit_text(text, reply_markup=kb)
+    with contextlib.suppress(TelegramBadRequest):
+        await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+        
     await state.set_state(RegistrationStates.waiting_for_group)
+    await callback.answer()
 
 @router.callback_query(RegistrationStates.waiting_for_group, F.data.startswith("group:"))
-async def process_group(callback: CallbackQuery, state: FSMContext, profile_service: ProfileService):
-    group_id = callback.data.split(":")[1]
+async def process_group(
+    callback: CallbackQuery, 
+    state: FSMContext, 
+    profile_service: ProfileService, 
+    schedule_service: ScheduleService
+):
+    main_group_id = callback.data.split(":")[1]
     data = await state.get_data()
-    user_id = callback.from_user.id
     
-    await profile_service.set_child_class_and_group(user_id, data['class_id'], group_id)
+    # 1. Сохраняем ТОЛЬКО выбранную группу
+    final_group_string = main_group_id
     
-    user_dto = await profile_service.get_user_profile_dto(user_id)
+    # 2. Сохраняем в профиль
+    target_user_id = data.get('editing_child_id', callback.from_user.id)
+    await profile_service.set_child_class_and_group(target_user_id, data['class_id'], final_group_string)
     
-    text = UIRenderer.render_final_success(user_dto.name)
+    # 3. ВЕТКА 1: Возврат в Настройки (если редактировали профиль ребенка через родителя)
+    if 'editing_child_id' in data:
+        await state.clear()
+        child_dto = await profile_service.get_user_profile_dto(target_user_id)
+        
+        text = UIRenderer.render_child_settings_menu(child_dto.name, child_dto.class_id)
+        kb = Keyboards.get_child_settings_kb(child_dto)
+        
+        with contextlib.suppress(TelegramBadRequest):
+            await callback.message.edit_text(f"✅ Подгруппа успешно обновлена.\n\n{text}", reply_markup=kb, parse_mode="HTML")
+        return await callback.answer()
+
+    # 4. ВЕТКА 2: Возврат в свои Настройки (если просто меняли свой класс)
+    elif data.get('is_settings_edit'):
+        await state.clear()
+        
+        # Локальный импорт, чтобы избежать конфликта модулей
+        from bot.handlers.settings import _show_settings_menu
+        
+        # Отрисовываем обновленное меню настроек в текущем сообщении
+        await _show_settings_menu(
+            message_obj=callback.message,
+            user_id=callback.from_user.id,
+            profile_service=profile_service,
+            schedule_service=schedule_service,
+            is_callback=True
+        )
+        return await callback.answer("✅ Класс и подгруппа успешно обновлены!")
+
+    # 5. ВЕТКА 3: Стандартное завершение первой регистрации
+    user_dto = await profile_service.get_user_profile_dto(callback.from_user.id)
+    await state.clear()
+    
+    text = UIRenderer.render_final_success(getattr(user_dto, 'name', 'Пользователь'))
     await callback.message.delete()
     await callback.message.answer(text, parse_mode="HTML")
     
-    menu_text = UIRenderer.render_main_menu()
-    menu_kb = Keyboards.get_main_menu()
+    menu_text, menu_kb = UIRenderer.render_main_menu()
     await callback.message.answer(menu_text, reply_markup=menu_kb)
-    await state.clear()
