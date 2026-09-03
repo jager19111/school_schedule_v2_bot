@@ -68,6 +68,9 @@ class ScheduleService:
             )
         )
 
+        metadata = await self.schedule_repo.get_metadata()
+        self._enrich_display_numbers(combined, metadata)
+        
         return DayScheduleDTO(date_iso=date_iso, lessons=combined)
 
     def _map_extra_to_lesson(self, row: Dict[str, Any], date_iso: str) -> Dict[str, Any]:
@@ -145,6 +148,7 @@ class ScheduleService:
         self, class_id: str, group_id: str, week_start_iso: str, user_id: int | None = None
     ) -> WeekSummaryDTO:
         """Собирает сводку (кол-во уроков, замен, доп. занятий) на неделю."""
+        from datetime import timedelta
         start_date = self.time_service.date_from_iso(week_start_iso)
         day_summaries = []
         
@@ -154,9 +158,24 @@ class ScheduleService:
                 class_id=class_id, group_id=group_id, date_iso=current_date_iso, user_id=user_id
             )
             
-            main_count = sum(1 for l in day_dto.lessons if not l.get("is_extra"))
+            # Считаем уникальные номера основных уроков (set автоматически уберет дубли подгрупп)
+            main_lesson_nums = {
+                l.get("lesson_num") 
+                for l in day_dto.lessons 
+                if not l.get("is_extra") and l.get("lesson_num") is not None
+            }
+            main_count = len(main_lesson_nums)
+            
+            # Считаем уникальные номера измененных уроков
+            exchange_nums = {
+                l.get("lesson_num") 
+                for l in day_dto.lessons 
+                if l.get("is_exchange") and l.get("lesson_num") is not None
+            }
+            exchange_count = len(exchange_nums)
+
+            # Доп. занятия не имеют номеров, их считаем напрямую
             extra_count = sum(1 for l in day_dto.lessons if l.get("is_extra"))
-            exchange_count = sum(1 for l in day_dto.lessons if l.get("is_exchange"))
             
             day_summaries.append(DaySummaryDTO(
                 date_iso=current_date_iso,
@@ -195,6 +214,11 @@ class ScheduleService:
             return (num, st.zfill(5))  # zfill делает "08:15" из "8:15" для правильной сортировки
 
         combined = sorted(lessons, key=sort_key)
+        
+        # Получаем настройки смен и обогащаем номера уроков
+        metadata = await self.schedule_repo.get_metadata()
+        self._enrich_display_numbers(combined, metadata)
+        
         return DayScheduleDTO(date_iso=date_iso, lessons=combined)
 
     async def get_daily_schedule_for_teacher(self, teacher_id: str, date_iso: str) -> DayScheduleDTO:
@@ -217,8 +241,14 @@ class ScheduleService:
             return (num, st.zfill(5))
 
         combined = sorted(lessons, key=sort_key)
+        
+        # Для учителей смены не применяются, используем абсолютные номера
+        for l in combined:
+            num = l.get("lesson_num")
+            l["display_num"] = str(num) if num else "•"
+            
         return DayScheduleDTO(date_iso=date_iso, lessons=combined)
-
+        
     async def get_full_week_schedule_for_class(self, class_id: str, week_start_iso: str) -> FullWeekScheduleDTO:
         from datetime import timedelta
         start_date = self.time_service.date_from_iso(week_start_iso)
@@ -238,3 +268,50 @@ class ScheduleService:
             day_dto = await self.get_daily_schedule_for_teacher(teacher_id, current_date_iso)
             days.append(day_dto)
         return FullWeekScheduleDTO(week_start_iso=week_start_iso, days=days)
+    
+    # Парсинг 2 смены
+    def _enrich_display_numbers(self, lessons: list[dict], metadata: dict) -> None:
+        class_shifts = metadata.get("class_shift", {})
+        second_relative = metadata.get("second_relative", False)
+
+        # Группируем уроки по дате и классу (особенно важно для расписания учителей)
+        groups = {}
+        for l in lessons:
+            if not l.get("is_extra") and l.get("lesson_num"):
+                key = (l["date"], l["class_id"])
+                groups.setdefault(key, []).append(l)
+
+        for (date_iso, c_id), day_lessons in groups.items():
+            p_id = day_lessons[0].get("period_id")
+            
+            # Определяем, с какого урока начинается 2 смена для этого класса
+            shift_start = 1
+            if p_id in class_shifts and c_id in class_shifts[p_id]:
+                shift_start = int(class_shifts[p_id][c_id])
+
+            day_lessons.sort(key=lambda x: x["lesson_num"])
+
+            # Точная копия логики из nika_data.js
+            w_flag = (shift_start == 1)
+            for l in day_lessons:
+                m = l["lesson_num"]
+                v = m
+                is_star = False
+
+                if shift_start > 1 and not w_flag:
+                    if m < shift_start:
+                        w_flag = True  # Отключает 2 смену до конца дня, если начали раньше!
+                    else:
+                        v = m - shift_start + 1
+                        is_star = True
+
+                if is_star:
+                    display_val = v if second_relative else m
+                    l["display_num"] = f"{display_val}*"
+                else:
+                    l["display_num"] = str(m)
+
+        # Для доп. занятий или уроков без номера
+        for l in lessons:
+            if "display_num" not in l:
+                l["display_num"] = "•"

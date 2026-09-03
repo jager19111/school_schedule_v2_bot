@@ -40,10 +40,14 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 async def scheduled_schedule_refresh(repo: ScheduleRepository, tz: ZoneInfo) -> None:
-    """Фоновая выгрузка и обновление расписания на ближайшие 14 дней[cite: 3, 5]."""
+    """Фоновая выгрузка и обновление расписания на 3 недели (текущая + 2 вперед)[cite: 7]."""
     try:
         today = datetime.datetime.now(tz).date()
-        target_dates = [today + datetime.timedelta(days=i) for i in range(14)]
+        # Сдвигаем старт на понедельник текущей недели, чтобы прошлые дни не пропадали
+        monday = today - datetime.timedelta(days=today.isoweekday() - 1)
+        
+        # Генерируем даты на 21 день (текущая неделя + 2 следующие)
+        target_dates = [monday + datetime.timedelta(days=i) for i in range(21)]
         await repo.refresh_from_remote(target_dates)
     except Exception as e:
         logger.error(f"Ошибка периодического обновления расписания: {e}")

@@ -51,7 +51,9 @@ class ScheduleRepository(BaseRepository):
             return {
                 "classes": classes,
                 "groups": json_dict.get("CLASSGROUPS", {}),
-                "teachers": teachers,  # <-- ИСПРАВЛЕНИЕ: Теперь учителя передаются в сервис
+                "teachers": teachers,
+                "class_shift": json_dict.get("CLASS_SHIFT", {}),         # <-- ДОБАВЛЕНО
+                "second_relative": json_dict.get("SECOND_RELATIVE", False) # <-- ДОБАВЛЕНО
             }
         except Exception as e:
             logger.error(f"Ошибка получения метаданных: {e}")

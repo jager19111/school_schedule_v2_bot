@@ -310,14 +310,6 @@ class UIRenderer:
     # В классе UIRenderer:
 
     @staticmethod
-    def _format_date_header(date_iso: str) -> str:
-        from datetime import datetime
-        date_obj = datetime.fromisoformat(date_iso)
-        day_name = UIRenderer.FULL_DAYS_MAP.get(date_obj.isoweekday(), "")
-        # Изменено форматирование: только день и месяц
-        return f"━━━━━━━━━━━━━━━━━\n📅 {day_name}, {date_obj.strftime('%d.%m')}\n━━━━━━━━━━━━━━━━━\n"
-
-    @staticmethod
     def render_child_day_schedule(dto: 'DayScheduleDTO', name: str | None = None) -> tuple[str, None]:
         if not dto.lessons:
             return f"{UIRenderer._format_date_header(dto.date_iso)}\n🏖 <b>Занятий нет</b>", None
@@ -328,7 +320,7 @@ class UIRenderer:
         text = UIRenderer._format_date_header(dto.date_iso)
 
         if main_lessons:
-            text += "\n📚 <b>Основное расписание</b>\n\n"
+            text += "\n"  # Просто отступ, без текста "Основное расписание"
             
             grouped_lessons = {}
             for l in main_lessons:
@@ -339,7 +331,9 @@ class UIRenderer:
 
             for num, parallel_lessons in grouped_lessons.items():
                 first = parallel_lessons[0]
-                num_str = f"{first['lesson_num']}." if first['lesson_num'] else "•"
+                
+                # Читаем вычисленный номер (сдвиг для учеников, абсолютный для учителей)
+                num_str = f"{first.get('display_num', '•')}." 
                 time_str = f"{first['start_time']} - {first['end_time']}"
                 
                 if len(parallel_lessons) == 1:
@@ -349,7 +343,7 @@ class UIRenderer:
                     name_str = "ОТМЕНА" if l['is_cancelled'] else (l.get('subject_name') or "Без предмета")
                     grp_label = f" ({l.get('group_name')})" if l.get('group_id') != "ALL" and l.get('group_name') else ""
                     
-                    # НОВОЕ: подтягиваем класс (для расписания учителя)
+                    # Подтягиваем название класса (для расписания учителя)
                     c_name = l.get('class_name')
                     class_label = f" [{c_name}]" if c_name else ""
                     
@@ -358,7 +352,7 @@ class UIRenderer:
                     text += f"📚 {num_str} {time_str}\n"
                     for i, l in enumerate(parallel_lessons):
                         is_last = (i == len(parallel_lessons) - 1)
-                        prefix = "    └ " if is_last else "    ├ "
+                        prefix = " └ " if is_last else " ├ "
                         
                         icon = "🔄" if l['is_exchange'] else ("🚫" if l['is_cancelled'] else "")
                         icon_str = f"{icon} " if icon else ""
@@ -367,7 +361,7 @@ class UIRenderer:
                         grp_name = l.get('group_name') or f"Группа {l.get('group_id')}"
                         grp_label = f" ({grp_name})" if l.get('group_id') != "ALL" else ""
                         
-                        # НОВОЕ: подтягиваем класс
+                        # Подтягиваем название класса
                         c_name = l.get('class_name')
                         class_label = f" [{c_name}]" if c_name else ""
                         
