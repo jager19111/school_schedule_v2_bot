@@ -25,6 +25,7 @@ class Database:
                     parent_control_notifications INTEGER NOT NULL DEFAULT 0,
                     notify_parent_about_me INTEGER NOT NULL DEFAULT 1, -- НОВОЕ: Отправлять ли сводку родителю
                     morning_summary_time TEXT DEFAULT NULL,            -- НОВОЕ: Время сводки (например, '07:30')
+                    global_extra_reminder INTEGER NOT NULL DEFAULT 30, -- НОВОЕ: Время уведомления о доп занятиях (по умолчанию 30')
                     last_active_at TIMESTAMP,
                     is_notifications_enabled INTEGER NOT NULL DEFAULT 1,
                     is_admin INTEGER NOT NULL DEFAULT 0,

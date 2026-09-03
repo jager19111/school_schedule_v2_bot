@@ -1,6 +1,8 @@
 import logging
+import contextlib
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
+from aiogram.exceptions import TelegramBadRequest
 
 from services.profiles_service import ProfileService
 from bot.utils.ui_renderer import UIRenderer
@@ -11,6 +13,12 @@ from core.models.dto import ChildrenListDTO
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
 from services.time_service import TimeService
+from services.schedule_service import ScheduleService
+from bot.handlers.registration import RegistrationStates
+
+
+
+
 logger = logging.getLogger(__name__)
 router = Router()
 
@@ -40,18 +48,37 @@ async def _show_settings_menu(message_obj: Message, user_id: int, profile_servic
     user_dto = await profile_service.get_user_profile_dto(user_id)
     family_code = await profile_service.get_family_code(user_dto.family_id) if user_dto.family_id else None
     
-    text = UIRenderer.render_parent_settings_menu(family_code)
-    kb = Keyboards.get_parent_settings_kb(user_dto)
+    # Новые методы из рендерера и клавиатур
+    text = UIRenderer.render_settings_main(user_dto, family_code)
+    kb = Keyboards.get_settings_main_kb(user_dto)
     
     if is_callback:
         await message_obj.edit_text(text, reply_markup=kb, parse_mode="HTML")
     else:
         await message_obj.answer(text, reply_markup=kb, parse_mode="HTML")
 
+# ================= ПЕРЕРЕГИСТРАЦИЯ =================
+@router.callback_query(F.data == "auth:restart")
+async def process_restart(callback: CallbackQuery, state: FSMContext, profile_service: ProfileService):
+    await profile_service.reset_user_profile(callback.from_user.id)
+    await state.clear()
+    await callback.message.edit_text("🔄 Профиль сброшен. Отправьте /start для новой регистрации.")
+    await callback.answer()
+    
 # ================= 3. УПРАВЛЕНИЕ СЕМЬЕЙ =================
 
 @router.callback_query(F.data == "settings:family")
 async def show_family_management(callback: CallbackQuery, profile_service: ProfileService):
+    user_dto = await profile_service.get_user_profile_dto(callback.from_user.id)
+    
+    # Заглушка для одинокого ребёнка
+    if user_dto.role == "child" and not user_dto.family_id:
+        text = UIRenderer.render_family_management_error()
+        kb = Keyboards.get_family_management_error_kb()
+        
+        await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+        return await callback.answer()
+
     children_dtos = await profile_service.get_children_for_parent(callback.from_user.id)
     list_dto = ChildrenListDTO(children=children_dtos, action="settings")
     
@@ -200,3 +227,74 @@ async def cancel_time_input(callback: CallbackQuery, state: FSMContext, profile_
         await _refresh_child_settings(callback, data["child_id"], profile_service)
     else:
         await settings_main_menu_cb(callback, profile_service)
+        
+        
+# ================= НАСТРОЙКИ УВЕДОМЛЕНИЙ =================
+@router.callback_query(F.data == "settings:notifications")
+async def show_notifications_menu(callback: CallbackQuery, profile_service: ProfileService):
+    user_dto = await profile_service.get_user_profile_dto(callback.from_user.id)
+    text = UIRenderer.render_notifications_menu()
+    kb = Keyboards.get_notifications_kb(user_dto)
+
+# Глушим ошибку TelegramBadRequest, если меню не изменилось 
+    # (например, при быстром двойном клике)
+    with contextlib.suppress(TelegramBadRequest):
+        await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+        
+    await callback.answer()
+    
+@router.callback_query(F.data == "set_notif:changes")
+async def toggle_changes_notif(callback: CallbackQuery, profile_service: ProfileService):
+    await profile_service.toggle_user_flag(callback.from_user.id, "is_notifications_enabled")
+    await show_notifications_menu(callback, profile_service)
+
+@router.callback_query(F.data == "set_notif:prelesson")
+async def toggle_prelesson_notif(callback: CallbackQuery, profile_service: ProfileService):
+    user_dto = await profile_service.get_user_profile_dto(callback.from_user.id)
+    # Переключаем между 0 (ВЫКЛ) и 10 (ВКЛ)
+    new_val = 0 if user_dto.pre_lesson_offset_minutes > 0 else 10
+    await profile_service.update_integer_setting(callback.from_user.id, "pre_lesson_offset_minutes", new_val)
+    await show_notifications_menu(callback, profile_service)
+
+@router.callback_query(F.data == "set_notif:extra")
+async def toggle_extra_notif(callback: CallbackQuery, profile_service: ProfileService):
+    user_dto = await profile_service.get_user_profile_dto(callback.from_user.id)
+    # Переключаем между 0 (ВЫКЛ) и 30 (ВКЛ)
+    new_val = 0 if user_dto.global_extra_reminder > 0 else 30
+    await profile_service.update_integer_setting(callback.from_user.id, "global_extra_reminder", new_val)
+    await show_notifications_menu(callback, profile_service)
+    
+    
+
+# ================= 5. СМЕНА КЛАССА И ГРУППЫ =================
+   
+    
+@router.callback_query(F.data == "settings:change_class")
+async def settings_change_class(callback: CallbackQuery, state: FSMContext, schedule_service: ScheduleService):
+    """Смена класса для ребенка-одиночки."""
+    class_dto = await schedule_service.get_classes_list()
+    
+    text = UIRenderer.render_class_selection(class_dto)
+    kb = Keyboards.get_class_selection(class_dto)
+    
+    await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    # Отправляем в FSM регистрации выбирать класс
+    await state.set_state(RegistrationStates.waiting_for_class)
+    await callback.answer()
+
+@router.callback_query(F.data.startswith("child_set:class:"))
+async def child_settings_change_class(callback: CallbackQuery, state: FSMContext, schedule_service: ScheduleService):
+    """Смена класса для ребенка через меню родителя."""
+    child_id = int(callback.data.split(":")[2])
+    
+    # Сохраняем ID ребенка, которого редактируем, чтобы RegistrationStates знал, кому менять класс
+    await state.update_data(editing_child_id=child_id)
+    
+    class_dto = await schedule_service.get_classes_list()
+    
+    text = UIRenderer.render_class_selection(class_dto)
+    kb = Keyboards.get_class_selection(class_dto)
+    
+    await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    await state.set_state(RegistrationStates.waiting_for_class)
+    await callback.answer()

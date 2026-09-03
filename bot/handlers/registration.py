@@ -7,6 +7,7 @@ from aiogram.fsm.state import StatesGroup, State
 
 from services.profiles_service import ProfileService
 from core.repository.schedule_repository import ScheduleRepository
+from services.schedule_service import ScheduleService
 from bot.utils.ui_renderer import UIRenderer
 from bot.keyboards.keyboard import Keyboards
 from core.models.dto import ClassListDTO, GroupListDTO, FamilyCreatedDTO
@@ -95,9 +96,8 @@ async def process_family_join_btn(callback: CallbackQuery, state: FSMContext):
     await state.set_state(RegistrationStates.waiting_for_family_code)
 
 @router.callback_query(RegistrationStates.waiting_for_family_action, F.data == "family:skip")
-async def process_family_skip_btn(callback: CallbackQuery, state: FSMContext, schedule_repo: ScheduleRepository):
-    metadata = await schedule_repo.get_metadata()
-    class_dto = ClassListDTO(classes={k: v.name for k, v in metadata.get('classes', {}).items()})
+async def process_family_skip_btn(callback: CallbackQuery, state: FSMContext, schedule_service: ScheduleService):
+    class_dto = await schedule_service.get_classes_list()
     
     text = UIRenderer.render_class_selection(class_dto)
     kb = Keyboards.get_class_selection(class_dto)
@@ -105,7 +105,7 @@ async def process_family_skip_btn(callback: CallbackQuery, state: FSMContext, sc
     await state.set_state(RegistrationStates.waiting_for_class)
 
 @router.message(RegistrationStates.waiting_for_family_code)
-async def process_family_code_input(message: Message, state: FSMContext, profile_service: ProfileService, schedule_repo: ScheduleRepository):
+async def process_family_code_input(message: Message, state: FSMContext, profile_service: ProfileService, schedule_service: ScheduleService):
     code = message.text.strip().upper()
     data = await state.get_data()
     role = data.get('role', 'parent')
@@ -124,8 +124,7 @@ async def process_family_code_input(message: Message, state: FSMContext, profile
         text_success = UIRenderer.render_success_join(user_dto.name)
         await message.answer(text_success, parse_mode="HTML")
         
-        metadata = await schedule_repo.get_metadata()
-        class_dto = ClassListDTO(classes={k: v.name for k, v in metadata.get('classes', {}).items()})
+        class_dto = await schedule_service.get_classes_list()
         
         text = UIRenderer.render_class_selection(class_dto)
         kb = Keyboards.get_class_selection(class_dto)
@@ -141,12 +140,11 @@ async def process_family_code_input(message: Message, state: FSMContext, profile
         await state.clear()
 
 @router.callback_query(RegistrationStates.waiting_for_class, F.data.startswith("class:"))
-async def process_class(callback: CallbackQuery, state: FSMContext, schedule_repo: ScheduleRepository):
+async def process_class(callback: CallbackQuery, state: FSMContext, schedule_service: ScheduleService):
     class_id = callback.data.split(":")[1]
     await state.update_data(class_id=class_id)
     
-    metadata = await schedule_repo.get_metadata()
-    group_dto = GroupListDTO(groups=metadata.get('groups', {}))
+    group_dto = await schedule_service.get_groups_list()
     
     text = UIRenderer.render_group_selection()
     kb = Keyboards.get_group_selection(group_dto)

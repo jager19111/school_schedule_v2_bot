@@ -71,7 +71,7 @@ class ProfileRepository(BaseRepository):
             SELECT role, name, class_id, group_id, family_id, 
                    parent_control_notifications, notify_parent_about_me,
                    morning_summary_time, pre_lesson_offset_minutes, 
-                   changes_window_days, is_notifications_enabled
+                   changes_window_days, is_notifications_enabled, global_extra_reminder
             FROM users WHERE user_id = ?
             """,
             (user_id,),
@@ -199,3 +199,21 @@ class ProfileRepository(BaseRepository):
             "UPDATE users SET morning_summary_time = ? WHERE user_id = ?",
             (time_str, user_id),
         )
+        
+    # Перерегистрация   
+# В файле core/repository/profile_repository.py
+
+    async def reset_user(self, user_id: int) -> None:
+        """Полностью очищает профиль пользователя для перерегистрации."""
+        # Используем пустую строку '', чтобы обойти ограничение NOT NULL в БД.
+        # Сервис корректно распознает её как "роль не выбрана".
+        await self._execute(
+            "UPDATE users SET role = '', family_id = NULL, class_id = NULL, group_id = NULL WHERE user_id = ?",
+            (user_id,)
+        )
+
+    async def update_integer_setting(self, user_id: int, field_name: str, value: int) -> None:
+        """Безопасное обновление числовых настроек."""
+        allowed_fields = {"pre_lesson_offset_minutes", "global_extra_reminder"}
+        if field_name in allowed_fields:
+            await self._execute(f"UPDATE users SET {field_name} = ? WHERE user_id = ?", (value, user_id))

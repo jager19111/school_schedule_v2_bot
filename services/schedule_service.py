@@ -4,7 +4,7 @@ from datetime import timedelta
 from core.repository.schedule_repository import ScheduleRepository
 from core.repository.extra_classes_repository import ExtraClassesRepository
 from services.time_service import TimeService
-from core.models.dto import DayScheduleDTO, DaySummaryDTO, WeekSummaryDTO, WeekSummaryDTO, FullWeekScheduleDTO
+from core.models.dto import DayScheduleDTO, DaySummaryDTO, WeekSummaryDTO, WeekSummaryDTO, FullWeekScheduleDTO, ClassListDTO, GroupListDTO
 
 class ScheduleService:
     def __init__(
@@ -315,3 +315,19 @@ class ScheduleService:
         for l in lessons:
             if "display_num" not in l:
                 l["display_num"] = "•"
+                
+                
+
+    async def get_classes_list(self) -> ClassListDTO:
+        """Получает список классов из репозитория и упаковывает в DTO[cite: 5]."""
+        metadata = await self.schedule_repo.get_metadata()
+        classes_raw = metadata.get('classes', {})
+        # Извлекаем строковые имена, если объекты имеют атрибут name
+        classes_dict = {k: getattr(v, 'name', v) for k, v in classes_raw.items()}
+        return ClassListDTO(classes=classes_dict)
+
+    async def get_groups_list(self) -> GroupListDTO:
+        """Получает список групп из репозитория и упаковывает в DTO[cite: 5]."""
+        metadata = await self.schedule_repo.get_metadata()
+        groups_raw = metadata.get('groups', {})
+        return GroupListDTO(groups=groups_raw)

@@ -89,7 +89,8 @@ class ProfileService:
             morning_summary_time=row.get("morning_summary_time"),
             pre_lesson_offset_minutes=row.get("pre_lesson_offset_minutes", 15),
             changes_window_days=row.get("changes_window_days", 3),
-            is_notifications_enabled=bool(row.get("is_notifications_enabled", True))
+            is_notifications_enabled=bool(row.get("is_notifications_enabled", True)),
+            global_extra_reminder=row.get("global_extra_reminder", 30) # <-- ДОБАВИТЬ СЮДА
         )
 
     # ========== СЕМЬИ ==========
@@ -170,3 +171,9 @@ class ProfileService:
     async def update_morning_summary_time(self, user_id: int, time_str: str | None) -> None:
         """Обновляет индивидуальное время утренней рассылки."""
         await self.repo.update_morning_summary_time(user_id, time_str)
+    # Перерегистрация    
+    async def reset_user_profile(self, user_id: int) -> None:
+        await self.repo.reset_user(user_id)
+
+    async def update_integer_setting(self, user_id: int, field_name: str, value: int) -> None:
+        await self.repo.update_integer_setting(user_id, field_name, value)

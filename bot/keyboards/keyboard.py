@@ -69,7 +69,7 @@ class Keyboards:
             [InlineKeyboardButton(text="🎓 Расписание классов", callback_data="search:classes")],
             [InlineKeyboardButton(text="👨‍🏫 Расписание учителей", callback_data="search:teachers")]
         ])
-
+# на удаление
     @staticmethod
     def get_parent_settings_kb(user_dto: 'UserProfileDTO') -> InlineKeyboardMarkup:
         """Настройки родителя."""
@@ -110,6 +110,40 @@ class Keyboards:
             [InlineKeyboardButton(text=f"🔒 Запрет изменения настроек: {lock_status}", callback_data=f"child_set:lock:{child_dto.user_id}")],
             [InlineKeyboardButton(text="⬅️ Назад к составу семьи", callback_data="settings:family")]
         ])
+        
+    # В классе Keyboards:
+
+    @staticmethod
+    def get_settings_main_kb(user_dto: 'UserProfileDTO') -> InlineKeyboardMarkup:
+        """Главное меню настроек (обновленное)."""
+        buttons = []
+        
+        # Для ребёнка добавляем кнопку смены класса
+        if user_dto.role == "child":
+            buttons.append([InlineKeyboardButton(text="🎓 Сменить класс/группу", callback_data="settings:change_class")])
+            
+        buttons.append([InlineKeyboardButton(text="👨‍👩‍👧 Управление семьей", callback_data="settings:family")])
+        buttons.append([InlineKeyboardButton(text="🔔 Настройки уведомлений", callback_data="settings:notifications")])
+        buttons.append([InlineKeyboardButton(text="🔄 Перерегистрироваться / Выйти", callback_data="auth:restart")])
+
+        return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+    @staticmethod
+    def get_notifications_kb(user_dto: 'UserProfileDTO') -> InlineKeyboardMarkup:
+        """Отдельное меню управления всеми уведомлениями."""
+        morning_time = user_dto.morning_summary_time if user_dto.morning_summary_time else "ВЫКЛ"
+        changes_state = "ВКЛ 🟢" if user_dto.is_notifications_enabled else "ВЫКЛ 🔴"
+        pre_lesson_state = f"{user_dto.pre_lesson_offset_minutes} мин 🟢" if user_dto.pre_lesson_offset_minutes > 0 else "ВЫКЛ 🔴"
+        extra_state = f"{user_dto.global_extra_reminder} мин 🟢" if user_dto.global_extra_reminder > 0 else "ВЫКЛ 🔴"
+
+        return InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=f"🌅 Утренняя сводка: {morning_time}", callback_data="settings:my_summary_time")],
+            [InlineKeyboardButton(text=f"🔄 Изменения в расписании: {changes_state}", callback_data="set_notif:changes")],
+            [InlineKeyboardButton(text=f"⏰ Начало урока: {pre_lesson_state}", callback_data="set_notif:prelesson")],
+            [InlineKeyboardButton(text=f"🎨 Доп. занятия: {extra_state}", callback_data="set_notif:extra")],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data="settings:main")]
+        ])
+        
 #-----------------------
 
     @staticmethod
@@ -338,3 +372,10 @@ class Keyboards:
         buttons.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="search:back")])
         return InlineKeyboardMarkup(inline_keyboard=buttons)
 
+    @staticmethod
+    def get_family_management_error_kb() -> InlineKeyboardMarkup:
+        """Клавиатура-заглушка для ребёнка без семьи."""
+        return InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔄 Перерегистрироваться", callback_data="auth:restart")],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data="settings:main")]
+        ])

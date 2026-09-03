@@ -1,6 +1,6 @@
 from typing import Any, Dict, List, Optional, Set
 from datetime import datetime, timedelta, timezone, date
-from core.models.dto import ClassListDTO, FamilyCreatedDTO, AdminStatsDTO, DayScheduleDTO, ChildrenListDTO, ExtraClassListDTO, WeekSummaryDTO, FullWeekScheduleDTO
+from core.models.dto import ClassListDTO, FamilyCreatedDTO, AdminStatsDTO, DayScheduleDTO, ChildrenListDTO, ExtraClassListDTO, WeekSummaryDTO, FullWeekScheduleDTO, UserProfileDTO
 
 class UIRenderer:
     
@@ -47,9 +47,11 @@ class UIRenderer:
     @staticmethod
     def render_family_code_prompt() -> str:
         return "Введите код семьи (family_code) для подключения:"
-# ---------------
-# Доп занятия # handlers/extra_classes
-# ---------------
+
+#=======================
+#Дополнительные занятия
+#=======================
+
     DAYS_MAP_SHORT = {1: "Пн", 2: "Вт", 3: "Ср", 4: "Чт", 5: "Пт", 6: "Сб", 7: "Вс"}
     # Клавиатура
     @staticmethod
@@ -103,6 +105,7 @@ class UIRenderer:
     @staticmethod
     def render_extra_class_error() -> tuple[str, None]:
         return "❌ Произошла ошибка при сохранении.", None
+
 # Словарь с полными названиями дней недели
     FULL_DAYS_MAP = {
         1: "Понедельник", 2: "Вторник", 3: "Среда", 
@@ -160,8 +163,6 @@ class UIRenderer:
     @staticmethod
     def render_extra_class_updated() -> tuple[str, None]:
         return "✅ Занятие успешно обновлено.", None
-
-        return text, None
 
     @staticmethod
     def render_extra_class_delete_prompt(dto: ExtraClassListDTO) -> tuple[str, None]:
@@ -262,7 +263,7 @@ class UIRenderer:
     @staticmethod
     def render_school_search_menu() -> str:
         return "🏫 <b>Поиск по школе</b>\n\nВыберите нужный раздел:"
-
+# На удаление
     @staticmethod
     def render_parent_settings_menu(family_code: str) -> str:
         code_text = f"<code>{family_code}</code>" if family_code else "Не в семье"
@@ -277,6 +278,29 @@ class UIRenderer:
         cls_text = class_id if class_id else "Не выбран"
         return f"⚙️ <b>Настройки профиля:</b> {name} ({cls_text})"
     
+    # В классе UIRenderer:
+
+    @staticmethod
+    def render_settings_main(user_dto: 'UserProfileDTO', family_code: str | None) -> str:
+        role_map = {"parent": "👨‍👩‍👧 Родитель", "child": "👶 Ребёнок", "observer": "👁 Наблюдатель"}
+        role_name = role_map.get(user_dto.role, "Неизвестно")
+        name_str = user_dto.name if user_dto.name else "Не указано"
+        code_str = f"<code>{family_code}</code>" if family_code else "Не в семье"
+        
+        return (
+            f"⚙️ <b>Ваши настройки профиля, <b>{name_str}</b></b>\n\n"
+            f"👤 Роль: {role_name}\n"
+            f"👨‍👩‍👧 Код семьи: {code_str}\n\n"
+            f"Выберите действие:"
+        )
+
+    @staticmethod
+    def render_family_management_error() -> str:
+        return "👨‍👩‍👧 <b>Управление семьей</b>\n\nВы не состоите в семье. Обратитесь к администратору семьи, запросите код и перерегистрируйте учетную запись."
+
+    @staticmethod
+    def render_notifications_menu() -> str:
+        return "🔔 <b>Настройки уведомлений</b>\n\nЗдесь вы можете детально настроить, какие оповещения получать:"
     
 # Сводка
     @staticmethod

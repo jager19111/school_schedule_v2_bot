@@ -35,6 +35,7 @@ class UserProfileDTO:
     pre_lesson_offset_minutes: int = 15
     changes_window_days: int = 3
     is_notifications_enabled: bool = True
+    global_extra_reminder: int = 30  # <-- ДОБАВЛЕНО
     
 @dataclass
 class AdminStatsDTO:
