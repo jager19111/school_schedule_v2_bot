@@ -25,9 +25,7 @@ class ScheduleRepository(BaseRepository):
 
     async def get_metadata(self) -> Dict[str, Any]:
         """
-        Извлекает справочники классов и групп из последнего кэша NIKA.
-
-        Читает последний raw_nika_cache, парсит через NikaNormalizer.build_metadata().
+        Извлекает справочники классов, учителей и групп из последнего кэша NIKA.
         """
         # Берём последнюю запись из raw_nika_cache через обычный SELECT
         row = await self._fetch_one(
@@ -35,26 +33,29 @@ class ScheduleRepository(BaseRepository):
         )
         if not row:
             logger.warning("Кэш NIKA пуст.")
-            return {"classes": {}, "groups": {}}
+            return {"classes": {}, "groups": {}, "teachers": {}}
 
         content = row.get("content")
         if not content:
             logger.warning("Последний raw_nika_cache.content пуст.")
-            return {"classes": {}, "groups": {}}
+            return {"classes": {}, "groups": {}, "teachers": {}}
 
         try:
             # Используем уже существующий метод ScheduleFetcher для извлечения JSON
             json_dict = self.fetcher._extract_json_from_js(content)
             normalizer = NikaNormalizer(json_dict)
+            
+            # Извлекаем все 4 справочника
             classes, teachers, rooms, subjects = normalizer.build_metadata()
 
             return {
                 "classes": classes,
                 "groups": json_dict.get("CLASSGROUPS", {}),
+                "teachers": teachers,  # <-- ИСПРАВЛЕНИЕ: Теперь учителя передаются в сервис
             }
         except Exception as e:
             logger.error(f"Ошибка получения метаданных: {e}")
-            return {"classes": {}, "groups": {}}
+            return {"classes": {}, "groups": {}, "teachers": {}}
 
     async def refresh_from_remote(self, target_dates: List[datetime.date]) -> None:
         """
@@ -126,4 +127,15 @@ class ScheduleRepository(BaseRepository):
             ORDER BY lesson_num
             """,
             (class_id, date_iso),
+        )
+        
+    async def get_lessons_for_teacher(self, teacher_id: str, date_iso: str) -> List[Dict[str, Any]]:
+        """Извлекает расписание учителя на конкретную дату."""
+        return await self._fetch_all(
+            """
+            SELECT * FROM schedule_cache
+            WHERE teacher_id = ? AND date = ?
+            ORDER BY start_time, lesson_num
+            """,
+            (teacher_id, date_iso),
         )

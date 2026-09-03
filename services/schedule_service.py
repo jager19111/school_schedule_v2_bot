@@ -180,3 +180,61 @@ class ScheduleService:
             )
             days.append(day_dto)
         return FullWeekScheduleDTO(week_start_iso=week_start_iso, days=days)
+    
+    
+    # методы для формирования расписания для поиска
+
+    # Вставить/Заменить методы в классе ScheduleService:
+
+    async def get_daily_schedule_for_class(self, class_id: str, date_iso: str) -> DayScheduleDTO:
+        lessons = await self.schedule_repo.get_lessons_for_class(class_id, date_iso)
+        
+        def sort_key(l):
+            num = int(l.get("lesson_num") or 0)
+            st = l.get("start_time") or ""
+            return (num, st.zfill(5))  # zfill делает "08:15" из "8:15" для правильной сортировки
+
+        combined = sorted(lessons, key=sort_key)
+        return DayScheduleDTO(date_iso=date_iso, lessons=combined)
+
+    async def get_daily_schedule_for_teacher(self, teacher_id: str, date_iso: str) -> DayScheduleDTO:
+        lessons = await self.schedule_repo.get_lessons_for_teacher(teacher_id, date_iso)
+        metadata = await self.schedule_repo.get_metadata()
+        classes_dict = metadata.get('classes', {})
+        
+        # Подтягиваем названия классов
+        for l in lessons:
+            c_id = l.get("class_id")
+            if c_id in classes_dict:
+                cls_obj = classes_dict[c_id]
+                l["class_name"] = cls_obj.name if hasattr(cls_obj, 'name') else cls_obj
+            else:
+                l["class_name"] = c_id
+
+        def sort_key(l):
+            num = int(l.get("lesson_num") or 0)
+            st = l.get("start_time") or ""
+            return (num, st.zfill(5))
+
+        combined = sorted(lessons, key=sort_key)
+        return DayScheduleDTO(date_iso=date_iso, lessons=combined)
+
+    async def get_full_week_schedule_for_class(self, class_id: str, week_start_iso: str) -> FullWeekScheduleDTO:
+        from datetime import timedelta
+        start_date = self.time_service.date_from_iso(week_start_iso)
+        days = []
+        for i in range(6):
+            current_date_iso = (start_date + timedelta(days=i)).isoformat()
+            day_dto = await self.get_daily_schedule_for_class(class_id, current_date_iso)
+            days.append(day_dto)
+        return FullWeekScheduleDTO(week_start_iso=week_start_iso, days=days)
+
+    async def get_full_week_schedule_for_teacher(self, teacher_id: str, week_start_iso: str) -> FullWeekScheduleDTO:
+        from datetime import timedelta
+        start_date = self.time_service.date_from_iso(week_start_iso)
+        days = []
+        for i in range(6):
+            current_date_iso = (start_date + timedelta(days=i)).isoformat()
+            day_dto = await self.get_daily_schedule_for_teacher(teacher_id, current_date_iso)
+            days.append(day_dto)
+        return FullWeekScheduleDTO(week_start_iso=week_start_iso, days=days)

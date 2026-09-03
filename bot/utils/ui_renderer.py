@@ -307,6 +307,16 @@ class UIRenderer:
         return f"━━━━━━━━━━━━━━━━━\n📅 {day_name}, {date_obj.strftime('%d.%m.%Y')}\n━━━━━━━━━━━━━━━━━\n"
 
 # вывод расписания
+    # В классе UIRenderer:
+
+    @staticmethod
+    def _format_date_header(date_iso: str) -> str:
+        from datetime import datetime
+        date_obj = datetime.fromisoformat(date_iso)
+        day_name = UIRenderer.FULL_DAYS_MAP.get(date_obj.isoweekday(), "")
+        # Изменено форматирование: только день и месяц
+        return f"━━━━━━━━━━━━━━━━━\n📅 {day_name}, {date_obj.strftime('%d.%m')}\n━━━━━━━━━━━━━━━━━\n"
+
     @staticmethod
     def render_child_day_schedule(dto: 'DayScheduleDTO', name: str | None = None) -> tuple[str, None]:
         if not dto.lessons:
@@ -320,10 +330,9 @@ class UIRenderer:
         if main_lessons:
             text += "\n📚 <b>Основное расписание</b>\n\n"
             
-            # Группировка по номеру урока
             grouped_lessons = {}
             for l in main_lessons:
-                num = l['lesson_num'] if l['lesson_num'] else 99  # 99 для уроков без номера
+                num = l['lesson_num'] if l['lesson_num'] else 99
                 if num not in grouped_lessons:
                     grouped_lessons[num] = []
                 grouped_lessons[num].append(l)
@@ -334,16 +343,18 @@ class UIRenderer:
                 time_str = f"{first['start_time']} - {first['end_time']}"
                 
                 if len(parallel_lessons) == 1:
-                    # Одиночный урок
                     l = first
                     icon = "🔄" if l['is_exchange'] else ("🚫" if l['is_cancelled'] else "📚")
                     room = f" → {l.get('room_name')}" if l.get('room_name') and l.get('room_name') != "—" else ""
                     name_str = "ОТМЕНА" if l['is_cancelled'] else (l.get('subject_name') or "Без предмета")
                     grp_label = f" ({l.get('group_name')})" if l.get('group_id') != "ALL" and l.get('group_name') else ""
                     
-                    text += f"{icon} {num_str} {time_str} | {name_str}{grp_label}{room}\n"
+                    # НОВОЕ: подтягиваем класс (для расписания учителя)
+                    c_name = l.get('class_name')
+                    class_label = f" [{c_name}]" if c_name else ""
+                    
+                    text += f"{icon} {num_str} {time_str} | {name_str}{grp_label}{class_label}{room}\n"
                 else:
-                    # Параллельные уроки (подгруппы)
                     text += f"📚 {num_str} {time_str}\n"
                     for i, l in enumerate(parallel_lessons):
                         is_last = (i == len(parallel_lessons) - 1)
@@ -353,12 +364,14 @@ class UIRenderer:
                         icon_str = f"{icon} " if icon else ""
                         room = f" → {l.get('room_name')}" if l.get('room_name') and l.get('room_name') != "—" else ""
                         name_str = "ОТМЕНА" if l['is_cancelled'] else (l.get('subject_name') or "Без предмета")
-                        
-                        # Если имя группы так и не пришло, используем ID
                         grp_name = l.get('group_name') or f"Группа {l.get('group_id')}"
                         grp_label = f" ({grp_name})" if l.get('group_id') != "ALL" else ""
                         
-                        text += f"  {prefix}{icon_str}{name_str}{grp_label}{room}\n"
+                        # НОВОЕ: подтягиваем класс
+                        c_name = l.get('class_name')
+                        class_label = f" [{c_name}]" if c_name else ""
+                        
+                        text += f"  {prefix}{icon_str}{name_str}{grp_label}{class_label}{room}\n"
 
         if extra_lessons:
             text += "\n🎨 <b>Доп. занятия</b>\n\n"
@@ -392,3 +405,17 @@ class UIRenderer:
                 day_text, _ = UIRenderer.render_child_day_schedule(day_dto)
                 text += day_text + "\n"
         return text, None   
+    
+    # методы для формирования расписания для поиска
+
+    @staticmethod
+    def render_search_class_select() -> str:
+        return "🎓 <b>Выберите класс для просмотра расписания:</b>"
+
+    @staticmethod
+    def render_search_teacher_select() -> str:
+        return "👨‍🏫 <b>Выберите преподавателя:</b>"
+
+    @staticmethod
+    def render_search_day_select(name: str) -> str:
+        return f"📅 Выберите день недели для: <b>{name}</b>"

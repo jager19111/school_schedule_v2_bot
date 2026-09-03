@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta, timezone, date
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
-from core.models.dto import ClassListDTO, GroupListDTO, ChildrenListDTO, UserProfileDTO
+from core.models.dto import ClassListDTO, GroupListDTO, ChildrenListDTO, UserProfileDTO, TeacherListDTO
 
 class Keyboards:
     @staticmethod
@@ -261,4 +261,75 @@ class Keyboards:
             InlineKeyboardButton(text="След. неделя ➡️", callback_data=f"sched:week:{next_week}")
         ])
         
+        return InlineKeyboardMarkup(inline_keyboard=buttons)
+    
+    
+    
+    # Клавиатуры для поиска классов и учителей
+
+    @staticmethod
+    def get_search_classes_kb(dto: ClassListDTO) -> InlineKeyboardMarkup:
+        buttons = []
+        row = []
+        for c_id, c_name in dto.classes.items():
+            row.append(InlineKeyboardButton(text=c_name, callback_data=f"srch_cls:{c_id}"))
+            if len(row) == 4:  # По 4 класса в ряд
+                buttons.append(row)
+                row = []
+        if row: buttons.append(row)
+        buttons.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="search:back")])
+        return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+    @staticmethod
+    def get_search_teachers_kb(dto: 'TeacherListDTO') -> InlineKeyboardMarkup:
+        buttons = []
+        row = []
+        # Сортируем учителей по алфавиту
+        sorted_teachers = sorted(dto.teachers.items(), key=lambda x: x[1].name if hasattr(x[1], 'name') else x[1])
+        for t_id, t_name in sorted_teachers:
+            # Извлекаем строковое имя, если это объект Teacher
+            name_str = t_name.name if hasattr(t_name, 'name') else t_name
+            row.append(InlineKeyboardButton(text=name_str, callback_data=f"srch_tch:{t_id}"))
+            if len(row) == 2:  # По 2 учителя в ряд
+                buttons.append(row)
+                row = []
+        if row: buttons.append(row)
+        buttons.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="search:back")])
+        return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+    # В классе Keyboards:
+
+    @staticmethod
+    def get_search_days_kb(target_id: str, is_teacher: bool, week_start_iso: str, is_full: bool = False) -> InlineKeyboardMarkup:
+        from datetime import datetime, timedelta
+        start_date = datetime.fromisoformat(week_start_iso).date()
+        prefix = "sch_t" if is_teacher else "sch_c"
+
+        days = []
+        for i in range(6):  # Пн-Сб
+            day_date = (start_date + timedelta(days=i)).isoformat()
+            day_name = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб"][i]
+            days.append(InlineKeyboardButton(text=day_name, callback_data=f"{prefix}:{target_id}:{day_date}"))
+
+        buttons = [days[0:3], days[3:6]]
+
+        # НОВОЕ: Кнопка полной недели
+        if not is_full:
+            fw_cb = f"{prefix}_fw:{target_id}:{week_start_iso}"
+            buttons.append([InlineKeyboardButton(text="📋 Все дни подробно", callback_data=fw_cb)])
+        else:
+            w_cb = f"{prefix}_w:{target_id}:{week_start_iso}"
+            buttons.append([InlineKeyboardButton(text="🗓 По дням", callback_data=w_cb)])
+
+        prev_week = (start_date - timedelta(days=7)).isoformat()
+        next_week = (start_date + timedelta(days=7)).isoformat()
+
+        buttons.append([
+            InlineKeyboardButton(text="⬅️ Пред. нед", callback_data=f"{prefix}_w:{target_id}:{prev_week}"),
+            InlineKeyboardButton(text="След. нед ➡️", callback_data=f"{prefix}_w:{target_id}:{next_week}")
+        ])
+
+        back_cb = "search:teachers" if is_teacher else "search:classes"
+        buttons.append([InlineKeyboardButton(text="⬅️ Назад к списку", callback_data=back_cb)])
+
         return InlineKeyboardMarkup(inline_keyboard=buttons)

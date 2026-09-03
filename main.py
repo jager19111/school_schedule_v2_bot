@@ -29,7 +29,8 @@ from bot.handlers import (
     schedule_parent,
     settings,
     extra_classes,
-    admin
+    admin,
+    search
 )
 
 logging.basicConfig(
@@ -92,6 +93,7 @@ async def main():
     dp.include_router(settings.router)
     dp.include_router(extra_classes.router)
     dp.include_router(admin.router)
+    dp.include_router(search.router)
 
     # Внедрение зависимостей в хендлеры (Dependency Injection)
     dp.workflow_data.update(

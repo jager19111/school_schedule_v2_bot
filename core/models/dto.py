@@ -105,3 +105,11 @@ class ExtraClassItemDTO:
 @dataclass
 class ExtraClassListDTO:
     items: List[ExtraClassItemDTO]
+    
+    
+@dataclass
+class TeacherListDTO:
+    """
+    DTO для списка учителей.
+    """
+    teachers: Dict[str, str]  # id -> name
