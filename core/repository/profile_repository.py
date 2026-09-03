@@ -71,7 +71,7 @@ class ProfileRepository(BaseRepository):
             SELECT role, name, class_id, group_id, family_id, 
                    parent_control_notifications, notify_parent_about_me,
                    morning_summary_time, pre_lesson_offset_minutes, 
-                   changes_window_days, is_notifications_enabled, global_extra_reminder
+                   changes_window_days, is_notifications_enabled, global_extra_reminder, can_edit_extra_classes
             FROM users WHERE user_id = ?
             """,
             (user_id,),
@@ -184,7 +184,7 @@ class ProfileRepository(BaseRepository):
 
     async def toggle_boolean_flag(self, user_id: int, field_name: str) -> None:
         """Универсальный метод переключения boolean-флагов для защиты от инъекций валидируем field_name."""
-        allowed_fields = {"is_notifications_enabled", "notify_parent_about_me", "parent_control_notifications"}
+        allowed_fields = {"is_notifications_enabled", "notify_parent_about_me", "parent_control_notifications", "can_edit_extra_classes"}
         if field_name not in allowed_fields:
             return
         await self._execute(

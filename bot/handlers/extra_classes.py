@@ -29,15 +29,21 @@ class ExtraClassStates(StatesGroup):
 # === ГЛАВНОЕ МЕНЮ И ОТМЕНА ===
 
 @router.message(F.text == "➕ Доп. занятия")
-async def show_extra_menu(message: Message):
+async def show_extra_menu(message: Message, profile_service: ProfileService):
+    user_dto = await profile_service.get_user_profile_dto(message.from_user.id)
+    can_edit = getattr(user_dto, 'can_edit_extra_classes', True)
+    
     text, _ = UIRenderer.render_extra_classes_menu()
-    await message.answer(text, reply_markup=Keyboards.get_extra_classes_menu(), parse_mode="HTML")
+    await message.answer(text, reply_markup=Keyboards.get_extra_classes_menu(can_edit), parse_mode="HTML")
 
 @router.callback_query(F.data == "extra:menu")
-async def show_extra_menu_cb(callback: CallbackQuery, state: FSMContext):
+async def show_extra_menu_cb(callback: CallbackQuery, state: FSMContext, profile_service: ProfileService):
     await state.clear()
+    user_dto = await profile_service.get_user_profile_dto(callback.from_user.id)
+    can_edit = getattr(user_dto, 'can_edit_extra_classes', True)
+    
     text, _ = UIRenderer.render_extra_classes_menu()
-    await callback.message.edit_text(text, reply_markup=Keyboards.get_extra_classes_menu(), parse_mode="HTML")
+    await callback.message.edit_text(text, reply_markup=Keyboards.get_extra_classes_menu(can_edit), parse_mode="HTML")
     await callback.answer()
 
 @router.callback_query(F.data == "extra:cancel")
@@ -61,7 +67,10 @@ async def show_extra_list(callback: CallbackQuery, extra_classes_service: ExtraC
 # === УДАЛЕНИЕ ЗАНЯТИЯ ===
 
 @router.callback_query(F.data == "extra:delete")
-async def start_delete_extra(callback: CallbackQuery, state: FSMContext, extra_classes_service: ExtraClassesService):
+async def start_delete_extra(callback: CallbackQuery, state: FSMContext, extra_classes_service: ExtraClassesService, profile_service: ProfileService):
+    user_dto = await profile_service.get_user_profile_dto(callback.from_user.id)
+    if not getattr(user_dto, 'can_edit_extra_classes', True):
+        return await callback.answer(UIRenderer.render_extra_class_locked(), show_alert=True)
     dto_list = await extra_classes_service.get_user_extra_classes(callback.from_user.id)
     
     # Если список пуст, рендерим возврат
@@ -243,12 +252,12 @@ async def finalize_extra_class(message: Message, user_id, state: FSMContext, ext
     
 # === ИЗМЕНЕНИЕ ЗАНЯТИЯ ===
 
-# ЗАМЕНИТЬ блок === ИЗМЕНЕНИЕ ЗАНЯТИЯ === в файле bot/handlers/extra_classes.py:
-
-# === ИЗМЕНЕНИЕ ЗАНЯТИЯ ===
-
 @router.callback_query(F.data == "extra:edit")
-async def start_edit_extra(callback: CallbackQuery, state: FSMContext, extra_classes_service: ExtraClassesService):
+async def start_edit_extra(callback: CallbackQuery, state: FSMContext, extra_classes_service: ExtraClassesService, profile_service: ProfileService):
+    user_dto = await profile_service.get_user_profile_dto(callback.from_user.id)
+    if not getattr(user_dto, 'can_edit_extra_classes', True):
+        return await callback.answer(UIRenderer.render_extra_class_locked(), show_alert=True)
+    
     dto_list = await extra_classes_service.get_user_extra_classes(callback.from_user.id)
     
     if not dto_list.items:

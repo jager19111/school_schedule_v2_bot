@@ -117,12 +117,14 @@ class Keyboards:
         summary_time = child_dto.morning_summary_time if child_dto.morning_summary_time else "ВЫКЛ"
         parent_notif = "ВКЛ 🟢" if child_dto.notify_parent_about_me else "ВЫКЛ 🔴"
         lock_status = "ВКЛ 🔴" if child_dto.parent_control_notifications else "ВЫКЛ 🟢"
+        can_edit_text = "ВКЛ 🟢" if child_dto.can_edit_extra_classes else "ВЫКЛ 🔴"
 
         return InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🎓 Изменить класс/группу", callback_data=f"child_set:class:{child_dto.user_id}")],
             [InlineKeyboardButton(text=f"🔔 Уведомления {child_dto.name}: {notif_status}", callback_data=f"child_set:notif:{child_dto.user_id}")],
             [InlineKeyboardButton(text=f"⏰ Время сводки {child_dto.name}: {summary_time}", callback_data=f"child_set:time:{child_dto.user_id}")],
             [InlineKeyboardButton(text=f"📱 Присылать сводки мне: {parent_notif}", callback_data=f"child_set:parent_notif:{child_dto.user_id}")],
+            [InlineKeyboardButton(text=f"🎨 Доп.занятия (правка): {can_edit_text}", callback_data=f"child_set:extra_edit:{child_dto.user_id}")],
             [InlineKeyboardButton(text=f"🔒 Запрет изменения настроек: {lock_status}", callback_data=f"child_set:lock:{child_dto.user_id}")],
             [InlineKeyboardButton(text="⬅️ Назад к составу семьи", callback_data="settings:family")]
         ])
@@ -191,16 +193,19 @@ class Keyboards:
     
     # Доп занятия  ExtraClassesService
     @staticmethod
-    def get_extra_classes_menu() -> InlineKeyboardMarkup:
-        """Клавиатура управления доп. занятиями."""
-        return InlineKeyboardMarkup(inline_keyboard=[
+    def get_extra_classes_menu(can_edit: bool = True) -> InlineKeyboardMarkup:
+        """Клавиатура управления доп. занятиями (динамическая)."""
+        buttons = [
             [InlineKeyboardButton(text="➕ Добавить занятие", callback_data="extra:add")],
-            [InlineKeyboardButton(text="📋 Список занятий", callback_data="extra:list")],
-            [InlineKeyboardButton(text="✏️ Изменить занятие", callback_data="extra:edit")], # <-- ДОБАВЛЕНО
-            [InlineKeyboardButton(text="🗑 Удалить занятие", callback_data="extra:delete")]
-        ])
- #       ]
- #       return InlineKeyboardMarkup(inline_keyboard=buttons)
+            [InlineKeyboardButton(text="📋 Список занятий", callback_data="extra:list")]
+        ]
+        
+        # Скрываем кнопки, если редактирование запрещено
+        if can_edit:
+            buttons.append([InlineKeyboardButton(text="✏️ Изменить занятие", callback_data="extra:edit")])
+            buttons.append([InlineKeyboardButton(text="🗑 Удалить занятие", callback_data="extra:delete")])
+            
+        return InlineKeyboardMarkup(inline_keyboard=buttons)
  
     @staticmethod
     def get_extra_edit_fields_kb(class_id: int) -> InlineKeyboardMarkup:

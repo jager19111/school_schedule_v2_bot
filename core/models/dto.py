@@ -35,10 +35,11 @@ class UserProfileDTO:
     parent_control_notifications: bool = False
     notify_parent_about_me: bool = True      # <-- ДОБАВЛЕНО
     morning_summary_time: Optional[str] = None # <-- ДОБАВЛЕНО
-    pre_lesson_offset_minutes: int = 15
+    pre_lesson_offset_minutes: int = 10
     changes_window_days: int = 3
     is_notifications_enabled: bool = True
     global_extra_reminder: int = 30  # <-- ДОБАВЛЕНО
+    can_edit_extra_classes: bool = True  # <-- НОВОЕ ПОЛЕ
     
 @dataclass
 class AdminStatsDTO:

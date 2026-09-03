@@ -106,6 +106,10 @@ class UIRenderer:
     def render_extra_class_error() -> tuple[str, None]:
         return "❌ Произошла ошибка при сохранении.", None
 
+    @staticmethod
+    def render_extra_class_locked() -> str:
+        return "🔒 Редактирование и удаление занятий запрещено родителем."
+    
 # Словарь с полными названиями дней недели
     FULL_DAYS_MAP = {
         1: "Понедельник", 2: "Вторник", 3: "Среда", 

@@ -29,6 +29,7 @@ class Database:
                     last_active_at TIMESTAMP,
                     is_notifications_enabled INTEGER NOT NULL DEFAULT 1,
                     is_admin INTEGER NOT NULL DEFAULT 0,
+                    can_edit_extra_classes INTEGER NOT NULL DEFAULT 1,   -- Запрет правки доп занятий (по умолчанию выключено)
                     created_at TIMESTAMP,
                     updated_at TIMESTAMP
                 )

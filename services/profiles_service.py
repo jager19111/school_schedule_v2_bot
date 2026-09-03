@@ -91,7 +91,8 @@ class ProfileService:
             pre_lesson_offset_minutes=row.get("pre_lesson_offset_minutes", 15),
             changes_window_days=row.get("changes_window_days", 3),
             is_notifications_enabled=bool(row.get("is_notifications_enabled", True)),
-            global_extra_reminder=row.get("global_extra_reminder", 30) # <-- ДОБАВИТЬ СЮДА
+            global_extra_reminder=row.get("global_extra_reminder", 30), # <-- ДОБАВИТЬ СЮДА
+            can_edit_extra_classes=bool(row.get("can_edit_extra_classes", True))
         )
 
     # ========== СЕМЬИ ==========

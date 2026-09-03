@@ -152,7 +152,10 @@ async def _refresh_child_settings(callback: CallbackQuery, child_user_id: int, p
     child_dto = await profile_service.get_user_profile_dto(child_user_id)
     text = UIRenderer.render_child_settings_menu(child_dto.name, child_dto.class_id)
     kb = Keyboards.get_child_settings_kb(child_dto)
-    await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    
+    with contextlib.suppress(TelegramBadRequest):
+        await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+        
     await callback.answer()
 
 # Настройки самого родителя
@@ -165,8 +168,15 @@ async def toggle_my_notifications(callback: CallbackQuery, profile_service: Prof
         return await callback.answer("🔒 Ваши настройки уведомлений заблокированы родителем.", show_alert=True)
     await profile_service.toggle_user_flag(callback.from_user.id, "is_notifications_enabled")
     await settings_main_menu_cb(callback, profile_service)
-    
-    
+ # Запрет редактирования доп.занятий   
+@router.callback_query(F.data.startswith("child_set:extra_edit:"))
+async def toggle_child_extra_edit(callback: CallbackQuery, profile_service: ProfileService):
+    child_user_id = int(callback.data.split(":")[2])
+    # Переключаем флаг в БД
+    await profile_service.toggle_user_flag(child_user_id, "can_edit_extra_classes")
+    # Обновляем интерфейс
+    await _refresh_child_settings(callback, child_user_id, profile_service)
+        
     # ================= 5. ВВОД ВРЕМЕНИ СВОДКИ (FSM) =================
 
 @router.callback_query(F.data == "settings:my_summary_time")
