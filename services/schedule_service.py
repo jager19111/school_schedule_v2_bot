@@ -34,12 +34,16 @@ class ScheduleService:
             date_iso=date_iso,
         )
 
-        # 2. Фильтрация по группе
-        filtered_base = [
-            lesson
-            for lesson in base_lessons
-            if lesson.get("group_id") == "ALL" or lesson.get("group_id") == group_id
-        ]
+        # 2. Умная фильтрация по группе
+        filtered_base = []
+        for lesson in base_lessons:
+            l_group = lesson.get("group_id")
+            # Если пользователь выбрал "Весь класс", он видит все уроки
+            if group_id == "ALL":
+                filtered_base.append(lesson)
+            # Иначе он видит общие уроки класса И уроки своей группы
+            elif l_group == "ALL" or l_group == group_id:
+                filtered_base.append(lesson)
 
         extra_lessons: list[dict] = []
 

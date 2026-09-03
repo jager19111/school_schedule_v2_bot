@@ -53,6 +53,7 @@ class Database:
                     class_id TEXT NOT NULL,
                     lesson_num INTEGER NOT NULL,
                     group_id TEXT NOT NULL,
+                    group_name TEXT,            -- НОВОЕ ПОЛЕ
                     subject_id TEXT,
                     subject_name TEXT, 
                     teacher_id TEXT,

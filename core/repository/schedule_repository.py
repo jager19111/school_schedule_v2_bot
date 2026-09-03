@@ -88,36 +88,24 @@ class ScheduleRepository(BaseRepository):
                     await db.execute(
                         """
                         INSERT OR REPLACE INTO schedule_cache 
-                        (id, date, period_id, class_id, lesson_num, group_id,
+                        (id, date, period_id, class_id, lesson_num, group_id, group_name,
                          subject_id, subject_name, teacher_id, teacher_name,
                          room_id, room_name, start_time, end_time,
                          is_exchange, is_cancelled,
                          is_notified, is_change_notified, created_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                             COALESCE((SELECT is_notified FROM schedule_cache WHERE id = ?), 0),
                             COALESCE((SELECT is_change_notified FROM schedule_cache WHERE id = ?), 0),
                             CURRENT_TIMESTAMP
                         )
                         """,
                         (
-                            lesson.id,
-                            lesson.date,
-                            lesson.period_id,
-                            lesson.class_id,
-                            lesson.lesson_num,
-                            lesson.group_id,
-                            lesson.subject_id,
-                            lesson.subject_name,
-                            lesson.teacher_id,
-                            lesson.teacher_name,
-                            lesson.room_id,
-                            lesson.room_name,
-                            lesson.start_time,
-                            lesson.end_time,
-                            int(lesson.is_exchange),
-                            int(lesson.is_cancelled),
-                            lesson.id,
-                            lesson.id,
+                            lesson.id, lesson.date, lesson.period_id, lesson.class_id,
+                            lesson.lesson_num, lesson.group_id, lesson.group_name,  # <-- ДОБАВЛЕНО lesson.group_name
+                            lesson.subject_id, lesson.subject_name, lesson.teacher_id, lesson.teacher_name,
+                            lesson.room_id, lesson.room_name, lesson.start_time, lesson.end_time,
+                            int(lesson.is_exchange), int(lesson.is_cancelled),
+                            lesson.id, lesson.id
                         ),
                     )
 

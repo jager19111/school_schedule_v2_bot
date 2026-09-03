@@ -46,7 +46,7 @@ class NikaNormalizer:
         return list(periods.keys())[0] if periods else None
     
     def build_class_lessons(self, target_dates: List[datetime.date]) -> List[LessonInstance]:
-        """Генерирует LessonInstance на основе CLASS_SCHEDULE и CLASS_EXCHANGE для заданных дат[cite: 1, 2]."""
+        """Генерирует LessonInstance на основе CLASS_SCHEDULE и CLASS_EXCHANGE для заданных дат[cite: 2]."""
         lessons = []
         classes, teachers, rooms, subjects = self.build_metadata()
         class_groups = self.data.get("CLASSGROUPS", {})
@@ -59,7 +59,6 @@ class NikaNormalizer:
             weekday = t_date.isoweekday()
             
             # Поиск активного периода по дате
-            # В реальных данных PERIODS = {"109": {"b": "01.09.2025", "e": "31.12.2025", "name": "1 полугодие"}}
             period_id = self._get_active_period(t_date, periods)
             if not period_id:
                 continue
@@ -68,7 +67,7 @@ class NikaNormalizer:
                 schedule_base = self.data.get("CLASS_SCHEDULE", {}).get(period_id, {}).get(class_id, {})
                 exchanges = self.data.get("CLASS_EXCHANGE", {}).get(class_id, {}).get(date_str, {})
                 
-                # Обрабатываем 1-10 уроки
+                # Обрабатываем 1-14 уроки
                 for lesson_num in range(1, 15):
                     daylesson_key = f"{weekday}{lesson_num:02d}"
                     l_str = str(lesson_num)
@@ -82,42 +81,51 @@ class NikaNormalizer:
                     is_exchange = bool(slot_exchange)
                     active_slot = slot_exchange if is_exchange else slot_base
                     
-                    # Безопасный доступ к массивам при заменах (защита от "F")[cite: 1, 8]
-                    raw_s = active_slot.get("s", [])
-                    raw_t = active_slot.get("t", [])
-                    raw_r = active_slot.get("r", [])
-                    raw_g = active_slot.get("g", [])
+                    # Вспомогательная функция для приведения значений к списку
+                    def _ensure_list(val):
+                        if not val: return []
+                        return val if isinstance(val, list) else [val]
+
+                    # Безопасный доступ к массивам при заменах (защита от "F")[cite: 11]
+                    raw_s = _ensure_list(active_slot.get("s"))
+                    raw_t = _ensure_list(active_slot.get("t"))
+                    raw_r = _ensure_list(active_slot.get("r"))
+                    raw_g = _ensure_list(active_slot.get("g"))
                     
-                    # Проверка отмены ("F")[cite: 1, 3]
+                    # Проверка отмены ("F")[cite: 11]
                     is_cancelled = False
-                    if isinstance(raw_s, str) and raw_s == "F":
-                        is_cancelled = True
-                        raw_s, raw_t, raw_r, raw_g = [], [], [], []
-                    elif isinstance(raw_s, list) and len(raw_s) > 0 and raw_s[0] == "F":
+                    if raw_s and raw_s[0] == "F":
                         is_cancelled = True
                         raw_s, raw_t, raw_r, raw_g = [], [], [], []
 
                     start_time = lesson_times.get(l_str, ["00:00", "00:00"])[0]
                     end_time = lesson_times.get(l_str, ["00:00", "00:00"])[1]
 
-                    # Если групп нет, создаем дефолтную для всего класса ("ALL")[cite: 1, 5]
-                    if not raw_g:
-                        raw_g = ["ALL"]
+                    # Определяем максимальную длину массивов, чтобы не потерять параллельные уроки
+                    max_len = max(len(raw_s), len(raw_t), len(raw_r), len(raw_g))
+                    
+                    if max_len == 0 and not is_cancelled:
+                        continue
+                    elif max_len == 0 and is_cancelled:
+                        max_len = 1  # Для отменённого урока нужна 1 итерация создания
 
-                    for idx, g_id in enumerate(raw_g):
+                    for idx in range(max_len):
                         clean_s = self._clean_val(raw_s[idx]) if idx < len(raw_s) else None
                         clean_t = self._clean_val(raw_t[idx]) if idx < len(raw_t) else None
                         clean_r = self._clean_val(raw_r[idx]) if idx < len(raw_r) else None
+                        
+                        g_id = raw_g[idx] if idx < len(raw_g) else "ALL"
                         clean_g = self._clean_val(g_id)
                         
                         sub_name = subjects.get(clean_s).name if clean_s and clean_s in subjects else ("ОТМЕНА" if is_cancelled else None)
                         tea_name = teachers.get(clean_t).name if clean_t and clean_t in teachers else None
                         rom_name = rooms.get(clean_r).name if clean_r and clean_r in rooms else None
-                        grp_name = class_groups.get(clean_g, "Весь класс") if clean_g != "ALL" else "Весь класс"
+                        
+                        safe_g_id = clean_g if clean_g and clean_g != "ALL" else "ALL"
+                        grp_name = class_groups.get(safe_g_id, "Весь класс") if safe_g_id != "ALL" else "Весь класс"
 
-                        # Формирование детерминированного ID: period_class_date_lesson_group[cite: 1, 7]
-                        safe_g_id = clean_g if clean_g else "ALL"
-                        lesson_id = f"{period_id}_{class_id}_{iso_date}_{lesson_num}_{safe_g_id}"
+                        # Формирование детерминированного ID с учетом индекса для параллельных уроков[cite: 11]
+                        lesson_id = f"{period_id}_{class_id}_{iso_date}_{lesson_num}_{safe_g_id}_{idx}"
 
                         lessons.append(LessonInstance(
                             id=lesson_id,
@@ -137,3 +145,4 @@ class NikaNormalizer:
                             groups_raw=raw_g, subjects_raw=raw_s, rooms_raw=raw_r
                         ))
         return lessons
+    

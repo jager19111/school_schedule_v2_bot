@@ -250,26 +250,6 @@ class UIRenderer:
             text += f"- {role}: {count}\n"
         return text
  
-    @staticmethod
-    def render_child_day_schedule(dto: DayScheduleDTO) -> str:
-        if not dto.lessons:
-            return f"На сегодня ({dto.date_iso}) уроков не найдено или расписание еще не загружено."
-            
-        text_lines = [f"📅 <b>Расписание на сегодня ({dto.date_iso})</b>\n"]
-        for l in dto.lessons:
-            if l.get("is_extra"):
-                label = " (Доп. занятие)"
-            else:
-                label = ""
-
-            status = "🚫 ОТМЕНЕН" if l['is_cancelled'] else ("🔄 (Замена)" if l['is_exchange'] else "")
-            room = f"каб. {l.get('room_name', '—')}"
-            num = l['lesson_num'] if l['lesson_num'] is not None else "•"
-
-            text_lines.append(
-                f"{num}. {l['start_time']}-{l['end_time']} | <b>{l['subject_name']}{label}</b> {room} {status}"
-            )
-        return "\n".join(text_lines)
 # под вопросом
     @staticmethod
     def render_parent_children_menu(dto: ChildrenListDTO) -> str:
@@ -326,6 +306,7 @@ class UIRenderer:
         day_name = UIRenderer.FULL_DAYS_MAP.get(date_obj.isoweekday(), "")
         return f"━━━━━━━━━━━━━━━━━\n📅 {day_name}, {date_obj.strftime('%d.%m.%Y')}\n━━━━━━━━━━━━━━━━━\n"
 
+# вывод расписания
     @staticmethod
     def render_child_day_schedule(dto: 'DayScheduleDTO', name: str | None = None) -> tuple[str, None]:
         if not dto.lessons:
@@ -338,18 +319,52 @@ class UIRenderer:
 
         if main_lessons:
             text += "\n📚 <b>Основное расписание</b>\n\n"
+            
+            # Группировка по номеру урока
+            grouped_lessons = {}
             for l in main_lessons:
-                icon = "🔄" if l['is_exchange'] else ("🚫" if l['is_cancelled'] else "📚")
-                room = f" → {l.get('room_name')}" if l.get('room_name') and l.get('room_name') != "—" else ""
-                num = l['lesson_num'] if l['lesson_num'] else "•"
-                name_str = "ОТМЕНА" if l['is_cancelled'] else l['subject_name']
-                text += f"{icon} {num}. {l['start_time']} - {l['end_time']} | {name_str}{room}\n"
+                num = l['lesson_num'] if l['lesson_num'] else 99  # 99 для уроков без номера
+                if num not in grouped_lessons:
+                    grouped_lessons[num] = []
+                grouped_lessons[num].append(l)
+
+            for num, parallel_lessons in grouped_lessons.items():
+                first = parallel_lessons[0]
+                num_str = f"{first['lesson_num']}." if first['lesson_num'] else "•"
+                time_str = f"{first['start_time']} - {first['end_time']}"
+                
+                if len(parallel_lessons) == 1:
+                    # Одиночный урок
+                    l = first
+                    icon = "🔄" if l['is_exchange'] else ("🚫" if l['is_cancelled'] else "📚")
+                    room = f" → {l.get('room_name')}" if l.get('room_name') and l.get('room_name') != "—" else ""
+                    name_str = "ОТМЕНА" if l['is_cancelled'] else (l.get('subject_name') or "Без предмета")
+                    grp_label = f" ({l.get('group_name')})" if l.get('group_id') != "ALL" and l.get('group_name') else ""
+                    
+                    text += f"{icon} {num_str} {time_str} | {name_str}{grp_label}{room}\n"
+                else:
+                    # Параллельные уроки (подгруппы)
+                    text += f"📚 {num_str} {time_str}\n"
+                    for i, l in enumerate(parallel_lessons):
+                        is_last = (i == len(parallel_lessons) - 1)
+                        prefix = "    └ " if is_last else "    ├ "
+                        
+                        icon = "🔄" if l['is_exchange'] else ("🚫" if l['is_cancelled'] else "")
+                        icon_str = f"{icon} " if icon else ""
+                        room = f" → {l.get('room_name')}" if l.get('room_name') and l.get('room_name') != "—" else ""
+                        name_str = "ОТМЕНА" if l['is_cancelled'] else (l.get('subject_name') or "Без предмета")
+                        
+                        # Если имя группы так и не пришло, используем ID
+                        grp_name = l.get('group_name') or f"Группа {l.get('group_id')}"
+                        grp_label = f" ({grp_name})" if l.get('group_id') != "ALL" else ""
+                        
+                        text += f"  {prefix}{icon_str}{name_str}{grp_label}{room}\n"
 
         if extra_lessons:
             text += "\n🎨 <b>Доп. занятия</b>\n\n"
             for i, l in enumerate(extra_lessons, 1):
                 room = f" → {l.get('room_name')}" if l.get('room_name') and l.get('room_name') != "—" else ""
-                text += f"{i}. {l['start_time']} - {l['end_time']} | 🎸 {l['subject_name']}{room}\n"
+                text += f"🎸 {i}. {l['start_time']} - {l['end_time']} | {l['subject_name']}{room}\n"
 
         return text, None
 
