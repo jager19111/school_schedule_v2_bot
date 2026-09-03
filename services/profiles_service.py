@@ -1,7 +1,8 @@
 import logging
+import aiosqlite
 from typing import Dict, Any, List, Optional
 
-from core.models.dto import UserProfileDTO, ChildInfoDTO
+from core.models.dto import UserProfileDTO, ChildInfoDTO, FamilyMemberDTO
 from core.repository.profile_repository import ProfileRepository
 
 logger = logging.getLogger(__name__)
@@ -177,3 +178,20 @@ class ProfileService:
 
     async def update_integer_setting(self, user_id: int, field_name: str, value: int) -> None:
         await self.repo.update_integer_setting(user_id, field_name, value)
+    
+    # метод получения состава семьи
+    async def get_family_members(self, family_id: int) -> list[FamilyMemberDTO]:
+        """Возвращает список всех участников семьи."""
+        rows = await self.repo.get_family_members_rows(family_id)
+        return [
+            FamilyMemberDTO(
+                user_id=r['user_id'],
+                name=r['name'] if r['name'] else f"Участник {r['user_id']}",
+                role=r['role'],
+                class_id=r['class_id']
+            ) for r in rows
+        ]
+
+    async def update_user_role(self, user_id: int, role: str) -> None:
+        """Делегирует обновление роли и настроек репозиторию."""
+        await self.repo.update_role_and_defaults(user_id, role)

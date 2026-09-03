@@ -134,3 +134,12 @@ class TeacherListDTO:
     DTO для списка учителей.
     """
     teachers: Dict[str, str]  # id -> name
+    
+@dataclass
+class FamilyMemberDTO:
+    """ DTO для одного члена семьи. 
+    """
+    user_id: int
+    name: str
+    role: str
+    class_id: Optional[str] = None

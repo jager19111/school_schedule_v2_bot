@@ -1,6 +1,6 @@
 from typing import Any, Dict, List, Optional, Set
 from datetime import datetime, timedelta, timezone, date
-from core.models.dto import ClassListDTO, FamilyCreatedDTO, AdminStatsDTO, DayScheduleDTO, ChildrenListDTO, ExtraClassListDTO, WeekSummaryDTO, FullWeekScheduleDTO, UserProfileDTO
+from core.models.dto import ClassListDTO, FamilyCreatedDTO, AdminStatsDTO, DayScheduleDTO, ChildrenListDTO, ExtraClassListDTO, WeekSummaryDTO, FullWeekScheduleDTO, UserProfileDTO, FamilyMemberDTO
 
 class UIRenderer:
     
@@ -204,12 +204,7 @@ class UIRenderer:
     def render_success_join(name: str | None) -> str:
         greeting = f", {name}" if name else ""
         return (
-            f"✅ Привет{greeting}! Вы успешно присоединены к семье!\n\n"
-            f"🤖 <b>Что я умею:</b>\n"
-            f"• Отображать расписание детей\n"
-            f"• Присылать уведомления об изменениях в уроках\n"
-            f"• Помогать в управлении дополнительными занятиями\n\n"
-            f"Настройка завершена. Расписание доступно через меню ⬇️"
+            f"✅ Вы успешно присоединены к семье!\n\n"
         )
 
     @staticmethod
@@ -311,7 +306,37 @@ class UIRenderer:
         text += "Выберите действие:"
         
         return text
-
+    
+ # Меню семьи 
+    @staticmethod
+    def render_family_members_menu(
+        members: list['FamilyMemberDTO'], 
+        current_user: 'UserProfileDTO', 
+        classes_dict: dict
+    ) -> str:
+        text = "👨‍👩‍👧 <b>Ваша семья</b>\n\n"
+        roles_ru = {"parent": "👨‍👩‍👧 Родитель", "child": "👶 Ребёнок", "observer": "👁 Наблюдатель"}
+        
+        # Сортируем: сначала взрослые, потом дети
+        sorted_members = sorted(members, key=lambda m: 1 if m.role == 'child' else 0)
+        
+        for m in sorted_members:
+            role_str = roles_ru.get(m.role, m.role)
+            me_flag = " <i>(Вы)</i>" if m.user_id == current_user.user_id else ""
+            
+            if m.role == 'child':
+                class_name = classes_dict.get(m.class_id, m.class_id) if m.class_id else "Класс не выбран"
+                text += f"{role_str}: <b>{m.name}</b>{me_flag} — {class_name}\n"
+            else:
+                text += f"{role_str}: <b>{m.name}</b>{me_flag}\n"
+                
+        if current_user.role == 'parent':
+            text += "\n⚙️ <i>Выберите ребенка ниже для настройки профиля:</i>"
+        else:
+            text += "\n🔒 <i>Управление настройками доступно только родителям.</i>"
+            
+        return text
+    
     @staticmethod
     def render_family_management_error() -> str:
         return "👨‍👩‍👧 <b>Управление семьей</b>\n\nВы не состоите в семье. Обратитесь к администратору семьи, запросите код и перерегистрируйте учетную запись."

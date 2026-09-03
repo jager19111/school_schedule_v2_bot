@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta, timezone, date
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
-from core.models.dto import ClassListDTO, GroupListDTO, ChildrenListDTO, UserProfileDTO, TeacherListDTO
+from core.models.dto import ClassListDTO, GroupListDTO, ChildrenListDTO, UserProfileDTO, TeacherListDTO, FamilyMemberDTO
 
 class Keyboards:
     @staticmethod
@@ -396,3 +396,22 @@ class Keyboards:
             [InlineKeyboardButton(text="⬅️ Назад", callback_data="settings:main")]
         ])
         
+    # Клавитура семьи
+    @staticmethod
+    def get_family_management_kb(
+        members: list['FamilyMemberDTO'], 
+        current_user: 'UserProfileDTO', 
+        classes_dict: dict
+    ) -> InlineKeyboardMarkup:
+        buttons = []
+        
+        # Только родитель получает кнопки для входа в настройки детей
+        if current_user.role == 'parent':
+            for m in members:
+                if m.role == 'child':
+                    class_name = classes_dict.get(m.class_id, m.class_id) if m.class_id else "Нет класса"
+                    btn_text = f"⚙️ Настроить: {m.name} ({class_name})"
+                    buttons.append([InlineKeyboardButton(text=btn_text, callback_data=f"family:child_settings:{m.user_id}")])
+                    
+        buttons.append([InlineKeyboardButton(text="⬅️ Назад к настройкам", callback_data="settings:main")])
+        return InlineKeyboardMarkup(inline_keyboard=buttons)    

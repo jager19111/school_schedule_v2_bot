@@ -217,3 +217,36 @@ class ProfileRepository(BaseRepository):
         allowed_fields = {"pre_lesson_offset_minutes", "global_extra_reminder"}
         if field_name in allowed_fields:
             await self._execute(f"UPDATE users SET {field_name} = ? WHERE user_id = ?", (value, user_id))
+            
+    # метод получения состава семьи
+    async def get_family_members_rows(self, family_id: int) -> list[dict]:
+        """Возвращает сырые данные всех участников семьи."""
+        return await self._fetch_all(
+            "SELECT user_id, name, role, class_id FROM users WHERE family_id = ?",
+            (family_id,)
+        )
+
+    async def update_role_and_defaults(self, user_id: int, role: str) -> None:
+        """Назначает роль и выставляет дефолтные настройки уведомлений."""
+        async with aiosqlite.connect(self.db_path) as db:
+            if role in ('parent', 'observer'):
+                # Взрослые: включены только изменения, остальное в 0
+                await db.execute('''
+                    UPDATE users 
+                    SET role = ?, 
+                        pre_lesson_offset_minutes = 0, 
+                        global_extra_reminder = 0
+                    WHERE user_id = ?
+                ''', (role, user_id))
+            elif role == 'child':
+                # Ребенок: предурочные выключены (0), остальное работает
+                await db.execute('''
+                    UPDATE users 
+                    SET role = ?, 
+                        pre_lesson_offset_minutes = 0
+                    WHERE user_id = ?
+                ''', (role, user_id))
+            else:
+                await db.execute("UPDATE users SET role = ? WHERE user_id = ?", (role, user_id))
+            
+            await db.commit()

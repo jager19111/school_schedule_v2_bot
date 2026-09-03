@@ -93,26 +93,27 @@ async def process_restart(callback: CallbackQuery, state: FSMContext, profile_se
 # ================= 3. УПРАВЛЕНИЕ СЕМЬЕЙ =================
 
 @router.callback_query(F.data == "settings:family")
-async def show_family_management(callback: CallbackQuery, profile_service: ProfileService, schedule_service: ScheduleService):
+async def show_family_management(
+    callback: CallbackQuery, 
+    profile_service: ProfileService, 
+    schedule_service: ScheduleService
+):
     user_dto = await profile_service.get_user_profile_dto(callback.from_user.id)
     
-    # Жесткая изоляция: ребенок не управляет семьей
-    if user_dto.role == "child":
+    if not user_dto.family_id:
         text = UIRenderer.render_family_management_error()
         kb = Keyboards.get_settings_main_kb(user_dto)
-        await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
-        return await callback.answer()
+        return await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
 
-    children_dtos = await profile_service.get_children_for_parent(callback.from_user.id)
-    list_dto = ChildrenListDTO(children=children_dtos, action="settings")
-    
-    # Запрашиваем классы для расшифровки ID (например, 016 -> 6а)
+    # Получаем полный состав семьи
+    family_members = await profile_service.get_family_members(user_dto.family_id)
     class_dto = await schedule_service.get_classes_list()
     
-    text = UIRenderer.render_family_management_menu()
-    kb = Keyboards.get_family_management_kb(list_dto, class_dto.classes)
+    text = UIRenderer.render_family_members_menu(family_members, user_dto, class_dto.classes)
+    kb = Keyboards.get_family_management_kb(family_members, user_dto, class_dto.classes)
     
-    await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    with contextlib.suppress(TelegramBadRequest):
+        await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
     await callback.answer()
 
 @router.callback_query(F.data.startswith("family:child_settings:"))
