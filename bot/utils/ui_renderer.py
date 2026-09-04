@@ -1,7 +1,9 @@
 from typing import Any, Dict, List, Optional, Set
 from datetime import datetime, timedelta, timezone, date
-from core.models.dto import ClassListDTO, FamilyCreatedDTO, AdminStatsDTO, DayScheduleDTO, ChildrenListDTO, ExtraClassListDTO, WeekSummaryDTO, FullWeekScheduleDTO, UserProfileDTO, FamilyMemberDTO
-
+from core.models.dto import (ClassListDTO, FamilyCreatedDTO, AdminStatsDTO, DayScheduleDTO, ChildrenListDTO, ExtraClassListDTO,
+                             WeekSummaryDTO, FullWeekScheduleDTO, UserProfileDTO, FamilyMemberDTO,
+                             MorningSummaryDTO, ChangeReminderDTO, LessonReminderDTO
+)
 class UIRenderer:
     
     @staticmethod
@@ -354,9 +356,9 @@ class UIRenderer:
     def render_family_management_error() -> str:
         return "👨‍👩‍👧 <b>Управление семьей</b>\n\nВы не состоите в семье. Обратитесь к администратору семьи, запросите код и перерегистрируйте учетную запись."
 
-    @staticmethod
-    def render_notifications_menu() -> str:
-        return "🔔 <b>Настройки уведомлений</b>\n\nЗдесь вы можете детально настроить, какие оповещения получать:"
+#    @staticmethod
+#    def render_notifications_menu() -> str:
+#        return "🔔 <b>Настройки уведомлений</b>\n\nЗдесь вы можете детально настроить, какие оповещения получать:"
     
 # Сводка
     @staticmethod
@@ -504,3 +506,43 @@ class UIRenderer:
             "Когда отметите все нужные, нажмите <b>«💾 Подтвердить выбор»</b>."
         )
         return text, None
+    
+    
+# Уведомления
+
+    # Доработать!. TODO: Возможно, стоит удалить или объединить с render_notifications_menu
+    @staticmethod
+    def render_notifications_menu(user_dto: 'UserProfileDTO') -> str:
+        text = "🔔 <b>Настройки уведомлений</b>\n\n"
+        text += f"1️⃣ Уведомления о заменах и отменах уроков: {'✅ Включены' if user_dto.can_edit_extra_classes else '❌ Выключены'}\n"
+        text += f"2️⃣ Уведомления о дополнительных занятиях: {'✅ Включены' if user_dto.global_extra_reminder else '❌ Выключены'}\n"
+        text += f"3️⃣ Утренние сводки: {'✅ Включены' if user_dto.morning_summary_time else '❌ Выключены'}\n"
+        if user_dto.morning_summary_time:
+            text += f"   ⏰ Время утренней сводки: {user_dto.morning_summary_time}\n"
+        return text
+    
+    @staticmethod
+    def render_lesson_reminder(dto: 'LessonReminderDTO') -> str:
+        icon = "🎨" if dto.is_extra else "🔔"
+        lesson_type = "Доп. занятие" if dto.is_extra else "Урок"
+        return f"{icon} {lesson_type} <b>{dto.subject_name}</b> начнется в {dto.start_time} (каб. {dto.room_name})"
+
+    @staticmethod
+    def render_change_reminder(dto: 'ChangeReminderDTO') -> str:
+        status = "🚫 ОТМЕНЕН" if dto.is_cancelled else "🔄 ИЗМЕНЕН"
+        return f"❗️ Внимание! {dto.date} урок №{dto.lesson_num} ({dto.subject_name}) {status}."
+
+    @staticmethod
+    def render_morning_summary(dto: 'MorningSummaryDTO') -> str:
+        if not dto.lessons:
+            return f"🌅 <b>Утренняя сводка на сегодня ({dto.date_iso})</b>\n\nЗанятий не найдено."
+
+        text_lines = [f"🌅 <b>Утренняя сводка на сегодня ({dto.date_iso})</b>\n"]
+        for l in dto.lessons:
+            if l.is_extra:
+                text_lines.append(f"• <b>{l.start_time} - {l.end_time}</b> | 🎨 <b>{l.subject_name}</b> (каб. {l.room_name})")
+            else:
+                status = " 🚫 ОТМЕНЕН" if l.is_cancelled else (" 🔄 (Замена)" if l.is_exchange else "")
+                text_lines.append(f"{l.lesson_num}. {l.start_time} - {l.end_time} | <b>{l.subject_name}</b> каб. {l.room_name}{status}")
+        
+        return "\n".join(text_lines)

@@ -85,7 +85,7 @@ async def main():
     # 5. Сервисы
     schedule_service = ScheduleService(schedule_repo=schedule_repo, extra_classes_repo=extra_classes_repo, time_service=time_service)
     profile_service = ProfileService(profile_repo)
-    notification_service = NotificationService(bot, notification_repo, time_service)
+    notification_service = NotificationService(bot, notification_repo, time_service=time_service, schedule_repo=schedule_repo, extra_classes_repo=extra_classes_repo)
     cleanup_job = UserCleanupJob(user_repo, time_service=time_service, dormant_days=60)
     admin_service = AdminService(admin_repo)
     extra_classes_service = ExtraClassesService(extra_classes_repo=extra_classes_repo, time_service=time_service)
@@ -160,6 +160,15 @@ async def main():
         id='dormant_cleanup',
         replace_existing=True
     )
+#TODO: добавить утреннюю сводку в 07:00 (для родителей и наблюдателей)
+    #  настройка задачи утренней сводки:
+    scheduler.add_job(
+        notification_service.send_morning_reminders,
+        trigger='interval',
+        minutes=1,
+        id='morning_reminders',
+        replace_existing=True
+)
 
     scheduler.start()
     logger.info("Планировщик задач успешно запущен.")

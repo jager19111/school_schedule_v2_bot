@@ -99,3 +99,34 @@ class NotificationRepository(BaseRepository):
             "UPDATE schedule_cache SET is_change_notified = 1 WHERE id = ?",
             (lesson_id,),
         )
+        
+    # ---------- Утренняя сводка ----------
+    async def get_users_for_morning_summary(self, time_str: str) -> List[Dict[str, Any]]:
+        """Выбирает пользователей, у которых время сводки совпадает с текущим."""
+        return await self._fetch_all(
+            """
+            SELECT user_id, class_id, group_id 
+            FROM users 
+            WHERE is_notifications_enabled = 1 
+              AND morning_summary_time = ?
+            """,
+            (time_str,)
+        )
+
+    # ---------- Дополнительные занятия ----------
+    async def get_todays_extra_classes_for_reminders(self, day_of_week: int) -> List[Dict[str, Any]]:
+        """
+        Выбирает доп. занятия на сегодня для пользователей с включенными уведомлениями.
+        Учитывает индивидуальные и глобальные настройки напоминаний[cite: 3, 7].
+        """
+        return await self._fetch_all(
+            """
+            SELECT e.id, e.user_id, e.time_start, e.title, e.location, 
+                   e.reminder_minutes, u.global_extra_reminder
+            FROM extra_classes e
+            JOIN users u ON e.user_id = u.user_id
+            WHERE e.day_of_week = ? 
+              AND u.is_notifications_enabled = 1
+            """,
+            (day_of_week,)
+        )

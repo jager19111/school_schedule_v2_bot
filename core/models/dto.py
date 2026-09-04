@@ -144,3 +144,35 @@ class FamilyMemberDTO:
     name: str
     role: str
     class_id: Optional[str] = None
+    
+# Уведомления
+
+@dataclass
+class LessonReminderDTO:
+    subject_name: str
+    start_time: str
+    room_name: str
+    is_extra: bool = False
+
+@dataclass
+class ChangeReminderDTO:
+    date: str
+    lesson_num: int
+    subject_name: str
+    is_cancelled: bool
+
+@dataclass
+class MorningLessonDTO:
+    lesson_num: Optional[int]
+    start_time: str
+    end_time: str
+    subject_name: str
+    room_name: str
+    is_cancelled: bool
+    is_exchange: bool
+    is_extra: bool = False
+
+@dataclass
+class MorningSummaryDTO:
+    date_iso: str
+    lessons: List[MorningLessonDTO]

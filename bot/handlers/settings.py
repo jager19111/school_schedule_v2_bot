@@ -281,7 +281,7 @@ async def cancel_time_input(callback: CallbackQuery, state: FSMContext, profile_
 @router.callback_query(F.data == "settings:notifications")
 async def show_notifications_menu(callback: CallbackQuery, profile_service: ProfileService):
     user_dto = await profile_service.get_user_profile_dto(callback.from_user.id)
-    text = UIRenderer.render_notifications_menu()
+    text = UIRenderer.render_notifications_menu(user_dto)
     kb = Keyboards.get_notifications_kb(user_dto)
 
 # Глушим ошибку TelegramBadRequest, если меню не изменилось 
