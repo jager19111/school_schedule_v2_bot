@@ -102,6 +102,26 @@ class ChildInfoDTO:
     group_id: str  # <-- Обязательно добавляем поле
 
 @dataclass
+class ParentChildNotificationSettingsDTO:
+    """
+    Настройки уведомлений одного взрослого относительно одного ребёнка.
+
+    Это не личные настройки пользователя. Они принадлежат связи:
+        parent/observer -> конкретный child.
+    """
+    parent_id: int
+    child_id: int
+
+    child_name: str
+    child_class_id: Optional[str] = None
+    child_group_id: Optional[str] = None
+
+    receive_morning_summary: bool = True
+    receive_pre_lesson_reminders: bool = True
+    receive_schedule_changes: bool = True
+    receive_extra_class_reminders: bool = True
+    
+@dataclass
 class ChildrenListDTO:
     """ DTO для списка детей родителя. 
     """
@@ -164,10 +184,17 @@ class LessonReminderDTO:
 
 @dataclass
 class ChangeReminderDTO:
+    """
+    Уведомление о замене или отмене урока.
+
+    child_name задан только для взрослого получателя.
+    Для ребёнка остаётся None.
+    """
     date: str
     lesson_num: int
     subject_name: str
     is_cancelled: bool
+    child_name: Optional[str] = None
 
 @dataclass
 class MorningLessonDTO:
@@ -179,8 +206,18 @@ class MorningLessonDTO:
     is_cancelled: bool
     is_exchange: bool
     is_extra: bool = False
+    group_name: Optional[str] = None
 
 @dataclass
 class MorningSummaryDTO:
+    """
+    Утренняя сводка расписания одного ребёнка.
+
+    Для ребёнка-получателя child_name остаётся None.
+    Для взрослого получателя child_name содержит имя ребёнка.
+    """
     date_iso: str
     lessons: List[MorningLessonDTO]
+    child_name: Optional[str] = None
+    class_id: Optional[str] = None
+    

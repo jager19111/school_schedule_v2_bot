@@ -151,9 +151,9 @@ class Database:
                         CHECK (is_exchange IN (0, 1)),
                     is_cancelled INTEGER NOT NULL DEFAULT 0
                         CHECK (is_cancelled IN (0, 1)),
-                    is_notified INTEGER NOT NULL DEFAULT 0
+                    is_notified INTEGER NOT NULL DEFAULT 0.   --Удалть после рефакторинга, когда будет использоваться только notification_delivery_log
                         CHECK (is_notified IN (0, 1)),
-                    is_change_notified INTEGER NOT NULL DEFAULT 0
+                    is_change_notified INTEGER NOT NULL DEFAULT 0      --Удалть после рефакторинга, когда будет использоваться только notification_delivery_log
                         CHECK (is_change_notified IN (0, 1)),
                     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 )

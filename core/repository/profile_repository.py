@@ -349,6 +349,103 @@ class ProfileRepository(BaseRepository):
             (parent_user_id, child_user_id),
         )
 
+    async def get_parent_child_notification_settings_row(
+        self,
+        parent_user_id: int,
+        child_user_id: int,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Возвращает настройки уведомлений взрослого по конкретному ребёнку.
+
+        Запрос одновременно подтверждает:
+        - запись parent_child_settings существует;
+        - взрослый имеет подходящую роль;
+        - ребёнок имеет роль child;
+        - оба находятся в одной семье.
+        """
+        return await self._fetch_one(
+            """
+            SELECT
+                pcs.parent_id,
+                pcs.child_id,
+
+                child.name AS child_name,
+                child.class_id AS child_class_id,
+                child.group_id AS child_group_id,
+
+                pcs.receive_morning_summary,
+                pcs.receive_pre_lesson_reminders,
+                pcs.receive_schedule_changes,
+                pcs.receive_extra_class_reminders
+            FROM parent_child_settings AS pcs
+            JOIN users AS adult
+              ON adult.user_id = pcs.parent_id
+            JOIN users AS child
+              ON child.user_id = pcs.child_id
+            WHERE pcs.parent_id = ?
+              AND pcs.child_id = ?
+              AND adult.role IN ('parent', 'observer')
+              AND child.role = 'child'
+              AND adult.family_id = child.family_id
+            """,
+            (parent_user_id, child_user_id),
+        )
+
+    async def toggle_parent_child_notification_setting(
+        self,
+        parent_user_id: int,
+        child_user_id: int,
+        setting_name: str,
+    ) -> bool:
+        """
+        Переключает один notification-флаг взрослого для конкретного ребёнка.
+
+        Имя SQL-поля нельзя передавать из callback напрямую. Оно проходит
+        обязательную проверку по белому списку.
+        """
+        allowed_fields = {
+            "receive_morning_summary",
+            "receive_pre_lesson_reminders",
+            "receive_schedule_changes",
+            "receive_extra_class_reminders",
+        }
+
+        if setting_name not in allowed_fields:
+            raise ValueError(
+                f"Unsupported parent-child notification setting: {setting_name}"
+            )
+
+        changed = await self._execute(
+            f"""
+            UPDATE parent_child_settings
+            SET {setting_name} = CASE
+                    WHEN {setting_name} = 1 THEN 0
+                    ELSE 1
+                END,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE parent_id = ?
+              AND child_id = ?
+              AND EXISTS (
+                  SELECT 1
+                  FROM users AS adult
+                  JOIN users AS child
+                    ON child.user_id = ?
+                   AND child.family_id = adult.family_id
+                  WHERE adult.user_id = ?
+                    AND adult.role IN ('parent', 'observer')
+                    AND child.role = 'child'
+              )
+            """,
+            (
+                parent_user_id,
+                child_user_id,
+                child_user_id,
+                parent_user_id,
+            ),
+        )
+
+        return changed == 1
+    
     async def parent_can_access_child(
         self,
         parent_user_id: int,
@@ -371,20 +468,39 @@ class ProfileRepository(BaseRepository):
     
     # ========== CHILDREN LIST ==========
 
-    async def get_children_for_parent_rows(self, parent_user_id: int) -> List[Dict[str, Any]]:
+    async def get_children_for_parent_rows(
+        self,
+        parent_user_id: int,
+    ) -> List[Dict[str, Any]]:
         """
-        Возвращает список детей в виде dict-строк для родителя.
+        Возвращает только детей, на которых у взрослого есть запись
+        parent_child_settings.
+
+        parent_child_settings — источник истины для взрослого доступа
+        к конкретному ребёнку.
         """
         return await self._fetch_all(
             """
-            SELECT user_id, name, class_id, group_id
-            FROM users
-            WHERE family_id = (SELECT family_id FROM users WHERE user_id = ?)
-              AND role = 'child'
+            SELECT
+                child.user_id,
+                child.name,
+                child.class_id,
+                child.group_id
+            FROM parent_child_settings AS pcs
+            JOIN users AS adult
+              ON adult.user_id = pcs.parent_id
+            JOIN users AS child
+              ON child.user_id = pcs.child_id
+            WHERE pcs.parent_id = ?
+              AND adult.role IN ('parent', 'observer')
+              AND child.role = 'child'
+              AND adult.family_id = child.family_id
+            ORDER BY
+                COALESCE(child.name, ''),
+                child.user_id
             """,
             (parent_user_id,),
         )
-        
         
     async def update_user_name(self, user_id: int, name: str) -> None:
         """Сохраняет имя пользователя."""

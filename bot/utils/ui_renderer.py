@@ -2,7 +2,7 @@ from typing import Any, Dict, List, Optional, Set
 from datetime import datetime, timedelta, timezone, date
 from core.models.dto import (ClassListDTO, FamilyCreatedDTO, AdminStatsDTO, DayScheduleDTO, ChildrenListDTO, ExtraClassListDTO,
                              WeekSummaryDTO, FullWeekScheduleDTO, UserProfileDTO, FamilyMemberDTO,
-                             MorningSummaryDTO, ChangeReminderDTO, LessonReminderDTO
+                             MorningSummaryDTO, ChangeReminderDTO, LessonReminderDTO, ParentChildNotificationSettingsDTO
 )
 class UIRenderer:
     
@@ -292,9 +292,36 @@ class UIRenderer:
     def render_child_settings_menu(name: str, class_id: str) -> str:
         cls_text = class_id if class_id else "Не выбран"
         return f"⚙️ <b>Настройки профиля:</b> {name} ({cls_text})"
-    
-    # В классе UIRenderer:
 
+    @staticmethod
+    def render_parent_notification_children_menu() -> str:
+        """
+        Заголовок списка детей для управления подписками взрослого.
+        """
+        return (
+            "🔔 <b>Уведомления по детям</b>\n\n"
+            "Выберите ребёнка. Настройки применяются только к вашему "
+            "аккаунту и не изменяют настройки других взрослых."
+        )
+
+    @staticmethod
+    def render_parent_child_notification_settings(
+        dto: ParentChildNotificationSettingsDTO,
+    ) -> str:
+        """
+        Экран индивидуальных настроек уведомлений взрослого по ребёнку.
+        """
+        class_text = dto.child_class_id or "Класс не выбран"
+
+        return (
+            "🔔 <b>Уведомления по ребёнку</b>\n\n"
+            f"👤 Ребёнок: <b>{dto.child_name}</b>\n"
+            f"🎓 Класс: {class_text}\n\n"
+            "Настройки ниже относятся только к вам. "
+            "Другие взрослые и сам ребёнок управляют своими уведомлениями "
+            "независимо."
+        )
+        
     @staticmethod
     def render_settings_main(
         user_dto: 'UserProfileDTO', 
@@ -555,70 +582,148 @@ class UIRenderer:
         )
         
     @staticmethod
-    def render_change_reminder(dto: 'ChangeReminderDTO') -> str:
-        status = "🚫 ОТМЕНЕН" if dto.is_cancelled else "🔄 ИЗМЕНЕН"
-        child_str = f" (<b>{dto.child_name}</b>)" if dto.child_name else ""
-        return f"❗️ Внимание! {dto.date} урок №{dto.lesson_num}{child_str} ({dto.subject_name}) {status}."
+    def render_change_reminder(dto: ChangeReminderDTO) -> str:
+        """
+        Формирует уведомление об отмене или замене урока.
 
-    @staticmethod
-    def render_morning_summary(dto: 'MorningSummaryDTO') -> str:
-        from datetime import datetime
-        date_obj = datetime.fromisoformat(dto.date_iso)
-        date_str = date_obj.strftime('%d.%m')
-        
-        header = f"🌅 <b>Утренняя сводка на сегодня ({date_str})</b>"
-        if dto.child_name:
-            header += f"\n👤 <b>{dto.child_name} ({dto.class_id})</b>"
+        child_name выводится только для взрослого получателя.
+        """
+        child_line = (
+            f"👤 Ребёнок: <b>{dto.child_name}</b>\n"
+            if dto.child_name
+            else ""
+        )
+
+        if dto.is_cancelled:
+            return (
+                "🚫 <b>Отмена урока</b>\n"
+                f"{child_line}"
+                f"📅 Дата: {dto.date}\n"
+                f"🔢 Урок: {dto.lesson_num}\n"
+                f"📚 Предмет: <b>{dto.subject_name}</b>"
+            )
+
+        return (
+            "🔄 <b>Изменение в расписании</b>\n"
+            f"{child_line}"
+            f"📅 Дата: {dto.date}\n"
+            f"🔢 Урок: {dto.lesson_num}\n"
+            f"📚 Предмет: <b>{dto.subject_name}</b>"
+        )
             
-        if not dto.lessons:
-            return f"{header}\n\n🏖 Занятий нет.\n"
+        @staticmethod
+        def render_morning_summary(dto: 'MorningSummaryDTO') -> str:
+            from datetime import datetime
+            date_obj = datetime.fromisoformat(dto.date_iso)
+            date_str = date_obj.strftime('%d.%m')
             
-        main_lessons = [l for l in dto.lessons if not l.is_extra]
-        extra_lessons = [l for l in dto.lessons if l.is_extra]
-        
-        text = header + "\n"
-        
-        if main_lessons:
-            text += "\n📚 <b>Основное расписание</b>\n"
-            
-            grouped = {}
-            for l in main_lessons:
-                num = l.lesson_num if l.lesson_num else 99
-                if num not in grouped:
-                    grouped[num] = []
-                grouped[num].append(l)
+            header = f"🌅 <b>Утренняя сводка на сегодня ({date_str})</b>"
+            if dto.child_name:
+                header += f"\n👤 <b>{dto.child_name} ({dto.class_id})</b>"
                 
-            for num, parallel in grouped.items():
-                first = parallel[0]
-                num_str = f"{first.lesson_num}." if first.lesson_num else "•"
-                time_str = f"{first.start_time} - {first.end_time}"
+            if not dto.lessons:
+                return f"{header}\n\n🏖 Занятий нет.\n"
                 
-                if len(parallel) == 1:
-                    l = first
-                    icon = "🔄" if l.is_exchange else ("🚫" if l.is_cancelled else "📚")
-                    room = f" → {l.room_name}" if l.room_name and l.room_name != "—" else ""
-                    name_str = "ОТМЕНА" if l.is_cancelled else (l.subject_name or "Без предмета")
-                    grp_label = f" ({l.group_name})" if l.group_name else ""
+            main_lessons = [l for l in dto.lessons if not l.is_extra]
+            extra_lessons = [l for l in dto.lessons if l.is_extra]
+            
+            text = header + "\n"
+            
+            if main_lessons:
+                text += "\n📚 <b>Основное расписание</b>\n"
+                
+                grouped = {}
+                for l in main_lessons:
+                    num = l.lesson_num if l.lesson_num else 99
+                    if num not in grouped:
+                        grouped[num] = []
+                    grouped[num].append(l)
                     
-                    text += f"{icon} {num_str} {time_str} | {name_str}{grp_label}{room}\n"
-                else:
-                    text += f"📚 {num_str} {time_str}\n"
-                    for i, l in enumerate(parallel):
-                        is_last = (i == len(parallel) - 1)
-                        prefix = " └ " if is_last else " ├ "
-                        
-                        icon = "🔄" if l.is_exchange else ("🚫" if l.is_cancelled else "")
-                        icon_str = f"{icon} " if icon else ""
+                for num, parallel in grouped.items():
+                    first = parallel[0]
+                    num_str = f"{first.lesson_num}." if first.lesson_num else "•"
+                    time_str = f"{first.start_time} - {first.end_time}"
+                    
+                    if len(parallel) == 1:
+                        l = first
+                        icon = "🔄" if l.is_exchange else ("🚫" if l.is_cancelled else "📚")
                         room = f" → {l.room_name}" if l.room_name and l.room_name != "—" else ""
                         name_str = "ОТМЕНА" if l.is_cancelled else (l.subject_name or "Без предмета")
                         grp_label = f" ({l.group_name})" if l.group_name else ""
                         
-                        text += f"  {prefix}{icon_str}{name_str}{grp_label}{room}\n"
-                        
-        if extra_lessons:
-            text += "\n🎨 <b>Доп. занятия</b>\n"
-            for i, l in enumerate(extra_lessons, 1):
-                room = f" → {l.room_name}" if l.room_name and l.room_name != "—" else ""
-                text += f"🎸 {i}. {l.start_time} - {l.end_time} | {l.subject_name}{room}\n"
-                
-        return text + "\n"
+                        text += f"{icon} {num_str} {time_str} | {name_str}{grp_label}{room}\n"
+                    else:
+                        text += f"📚 {num_str} {time_str}\n"
+                        for i, l in enumerate(parallel):
+                            is_last = (i == len(parallel) - 1)
+                            prefix = " └ " if is_last else " ├ "
+                            
+                            icon = "🔄" if l.is_exchange else ("🚫" if l.is_cancelled else "")
+                            icon_str = f"{icon} " if icon else ""
+                            room = f" → {l.room_name}" if l.room_name and l.room_name != "—" else ""
+                            name_str = "ОТМЕНА" if l.is_cancelled else (l.subject_name or "Без предмета")
+                            grp_label = f" ({l.group_name})" if l.group_name else ""
+                            
+                            text += f"  {prefix}{icon_str}{name_str}{grp_label}{room}\n"
+                            
+            if extra_lessons:
+                text += "\n🎨 <b>Доп. занятия</b>\n"
+                for i, l in enumerate(extra_lessons, 1):
+                    room = f" → {l.room_name}" if l.room_name and l.room_name != "—" else ""
+                    text += f"🎸 {i}. {l.start_time} - {l.end_time} | {l.subject_name}{room}\n"
+                    
+            return text + "\n"
+    # Выбрать и доработать метод render_morning_summary, чтобы он корректно отображал сводку для одного ребёнка, учитывая его имя и класс.    
+    @staticmethod
+    def render_morning_summary(dto: MorningSummaryDTO) -> str:
+        """
+        Рендерит сводку расписания одного ребёнка.
+
+        Если child_name указан, это часть объединённой сводки взрослого.
+        Если child_name отсутствует, это личная сводка ребёнка.
+        """
+        header = "🌅 <b>Расписание на сегодня</b>\n"
+
+        if dto.child_name:
+            header += f"👤 Ребёнок: <b>{dto.child_name}</b>\n"
+
+        if dto.class_id:
+            header += f"🎓 Класс: {dto.class_id}\n"
+
+        if not dto.lessons:
+            return f"{header}\nНа сегодня занятий нет."
+
+        lines = [header]
+
+        for lesson in dto.lessons:
+            if lesson.is_extra:
+                location = lesson.room_name or "—"
+                lines.append(
+                    f"🎨 {lesson.start_time}–{lesson.end_time} | "
+                    f"<b>{lesson.subject_name}</b> "
+                    f"({location})"
+                )
+                continue
+
+            status = ""
+            if lesson.is_cancelled:
+                status = " 🚫 <b>ОТМЕНА</b>"
+            elif lesson.is_exchange:
+                status = " 🔄 <b>ЗАМЕНА</b>"
+
+            group_text = (
+                f" · {lesson.group_name}"
+                if lesson.group_name
+                else ""
+            )
+
+            lines.append(
+                f"{lesson.lesson_num}. "
+                f"{lesson.start_time}–{lesson.end_time} | "
+                f"<b>{lesson.subject_name}</b> | "
+                f"каб. {lesson.room_name}"
+                f"{group_text}"
+                f"{status}"
+            )
+
+        return "\n".join(lines)

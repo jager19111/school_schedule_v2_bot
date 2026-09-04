@@ -120,6 +120,10 @@ async def main():
     logger.info("Синхронизация первичного кэша расписания...")
     await scheduled_schedule_refresh(schedule_repo, tz)
 
+    # ВРЕМЕННЫЙ smoke-test предурочного уведомления.
+    # Удалить сразу после проверки.
+    await notification_service.send_morning_reminders()
+    
     # 6. Настройка планировщика задач (APScheduler)
     scheduler = AsyncIOScheduler(timezone=tz)
 

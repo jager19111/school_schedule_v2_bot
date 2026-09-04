@@ -116,6 +116,178 @@ async def show_family_management(
         await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
     await callback.answer()
 
+@router.callback_query(F.data == "settings:children_notifications")
+async def show_children_notification_settings(
+    callback: CallbackQuery,
+    profile_service: ProfileService,
+) -> None:
+    """
+    Показывает взрослому список детей, по которым он может настроить
+    персональные подписки.
+    """
+    parent_id = callback.from_user.id
+
+    parent_dto = await profile_service.get_user_profile_dto(parent_id)
+
+    if parent_dto.role not in ("parent", "observer"):
+        await callback.answer(
+            "Эта настройка доступна только родителям и наблюдателям.",
+            show_alert=True,
+        )
+        return
+
+    children = await profile_service.get_children_for_parent(parent_id)
+
+    if not children:
+        await callback.message.edit_text(
+            "👥 У вас пока нет детей, доступных для настройки уведомлений.\n\n"
+            "Сначала добавьте ребёнка в семью.",
+            reply_markup=Keyboards.get_settings_main_kb(parent_dto),
+            parse_mode="HTML",
+        )
+        await callback.answer()
+        return
+
+    text = UIRenderer.render_parent_notification_children_menu()
+    keyboard = Keyboards.get_parent_notification_children_kb(children)
+
+    await callback.message.edit_text(
+        text,
+        reply_markup=keyboard,
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+@router.callback_query(F.data.startswith("pcn:child:"))
+async def show_parent_child_notification_settings(
+    callback: CallbackQuery,
+    profile_service: ProfileService,
+) -> None:
+    """
+    Показывает настройки уведомлений текущего взрослого по ребёнку.
+    """
+    try:
+        child_id = int(callback.data.split(":")[2])
+    except (IndexError, ValueError):
+        await callback.answer(
+            "Некорректные данные выбранного ребёнка.",
+            show_alert=True,
+        )
+        return
+
+    parent_id = callback.from_user.id
+
+    settings_dto = await profile_service.get_parent_child_notification_settings(
+        parent_user_id=parent_id,
+        child_user_id=child_id,
+    )
+
+    if settings_dto is None:
+        logger.warning(
+            "Parent-child notification access denied: parent_id=%s child_id=%s",
+            parent_id,
+            child_id,
+        )
+        await callback.answer(
+            "У вас нет доступа к настройкам этого ребёнка.",
+            show_alert=True,
+        )
+        return
+
+    text = UIRenderer.render_parent_child_notification_settings(
+        settings_dto,
+    )
+
+    keyboard = Keyboards.get_parent_child_notification_settings_kb(
+        settings_dto,
+    )
+
+    await callback.message.edit_text(
+        text,
+        reply_markup=keyboard,
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+@router.callback_query(F.data.startswith("pcn:toggle:"))
+async def toggle_parent_child_notification_setting(
+    callback: CallbackQuery,
+    profile_service: ProfileService,
+) -> None:
+    """
+    Переключает один тип уведомлений текущего взрослого
+    для выбранного ребёнка.
+    """
+    try:
+        _, _, setting_token, child_id_raw = callback.data.split(":")
+        child_id = int(child_id_raw)
+    except (ValueError, IndexError):
+        await callback.answer(
+            "Некорректные параметры настройки.",
+            show_alert=True,
+        )
+        return
+
+    setting_map = {
+        "morning": "receive_morning_summary",
+        "prelesson": "receive_pre_lesson_reminders",
+        "changes": "receive_schedule_changes",
+        "extra": "receive_extra_class_reminders",
+    }
+
+    setting_name = setting_map.get(setting_token)
+
+    if setting_name is None:
+        await callback.answer(
+            "Неизвестный тип уведомления.",
+            show_alert=True,
+        )
+        return
+
+    parent_id = callback.from_user.id
+
+    changed = await profile_service.toggle_parent_child_notification_setting(
+        parent_user_id=parent_id,
+        child_user_id=child_id,
+        setting_name=setting_name,
+    )
+
+    if not changed:
+        await callback.answer(
+            "Не удалось изменить настройку. "
+            "Возможно, у вас нет доступа к ребёнку.",
+            show_alert=True,
+        )
+        return
+
+    settings_dto = await profile_service.get_parent_child_notification_settings(
+        parent_user_id=parent_id,
+        child_user_id=child_id,
+    )
+
+    if settings_dto is None:
+        await callback.answer(
+            "Настройки ребёнка больше недоступны.",
+            show_alert=True,
+        )
+        return
+
+    text = UIRenderer.render_parent_child_notification_settings(
+        settings_dto,
+    )
+
+    keyboard = Keyboards.get_parent_child_notification_settings_kb(
+        settings_dto,
+    )
+
+    await callback.message.edit_text(
+        text,
+        reply_markup=keyboard,
+        parse_mode="HTML",
+    )
+
+    await callback.answer("Настройка обновлена")
+            
 @router.callback_query(F.data.startswith("family:child_settings:"))
 async def show_child_settings(callback: CallbackQuery, profile_service: ProfileService):
     child_user_id = int(callback.data.split(":")[2])

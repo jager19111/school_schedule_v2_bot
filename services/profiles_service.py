@@ -2,8 +2,13 @@ import logging
 import aiosqlite
 from typing import Dict, Any, List, Optional
 
-from core.models.dto import UserProfileDTO, ChildInfoDTO, FamilyMemberDTO
 from core.repository.profile_repository import ProfileRepository
+from core.models.dto import (
+    UserProfileDTO,
+    ChildInfoDTO,
+    FamilyMemberDTO,
+    ParentChildNotificationSettingsDTO,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -180,7 +185,66 @@ class ProfileService:
             )
             for r in rows
         ]
-        
+
+    async def get_parent_child_notification_settings(
+        self,
+        parent_user_id: int,
+        child_user_id: int,
+    ) -> Optional[ParentChildNotificationSettingsDTO]:
+        """
+        Возвращает настройки уведомлений текущего взрослого
+        по выбранному ребёнку.
+        """
+        row = await self.repo.get_parent_child_notification_settings_row(
+            parent_user_id=parent_user_id,
+            child_user_id=child_user_id,
+        )
+
+        if row is None:
+            return None
+
+        child_name = row.get("child_name")
+        if not child_name:
+            child_name = f"Ученик {child_user_id}"
+
+        return ParentChildNotificationSettingsDTO(
+            parent_id=row["parent_id"],
+            child_id=row["child_id"],
+            child_name=child_name,
+            child_class_id=row.get("child_class_id"),
+            child_group_id=row.get("child_group_id"),
+            receive_morning_summary=bool(
+                row["receive_morning_summary"]
+            ),
+            receive_pre_lesson_reminders=bool(
+                row["receive_pre_lesson_reminders"]
+            ),
+            receive_schedule_changes=bool(
+                row["receive_schedule_changes"]
+            ),
+            receive_extra_class_reminders=bool(
+                row["receive_extra_class_reminders"]
+            ),
+        )
+
+    async def toggle_parent_child_notification_setting(
+        self,
+        parent_user_id: int,
+        child_user_id: int,
+        setting_name: str,
+    ) -> bool:
+        """
+        Переключает настройку уведомлений взрослого по конкретному ребёнку.
+
+        Взрослый может изменить только собственную строку
+        parent_child_settings и только для ребёнка, к которому он привязан.
+        """
+        return await self.repo.toggle_parent_child_notification_setting(
+            parent_user_id=parent_user_id,
+            child_user_id=child_user_id,
+            setting_name=setting_name,
+        )
+                
 # для переключения флагов (toggles) и получения family_code по ID, чтобы изолировать SQL от хендлеров.
     async def get_family_code(self, family_id: int) -> str | None:
         return await self.repo.get_family_code_by_id(family_id)

@@ -1,6 +1,8 @@
 from datetime import datetime, timedelta, timezone, date
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
-from core.models.dto import ClassListDTO, GroupListDTO, ChildrenListDTO, UserProfileDTO, TeacherListDTO, FamilyMemberDTO
+from core.models.dto import ( ClassListDTO, GroupListDTO, ChildrenListDTO, UserProfileDTO, TeacherListDTO, 
+                             FamilyMemberDTO, ParentChildNotificationSettingsDTO, ChildInfoDTO
+)
 
 class Keyboards:
     @staticmethod
@@ -157,20 +159,48 @@ class Keyboards:
             [InlineKeyboardButton(text="⬅️ Назад к составу семьи", callback_data="settings:family")]
         ])
         
-    # В классе Keyboards:
-
     @staticmethod
-    def get_settings_main_kb(user_dto: 'UserProfileDTO') -> InlineKeyboardMarkup:
-        """Главное меню настроек (обновленное)."""
+    def get_settings_main_kb(
+        user_dto: UserProfileDTO,
+    ) -> InlineKeyboardMarkup:
+        """Главное меню настроек пользователя."""
         buttons = []
-        
-        # Для ребёнка добавляем кнопку смены класса
+
         if user_dto.role == "child":
-            buttons.append([InlineKeyboardButton(text="🎓 Сменить класс/группу", callback_data="settings:change_class")])
-            
-        buttons.append([InlineKeyboardButton(text="👨‍👩‍👧 Управление семьей", callback_data="settings:family")])
-        buttons.append([InlineKeyboardButton(text="🔔 Настройки уведомлений", callback_data="settings:notifications")])
-        buttons.append([InlineKeyboardButton(text="🔄 Перерегистрироваться / Выйти", callback_data="auth:restart")])
+            buttons.append([
+                InlineKeyboardButton(
+                    text="🎓 Сменить класс/группу",
+                    callback_data="settings:change_class",
+                )
+            ])
+
+        if user_dto.role in ("parent", "observer"):
+            buttons.append([
+                InlineKeyboardButton(
+                    text="👨‍👩‍👧 Управление семьей",
+                    callback_data="settings:family",
+                )
+            ])
+            buttons.append([
+                InlineKeyboardButton(
+                    text="🔔 Уведомления по детям",
+                    callback_data="settings:children_notifications",
+                )
+            ])
+
+        buttons.append([
+            InlineKeyboardButton(
+                text="🔔 Мои уведомления",
+                callback_data="settings:notifications",
+            )
+        ])
+
+        buttons.append([
+            InlineKeyboardButton(
+                text="🔄 Перерегистрироваться / Выйти",
+                callback_data="auth:restart",
+            )
+        ])
 
         return InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -447,6 +477,7 @@ class Keyboards:
         buttons.append([InlineKeyboardButton(text="⬅️ Назад к настройкам", callback_data="settings:main")])
         return InlineKeyboardMarkup(inline_keyboard=buttons)    
 
+# Возможно нужно удалить, так как есть get_parent_children_menu, но она не используется в коде.
     @staticmethod
     def get_extra_children_select_kb(children: list) -> InlineKeyboardMarkup:
         """Клавиатура выбора ребенка для родителя."""
@@ -454,3 +485,99 @@ class Keyboards:
         for child in children:
             buttons.append([InlineKeyboardButton(text=f"👦/👧 {child.name}", callback_data=f"extra:menu:{child.user_id}")])
         return InlineKeyboardMarkup(inline_keyboard=buttons)
+    
+    @staticmethod
+    def get_parent_notification_children_kb(
+        children: list[ChildInfoDTO],
+    ) -> InlineKeyboardMarkup:
+        """
+        Выбор ребёнка для настройки персональных подписок взрослого.
+        """
+        buttons = []
+
+        for child in children:
+            name = child.name or f"Ученик {child.user_id}"
+            class_name = child.class_id or "—"
+
+            buttons.append([
+                InlineKeyboardButton(
+                    text=f"👤 {name} ({class_name})",
+                    callback_data=f"pcn:child:{child.user_id}",
+                )
+            ])
+
+        buttons.append([
+            InlineKeyboardButton(
+                text="⬅️ Назад к настройкам",
+                callback_data="settings:main",
+            )
+        ])
+
+        return InlineKeyboardMarkup(inline_keyboard=buttons)
+    
+    
+    @staticmethod
+    def get_parent_child_notification_settings_kb(
+        dto: ParentChildNotificationSettingsDTO,
+    ) -> InlineKeyboardMarkup:
+        """
+        Клавиатура настройки четырёх типов уведомлений взрослого
+        по конкретному ребёнку.
+        """
+        def status(value: bool) -> str:
+            return "ВКЛ 🟢" if value else "ВЫКЛ 🔴"
+
+        child_id = dto.child_id
+
+        return InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text=(
+                            "🌅 Утренняя сводка: "
+                            f"{status(dto.receive_morning_summary)}"
+                        ),
+                        callback_data=f"pcn:toggle:morning:{child_id}",
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text=(
+                            "⏰ Напоминания об уроках: "
+                            f"{status(dto.receive_pre_lesson_reminders)}"
+                        ),
+                        callback_data=f"pcn:toggle:prelesson:{child_id}",
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text=(
+                            "🔄 Изменения расписания: "
+                            f"{status(dto.receive_schedule_changes)}"
+                        ),
+                        callback_data=f"pcn:toggle:changes:{child_id}",
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text=(
+                            "🎨 Доп. занятия: "
+                            f"{status(dto.receive_extra_class_reminders)}"
+                        ),
+                        callback_data=f"pcn:toggle:extra:{child_id}",
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="⬅️ К списку детей",
+                        callback_data="settings:children_notifications",
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="⚙️ Главные настройки",
+                        callback_data="settings:main",
+                    )
+                ],
+            ]
+        )
