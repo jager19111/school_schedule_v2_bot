@@ -244,13 +244,12 @@ async def finalize_extra_class(event, state: FSMContext, extra_classes_service: 
 
     response = await extra_classes_service.add_extra_class(
         user_id=target_id,
-        family_id=profile_dto.family_id,
         day_of_week=data["day_of_week"],
         time_start=data["time_start"],
         time_end=data["time_end"],
         title=data["title"],
         location=data.get("location"),
-        reminder_minutes=reminder_minutes
+        reminder_minutes=reminder_minutes,
     )
 
     is_callback = isinstance(event, CallbackQuery)

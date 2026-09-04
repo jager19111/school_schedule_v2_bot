@@ -2,11 +2,14 @@
 from __future__ import annotations
 
 from typing import List, Dict, Any, Optional
+import logging
 
-import aiosqlite
+from core.repository.base_repository import BaseRepository
+from services.time_service import TimeService
 
+logger = logging.getLogger(__name__)
 
-class ExtraClassesRepository:
+class ExtraClassesRepository(BaseRepository):
     """
     Репозиторий для работы с доп. занятиями (extra_classes).
 
@@ -14,8 +17,8 @@ class ExtraClassesRepository:
     Вся бизнес-логика (валидация времени, выбор дня и т.п.) — в сервисах/хендлерах.
     """
 
-    def __init__(self, db_path: str):
-        self.db_path = db_path
+    def __init__(self, db_path: str, time_service: TimeService):
+        super().__init__(db_path, time_service)
 
     # ---------- CREATE ----------
 
@@ -23,7 +26,6 @@ class ExtraClassesRepository:
         self,
         *,
         user_id: int,
-        family_id: Optional[int],
         day_of_week: int,
         time_start: str,
         time_end: str,
@@ -34,25 +36,49 @@ class ExtraClassesRepository:
         """
         Создаёт доп. занятие и возвращает его id.
         """
-        async with aiosqlite.connect(self.db_path) as db:
-            cursor = await db.execute(
-                """
-                INSERT INTO extra_classes
-                    (family_id, user_id, day_of_week,
-                     time_start, time_end, title, location, reminder_minutes)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    family_id,
-                    user_id,
-                    day_of_week,
-                    time_start,
-                    time_end,
-                    title,
-                    location,
-                    reminder_minutes,
-                ),
+        query = """
+            INSERT INTO extra_classes (
+                family_id,
+                user_id,
+                day_of_week,
+                time_start,
+                time_end,
+                title,
+                location,
+                reminder_minutes
             )
+            SELECT
+                u.family_id,
+                u.user_id,
+                ?,
+                ?,
+                ?,
+                ?,
+                ?,
+                ?
+            FROM users u
+            WHERE u.user_id = ?
+              AND u.role = 'child'
+              AND u.family_id IS NOT NULL
+        """
+        params = (
+            day_of_week,
+            time_start,
+            time_end,
+            title,
+            location,
+            reminder_minutes,
+            user_id,
+        )
+
+        async with self._connection() as db:
+            cursor = await db.execute(query, params)
+
+            if cursor.rowcount != 1:
+                raise ValueError(
+                    f"Cannot create extra class for child user_id={user_id}"
+                )
+
             await db.commit()
             return cursor.lastrowid
 
@@ -68,34 +94,24 @@ class ExtraClassesRepository:
         Возвращает список доп. занятий ребёнка.
         Если day_of_week указан — фильтруем по нему, иначе возвращаем все.
         """
-        async with aiosqlite.connect(self.db_path) as db:
-            db.row_factory = aiosqlite.Row
-
-            if day_of_week is None:
-                cursor = await db.execute(
-                    """
-                    SELECT id, family_id, user_id, day_of_week,
-                           time_start, time_end, title, location, reminder_minutes
-                    FROM extra_classes
-                    WHERE user_id = ?
-                    ORDER BY day_of_week, time_start
-                    """,
-                    (user_id,),
-                )
-            else:
-                cursor = await db.execute(
-                    """
-                    SELECT id, family_id, user_id, day_of_week,
-                           time_start, time_end, title, location, reminder_minutes
-                    FROM extra_classes
-                    WHERE user_id = ? AND day_of_week = ?
-                    ORDER BY time_start
-                    """,
-                    (user_id, day_of_week),
-                )
-
-            rows = await cursor.fetchall()
-            return [dict(row) for row in rows]
+        if day_of_week is None:
+            query = """
+                SELECT id, family_id, user_id, day_of_week,
+                       time_start, time_end, title, location, reminder_minutes
+                FROM extra_classes
+                WHERE user_id = ?
+                ORDER BY day_of_week, time_start
+            """
+            return await self._fetch_all(query, (user_id,))
+        else:
+            query = """
+                SELECT id, family_id, user_id, day_of_week,
+                       time_start, time_end, title, location, reminder_minutes
+                FROM extra_classes
+                WHERE user_id = ? AND day_of_week = ?
+                ORDER BY time_start
+            """
+            return await self._fetch_all(query, (user_id, day_of_week))
 
     # ---------- DELETE ----------
 
@@ -109,25 +125,21 @@ class ExtraClassesRepository:
         Удаляет доп. занятие по id, только если оно принадлежит user_id.
         Возвращает True, если что-то удалено.
         """
-        async with aiosqlite.connect(self.db_path) as db:
-            cursor = await db.execute(
-                """
-                DELETE FROM extra_classes
-                WHERE id = ? AND user_id = ?
-                """,
-                (extra_id, user_id),
-            )
-            await db.commit()
-            return cursor.rowcount > 0
+        query = """
+            DELETE FROM extra_classes
+            WHERE id = ? AND user_id = ?
+        """
+        rowcount = await self._execute(query, (extra_id, user_id))
+        return rowcount > 0
 
-    # ---------- UPDATE (опционально) ----------
+    # ---------- UPDATE ----------
 
     async def update_extra_class(
         self,
         *,
         extra_id: int,
         user_id: int,
-        day_of_week: Optional[int] = None, # <-- ДОБАВЛЕНО
+        day_of_week: Optional[int] = None,
         time_start: Optional[str] = None,
         time_end: Optional[str] = None,
         title: Optional[str] = None,
@@ -136,7 +148,6 @@ class ExtraClassesRepository:
     ) -> bool:
         """
         Частичное обновление доп. занятия.
-
         Только владелец (user_id) может обновить запись.
         """
         fields = []
@@ -154,6 +165,8 @@ class ExtraClassesRepository:
         if title is not None:
             fields.append("title = ?")
             params.append(title)
+# стоит использовать специальный sentinel _UNSET = object() и применять его для проверки, чтобы отличать "не передано" от "передано None". Но пока оставим так для добавления location и reminder_minutes, так как они могут быть None.
+
         if location is not None:
             fields.append("location = ?")
             params.append(location)
@@ -164,16 +177,13 @@ class ExtraClassesRepository:
         if not fields:
             return False
 
+        fields.append("updated_at = CURRENT_TIMESTAMP")
         params.extend([extra_id, user_id])
-
-        async with aiosqlite.connect(self.db_path) as db:
-            cursor = await db.execute(
-                f"""
-                UPDATE extra_classes
-                SET {", ".join(fields)}
-                WHERE id = ? AND user_id = ?
-                """,
-                params,
-            )
-            await db.commit()
-            return cursor.rowcount > 0
+        
+        query = f"""
+            UPDATE extra_classes
+            SET {", ".join(fields)}
+            WHERE id = ? AND user_id = ?
+        """
+        rowcount = await self._execute(query, tuple(params))
+        return rowcount > 0

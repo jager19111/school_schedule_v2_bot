@@ -164,8 +164,8 @@ async def toggle_my_notifications(callback: CallbackQuery, profile_service: Prof
     user_dto = await profile_service.get_user_profile_dto(callback.from_user.id)
     
     # Блокировка: если это ребенок и родитель включил контроль
-    if user_dto.role == "child" and user_dto.parent_control_notifications:
-        return await callback.answer("🔒 Ваши настройки уведомлений заблокированы родителем.", show_alert=True)
+    # Проверка блокировки конкретным взрослым будет реализована через
+    # parent_child_settings на Этапе 3.
     await profile_service.toggle_user_flag(callback.from_user.id, "is_notifications_enabled")
     await settings_main_menu_cb(callback, profile_service)
  # Запрет редактирования доп.занятий   
@@ -208,8 +208,8 @@ async def process_my_time(message: Message, state: FSMContext, time_service: Tim
     user_dto = await profile_service.get_user_profile_dto(message.from_user.id)
     
     # Блокировка: если это ребенок и родитель включил контроль
-    if user_dto.role == "child" and user_dto.parent_control_notifications:
-        return await message.answer("🔒 Ваши настройки уведомлений заблокированы родителем.", show_alert=True)
+    # Проверка блокировки конкретным взрослым будет реализована через
+    # parent_child_settings на Этапе 3.
     # Умная нормализация ввода (понимает "715", "7.15", "07:15")
     norm_time = time_service.normalize_time(message.text)
     

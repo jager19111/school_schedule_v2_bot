@@ -522,12 +522,38 @@ class UIRenderer:
         return text
     
     @staticmethod
-    def render_lesson_reminder(dto: 'LessonReminderDTO') -> str:
-        icon = "🎨" if dto.is_extra else "🔔"
-        lesson_type = "Доп. занятие" if dto.is_extra else "Урок"
-        child_str = f" для <b>{dto.child_name}</b>" if dto.child_name else ""
-        return f"{icon} {lesson_type}{child_str}: <b>{dto.subject_name}</b> начнется в {dto.start_time} (каб. {dto.room_name})"
+    def render_lesson_reminder(dto: LessonReminderDTO) -> str:
+        """
+        Формирует напоминание об уроке или дополнительном занятии.
 
+        Если получатель — взрослый, child_name содержит имя ребёнка и выводится
+        отдельной строкой. Для ребёнка child_name=None, имя не дублируется.
+        """
+        child_line = (
+            f"👤 Ребёнок: <b>{dto.child_name}</b>\n"
+            if dto.child_name
+            else ""
+        )
+
+        room = dto.room_name or "—"
+
+        if dto.is_extra:
+            return (
+                "🎨 <b>Скоро дополнительное занятие</b>\n"
+                f"{child_line}"
+                f"🕐 Начало: <b>{dto.start_time}</b>\n"
+                f"📝 Занятие: <b>{dto.subject_name}</b>\n"
+                f"📍 Место: {room}"
+            )
+
+        return (
+            "⏰ <b>Скоро урок</b>\n"
+            f"{child_line}"
+            f"🕐 Начало: <b>{dto.start_time}</b>\n"
+            f"📚 Предмет: <b>{dto.subject_name}</b>\n"
+            f"🏫 Кабинет: {room}"
+        )
+        
     @staticmethod
     def render_change_reminder(dto: 'ChangeReminderDTO') -> str:
         status = "🚫 ОТМЕНЕН" if dto.is_cancelled else "🔄 ИЗМЕНЕН"

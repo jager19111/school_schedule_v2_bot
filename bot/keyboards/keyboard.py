@@ -111,7 +111,35 @@ class Keyboards:
         return InlineKeyboardMarkup(inline_keyboard=buttons)
 
     @staticmethod
-    def get_child_settings_kb(child_dto: 'UserProfileDTO') -> InlineKeyboardMarkup:
+    def get_child_settings_kb(
+        child_dto: UserProfileDTO,
+    ) -> InlineKeyboardMarkup:
+        """
+        Временная безопасная клавиатура профиля ребёнка.
+
+        Индивидуальные права взрослого, подписки и блокировки будут добавлены
+        на Этапе 3 через parent_child_settings. Пока не используем удалённые
+        поля legacy-схемы users.
+        """
+        return InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="🎓 Изменить класс/группу",
+                        callback_data=f"child_set:class:{child_dto.user_id}",
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="⬅️ Назад к составу семьи",
+                        callback_data="settings:family",
+                    )
+                ],
+            ]
+        )
+        
+    @staticmethod
+    def get_child_settings_kb1111111(child_dto: 'UserProfileDTO') -> InlineKeyboardMarkup:
         """Точечные настройки конкретного ребенка."""
         notif_status = "ВКЛ 🟢" if child_dto.is_notifications_enabled else "ВЫКЛ 🔴"
         summary_time = child_dto.morning_summary_time if child_dto.morning_summary_time else "ВЫКЛ"

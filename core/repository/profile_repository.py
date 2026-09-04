@@ -26,7 +26,7 @@ class ProfileRepository(BaseRepository):
         """
         Создаёт пользователя, если его нет, и проставляет last_active_at.
         """
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._connection() as db:
             await db.execute(
                 "INSERT OR IGNORE INTO users (user_id) VALUES (?)",
                 (user_id,),
@@ -36,7 +36,7 @@ class ProfileRepository(BaseRepository):
                 (user_id,),
             )
             await db.commit()
-
+# Возможно нужно удалить дублирующий метод update_user_role, так как он уже есть в ProfileService.
     async def update_user_role(self, user_id: int, role: str) -> None:
         """
         Обновляет роль пользователя.
@@ -64,15 +64,27 @@ class ProfileRepository(BaseRepository):
             (user_id,),
         )
 
-    async def get_user_profile_for_dto(self, user_id: int) -> Optional[Dict[str, Any]]:
-        """Возвращает только нужные поля для UserProfileDTO."""
+    async def get_user_profile_for_dto(
+        self,
+        user_id: int,
+    ) -> Optional[Dict[str, Any]]:
+        """Возвращает поля, необходимые для UserProfileDTO."""
         return await self._fetch_one(
             """
-            SELECT role, name, class_id, group_id, family_id, 
-                   parent_control_notifications, notify_parent_about_me,
-                   morning_summary_time, pre_lesson_offset_minutes, 
-                   changes_window_days, is_notifications_enabled, global_extra_reminder, can_edit_extra_classes
-            FROM users WHERE user_id = ?
+            SELECT
+                user_id,
+                role,
+                name,
+                class_id,
+                group_id,
+                family_id,
+                morning_summary_time,
+                pre_lesson_offset_minutes,
+                changes_window_days,
+                is_notifications_enabled,
+                global_extra_reminder
+            FROM users
+            WHERE user_id = ?
             """,
             (user_id,),
         )
@@ -85,28 +97,95 @@ class ProfileRepository(BaseRepository):
             "UPDATE users SET class_id = ?, group_id = ? WHERE user_id = ?",
             (class_id, group_id, user_id),
         )
+    
+    async def _ensure_parent_child_settings_for_family(
+        self,
+        db: aiosqlite.Connection,
+        family_id: int,
+    ) -> None:
+        """
+        Создаёт недостающие связи взрослый → ребёнок для одной семьи.
 
+        Все parent и observer семьи получают самостоятельную строку настроек
+        для каждого child. INSERT OR IGNORE безопасен при повторном вызове:
+        PRIMARY KEY(parent_id, child_id) исключает дубли.
+        """
+        await db.execute(
+            """
+            INSERT OR IGNORE INTO parent_child_settings (
+                parent_id,
+                child_id
+            )
+            SELECT
+                adult.user_id,
+                child.user_id
+            FROM users AS adult
+            JOIN users AS child
+              ON child.family_id = adult.family_id
+            WHERE adult.family_id = ?
+              AND adult.role IN ('parent', 'observer')
+              AND child.role = 'child'
+            """,
+            (family_id,),
+        )
+        
     # ========== FAMILIES ==========
 
     async def create_family_and_link(self, admin_user_id: int) -> str:
         """
-        Создаёт семью и привязывает создателя как parent.
+        Создаёт новую семью и привязывает создателя как администратора-родителя.
 
-        Возвращает family_code.
+        На момент создания семьи детей ещё нет, поэтому строки
+        parent_child_settings не создаются. Они появятся автоматически,
+        когда к семье присоединится ребёнок.
         """
         family_code = str(uuid.uuid4())[:8].upper()
 
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._connection() as db:
+            await db.execute("BEGIN")
+
+            user_row = await (
+                await db.execute(
+                    """
+                    SELECT user_id
+                    FROM users
+                    WHERE user_id = ?
+                    """,
+                    (admin_user_id,),
+                )
+            ).fetchone()
+
+            if user_row is None:
+                raise ValueError(
+                    f"Cannot create family for missing user: {admin_user_id}"
+                )
+
             cursor = await db.execute(
-                "INSERT INTO families (family_code, admin_user_id, created_at) VALUES (?, ?, CURRENT_TIMESTAMP)",
+                """
+                INSERT INTO families (
+                    family_code,
+                    admin_user_id,
+                    created_at,
+                    updated_at
+                )
+                VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                """,
                 (family_code, admin_user_id),
             )
+
             family_id = cursor.lastrowid
 
             await db.execute(
-                "UPDATE users SET family_id = ?, role = 'parent' WHERE user_id = ?",
+                """
+                UPDATE users
+                SET family_id = ?,
+                    role = 'parent',
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE user_id = ?
+                """,
                 (family_id, admin_user_id),
             )
+
             await db.commit()
 
         return family_code
@@ -120,39 +199,176 @@ class ProfileRepository(BaseRepository):
             (family_code,),
         )
 
-    async def link_user_to_family(self, user_id: int, family_id: int, role: str) -> None:
+    async def link_user_to_family(
+        self,
+        user_id: int,
+        family_id: int,
+        role: str,
+    ) -> None:
         """
-        Привязывает пользователя к семье и обновляет роль.
-        """
-        await self._execute(
-            "UPDATE users SET family_id = ?, role = ? WHERE user_id = ?",
-            (family_id, role, user_id),
-        )
+        Привязывает пользователя к семье и создаёт все недостающие
+        связи взрослый → ребёнок.
 
-    async def set_child_notifications_lock_flag(self, child_user_id: int, locked: bool) -> None:
-        """
-        Устанавливает флаг parent_control_notifications у ребёнка.
-        """
-        await self._execute(
-            "UPDATE users SET parent_control_notifications = ? WHERE user_id = ?",
-            (int(locked), child_user_id),
-        )
+        Допустимые сценарии:
+        - child подключается к существующей семье;
+        - parent подключается к существующей семье;
+        - observer подключается к существующей семье.
 
-    async def check_parent_child_same_family(self, parent_user_id: int, child_user_id: int) -> bool:
+        После операции каждая пара:
+            parent/observer × child
+        в рамках семьи существует в parent_child_settings.
         """
-        Проверяет, что parent и child в одной семье и parent действительно 'parent'.
+        allowed_roles = {"child", "parent", "observer"}
+
+        if role not in allowed_roles:
+            raise ValueError(f"Unsupported family role: {role}")
+
+        async with self._connection() as db:
+            await db.execute("BEGIN")
+
+            family_row = await (
+                await db.execute(
+                    """
+                    SELECT id
+                    FROM families
+                    WHERE id = ?
+                    """,
+                    (family_id,),
+                )
+            ).fetchone()
+
+            if family_row is None:
+                raise ValueError(f"Family does not exist: family_id={family_id}")
+
+            user_row = await (
+                await db.execute(
+                    """
+                    SELECT user_id
+                    FROM users
+                    WHERE user_id = ?
+                    """,
+                    (user_id,),
+                )
+            ).fetchone()
+
+            if user_row is None:
+                raise ValueError(f"User does not exist: user_id={user_id}")
+
+            await db.execute(
+                """
+                UPDATE users
+                SET family_id = ?,
+                    role = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE user_id = ?
+                """,
+                (family_id, role, user_id),
+            )
+
+            await self._ensure_parent_child_settings_for_family(
+                db=db,
+                family_id=family_id,
+            )
+
+            await db.commit()
+
+    async def set_child_notifications_lock(
+        self,
+        parent_user_id: int,
+        child_user_id: int,
+        locked: bool,
+    ) -> bool:
         """
-        row = await self._fetch_one(
+        Устанавливает запрет ребёнку менять личные настройки уведомлений.
+
+        Блокировка принадлежит конкретному взрослому и конкретному ребёнку.
+        Она не хранится в users, потому что users не может выразить:
+        «родитель A управляет ребёнком X, а observer B — нет».
+        """
+        changed = await self._execute(
             """
-            SELECT u1.family_id AS parent_family_id, u2.family_id AS child_family_id, u1.role AS parent_role
-            FROM users u1
-            JOIN users u2 ON u1.family_id = u2.family_id
-            WHERE u1.user_id = ? AND u2.user_id = ?
+            UPDATE parent_child_settings
+            SET child_notification_settings_locked = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE parent_id = ?
+              AND child_id = ?
+            """,
+            (int(locked), parent_user_id, child_user_id),
+        )
+        return changed == 1
+
+    async def check_parent_child_same_family(
+        self,
+        parent_user_id: int,
+        child_user_id: int,
+    ) -> bool:
+        """
+        Проверяет наличие действующей связи взрослый → ребёнок.
+
+        parent_child_settings является источником истины. Простого совпадения
+        family_id недостаточно: взрослый может быть в семье, но не иметь
+        разрешения на конкретного ребёнка.
+        """
+        return await self.parent_can_access_child(
+            parent_user_id=parent_user_id,
+            child_user_id=child_user_id,
+        )
+
+    async def get_parent_child_settings(
+        self,
+        parent_user_id: int,
+        child_user_id: int,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Возвращает настройки конкретного взрослого относительно ребёнка.
+
+        Возвращает None, если связи нет либо ребёнок не принадлежит взрослому.
+        """
+        return await self._fetch_one(
+            """
+            SELECT
+                pcs.parent_id,
+                pcs.child_id,
+                pcs.receive_morning_summary,
+                pcs.receive_pre_lesson_reminders,
+                pcs.receive_schedule_changes,
+                pcs.receive_extra_class_reminders,
+                pcs.child_notification_settings_locked,
+                pcs.can_manage_extra_classes
+            FROM parent_child_settings AS pcs
+            JOIN users AS adult
+              ON adult.user_id = pcs.parent_id
+            JOIN users AS child
+              ON child.user_id = pcs.child_id
+            WHERE pcs.parent_id = ?
+              AND pcs.child_id = ?
+              AND adult.family_id = child.family_id
+              AND adult.role IN ('parent', 'observer')
+              AND child.role = 'child'
             """,
             (parent_user_id, child_user_id),
         )
-        return bool(row and row.get("parent_role") == "parent")
 
+    async def parent_can_access_child(
+        self,
+        parent_user_id: int,
+        child_user_id: int,
+    ) -> bool:
+        """
+        Проверяет, что существует активная связь взрослый → ребёнок.
+        Используется перед любой родительской операцией над ребёнком.
+        """
+        row = await self._fetch_one(
+            """
+            SELECT 1 AS allowed
+            FROM parent_child_settings
+            WHERE parent_id = ?
+              AND child_id = ?
+            """,
+            (parent_user_id, child_user_id),
+        )
+        return row is not None
+    
     # ========== CHILDREN LIST ==========
 
     async def get_children_for_parent_rows(self, parent_user_id: int) -> List[Dict[str, Any]]:
@@ -228,7 +444,7 @@ class ProfileRepository(BaseRepository):
 
     async def update_role_and_defaults(self, user_id: int, role: str) -> None:
         """Назначает роль и выставляет дефолтные настройки уведомлений."""
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._connection() as db:
             if role in ('parent', 'observer'):
                 # Взрослые: включены только изменения, остальное в 0
                 await db.execute('''

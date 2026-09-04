@@ -80,7 +80,7 @@ async def main():
     admin_repo = AdminRepository(db_path=config.DB_PATH, time_service=time_service)
     profile_repo = ProfileRepository(db_path=config.DB_PATH, time_service=time_service)
     notification_repo = NotificationRepository(db_path=config.DB_PATH, time_service=time_service)
-    extra_classes_repo = ExtraClassesRepository(db_path=config.DB_PATH)
+    extra_classes_repo = ExtraClassesRepository(db_path=config.DB_PATH, time_service=time_service)
     
     # 5. Сервисы
     schedule_service = ScheduleService(schedule_repo=schedule_repo, extra_classes_repo=extra_classes_repo, time_service=time_service)
@@ -131,7 +131,20 @@ async def main():
         id='pre_lesson_reminders',
         replace_existing=True
     )
-
+    
+    # Напоминания о дополнительных занятиях.
+    # Запуск раз в минуту: это уменьшает риск пропуска окна при старте,
+    # задержке event loop или точном значении reminder_minutes.
+    scheduler.add_job(
+        notification_service.send_extra_class_reminders,
+        trigger="interval",
+        minutes=1,
+        id="extra_class_reminders",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+    )
+    
     # Оповещения об изменениях в N-дневном окне: интервал 45 минут[cite: 5, 7]
     scheduler.add_job(
         notification_service.send_upcoming_changes,

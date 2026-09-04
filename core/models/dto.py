@@ -24,22 +24,23 @@ class ActionResponseDTO:
 
 @dataclass
 class UserProfileDTO:
-    """ DTO для профиля пользователя. """
+    """DTO личного профиля пользователя."""
+
     user_id: int
     role: Optional[str]
     is_fully_registered: bool
-    name: Optional[str] = None               # <-- ДОБАВЛЕНО
+
+    name: Optional[str] = None
     family_id: Optional[int] = None
     class_id: Optional[str] = None
     group_id: Optional[str] = None
-    parent_control_notifications: bool = False
-    notify_parent_about_me: bool = True      # <-- ДОБАВЛЕНО
-    morning_summary_time: Optional[str] = None # <-- ДОБАВЛЕНО
+
+    morning_summary_time: Optional[str] = None
     pre_lesson_offset_minutes: int = 10
     changes_window_days: int = 3
     is_notifications_enabled: bool = True
-    global_extra_reminder: int = 30  # <-- ДОБАВЛЕНО
-    can_edit_extra_classes: bool = True  # <-- НОВОЕ ПОЛЕ
+    global_extra_reminder: int = 30
+
     
 @dataclass
 class AdminStatsDTO:
@@ -149,10 +150,17 @@ class FamilyMemberDTO:
 
 @dataclass
 class LessonReminderDTO:
+    """
+    Напоминание об уроке или дополнительном занятии.
+
+    child_name заполняется только для взрослого получателя.
+    Для ребёнка оно остаётся None, потому что сообщение относится к нему самому.
+    """
     subject_name: str
     start_time: str
     room_name: str
     is_extra: bool = False
+    child_name: Optional[str] = None
 
 @dataclass
 class ChangeReminderDTO:

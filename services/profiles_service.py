@@ -36,12 +36,11 @@ class ProfileService:
         """
         await self.repo.update_last_active(user_id)
 
+# Далее переименовать в set_user_role_with_defaults()
     async def update_user_role(self, user_id: int, role: str) -> None:
-        """
-        Обновляет роль пользователя.
-        """
-        await self.repo.update_user_role(user_id, role)
-
+        """Делегирует обновление роли и настроек репозиторию."""
+        await self.repo.update_role_and_defaults(user_id, role)
+        
     # ========== ПРОФИЛЬ ПОЛЬЗОВАТЕЛЯ ==========
 
     async def get_user_profile(self, user_id: int) -> Optional[Dict[str, Any]]:
@@ -85,14 +84,22 @@ class ProfileService:
             family_id=row.get("family_id"),
             class_id=row.get("class_id"),
             group_id=row.get("group_id"),
-            parent_control_notifications=bool(row.get("parent_control_notifications")),
-            notify_parent_about_me=bool(row.get("notify_parent_about_me", True)),
             morning_summary_time=row.get("morning_summary_time"),
-            pre_lesson_offset_minutes=row.get("pre_lesson_offset_minutes", 15),
-            changes_window_days=row.get("changes_window_days", 3),
-            is_notifications_enabled=bool(row.get("is_notifications_enabled", True)),
-            global_extra_reminder=row.get("global_extra_reminder", 30), # <-- ДОБАВИТЬ СЮДА
-            can_edit_extra_classes=bool(row.get("can_edit_extra_classes", True))
+            pre_lesson_offset_minutes=row.get(
+                "pre_lesson_offset_minutes",
+                10,
+            ),
+            changes_window_days=row.get(
+                "changes_window_days",
+                3,
+            ),
+            is_notifications_enabled=bool(
+                row.get("is_notifications_enabled", True)
+            ),
+            global_extra_reminder=row.get(
+                "global_extra_reminder",
+                30,
+            ),
         )
 
     # ========== СЕМЬИ ==========
@@ -133,17 +140,29 @@ class ProfileService:
         locked: bool,
     ) -> bool:
         """
-        Блокировка изменения настроек уведомлений ребёнком (parent_control_notifications).
+        Блокирует или разблокирует изменение ребёнком собственных настроек.
+
+        Взрослый может менять только настройки ребёнка, на которого у него
+        существует связь в parent_child_settings.
         """
-        same_family = await self.repo.check_parent_child_same_family(
+        has_access = await self.repo.parent_can_access_child(
             parent_user_id=parent_user_id,
             child_user_id=child_user_id,
         )
-        if not same_family:
+
+        if not has_access:
+            logger.warning(
+                "Parent access denied: parent_id=%s, child_id=%s",
+                parent_user_id,
+                child_user_id,
+            )
             return False
 
-        await self.repo.set_child_notifications_lock_flag(child_user_id, locked)
-        return True
+        return await self.repo.set_child_notifications_lock(
+            parent_user_id=parent_user_id,
+            child_user_id=child_user_id,
+            locked=locked,
+        )
 
     # ========== СПИСКИ ДЕТЕЙ ==========
 
@@ -192,7 +211,3 @@ class ProfileService:
                 class_id=r['class_id']
             ) for r in rows
         ]
-
-    async def update_user_role(self, user_id: int, role: str) -> None:
-        """Делегирует обновление роли и настроек репозиторию."""
-        await self.repo.update_role_and_defaults(user_id, role)

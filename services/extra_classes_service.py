@@ -16,7 +16,6 @@ class ExtraClassesService:
     async def add_extra_class(
         self, 
         user_id: int, 
-        family_id: Optional[int], 
         day_of_week: int,          # <-- Теперь передается явно
         time_start: str, 
         time_end: str, 
@@ -32,7 +31,6 @@ class ExtraClassesService:
             # 2. Делегируем изолированный SQL-запрос репозиторию[cite: 12]
             extra_id = await self.repo.create_extra_class(
                 user_id=user_id,
-                family_id=family_id,
                 day_of_week=day_of_week,
                 time_start=time_start,
                 time_end=time_end,

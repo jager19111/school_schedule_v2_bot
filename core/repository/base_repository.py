@@ -1,10 +1,11 @@
 # core/repository/base_repository.py
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
+from typing import Any, AsyncIterator, Dict, List, Optional, Set
 import aiosqlite
 import logging
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Set
 
 from services.time_service import TimeService
 
@@ -30,6 +31,13 @@ class BaseRepository:
 
     # ================== ВНУТРЕННЯЯ ОБРАБОТКА ==================
 
+
+    @asynccontextmanager
+    async def _connection(self) -> AsyncIterator[aiosqlite.Connection]:
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute("PRAGMA foreign_keys = ON")
+            yield db
+            
     def _process_row(self, row: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
         """
         Преобразует datetime-поля из БД в aware UTC datetime.
@@ -71,8 +79,9 @@ class BaseRepository:
         """
         Выполнить SELECT ... LIMIT 1 и вернуть dict с обработанными datetime.
         """
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._connection() as db:
             db.row_factory = aiosqlite.Row
+
             cursor = await db.execute(query, params)
             row = await cursor.fetchone()
             return self._process_row(dict(row)) if row else None
@@ -81,8 +90,9 @@ class BaseRepository:
         """
         Выполнить SELECT и вернуть список dict с обработанными datetime.
         """
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._connection() as db:
             db.row_factory = aiosqlite.Row
+
             cursor = await db.execute(query, params)
             rows = await cursor.fetchall()
             if not rows:
@@ -93,7 +103,8 @@ class BaseRepository:
         """
         Получить одно скалярное значение (COUNT, SUM и т.п.).
         """
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._connection() as db:
+
             cursor = await db.execute(query, params)
             row = await cursor.fetchone()
             return row[0] if row is not None and len(row) > 0 else None
@@ -102,7 +113,8 @@ class BaseRepository:
         """
         Выполнить INSERT/UPDATE/DELETE и вернуть количество затронутых строк.
         """
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._connection() as db:
+
             cursor = await db.execute(query, params)
             await db.commit()
             return cursor.rowcount
@@ -111,6 +123,8 @@ class BaseRepository:
         """
         Выполнить executemany для массовых операций.
         """
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._connection() as db:
+
             await db.executemany(query, params_list)
             await db.commit()
+            

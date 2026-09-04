@@ -70,7 +70,7 @@ class ScheduleRepository(BaseRepository):
         try:
             js_content, nika_data = await self.fetcher.fetch()
 
-            async with aiosqlite.connect(self.db_path) as db:
+            async with self._connection() as db:
                 # 1. Сырой дамп для дебага
                 await db.execute(
                     "INSERT INTO raw_nika_cache (content, fetched_at) VALUES (?, CURRENT_TIMESTAMP)",

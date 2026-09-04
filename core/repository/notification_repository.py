@@ -114,19 +114,138 @@ class NotificationRepository(BaseRepository):
         )
 
     # ---------- Дополнительные занятия ----------
-    async def get_todays_extra_classes_for_reminders(self, day_of_week: int) -> List[Dict[str, Any]]:
+    async def get_todays_extra_classes_for_reminders(
+        self,
+        day_of_week: int,
+    ) -> List[Dict[str, Any]]:
         """
-        Выбирает доп. занятия на сегодня для пользователей с включенными уведомлениями.
-        Учитывает индивидуальные и глобальные настройки напоминаний[cite: 3, 7].
+        Возвращает адресные задачи напоминаний о допзанятиях.
+
+        Fan-out:
+        1. Ребёнок получает только собственное занятие.
+        2. Parent/observer получает занятие конкретного ребёнка только при
+           receive_extra_class_reminders = 1 в parent_child_settings.
+
+        У одного занятия может быть несколько получателей:
+        ребёнок + один или несколько взрослых.
         """
         return await self._fetch_all(
             """
-            SELECT e.id, e.user_id, e.time_start, e.title, e.location, 
-                   e.reminder_minutes, u.global_extra_reminder
-            FROM extra_classes e
-            JOIN users u ON e.user_id = u.user_id
-            WHERE e.day_of_week = ? 
-              AND u.is_notifications_enabled = 1
+            -- Получатель: сам ребёнок.
+            SELECT
+                e.id AS extra_id,
+                e.user_id AS child_id,
+                e.time_start,
+                e.title,
+                e.location,
+                e.reminder_minutes AS offset_minutes,
+
+                child.user_id AS recipient_id,
+                'child' AS recipient_kind,
+                NULL AS child_name
+            FROM extra_classes AS e
+            JOIN users AS child
+              ON child.user_id = e.user_id
+            WHERE e.day_of_week = ?
+              AND child.role = 'child'
+              AND child.is_notifications_enabled = 1
+
+            UNION ALL
+
+            -- Получатель: взрослый, подписанный на этого ребёнка.
+            SELECT
+                e.id AS extra_id,
+                e.user_id AS child_id,
+                e.time_start,
+                e.title,
+                e.location,
+                e.reminder_minutes AS offset_minutes,
+
+                adult.user_id AS recipient_id,
+                'adult' AS recipient_kind,
+                COALESCE(
+                    NULLIF(TRIM(child.name), ''),
+                    'Ученик ' || child.user_id
+                ) AS child_name
+            FROM extra_classes AS e
+            JOIN users AS child
+              ON child.user_id = e.user_id
+            JOIN parent_child_settings AS pcs
+              ON pcs.child_id = child.user_id
+             AND pcs.receive_extra_class_reminders = 1
+            JOIN users AS adult
+              ON adult.user_id = pcs.parent_id
+            WHERE e.day_of_week = ?
+              AND child.role = 'child'
+              AND adult.role IN ('parent', 'observer')
+              AND adult.is_notifications_enabled = 1
+
+            ORDER BY time_start, recipient_id, child_id
             """,
-            (day_of_week,)
+            (day_of_week, day_of_week),
         )
+        
+    async def is_notification_delivered(
+        self,
+        *,
+        notification_type: str,
+        notification_date: str,
+        source_id: str,
+        recipient_id: int,
+    ) -> bool:
+        """
+        Проверяет, зарегистрирована ли успешная доставка уведомления.
+
+        Журналируется только успешная отправка. При Telegram-ошибке запись
+        не создаётся, поэтому следующая задача сможет повторить попытку.
+        """
+        row = await self._fetch_one(
+            """
+            SELECT 1 AS delivered
+            FROM notification_delivery_log
+            WHERE notification_type = ?
+              AND notification_date = ?
+              AND source_id = ?
+              AND recipient_id = ?
+            """,
+            (
+                notification_type,
+                notification_date,
+                source_id,
+                recipient_id,
+            ),
+        )
+        return row is not None
+
+    async def record_notification_delivery(
+        self,
+        *,
+        notification_type: str,
+        notification_date: str,
+        source_id: str,
+        recipient_id: int,
+    ) -> bool:
+        """
+        Фиксирует успешную доставку.
+
+        Возвращает True, если была создана новая запись.
+        INSERT OR IGNORE защищает от дублей при повторном вызове.
+        """
+        changed = await self._execute(
+            """
+            INSERT OR IGNORE INTO notification_delivery_log (
+                notification_type,
+                notification_date,
+                source_id,
+                recipient_id
+            )
+            VALUES (?, ?, ?, ?)
+            """,
+            (
+                notification_type,
+                notification_date,
+                source_id,
+                recipient_id,
+            ),
+        )
+        return changed == 1

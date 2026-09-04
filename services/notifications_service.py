@@ -184,33 +184,139 @@ class NotificationService:
 
     # ---------- 4. Уведомления о доп. занятиях ----------
     async def send_extra_class_reminders(self) -> None:
-        """Интервальный запуск: каждые 5 минут."""
+        """
+        Отправляет адресные напоминания о дополнительных занятиях.
+
+        Получатели формируются в NotificationRepository:
+        - ребёнок получает только своё занятие;
+        - взрослые получают занятия только тех детей, на которых подписаны.
+
+        Успешные отправки фиксируются в notification_delivery_log. Это защищает
+        от дублей при минутном scheduler и при перезапуске приложения.
+        """
         now = self.time_service.get_now_base()
         today_iso = now.date().isoformat()
         weekday = now.isoweekday()
-        
-        extras = await self.repo.get_todays_extra_classes_for_reminders(weekday)
-        
-        for ex in extras:
-            ex_dt = datetime.datetime.strptime(
-                f"{today_iso} {ex['time_start']}", "%Y-%m-%d %H:%M"
-            ).replace(tzinfo=self.time_service.base_tz)
-            delta_minutes = (ex_dt - now).total_seconds() / 60.0
-            
-            if delta_minutes <= 0:
-                continue
 
-            reminder_time = ex['reminder_minutes'] if ex['reminder_minutes'] is not None else ex['global_extra_reminder']
-            
-            if 0 < delta_minutes <= reminder_time:
-                dto = LessonReminderDTO(
-                    subject_name=ex['title'],
-                    start_time=ex['time_start'],
-                    room_name=ex['location'] or "—",
-                    is_extra=True
+        extras = await self.repo.get_todays_extra_classes_for_reminders(
+            day_of_week=weekday,
+        )
+
+        logger.info(
+            "Extra reminder tick: date=%s, weekday=%s, candidates=%d",
+            today_iso,
+            weekday,
+            len(extras),
+        )
+
+        for extra in extras:
+            try:
+                extra_id = int(extra["extra_id"])
+                recipient_id = int(extra["recipient_id"])
+                offset_minutes = int(extra["offset_minutes"])
+
+                if offset_minutes <= 0:
+                    logger.debug(
+                        "Extra reminder disabled by zero offset: extra_id=%s, "
+                        "recipient_id=%s",
+                        extra_id,
+                        recipient_id,
+                    )
+                    continue
+
+                start_at = datetime.datetime.strptime(
+                    f"{today_iso} {extra['time_start']}",
+                    "%Y-%m-%d %H:%M",
+                ).replace(tzinfo=self.time_service.base_tz)
+
+                delta_minutes = (
+                    start_at - now
+                ).total_seconds() / 60.0
+
+                logger.debug(
+                    "Extra candidate: extra_id=%s, child_id=%s, "
+                    "recipient_id=%s, recipient_kind=%s, start=%s, "
+                    "offset=%s, delta=%.2f",
+                    extra_id,
+                    extra["child_id"],
+                    recipient_id,
+                    extra["recipient_kind"],
+                    extra["time_start"],
+                    offset_minutes,
+                    delta_minutes,
                 )
-                text = UIRenderer.render_lesson_reminder(dto)
-                
-                # Защита от дублей уведомлений
-                if reminder_time - 5 < delta_minutes <= reminder_time:
-                    await self._safe_send(user_id=ex['user_id'], text=text)
+
+                # Занятие уже началось: обычное pre-reminder больше не нужно.
+                if delta_minutes <= 0:
+                    continue
+
+                # Ещё не вошли в окно напоминания.
+                if delta_minutes > offset_minutes:
+                    continue
+
+                source_id = str(extra_id)
+
+                already_sent = await self.repo.is_notification_delivered(
+                    notification_type="extra_class",
+                    notification_date=today_iso,
+                    source_id=source_id,
+                    recipient_id=recipient_id,
+                )
+
+                if already_sent:
+                    continue
+
+                dto = LessonReminderDTO(
+                    subject_name=extra["title"],
+                    start_time=extra["time_start"],
+                    room_name=extra["location"] or "—",
+                    is_extra=True,
+                    child_name=(
+                        extra["child_name"]
+                        if extra["recipient_kind"] == "adult"
+                        else None
+                    ),
+                )
+
+                sent = await self._safe_send(
+                    user_id=recipient_id,
+                    text=UIRenderer.render_lesson_reminder(dto),
+                )
+
+                if not sent:
+                    logger.warning(
+                        "Extra reminder send failed: extra_id=%s, "
+                        "recipient_id=%s",
+                        extra_id,
+                        recipient_id,
+                    )
+                    continue
+
+                logged = await self.repo.record_notification_delivery(
+                    notification_type="extra_class",
+                    notification_date=today_iso,
+                    source_id=source_id,
+                    recipient_id=recipient_id,
+                )
+
+                logger.info(
+                    "Extra reminder delivered: extra_id=%s, child_id=%s, "
+                    "recipient_id=%s, recipient_kind=%s, log_created=%s",
+                    extra_id,
+                    extra["child_id"],
+                    recipient_id,
+                    extra["recipient_kind"],
+                    logged,
+                )
+
+            except (KeyError, TypeError, ValueError) as exc:
+                logger.exception(
+                    "Invalid extra reminder task: task=%r, error=%s",
+                    extra,
+                    exc,
+                )
+            except Exception:
+                logger.exception(
+                    "Unexpected extra reminder processing error: task=%r",
+                    extra,
+                )
