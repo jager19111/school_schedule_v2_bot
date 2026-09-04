@@ -193,15 +193,18 @@ class Keyboards:
     
     # Доп занятия  ExtraClassesService
     @staticmethod
-    def get_extra_classes_menu(target_user_id: int, can_edit: bool = True) -> InlineKeyboardMarkup:
-        """Динамическая клавиатура с привязкой к ID целевого ребенка."""
-        buttons = [
-            [InlineKeyboardButton(text="➕ Добавить занятие", callback_data=f"extra:add:{target_user_id}")],
-            [InlineKeyboardButton(text="📋 Список занятий", callback_data=f"extra:list:{target_user_id}")]
-        ]
+    def get_extra_classes_menu(target_user_id: int, can_add: bool = True, can_edit: bool = True) -> InlineKeyboardMarkup:
+        """Динамическая клавиатура с привязкой к ID ребенка и проверкой прав."""
+        buttons = []
+        if can_add:
+            buttons.append([InlineKeyboardButton(text="➕ Добавить занятие", callback_data=f"extra:add:{target_user_id}")])
+            
+        buttons.append([InlineKeyboardButton(text="📋 Список занятий", callback_data=f"extra:list:{target_user_id}")])
+        
         if can_edit:
             buttons.append([InlineKeyboardButton(text="✏️ Изменить занятие", callback_data=f"extra:edit:{target_user_id}")])
             buttons.append([InlineKeyboardButton(text="🗑 Удалить занятие", callback_data=f"extra:delete:{target_user_id}")])
+            
         return InlineKeyboardMarkup(inline_keyboard=buttons)
  
     @staticmethod

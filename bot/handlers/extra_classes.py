@@ -27,14 +27,24 @@ class ExtraClassStates(StatesGroup):
 
 # === ГЛАВНОЕ МЕНЮ И УМНАЯ МАРШРУТИЗАЦИЯ ===
 
+# === ГЛАВНОЕ МЕНЮ И УМНАЯ МАРШРУТИЗАЦИЯ ===
+
+def _get_rights(user_dto) -> tuple[bool, bool]:
+    """Возвращает права (can_add, can_edit). Наблюдатель может только смотреть."""
+    if user_dto.role == "observer":
+        return False, False
+    if user_dto.role == "child":
+        return True, getattr(user_dto, 'can_edit_extra_classes', True)
+    return True, True
+
 @router.message(F.text == "➕ Доп. занятия")
 async def show_extra_menu(message: Message, profile_service: ProfileService):
     user_dto = await profile_service.get_user_profile_dto(message.from_user.id)
+    can_add, can_edit = _get_rights(user_dto)
     
     # 1. Логика маршрутизации: Ребенок или Родитель
     if user_dto.role == "child":
         target_id = message.from_user.id
-        can_edit = getattr(user_dto, 'can_edit_extra_classes', True)
     else:
         children = await profile_service.get_children_for_parent(message.from_user.id)
         if not children:
@@ -42,13 +52,12 @@ async def show_extra_menu(message: Message, profile_service: ProfileService):
             return await message.answer(text, parse_mode="HTML")
         elif len(children) == 1:
             target_id = children[0].user_id
-            can_edit = True # Родитель всегда может редактировать
         else:
             text, _ = UIRenderer.render_extra_child_select()
             return await message.answer(text, reply_markup=Keyboards.get_extra_children_select_kb(children), parse_mode="HTML")
 
     text, _ = UIRenderer.render_extra_classes_menu()
-    await message.answer(text, reply_markup=Keyboards.get_extra_classes_menu(target_id, can_edit), parse_mode="HTML")
+    await message.answer(text, reply_markup=Keyboards.get_extra_classes_menu(target_id, can_add, can_edit), parse_mode="HTML")
 
 @router.callback_query(F.data.startswith("extra:menu:"))
 async def show_extra_menu_cb(callback: CallbackQuery, state: FSMContext, profile_service: ProfileService):
@@ -56,26 +65,24 @@ async def show_extra_menu_cb(callback: CallbackQuery, state: FSMContext, profile
     target_id = int(callback.data.split(":")[2])
     user_dto = await profile_service.get_user_profile_dto(callback.from_user.id)
     
-    can_edit = True if user_dto.role != "child" else getattr(user_dto, 'can_edit_extra_classes', True)
+    can_add, can_edit = _get_rights(user_dto)
     
     text, _ = UIRenderer.render_extra_classes_menu()
-    await callback.message.edit_text(text, reply_markup=Keyboards.get_extra_classes_menu(target_id, can_edit), parse_mode="HTML")
+    await callback.message.edit_text(text, reply_markup=Keyboards.get_extra_classes_menu(target_id, can_add, can_edit), parse_mode="HTML")
     await callback.answer()
 
 @router.callback_query(F.data == "extra:cancel")
 async def cancel_action(callback: CallbackQuery, state: FSMContext, profile_service: ProfileService):
-    # Умная отмена: берем ID из state или откатываемся к своему
     data = await state.get_data()
     target_id = data.get("target_user_id", callback.from_user.id)
     await state.clear()
     
     user_dto = await profile_service.get_user_profile_dto(callback.from_user.id)
-    can_edit = True if user_dto.role != "child" else getattr(user_dto, 'can_edit_extra_classes', True)
+    can_add, can_edit = _get_rights(user_dto)
     
     text, _ = UIRenderer.render_extra_classes_menu()
-    await callback.message.edit_text(f"❌ Действие отменено.\n\n{text}", reply_markup=Keyboards.get_extra_classes_menu(target_id, can_edit), parse_mode="HTML")
+    await callback.message.edit_text(f"❌ Действие отменено.\n\n{text}", reply_markup=Keyboards.get_extra_classes_menu(target_id, can_add, can_edit), parse_mode="HTML")
     await callback.answer()
-
 
 # === СПИСОК И УДАЛЕНИЕ ===
 
@@ -93,8 +100,9 @@ async def start_delete_extra(callback: CallbackQuery, state: FSMContext, extra_c
     target_id = int(callback.data.split(":")[2])
     user_dto = await profile_service.get_user_profile_dto(callback.from_user.id)
     
-    if user_dto.role == "child" and not getattr(user_dto, 'can_edit_extra_classes', True):
-        return await callback.answer(UIRenderer.render_extra_class_locked(), show_alert=True)
+    _, can_edit = _get_rights(user_dto)
+    if not can_edit:
+        return await callback.answer("🔒 Удаление занятий запрещено.", show_alert=True)
         
     dto_list = await extra_classes_service.get_user_extra_classes(target_id)
     
@@ -102,7 +110,6 @@ async def start_delete_extra(callback: CallbackQuery, state: FSMContext, extra_c
         text, _ = UIRenderer.render_extra_class_delete_prompt(dto_list)
         return await callback.message.edit_text(text, reply_markup=Keyboards.get_back_to_extra_menu(target_id), parse_mode="HTML")
 
-    # Сохраняем target_id в State для обработки удаления
     await state.update_data(target_user_id=target_id)
     text, _ = UIRenderer.render_extra_class_delete_prompt(dto_list)
     await callback.message.edit_text(text, reply_markup=Keyboards.get_cancel_keyboard(), parse_mode="HTML")
@@ -112,7 +119,7 @@ async def start_delete_extra(callback: CallbackQuery, state: FSMContext, extra_c
 @router.message(ExtraClassStates.waiting_for_delete_id)
 async def process_delete_id(message: Message, state: FSMContext, extra_classes_service: ExtraClassesService, profile_service: ProfileService):
     data = await state.get_data()
-    target_id = data["target_user_id"] # Берем ID ребенка!
+    target_id = data["target_user_id"] 
     
     if not message.text.strip().isdigit():
         text, _ = UIRenderer.render_extra_class_not_found()
@@ -128,19 +135,23 @@ async def process_delete_id(message: Message, state: FSMContext, extra_classes_s
     await state.clear()
     
     user_dto = await profile_service.get_user_profile_dto(message.from_user.id)
-    can_edit = True if user_dto.role != "child" else getattr(user_dto, 'can_edit_extra_classes', True)
+    can_add, can_edit = _get_rights(user_dto)
     
     text_deleted, _ = UIRenderer.render_extra_class_deleted()
     text_menu, _ = UIRenderer.render_extra_classes_menu()
-    await message.answer(f"{text_deleted}\n\n{text_menu}", reply_markup=Keyboards.get_extra_classes_menu(target_id, can_edit), parse_mode="HTML")
-
+    await message.answer(f"{text_deleted}\n\n{text_menu}", reply_markup=Keyboards.get_extra_classes_menu(target_id, can_add, can_edit), parse_mode="HTML")
 
 # === ДОБАВЛЕНИЕ ЗАНЯТИЯ ===
 
 @router.callback_query(F.data.startswith("extra:add:"))
-async def start_add_extra(callback: CallbackQuery, state: FSMContext):
+async def start_add_extra(callback: CallbackQuery, state: FSMContext, profile_service: ProfileService):
+    user_dto = await profile_service.get_user_profile_dto(callback.from_user.id)
+    can_add, _ = _get_rights(user_dto)
+    if not can_add:
+        return await callback.answer("👁 Наблюдателям запрещено добавлять занятия.", show_alert=True)
+        
     target_id = int(callback.data.split(":")[2])
-    await state.update_data(target_user_id=target_id) # Запомнили, кому добавляем
+    await state.update_data(target_user_id=target_id)
     
     text, _ = UIRenderer.render_extra_class_day()
     await callback.message.edit_text(text, reply_markup=Keyboards.get_day_selection_kb())
@@ -247,18 +258,26 @@ async def finalize_extra_class(event, state: FSMContext, extra_classes_service: 
 
     if not response.success:
         text, _ = UIRenderer.render_extra_class_error()
-        return await msg_func(text, reply_markup=Keyboards.get_cancel_keyboard(), parse_mode="HTML")
+        if isinstance(event, CallbackQuery):
+            await event.message.answer(text, reply_markup=Keyboards.get_cancel_keyboard(), parse_mode="HTML")
+            await event.answer()
+        else:
+            await event.answer(text, reply_markup=Keyboards.get_cancel_keyboard(), parse_mode="HTML")
+        return
 
     await state.clear()
     
-    # Возврат к меню с правильными правами
     current_user_dto = await profile_service.get_user_profile_dto(event.from_user.id)
-    can_edit = True if current_user_dto.role != "child" else getattr(current_user_dto, 'can_edit_extra_classes', True)
+    can_add, can_edit = _get_rights(current_user_dto)
     
     text_success, _ = UIRenderer.render_extra_class_success()
     text_menu, _ = UIRenderer.render_extra_classes_menu()
-    await msg_func(f"{text_success}\n\n{text_menu}", reply_markup=Keyboards.get_extra_classes_menu(target_id, can_edit), parse_mode="HTML")
-
+    
+    if isinstance(event, CallbackQuery):
+        await event.message.answer(f"{text_success}\n\n{text_menu}", reply_markup=Keyboards.get_extra_classes_menu(target_id, can_add, can_edit), parse_mode="HTML")
+        await event.answer()
+    else:
+        await event.answer(f"{text_success}\n\n{text_menu}", reply_markup=Keyboards.get_extra_classes_menu(target_id, can_add, can_edit), parse_mode="HTML")
 
 # === ИЗМЕНЕНИЕ ЗАНЯТИЯ ===
 
@@ -267,8 +286,9 @@ async def start_edit_extra(callback: CallbackQuery, state: FSMContext, extra_cla
     target_id = int(callback.data.split(":")[2])
     user_dto = await profile_service.get_user_profile_dto(callback.from_user.id)
     
-    if user_dto.role == "child" and not getattr(user_dto, 'can_edit_extra_classes', True):
-        return await callback.answer("🔒 Редактирование занятий запрещено родителем.", show_alert=True)
+    _, can_edit = _get_rights(user_dto)
+    if not can_edit:
+        return await callback.answer("🔒 Редактирование занятий запрещено.", show_alert=True)
 
     dto_list = await extra_classes_service.get_user_extra_classes(target_id)
     
@@ -339,8 +359,8 @@ async def process_edit_day(callback: CallbackQuery, state: FSMContext, extra_cla
     await extra_classes_service.update_extra_class(user_id=target_id, extra_id=class_id, day_of_week=day_num)
     await state.clear()
     
-    user_dto = await profile_service.get_user_profile_dto(callback.from_user.id)
-    can_edit = True if user_dto.role != "child" else getattr(user_dto, 'can_edit_extra_classes', True)
+    user_dto = await profile_service.get_user_profile_dto(callback.from_user.id) # для message - используйте message.from_user.id
+    can_add, can_edit = _get_rights(user_dto)
     
     text_updated, _ = UIRenderer.render_extra_class_updated()
     text_menu, _ = UIRenderer.render_extra_classes_menu()
@@ -379,8 +399,8 @@ async def process_edit_value(message: Message, state: FSMContext, time_service: 
     await extra_classes_service.update_extra_class(user_id=target_id, extra_id=class_id, **kwargs)
     await state.clear()
     
-    user_dto = await profile_service.get_user_profile_dto(message.from_user.id)
-    can_edit = True if user_dto.role != "child" else getattr(user_dto, 'can_edit_extra_classes', True)
+    user_dto = await profile_service.get_user_profile_dto(message.from_user.id) # для message - используйте message.from_user.id
+    can_add, can_edit = _get_rights(user_dto)
     
     text_updated, _ = UIRenderer.render_extra_class_updated()
     text_menu, _ = UIRenderer.render_extra_classes_menu()
@@ -408,8 +428,8 @@ async def process_edit_time_end(message: Message, state: FSMContext, time_servic
     )
     
     await state.clear()
-    user_dto = await profile_service.get_user_profile_dto(message.from_user.id)
-    can_edit = True if user_dto.role != "child" else getattr(user_dto, 'can_edit_extra_classes', True)
+    user_dto = await profile_service.get_user_profile_dto(message.from_user.id) # для message - используйте message.from_user.id
+    can_add, can_edit = _get_rights(user_dto)
     
     text_updated, _ = UIRenderer.render_extra_class_updated()
     text_menu, _ = UIRenderer.render_extra_classes_menu()
