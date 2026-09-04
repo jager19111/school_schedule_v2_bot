@@ -20,6 +20,7 @@ class Database:
                     class_id TEXT,
                     group_id TEXT,
                     teacher_id TEXT,
+                    
                     pre_lesson_offset_minutes INTEGER NOT NULL DEFAULT 10,
                     changes_window_days INTEGER NOT NULL DEFAULT 3,
                     parent_control_notifications INTEGER NOT NULL DEFAULT 0,
