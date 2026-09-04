@@ -204,12 +204,12 @@ async def prompt_child_summary_time(callback: CallbackQuery, state: FSMContext, 
     await callback.answer()
 
 @router.message(SettingsStates.waiting_for_my_time)
-async def process_my_time(callback: CallbackQuery, message: Message, state: FSMContext, time_service: TimeService, profile_service: ProfileService, schedule_service: ScheduleService):
-    user_dto = await profile_service.get_user_profile_dto(callback.from_user.id)
+async def process_my_time(message: Message, state: FSMContext, time_service: TimeService, profile_service: ProfileService, schedule_service: ScheduleService):
+    user_dto = await profile_service.get_user_profile_dto(message.from_user.id)
     
     # Блокировка: если это ребенок и родитель включил контроль
     if user_dto.role == "child" and user_dto.parent_control_notifications:
-        return await callback.answer("🔒 Ваши настройки уведомлений заблокированы родителем.", show_alert=True)
+        return await message.answer("🔒 Ваши настройки уведомлений заблокированы родителем.", show_alert=True)
     # Умная нормализация ввода (понимает "715", "7.15", "07:15")
     norm_time = time_service.normalize_time(message.text)
     

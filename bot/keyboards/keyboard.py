@@ -273,7 +273,7 @@ class Keyboards:
 
     @staticmethod
     def get_day_nav_kb(current_date_iso: str) -> InlineKeyboardMarkup:
-        """Клавиатура: Предыдущий / Следующий день."""
+        """Клавиатура: Предыдущий / Следующий день с привязкой к ID."""
         curr_date = datetime.fromisoformat(current_date_iso).date()
         prev_date = (curr_date - timedelta(days=1)).isoformat()
         next_date = (curr_date + timedelta(days=1)).isoformat()
@@ -325,7 +325,7 @@ class Keyboards:
 
     @staticmethod
     def get_week_nav_kb(week_start_iso: str, is_full: bool = False) -> InlineKeyboardMarkup:
-        """Клавиатура недельного меню (Моя неделя)."""
+        """Клавиатура недельного меню (Моя неделя) с привязкой к ID."""
         from datetime import datetime, timedelta
         start_date = datetime.fromisoformat(week_start_iso).date()
         prev_week = (start_date - timedelta(days=7)).isoformat()
@@ -339,15 +339,13 @@ class Keyboards:
             
             # НОВОЕ: Динамическая подпись даты
             btn_text = f"{day_name} {day_date_obj.strftime('%d.%m')}"
+            # Кнопка конкретного дня недели ведет на день
             days.append(InlineKeyboardButton(text=btn_text, callback_data=f"sched:day:{day_date_iso}"))
             
-        buttons = [
-            days[0:3],
-            days[3:6]
-        ]
+        buttons = [days[0:3], days[3:6]]
         
         if not is_full:
-            buttons.append([InlineKeyboardButton(text="📋 Все дни подробно", callback_data=f"sched:fullweek:{week_start_iso}")])
+            buttons.append([InlineKeyboardButton(text="📋 Все дни подробно", callback_data=f"sched:full_week:{week_start_iso}")])
         else:
             buttons.append([InlineKeyboardButton(text="🗓 Краткая сводка", callback_data=f"sched:week:{week_start_iso}")])
             

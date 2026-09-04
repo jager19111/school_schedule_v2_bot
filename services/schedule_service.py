@@ -40,7 +40,7 @@ class ScheduleService:
         
         for lesson in base_lessons:
             l_group = lesson.get("group_id")
-            subj_name = lesson.get("subject_name", "").lower()
+            subj_name = (lesson.get("subject_name") or "").lower()
             
             # Перехватываем номинальные предметы, чтобы вывести их деревом для всех
             is_nominal_tree = "труд" in subj_name or "технологи" in subj_name
