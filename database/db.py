@@ -41,9 +41,23 @@ class Database:
 
                     is_notifications_enabled INTEGER NOT NULL DEFAULT 1
                         CHECK (is_notifications_enabled IN (0, 1)),
+
                     morning_summary_time TEXT,
+
                     pre_lesson_offset_minutes INTEGER NOT NULL DEFAULT 10
                         CHECK (pre_lesson_offset_minutes BETWEEN 0 AND 180),
+
+                    receive_schedule_changes INTEGER NOT NULL DEFAULT 1
+                        CHECK (receive_schedule_changes IN (0, 1)),
+
+                    receive_extra_class_reminders INTEGER NOT NULL DEFAULT 1
+                        CHECK (receive_extra_class_reminders IN (0, 1)),
+
+                    changes_window_days INTEGER NOT NULL DEFAULT 3
+                        CHECK (changes_window_days BETWEEN 0 AND 31),
+
+                    global_extra_reminder INTEGER NOT NULL DEFAULT 30
+                        CHECK (global_extra_reminder BETWEEN 0 AND 180),
                     changes_window_days INTEGER NOT NULL DEFAULT 3
                         CHECK (changes_window_days BETWEEN 0 AND 31),
                     global_extra_reminder INTEGER NOT NULL DEFAULT 30

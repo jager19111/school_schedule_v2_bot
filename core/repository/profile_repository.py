@@ -80,6 +80,8 @@ class ProfileRepository(BaseRepository):
                 family_id,
                 morning_summary_time,
                 pre_lesson_offset_minutes,
+                receive_schedule_changes,
+                receive_extra_class_reminders,
                 changes_window_days,
                 is_notifications_enabled,
                 global_extra_reminder
@@ -465,7 +467,107 @@ class ProfileRepository(BaseRepository):
             (parent_user_id, child_user_id),
         )
         return row is not None
-    
+
+    async def is_family_admin_for_child(
+        self,
+        admin_user_id: int,
+        child_user_id: int,
+    ) -> bool:
+        """
+        Проверяет, является ли пользователь администратором семьи ребёнка.
+
+        Только families.admin_user_id имеет право принудительно менять
+        настройки ребёнка и ставить/снимать блокировку.
+        """
+        row = await self._fetch_one(
+            """
+            SELECT 1 AS is_admin
+            FROM families AS family
+            JOIN users AS child
+              ON child.family_id = family.id
+            WHERE family.admin_user_id = ?
+              AND child.user_id = ?
+              AND child.role = 'child'
+            """,
+            (admin_user_id, child_user_id),
+        )
+
+        return row is not None
+
+    async def is_child_notification_settings_locked(
+        self,
+        child_user_id: int,
+    ) -> bool:
+        """
+        Возвращает фактическое состояние блокировки настроек ребёнка.
+
+        Источником блокировки является строка:
+            admin_user_id -> child_id
+        в parent_child_settings.
+
+        Если ребёнок не состоит в семье или строка ещё не найдена,
+        настройки считаются незаблокированными.
+        """
+        row = await self._fetch_one(
+            """
+            SELECT
+                pcs.child_notification_settings_locked AS locked
+            FROM families AS family
+            JOIN parent_child_settings AS pcs
+              ON pcs.parent_id = family.admin_user_id
+            JOIN users AS child
+              ON child.user_id = pcs.child_id
+            WHERE child.user_id = ?
+              AND child.role = 'child'
+              AND child.family_id = family.id
+            """,
+            (child_user_id,),
+        )
+
+        return bool(row and row["locked"])
+
+    async def set_child_notification_settings_locked(
+        self,
+        admin_user_id: int,
+        child_user_id: int,
+        locked: bool,
+    ) -> bool:
+        """
+        Устанавливает блокировку настроек ребёнка.
+
+        UPDATE содержит проверку families.admin_user_id, поэтому callback
+        вручную подделать недостаточно: не-администратор не сможет изменить
+        строку даже при знании child_id.
+        """
+        changed = await self._execute(
+            """
+            UPDATE parent_child_settings
+            SET
+                child_notification_settings_locked = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE parent_id = ?
+              AND child_id = ?
+              AND EXISTS (
+                  SELECT 1
+                  FROM families AS family
+                  JOIN users AS child
+                    ON child.family_id = family.id
+                  WHERE family.admin_user_id = ?
+                    AND child.user_id = ?
+                    AND child.role = 'child'
+              )
+            """,
+            (
+                int(locked),
+                admin_user_id,
+                child_user_id,
+                admin_user_id,
+                child_user_id,
+            ),
+        )
+
+        return changed == 1
+        
     # ========== CHILDREN LIST ==========
 
     async def get_children_for_parent_rows(
@@ -514,16 +616,39 @@ class ProfileRepository(BaseRepository):
         row = await self._fetch_one("SELECT family_code FROM families WHERE id = ?", (family_id,))
         return row["family_code"] if row else None
 
-    async def toggle_boolean_flag(self, user_id: int, field_name: str) -> None:
-        """Универсальный метод переключения boolean-флагов для защиты от инъекций валидируем field_name."""
-        allowed_fields = {"is_notifications_enabled", "notify_parent_about_me", "parent_control_notifications", "can_edit_extra_classes"}
+    async def toggle_boolean_flag(
+        self,
+        user_id: int,
+        field_name: str,
+    ) -> None:
+        """
+        Безопасно переключает разрешённый boolean-флаг профиля пользователя.
+        """
+        allowed_fields = {
+            "is_notifications_enabled",
+            "receive_schedule_changes",
+            "receive_extra_class_reminders",
+        }
+
         if field_name not in allowed_fields:
-            return
+            raise ValueError(
+                f"Unsupported boolean user field: {field_name}"
+            )
+
         await self._execute(
-            f"UPDATE users SET {field_name} = CASE WHEN {field_name} = 1 THEN 0 ELSE 1 END WHERE user_id = ?",
-            (user_id,)
+            f"""
+            UPDATE users
+            SET
+                {field_name} = CASE
+                    WHEN {field_name} = 1 THEN 0
+                    ELSE 1
+                END,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE user_id = ?
+            """,
+            (user_id,),
         )
-        
+            
  # Сводка       
     async def update_morning_summary_time(self, user_id: int, time_str: str | None) -> None:
         """Обновляет время утренней сводки. Если None - сводка выключена."""

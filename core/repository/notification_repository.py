@@ -180,6 +180,7 @@ class NotificationRepository(BaseRepository):
                   )
               AND child.role = 'child'
               AND child.is_notifications_enabled = 1
+              AND child.receive_schedule_changes = 1
 
             UNION ALL
 
@@ -208,6 +209,7 @@ class NotificationRepository(BaseRepository):
               AND child.role = 'child'
               AND adult.role IN ('parent', 'observer')
               AND adult.is_notifications_enabled = 1
+              AND child.receive_schedule_changes = 1
 
             ORDER BY recipient_id, child_id
             """,
@@ -328,6 +330,7 @@ class NotificationRepository(BaseRepository):
             WHERE e.day_of_week = ?
               AND child.role = 'child'
               AND child.is_notifications_enabled = 1
+              AND child.receive_extra_class_reminders = 1
 
             UNION ALL
 
@@ -358,6 +361,7 @@ class NotificationRepository(BaseRepository):
               AND child.role = 'child'
               AND adult.role IN ('parent', 'observer')
               AND adult.is_notifications_enabled = 1
+              AND adult.receive_extra_class_reminders = 1
 
             ORDER BY time_start, recipient_id, child_id
             """,

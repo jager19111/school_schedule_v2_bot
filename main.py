@@ -122,7 +122,7 @@ async def main():
 
     # ВРЕМЕННЫЙ smoke-test предурочного уведомления.
     # Удалить сразу после проверки.
-    await notification_service.send_morning_reminders()
+    # await notification_service.send_morning_reminders()
     
     # 6. Настройка планировщика задач (APScheduler)
     scheduler = AsyncIOScheduler(timezone=tz)

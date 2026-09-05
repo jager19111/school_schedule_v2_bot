@@ -22,9 +22,121 @@ from bot.handlers.registration import RegistrationStates
 logger = logging.getLogger(__name__)
 router = Router()
 
+async def _safe_edit_text(
+    message: Message,
+    text: str,
+    *,
+    reply_markup=None,
+    parse_mode: str = "HTML",
+) -> bool:
+    """
+    Безопасно обновляет inline-сообщение.
+
+    Telegram выбрасывает TelegramBadRequest, например если:
+    - новый текст и keyboard не отличаются от текущих;
+    - сообщение нельзя изменить;
+    - callback пришёл по старому/удалённому сообщению.
+
+    Ошибка логируется, но не прерывает handler.
+    Другие ошибки намеренно не подавляются.
+    """
+    try:
+        await message.edit_text(
+            text,
+            reply_markup=reply_markup,
+            parse_mode=parse_mode,
+        )
+        return True
+    except TelegramBadRequest as exc:
+        logger.debug(
+            "Telegram edit_text skipped: %s",
+            exc,
+        )
+        return False
+
+
+async def _safe_callback_answer(
+    callback: CallbackQuery,
+    text: str | None = None,
+    *,
+    show_alert: bool = False,
+) -> None:
+    """
+    Безопасно закрывает Telegram callback spinner.
+
+    Не допускает, чтобы вторичный TelegramBadRequest ломал рабочую
+    бизнес-операцию после успешного изменения БД.
+    """
+    try:
+        await callback.answer(
+            text=text,
+            show_alert=show_alert,
+        )
+    except TelegramBadRequest as exc:
+        logger.debug(
+            "Telegram callback answer skipped: %s",
+            exc,
+        )
+async def _require_family_admin_for_child(
+    callback: CallbackQuery,
+    profile_service: ProfileService,
+    child_user_id: int,
+) -> bool:
+    """
+    Проверяет, что инициатор callback — администратор семьи ребёнка.
+
+    Observer и обычный parent могут иметь доступ к просмотру ребёнка
+    и к собственным подпискам, но не могут менять его личный профиль,
+    уведомления, класс, группу или блокировку.
+    """
+    is_admin = await profile_service.is_family_admin_for_child(
+        admin_user_id=callback.from_user.id,
+        child_user_id=child_user_id,
+    )
+
+    if is_admin:
+        return True
+
+    await _safe_callback_answer(
+        callback,
+        "Только администратор семьи может менять настройки ребёнка.",
+        show_alert=True,
+    )
+
+    return False        
+
+async def _require_own_notification_settings_access(
+    callback: CallbackQuery,
+    profile_service: ProfileService,
+) -> bool:
+    """
+    Проверяет, что пользователь может менять собственные уведомления.
+
+    Для ребёнка учитывается блокировка, заданная администратором семьи.
+    Parent и observer всегда меняют только свои настройки.
+    """
+    allowed = await profile_service.can_user_change_own_notification_settings(
+        user_id=callback.from_user.id,
+    )
+
+    if allowed:
+        return True
+
+    await _safe_callback_answer(
+        callback,
+        "🔒 Ваши настройки уведомлений заблокированы "
+        "администратором семьи.",
+        show_alert=True,
+    )
+
+    return False
+
 class SettingsStates(StatesGroup):
     waiting_for_my_time = State()
     waiting_for_child_time = State()
+
+
+
 # ================= 1. ПОИСК ПО ШКОЛЕ =================
 
 @router.message(F.text == "🏫 Поиск по школе")
@@ -40,6 +152,375 @@ async def settings_main_menu(message: Message, profile_service: ProfileService, 
     """Главное меню настроек. Вызывается из главного меню и после изменения настроек."""
     await _show_settings_menu(message, message.from_user.id, profile_service, schedule_service, is_callback=False)
 
+# refresh-функция перед callback handlers child_ctl:*.
+async def _refresh_child_control_menu(
+    callback: CallbackQuery,
+    child_user_id: int,
+    profile_service: ProfileService,
+) -> None:
+    """
+    Перерисовывает экран профиля ребёнка.
+
+    Управляющие кнопки показываются только семейному администратору.
+    Обычный parent/observer может видеть ограниченный экран просмотра.
+    """
+    actor_user_id = callback.from_user.id
+
+    child_dto = await profile_service.get_user_profile_dto(
+        child_user_id,
+    )
+
+    if child_dto.role != "child":
+        logger.warning(
+            "Child control refresh rejected: target_user_id=%s role=%s",
+            child_user_id,
+            child_dto.role,
+        )
+
+        await _safe_callback_answer(
+            callback,
+            "Этот профиль не является профилем ребёнка.",
+            show_alert=True,
+        )
+        return
+
+    is_family_admin = await profile_service.is_family_admin_for_child(
+        admin_user_id=actor_user_id,
+        child_user_id=child_user_id,
+    )
+
+    is_locked = await profile_service.is_child_notification_settings_locked(
+        child_user_id=child_user_id,
+    )
+
+    text = UIRenderer.render_child_settings_menu(
+        child_dto.name,
+        child_dto.class_id,
+    )
+
+    keyboard = Keyboards.get_child_settings_kb(
+        child_dto=child_dto,
+        is_family_admin=is_family_admin,
+        is_notifications_locked=is_locked,
+    )
+
+    await _safe_edit_text(
+        callback.message,
+        text,
+        reply_markup=keyboard,
+    )
+# Обработчик юлокировок после refresh-функцию
+@router.callback_query(F.data.startswith("child_ctl:lock:"))
+async def toggle_child_notification_settings_lock(
+    callback: CallbackQuery,
+    profile_service: ProfileService,
+) -> None:
+    """Администратор включает или снимает lock настроек ребёнка."""
+    try:
+        child_user_id = int(callback.data.split(":")[2])
+    except (IndexError, ValueError):
+        await _safe_callback_answer(
+            callback,
+            "Некорректный идентификатор ребёнка.",
+            show_alert=True,
+        )
+        return
+
+    if not await _require_family_admin_for_child(
+        callback=callback,
+        profile_service=profile_service,
+        child_user_id=child_user_id,
+    ):
+        return
+
+    is_locked = await profile_service.is_child_notification_settings_locked(
+        child_user_id=child_user_id,
+    )
+
+    changed = await profile_service.set_child_notification_settings_locked(
+        admin_user_id=callback.from_user.id,
+        child_user_id=child_user_id,
+        locked=not is_locked,
+    )
+
+    if not changed:
+        logger.warning(
+            "Failed to change child lock: admin_id=%s child_id=%s",
+            callback.from_user.id,
+            child_user_id,
+        )
+
+        await _safe_callback_answer(
+            callback,
+            "Не удалось изменить блокировку настроек ребёнка.",
+            show_alert=True,
+        )
+        return
+
+    await _refresh_child_control_menu(
+        callback=callback,
+        child_user_id=child_user_id,
+        profile_service=profile_service,
+    )
+
+    await _safe_callback_answer(
+        callback,
+        (
+            "Блокировка настроек ребёнка включена."
+            if not is_locked
+            else "Блокировка настроек ребёнка выключена."
+        ),
+    )
+
+@router.callback_query(F.data.startswith("child_ctl:notif:"))
+async def toggle_child_notifications_by_admin(
+    callback: CallbackQuery,
+    profile_service: ProfileService,
+) -> None:
+    """Администратор меняет users.is_notifications_enabled ребёнка."""
+    try:
+        child_user_id = int(callback.data.split(":")[2])
+    except (IndexError, ValueError):
+        await _safe_callback_answer(
+            callback,
+            "Некорректный идентификатор ребёнка.",
+            show_alert=True,
+        )
+        return
+
+    if not await _require_family_admin_for_child(
+        callback=callback,
+        profile_service=profile_service,
+        child_user_id=child_user_id,
+    ):
+        return
+
+    changed = await profile_service.toggle_child_notifications_enabled(
+        admin_user_id=callback.from_user.id,
+        child_user_id=child_user_id,
+    )
+
+    if not changed:
+        await _safe_callback_answer(
+            callback,
+            "Не удалось изменить уведомления ребёнка.",
+            show_alert=True,
+        )
+        return
+
+    await _refresh_child_control_menu(
+        callback=callback,
+        child_user_id=child_user_id,
+        profile_service=profile_service,
+    )
+
+    await _safe_callback_answer(
+        callback,
+        "Настройки уведомлений ребёнка обновлены.",
+    )
+
+@router.callback_query(F.data.startswith("child_ctl:prelesson:"))
+async def toggle_child_pre_lesson_reminders(
+    callback: CallbackQuery,
+    profile_service: ProfileService,
+) -> None:
+    """Администратор включает/выключает предурочные напоминания ребёнка."""
+    try:
+        child_user_id = int(callback.data.split(":")[2])
+    except (IndexError, ValueError):
+        await _safe_callback_answer(
+            callback,
+            "Некорректный идентификатор ребёнка.",
+            show_alert=True,
+        )
+        return
+
+    if not await _require_family_admin_for_child(
+        callback=callback,
+        profile_service=profile_service,
+        child_user_id=child_user_id,
+    ):
+        return
+
+    child_dto = await profile_service.get_user_profile_dto(
+        child_user_id,
+    )
+
+    new_value = (
+        0
+        if child_dto.pre_lesson_offset_minutes > 0
+        else 10
+    )
+
+    changed = await profile_service.update_child_integer_notification_setting(
+        admin_user_id=callback.from_user.id,
+        child_user_id=child_user_id,
+        field_name="pre_lesson_offset_minutes",
+        value=new_value,
+    )
+
+    if not changed:
+        await _safe_callback_answer(
+            callback,
+            "Не удалось изменить предурочные напоминания ребёнка.",
+            show_alert=True,
+        )
+        return
+
+    await _refresh_child_control_menu(
+        callback=callback,
+        child_user_id=child_user_id,
+        profile_service=profile_service,
+    )
+
+    await _safe_callback_answer(
+        callback,
+        "Настройка напоминаний об уроках обновлена.",
+    )
+
+@router.callback_query(F.data.startswith("child_ctl:changes:"))
+async def toggle_child_schedule_changes(
+    callback: CallbackQuery,
+    profile_service: ProfileService,
+) -> None:
+    """Администратор включает/выключает уведомления ребёнка о заменах."""
+    try:
+        child_user_id = int(callback.data.split(":")[2])
+    except (IndexError, ValueError):
+        await _safe_callback_answer(
+            callback,
+            "Некорректный идентификатор ребёнка.",
+            show_alert=True,
+        )
+        return
+
+    if not await _require_family_admin_for_child(
+        callback=callback,
+        profile_service=profile_service,
+        child_user_id=child_user_id,
+    ):
+        return
+
+    changed = await profile_service.toggle_child_boolean_notification_setting(
+        admin_user_id=callback.from_user.id,
+        child_user_id=child_user_id,
+        field_name="receive_schedule_changes",
+    )
+
+    if not changed:
+        await _safe_callback_answer(
+            callback,
+            "Не удалось изменить уведомления ребёнка о заменах.",
+            show_alert=True,
+        )
+        return
+
+    await _refresh_child_control_menu(
+        callback=callback,
+        child_user_id=child_user_id,
+        profile_service=profile_service,
+    )
+
+    await _safe_callback_answer(
+        callback,
+        "Настройки уведомлений о заменах обновлены.",
+    )
+
+@router.callback_query(F.data.startswith("child_ctl:extra:"))
+async def toggle_child_extra_class_reminders(
+    callback: CallbackQuery,
+    profile_service: ProfileService,
+) -> None:
+    """Администратор включает/выключает напоминания ребёнку о допзанятиях."""
+    try:
+        child_user_id = int(callback.data.split(":")[2])
+    except (IndexError, ValueError):
+        await _safe_callback_answer(
+            callback,
+            "Некорректный идентификатор ребёнка.",
+            show_alert=True,
+        )
+        return
+
+    if not await _require_family_admin_for_child(
+        callback=callback,
+        profile_service=profile_service,
+        child_user_id=child_user_id,
+    ):
+        return
+
+    changed = await profile_service.toggle_child_boolean_notification_setting(
+        admin_user_id=callback.from_user.id,
+        child_user_id=child_user_id,
+        field_name="receive_extra_class_reminders",
+    )
+
+    if not changed:
+        await _safe_callback_answer(
+            callback,
+            "Не удалось изменить напоминания о допзанятиях ребёнка.",
+            show_alert=True,
+        )
+        return
+
+    await _refresh_child_control_menu(
+        callback=callback,
+        child_user_id=child_user_id,
+        profile_service=profile_service,
+    )
+
+    await _safe_callback_answer(
+        callback,
+        "Настройки дополнительных занятий ребёнка обновлены.",
+    )
+            
+@router.callback_query(F.data.startswith("child_ctl:class:"))
+async def child_settings_change_class(
+    callback: CallbackQuery,
+    state: FSMContext,
+    profile_service: ProfileService,
+    schedule_service: ScheduleService,
+) -> None:
+    """
+    Только администратор семьи запускает изменение класса/группы ребёнка.
+    """
+    try:
+        child_user_id = int(callback.data.split(":")[2])
+    except (IndexError, ValueError):
+        await _safe_callback_answer(
+            callback,
+            "Некорректный идентификатор ребёнка.",
+            show_alert=True,
+        )
+        return
+
+    if not await _require_family_admin_for_child(
+        callback=callback,
+        profile_service=profile_service,
+        child_user_id=child_user_id,
+    ):
+        return
+
+    class_dto = await schedule_service.get_classes_list()
+
+    text = UIRenderer.render_class_selection(class_dto)
+    keyboard = Keyboards.get_class_selection(class_dto)
+
+    await state.update_data(
+        editing_child_id=child_user_id,
+        editing_child_admin_id=callback.from_user.id,
+    )
+
+    await _safe_edit_text(
+        callback.message,
+        text,
+        reply_markup=keyboard,
+    )
+
+    await state.set_state(RegistrationStates.waiting_for_class)
+
+    await _safe_callback_answer(callback)
+                
 @router.callback_query(F.data == "settings:main")
 async def settings_main_menu_cb(callback: CallbackQuery, profile_service: ProfileService, schedule_service: ScheduleService):
     """Главное меню настроек. Вызывается из коллбэка после изменения настроек."""
@@ -289,166 +770,449 @@ async def toggle_parent_child_notification_setting(
     await callback.answer("Настройка обновлена")
             
 @router.callback_query(F.data.startswith("family:child_settings:"))
-async def show_child_settings(callback: CallbackQuery, profile_service: ProfileService):
-    child_user_id = int(callback.data.split(":")[2])
-    child_dto = await profile_service.get_user_profile_dto(child_user_id)
-    
-    text = UIRenderer.render_child_settings_menu(child_dto.name, child_dto.class_id)
-    kb = Keyboards.get_child_settings_kb(child_dto)
-    
-    await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
-    await callback.answer()
+async def show_child_settings(
+    callback: CallbackQuery,
+    profile_service: ProfileService,
+) -> None:
+    """
+    Показывает профиль ребёнка из семейного меню.
 
-# ================= 4. ПЕРЕКЛЮЧАТЕЛИ (TOGGLES) =================
+    Управляющие элементы доступны только администратору семьи.
+    """
+    try:
+        child_user_id = int(callback.data.split(":")[2])
+    except (IndexError, ValueError):
+        await callback.answer(
+            "Некорректный идентификатор ребёнка.",
+            show_alert=True,
+        )
+        return
 
-@router.callback_query(F.data.startswith("child_set:notif:"))
-async def toggle_child_notifications(callback: CallbackQuery, profile_service: ProfileService):
-    child_user_id = int(callback.data.split(":")[2])
-    await profile_service.toggle_user_flag(child_user_id, "is_notifications_enabled")
-    await _refresh_child_settings(callback, child_user_id, profile_service)
+    actor_user_id = callback.from_user.id
 
-@router.callback_query(F.data.startswith("child_set:parent_notif:"))
-async def toggle_parent_notif(callback: CallbackQuery, profile_service: ProfileService):
-    child_user_id = int(callback.data.split(":")[2])
-    await profile_service.toggle_user_flag(child_user_id, "notify_parent_about_me")
-    await _refresh_child_settings(callback, child_user_id, profile_service)
+    child_dto = await profile_service.get_user_profile_dto(
+        child_user_id,
+    )
 
-@router.callback_query(F.data.startswith("child_set:lock:"))
-async def toggle_child_lock(callback: CallbackQuery, profile_service: ProfileService):
-    child_user_id = int(callback.data.split(":")[2])
-    await profile_service.toggle_user_flag(child_user_id, "parent_control_notifications")
-    await _refresh_child_settings(callback, child_user_id, profile_service)
+    if child_dto.role != "child":
+        await callback.answer(
+            "Этот профиль не является профилем ребёнка.",
+            show_alert=True,
+        )
+        return
 
-async def _refresh_child_settings(callback: CallbackQuery, child_user_id: int, profile_service: ProfileService):
-    """Вспомогательный метод для обновления экрана после переключения флага."""
-    child_dto = await profile_service.get_user_profile_dto(child_user_id)
-    text = UIRenderer.render_child_settings_menu(child_dto.name, child_dto.class_id)
-    kb = Keyboards.get_child_settings_kb(child_dto)
-    
-    with contextlib.suppress(TelegramBadRequest):
-        await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
-        
-    await callback.answer()
+    is_family_admin = await profile_service.is_family_admin_for_child(
+        admin_user_id=actor_user_id,
+        child_user_id=child_user_id,
+    )
+
+    has_access = await profile_service.parent_can_access_child(
+        parent_user_id=actor_user_id,
+        child_user_id=child_user_id,
+    )
+
+    if not has_access:
+        await callback.answer(
+            "У вас нет доступа к профилю этого ребёнка.",
+            show_alert=True,
+        )
+        return
+
+    is_locked = await profile_service.is_child_notification_settings_locked(
+        child_user_id=child_user_id,
+    )
+
+    text = UIRenderer.render_child_settings_menu(
+        child_dto.name,
+        child_dto.class_id,
+    )
+
+    keyboard = Keyboards.get_child_settings_kb(
+        child_dto=child_dto,
+        is_family_admin=is_family_admin,
+        is_notifications_locked=is_locked,
+    )
+
+    await _safe_edit_text(
+        callback.message,
+        text,
+        reply_markup=keyboard,
+    )
+
+    await _safe_callback_answer(callback)
+
 
 # Настройки самого родителя
 @router.callback_query(F.data == "settings:my_notifications")
-async def toggle_my_notifications(callback: CallbackQuery, profile_service: ProfileService):
-    user_dto = await profile_service.get_user_profile_dto(callback.from_user.id)
+async def toggle_my_notifications(
+    callback: CallbackQuery,
+    profile_service: ProfileService,
+    schedule_service: ScheduleService,
+) -> None:
+    """
+    Пользователь меняет собственный глобальный флаг уведомлений.
+
+    Для ребёнка операция запрещается, если settings заблокированы
+    администратором семьи.
+    """
+    changed = await profile_service.toggle_own_notifications_enabled(
+        user_id=callback.from_user.id,
+    )
+
+    if not changed:
+        await callback.answer(
+            "🔒 Ваши настройки уведомлений заблокированы "
+            "администратором семьи.",
+            show_alert=True,
+        )
+        return
+
+    await _show_settings_menu(
+        message_obj=callback.message,
+        user_id=callback.from_user.id,
+        profile_service=profile_service,
+        schedule_service=schedule_service,
+        is_callback=True,
+    )
+
+    await callback.answer("Настройки уведомлений обновлены.")
     
-    # Блокировка: если это ребенок и родитель включил контроль
-    # Проверка блокировки конкретным взрослым будет реализована через
-    # parent_child_settings на Этапе 3.
-    await profile_service.toggle_user_flag(callback.from_user.id, "is_notifications_enabled")
-    await settings_main_menu_cb(callback, profile_service)
- # Запрет редактирования доп.занятий   
-@router.callback_query(F.data.startswith("child_set:extra_edit:"))
-async def toggle_child_extra_edit(callback: CallbackQuery, profile_service: ProfileService):
-    child_user_id = int(callback.data.split(":")[2])
-    # Переключаем флаг в БД
-    await profile_service.toggle_user_flag(child_user_id, "can_edit_extra_classes")
-    # Обновляем интерфейс
-    await _refresh_child_settings(callback, child_user_id, profile_service)
         
     # ================= 5. ВВОД ВРЕМЕНИ СВОДКИ (FSM) =================
 
 @router.callback_query(F.data == "settings:my_summary_time")
-async def prompt_my_summary_time(callback: CallbackQuery, state: FSMContext):
+async def prompt_my_summary_time(
+    callback: CallbackQuery,
+    state: FSMContext,
+    profile_service: ProfileService,
+) -> None:
+    """
+    Запрашивает время личной утренней сводки.
+
+    Если ребёнок заблокирован администратором семьи, изменение запрещено.
+    Parent и observer всегда настраивают свои сводки независимо.
+    """
+    if not await _require_own_notification_settings_access(
+        callback=callback,
+        profile_service=profile_service,
+    ):
+        return
+
     text = UIRenderer.render_summary_time_prompt()
-    kb = Keyboards.get_summary_time_prompt_kb()
-    
-    await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    keyboard = Keyboards.get_summary_time_prompt_kb()
+
+    await _safe_edit_text(
+        callback.message,
+        text,
+        reply_markup=keyboard,
+    )
+
     await state.set_state(SettingsStates.waiting_for_my_time)
-    await callback.answer()
 
-@router.callback_query(F.data.startswith("child_set:time:"))
-async def prompt_child_summary_time(callback: CallbackQuery, state: FSMContext, profile_service: ProfileService):
-    child_id = int(callback.data.split(":")[2])
-    await state.update_data(child_id=child_id)
-    
-    # Получаем DTO, чтобы отобразить имя ребенка в тексте
-    child_dto = await profile_service.get_user_profile_dto(child_id)
-
-    text = UIRenderer.render_summary_time_prompt(child_dto.name)
-    kb = Keyboards.get_summary_time_prompt_kb()
-    
-    await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
-    await state.set_state(SettingsStates.waiting_for_child_time)
-    await callback.answer()
+    await _safe_callback_answer(callback)
 
 @router.message(SettingsStates.waiting_for_my_time)
-async def process_my_time(message: Message, state: FSMContext, time_service: TimeService, profile_service: ProfileService, schedule_service: ScheduleService):
-    user_dto = await profile_service.get_user_profile_dto(message.from_user.id)
-    
-    # Блокировка: если это ребенок и родитель включил контроль
-    # Проверка блокировки конкретным взрослым будет реализована через
-    # parent_child_settings на Этапе 3.
-    # Умная нормализация ввода (понимает "715", "7.15", "07:15")
+async def process_my_time(
+    message: Message,
+    state: FSMContext,
+    time_service: TimeService,
+    profile_service: ProfileService,
+    schedule_service: ScheduleService,
+) -> None:
+    """
+    Сохраняет личное время утренней сводки пользователя.
+    """
     norm_time = time_service.normalize_time(message.text)
-    
-    if not norm_time:
-        text = UIRenderer.render_invalid_time_format()
-        kb = Keyboards.get_summary_time_prompt_kb()
-        return await message.answer(text, reply_markup=kb, parse_mode="HTML")
 
-    await profile_service.update_morning_summary_time(message.from_user.id, norm_time)
+    if not norm_time:
+        await message.answer(
+            UIRenderer.render_invalid_time_format(),
+            reply_markup=Keyboards.get_summary_time_prompt_kb(),
+            parse_mode="HTML",
+        )
+        return
+
+    changed = await profile_service.update_own_morning_summary_time(
+        user_id=message.from_user.id,
+        time_str=norm_time,
+    )
+
+    if not changed:
+        await message.answer(
+            "🔒 Ваши настройки уведомлений заблокированы "
+            "администратором семьи."
+        )
+        return
+
     await state.clear()
-    
-    # Возвращаем пользователя в главное меню настроек
-    await _show_settings_menu(message, message.from_user.id, profile_service, schedule_service, is_callback=False)
+
+    await _show_settings_menu(
+        message_obj=message,
+        user_id=message.from_user.id,
+        profile_service=profile_service,
+        schedule_service=schedule_service,
+        is_callback=False,
+    )
+        
+@router.callback_query(F.data.startswith("child_ctl:summary_time:"))
+async def prompt_child_summary_time(
+    callback: CallbackQuery,
+    state: FSMContext,
+    profile_service: ProfileService,
+) -> None:
+    """Администратор задаёт ребёнку время утренней сводки."""
+    try:
+        child_user_id = int(callback.data.split(":")[2])
+    except (IndexError, ValueError):
+        await _safe_callback_answer(
+            callback,
+            "Некорректный идентификатор ребёнка.",
+            show_alert=True,
+        )
+        return
+
+    if not await _require_family_admin_for_child(
+        callback=callback,
+        profile_service=profile_service,
+        child_user_id=child_user_id,
+    ):
+        return
+
+    child_dto = await profile_service.get_user_profile_dto(
+        child_user_id,
+    )
+
+    text = UIRenderer.render_summary_time_prompt(
+        child_dto.name,
+    )
+
+    keyboard = Keyboards.get_summary_time_prompt_kb()
+
+    await state.update_data(
+        child_id=child_user_id,
+        child_settings_admin_id=callback.from_user.id,
+    )
+
+    await _safe_edit_text(
+        callback.message,
+        text,
+        reply_markup=keyboard,
+    )
+
+    await state.set_state(SettingsStates.waiting_for_child_time)
+
+    await _safe_callback_answer(callback)
+
+@router.callback_query(F.data == "set_time:off")
+async def turn_off_summary_time(
+    callback: CallbackQuery,
+    state: FSMContext,
+    profile_service: ProfileService,
+    schedule_service: ScheduleService,
+) -> None:
+    """
+    Отключает утреннюю сводку.
+
+    Для ребёнка действие возможно только через FSM,
+    созданный администратором семьи.
+    """
+    current_state = await state.get_state()
+    data = await state.get_data()
+
+    if current_state == SettingsStates.waiting_for_child_time.state:
+        child_user_id = data.get("child_id")
+        admin_user_id = data.get("child_settings_admin_id")
+
+        if not child_user_id or admin_user_id != callback.from_user.id:
+            await state.clear()
+
+            await _safe_callback_answer(
+                callback,
+                "Состояние настройки устарело. Откройте настройки заново.",
+                show_alert=True,
+            )
+            return
+
+        changed = await profile_service.update_child_morning_summary_time(
+            admin_user_id=admin_user_id,
+            child_user_id=child_user_id,
+            time_str=None,
+        )
+
+        await state.clear()
+
+        if not changed:
+            await _safe_callback_answer(
+                callback,
+                "Только администратор семьи может менять "
+                "настройки ребёнка.",
+                show_alert=True,
+            )
+            return
+
+        await _refresh_child_control_menu(
+            callback=callback,
+            child_user_id=child_user_id,
+            profile_service=profile_service,
+        )
+
+        await _safe_callback_answer(
+            callback,
+            "Утренняя сводка ребёнка отключена.",
+        )
+        return
+
+    changed = await profile_service.update_own_morning_summary_time(
+        user_id=callback.from_user.id,
+        time_str=None,
+    )
+
+    await state.clear()
+
+    if not changed:
+        await _safe_callback_answer(
+            callback,
+            "🔒 Ваши настройки уведомлений заблокированы "
+            "администратором семьи.",
+            show_alert=True,
+        )
+        return
+
+    await _show_settings_menu(
+        message_obj=callback.message,
+        user_id=callback.from_user.id,
+        profile_service=profile_service,
+        schedule_service=schedule_service,
+        is_callback=True,
+    )
+
+    await _safe_callback_answer(
+        callback,
+        "Утренняя сводка отключена.",
+    )
 
 @router.message(SettingsStates.waiting_for_child_time)
-async def process_child_time(message: Message, state: FSMContext, time_service: TimeService, profile_service: ProfileService):
+async def process_child_time(
+    message: Message,
+    state: FSMContext,
+    time_service: TimeService,
+    profile_service: ProfileService,
+) -> None:
+    """Сохраняет время сводки ребёнка только от имени family admin."""
     norm_time = time_service.normalize_time(message.text)
-    
+
     if not norm_time:
         text = UIRenderer.render_invalid_time_format()
-        kb = Keyboards.get_summary_time_prompt_kb()
-        return await message.answer(text, reply_markup=kb, parse_mode="HTML")
+        keyboard = Keyboards.get_summary_time_prompt_kb()
+
+        await message.answer(
+            text,
+            reply_markup=keyboard,
+            parse_mode="HTML",
+        )
+        return
 
     data = await state.get_data()
-    child_id = data["child_id"]
-    
-    await profile_service.update_morning_summary_time(child_id, norm_time)
+
+    child_user_id = data.get("child_id")
+    admin_user_id = data.get("child_settings_admin_id")
+
+    if not child_user_id or admin_user_id != message.from_user.id:
+        await state.clear()
+
+        await message.answer(
+            "❌ Состояние настройки устарело. "
+            "Откройте настройки ребёнка заново."
+        )
+        return
+
+    changed = await profile_service.update_child_morning_summary_time(
+        admin_user_id=admin_user_id,
+        child_user_id=child_user_id,
+        time_str=norm_time,
+    )
+
+    if not changed:
+        await state.clear()
+
+        await message.answer(
+            "🔒 Только администратор семьи может менять "
+            "время сводки ребёнка."
+        )
+        return
+
     await state.clear()
-    
-    # Возвращаем пользователя в меню настроек конкретного ребенка.
-    # Так как мы в Message (а не CallbackQuery), отправим новое сообщение, 
-    # использовав хак с созданием фейкового CallbackQuery или продублировав логику.
-    # Для чистоты просто вызовем отрисовку нового сообщения:
-    child_dto = await profile_service.get_user_profile_dto(child_id)
-    text = UIRenderer.render_child_settings_menu(child_dto.name, child_dto.class_id)
-    kb = Keyboards.get_child_settings_kb(child_dto)
-    await message.answer(text, reply_markup=kb, parse_mode="HTML")
 
-# Отключение сводки и Отмена ввода
-@router.callback_query(F.data == "set_time:off")
-async def turn_off_summary_time(callback: CallbackQuery, state: FSMContext, profile_service: ProfileService, schedule_service: ScheduleService):
-    current_state = await state.get_state()
-    
-    if current_state == SettingsStates.waiting_for_child_time.state:
-        data = await state.get_data()
-        child_id = data["child_id"]
-        await profile_service.update_morning_summary_time(child_id, None)
-        await state.clear()
-        await _refresh_child_settings(callback, child_id, profile_service)
-    else:
-        await profile_service.update_morning_summary_time(callback.from_user.id, None)
-        await state.clear()
-        await settings_main_menu_cb(callback, profile_service, schedule_service)
+    child_dto = await profile_service.get_user_profile_dto(
+        child_user_id,
+    )
 
+    is_locked = await profile_service.is_child_notification_settings_locked(
+        child_user_id,
+    )
+
+    text = UIRenderer.render_child_settings_menu(
+        child_dto.name,
+        child_dto.class_id,
+    )
+
+    keyboard = Keyboards.get_child_settings_kb(
+        child_dto=child_dto,
+        is_family_admin=True,
+        is_notifications_locked=is_locked,
+    )
+
+    await message.answer(
+        text,
+        reply_markup=keyboard,
+        parse_mode="HTML",
+    )
+    
 @router.callback_query(F.data == "settings:cancel_input")
-async def cancel_time_input(callback: CallbackQuery, state: FSMContext, profile_service: ProfileService):
+async def cancel_time_input(
+    callback: CallbackQuery,
+    state: FSMContext,
+    profile_service: ProfileService,
+    schedule_service: ScheduleService,
+) -> None:
+    """Отменяет ввод времени и возвращает пользователя к исходному экрану."""
     current_state = await state.get_state()
-    is_child_state = current_state == SettingsStates.waiting_for_child_time.state
     data = await state.get_data()
+
+    is_child_state = (
+        current_state == SettingsStates.waiting_for_child_time.state
+    )
+
     await state.clear()
 
-    if is_child_state and "child_id" in data:
-        await _refresh_child_settings(callback, data["child_id"], profile_service)
-    else:
-        await settings_main_menu_cb(callback, profile_service)
-        
-        
+    if is_child_state and data.get("child_id"):
+        child_user_id = data["child_id"]
+
+        has_access = await profile_service.parent_can_access_child(
+            parent_user_id=callback.from_user.id,
+            child_user_id=child_user_id,
+        )
+
+        if has_access:
+            await _refresh_child_control_menu(
+                callback=callback,
+                child_user_id=child_user_id,
+                profile_service=profile_service,
+            )
+
+            await _safe_callback_answer(callback)
+            return
+
+    await _show_settings_menu(
+        message_obj=callback.message,
+        user_id=callback.from_user.id,
+        profile_service=profile_service,
+        schedule_service=schedule_service,
+        is_callback=True,
+    )
+
+    await _safe_callback_answer(callback)
+    
 # ================= НАСТРОЙКИ УВЕДОМЛЕНИЙ =================
 @router.callback_query(F.data == "settings:notifications")
 async def show_notifications_menu(callback: CallbackQuery, profile_service: ProfileService):
@@ -462,73 +1226,154 @@ async def show_notifications_menu(callback: CallbackQuery, profile_service: Prof
         await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
         
     await callback.answer()
-    
+   
 @router.callback_query(F.data == "set_notif:changes")
-async def toggle_changes_notif(callback: CallbackQuery, profile_service: ProfileService):
+async def toggle_changes_notif(
+    callback: CallbackQuery,
+    profile_service: ProfileService,
+) -> None:
+    if not await _require_own_notification_settings_access(
+        callback=callback,
+        profile_service=profile_service,
+    ):
+        return
 
-    user_dto = await profile_service.get_user_profile_dto(callback.from_user.id)
-    if user_dto.role == "child" and user_dto.parent_control_notifications:
-        return await callback.answer("🔒 Ваши настройки заблокированы родителем.", show_alert=True)
-    
-    await profile_service.toggle_user_flag(callback.from_user.id, "is_notifications_enabled")
-    await show_notifications_menu(callback, profile_service)
+    changed = await profile_service.toggle_own_boolean_notification_setting(
+        user_id=callback.from_user.id,
+        field_name="receive_schedule_changes",
+    )
+    if not changed:
+        await _safe_callback_answer(
+            callback,
+            "Не удалось изменить настройки уведомлений.",
+            show_alert=True,
+        )
+        return
+
+    await show_notifications_menu(
+        callback=callback,
+        profile_service=profile_service,
+    )
 
 @router.callback_query(F.data == "set_notif:prelesson")
-async def toggle_prelesson_notif(callback: CallbackQuery, profile_service: ProfileService):
+async def toggle_prelesson_notif(
+    callback: CallbackQuery,
+    profile_service: ProfileService,
+) -> None:
+    if not await _require_own_notification_settings_access(
+        callback=callback,
+        profile_service=profile_service,
+    ):
+        return
 
-    user_dto = await profile_service.get_user_profile_dto(callback.from_user.id)
-    if user_dto.role == "child" and user_dto.parent_control_notifications:
-        return await callback.answer("🔒 Ваши настройки заблокированы родителем.", show_alert=True)
-    
-    # Переключаем между 0 (ВЫКЛ) и 10 (ВКЛ)
-    new_val = 0 if user_dto.pre_lesson_offset_minutes > 0 else 10
-    await profile_service.update_integer_setting(callback.from_user.id, "pre_lesson_offset_minutes", new_val)
-    await show_notifications_menu(callback, profile_service)
+    user_dto = await profile_service.get_user_profile_dto(
+        callback.from_user.id,
+    )
+
+    new_value = (
+        0
+        if user_dto.pre_lesson_offset_minutes > 0
+        else 10
+    )
+
+    changed = await profile_service.update_own_integer_notification_setting(
+        user_id=callback.from_user.id,
+        field_name="pre_lesson_offset_minutes",
+        value=new_value,
+    )
+
+    if not changed:
+        await _safe_callback_answer(
+            callback,
+            "Не удалось изменить настройку предурочных уведомлений.",
+            show_alert=True,
+        )
+        return
+
+    await show_notifications_menu(
+        callback=callback,
+        profile_service=profile_service,
+    )    
 
 @router.callback_query(F.data == "set_notif:extra")
-async def toggle_extra_notif(callback: CallbackQuery, profile_service: ProfileService):
-    # Добавь этот блок в самое начало хендлеров toggle_changes_notif, toggle_prelesson_notif и toggle_extra_notif:
-    user_dto = await profile_service.get_user_profile_dto(callback.from_user.id)
-    if user_dto.role == "child" and user_dto.parent_control_notifications:
-        return await callback.answer("🔒 Ваши настройки заблокированы родителем.", show_alert=True)
-    # Переключаем между 0 (ВЫКЛ) и 30 (ВКЛ)
-    new_val = 0 if user_dto.global_extra_reminder > 0 else 30
-    await profile_service.update_integer_setting(callback.from_user.id, "global_extra_reminder", new_val)
-    await show_notifications_menu(callback, profile_service)
-    
-    
+async def toggle_extra_notif(
+    callback: CallbackQuery,
+    profile_service: ProfileService,
+) -> None:
+    if not await _require_own_notification_settings_access(
+        callback=callback,
+        profile_service=profile_service,
+    ):
+        return
+
+    changed = await profile_service.toggle_own_boolean_notification_setting(
+        user_id=callback.from_user.id,
+        field_name="receive_extra_class_reminders",
+    )
+
+    if not changed:
+        await _safe_callback_answer(
+            callback,
+            "Не удалось изменить настройку дополнительных занятий.",
+            show_alert=True,
+        )
+        return
+
+    await show_notifications_menu(
+        callback=callback,
+        profile_service=profile_service,
+    )
 
 # ================= 5. СМЕНА КЛАССА И ГРУППЫ =================
    
     
 @router.callback_query(F.data == "settings:change_class")
-async def settings_change_class(callback: CallbackQuery, state: FSMContext, schedule_service: ScheduleService):
-    """Смена класса для ребенка-одиночки."""
-    class_dto = await schedule_service.get_classes_list()
-    
-    text = UIRenderer.render_class_selection(class_dto)
-    kb = Keyboards.get_class_selection(class_dto)
-    
-    # НОВОЕ: Устанавливаем флаг, что это редактирование из настроек, а не новая регистрация
-    await state.update_data(is_settings_edit=True)
-    
-    await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
-    await state.set_state(RegistrationStates.waiting_for_class)
-    await callback.answer()
+async def settings_change_class(
+    callback: CallbackQuery,
+    state: FSMContext,
+    profile_service: ProfileService,
+    schedule_service: ScheduleService,
+) -> None:
+    """
+    Смена класса/группы для собственного профиля.
 
-@router.callback_query(F.data.startswith("child_set:class:"))
-async def child_settings_change_class(callback: CallbackQuery, state: FSMContext, schedule_service: ScheduleService):
-    """Смена класса для ребенка через меню родителя."""
-    child_id = int(callback.data.split(":")[2])
-    
-    # Сохраняем ID ребенка, которого редактируем, чтобы RegistrationStates знал, кому менять класс
-    await state.update_data(editing_child_id=child_id)
-    
+    Ребёнок не может менять класс, если профиль заблокирован
+    администратором семьи.
+    """
+    user_dto = await profile_service.get_user_profile_dto(
+        callback.from_user.id,
+    )
+
+    if user_dto.role == "child":
+        allowed = await profile_service.can_user_change_own_notification_settings(
+            user_id=callback.from_user.id,
+        )
+
+        if not allowed:
+            await _safe_callback_answer(
+                callback,
+                "🔒 Изменение профиля заблокировано "
+                "администратором семьи.",
+                show_alert=True,
+            )
+            return
+
     class_dto = await schedule_service.get_classes_list()
-    
+
     text = UIRenderer.render_class_selection(class_dto)
-    kb = Keyboards.get_class_selection(class_dto)
-    
-    await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    keyboard = Keyboards.get_class_selection(class_dto)
+
+    await state.update_data(
+        is_settings_edit=True,
+        editing_own_profile_id=callback.from_user.id,
+    )
+
+    await _safe_edit_text(
+        callback.message,
+        text,
+        reply_markup=keyboard,
+    )
+
     await state.set_state(RegistrationStates.waiting_for_class)
-    await callback.answer()
+
+    await _safe_callback_answer(callback)

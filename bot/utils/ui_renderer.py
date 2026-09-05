@@ -541,13 +541,12 @@ class UIRenderer:
     @staticmethod
     def render_notifications_menu(user_dto: 'UserProfileDTO') -> str:
         text = "🔔 <b>Настройки уведомлений</b>\n\n"
-        text += f"1️⃣ Уведомления о заменах и отменах уроков: {'✅ Включены' if user_dto.can_edit_extra_classes else '❌ Выключены'}\n"
-        text += f"2️⃣ Уведомления о дополнительных занятиях: {'✅ Включены' if user_dto.global_extra_reminder else '❌ Выключены'}\n"
+         #text += f"2️⃣ Уведомления о дополнительных занятиях: {'✅ Включены' if user_dto.global_extra_reminder else '❌ Выключены'}\n"
         text += f"3️⃣ Утренние сводки: {'✅ Включены' if user_dto.morning_summary_time else '❌ Выключены'}\n"
         if user_dto.morning_summary_time:
             text += f"   ⏰ Время утренней сводки: {user_dto.morning_summary_time}\n"
         return text
-    
+        
     @staticmethod
     def render_lesson_reminder(dto: LessonReminderDTO) -> str:
         """

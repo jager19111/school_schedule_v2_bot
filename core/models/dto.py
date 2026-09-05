@@ -37,6 +37,8 @@ class UserProfileDTO:
 
     morning_summary_time: Optional[str] = None
     pre_lesson_offset_minutes: int = 10
+    receive_schedule_changes: bool = True
+    receive_extra_class_reminders: bool = True
     changes_window_days: int = 3
     is_notifications_enabled: bool = True
     global_extra_reminder: int = 30

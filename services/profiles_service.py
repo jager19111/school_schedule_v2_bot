@@ -94,6 +94,12 @@ class ProfileService:
                 "pre_lesson_offset_minutes",
                 10,
             ),
+            receive_schedule_changes=bool(
+                row.get("receive_schedule_changes", True)
+            ),
+            receive_extra_class_reminders=bool(
+                row.get("receive_extra_class_reminders", True)
+            ),       
             changes_window_days=row.get(
                 "changes_window_days",
                 3,
@@ -244,11 +250,343 @@ class ProfileService:
             child_user_id=child_user_id,
             setting_name=setting_name,
         )
-                
+    
+    async def is_family_admin_for_child(
+        self,
+        admin_user_id: int,
+        child_user_id: int,
+    ) -> bool:
+        """Проверяет административные права над конкретным ребёнком."""
+        return await self.repo.is_family_admin_for_child(
+            admin_user_id=admin_user_id,
+            child_user_id=child_user_id,
+        )
+
+    async def is_child_notification_settings_locked(
+        self,
+        child_user_id: int,
+    ) -> bool:
+        """Возвращает действующее состояние блокировки ребёнка."""
+        return await self.repo.is_child_notification_settings_locked(
+            child_user_id=child_user_id,
+        )
+
+    async def set_child_notification_settings_locked(
+        self,
+        admin_user_id: int,
+        child_user_id: int,
+        locked: bool,
+    ) -> bool:
+        """
+        Устанавливает или снимает блокировку настроек ребёнка.
+
+        Выполнить это может только families.admin_user_id.
+        """
+        is_admin = await self.repo.is_family_admin_for_child(
+            admin_user_id=admin_user_id,
+            child_user_id=child_user_id,
+        )
+
+        if not is_admin:
+            logger.warning(
+                "Child notification lock denied: admin_user_id=%s, "
+                "child_user_id=%s",
+                admin_user_id,
+                child_user_id,
+            )
+            return False
+
+        return await self.repo.set_child_notification_settings_locked(
+            admin_user_id=admin_user_id,
+            child_user_id=child_user_id,
+            locked=locked,
+        )
+
+    async def can_user_change_own_notification_settings(
+        self,
+        user_id: int,
+    ) -> bool:
+        """
+        Определяет, может ли пользователь менять собственные настройки.
+
+        Parent и observer всегда управляют своими настройками сами.
+        Child не может менять настройки, если их заблокировал администратор.
+        """
+        profile = await self.repo.get_user_row(user_id)
+
+        if profile is None:
+            return False
+
+        if profile["role"] != "child":
+            return True
+
+        return not await self.repo.is_child_notification_settings_locked(
+            child_user_id=user_id,
+        )
+
+    async def toggle_own_notifications_enabled(
+        self,
+        user_id: int,
+    ) -> bool:
+        """
+        Переключает общий флаг уведомлений самого пользователя.
+
+        Ребёнок может сделать это только при отсутствии административной
+        блокировки его notification settings.
+        """
+        allowed = await self.can_user_change_own_notification_settings(
+            user_id=user_id,
+        )
+
+        if not allowed:
+            return False
+
+        await self.repo.toggle_boolean_flag(
+            user_id=user_id,
+            field_name="is_notifications_enabled",
+        )
+
+        return True
+
+    async def update_own_morning_summary_time(
+        self,
+        user_id: int,
+        time_str: str | None,
+    ) -> bool:
+        """
+        Обновляет личное время утренней сводки пользователя.
+
+        time_str=None отключает сводку.
+        """
+        allowed = await self.can_user_change_own_notification_settings(
+            user_id=user_id,
+        )
+
+        if not allowed:
+            return False
+
+        await self.repo.update_morning_summary_time(
+            user_id=user_id,
+            time_str=time_str,
+        )
+
+        return True
+
+    async def toggle_own_boolean_notification_setting(
+        self,
+        user_id: int,
+        field_name: str,
+    ) -> bool:
+        """
+        Переключает личный boolean-параметр уведомлений пользователя.
+
+        Для ребёнка проверяется administrative lock.
+        """
+        allowed = await self.can_user_change_own_notification_settings(
+            user_id=user_id,
+        )
+
+        if not allowed:
+            return False
+
+        allowed_fields = {
+            "is_notifications_enabled",
+            "receive_schedule_changes",
+            "receive_extra_class_reminders",
+        }
+
+        if field_name not in allowed_fields:
+            raise ValueError(
+                f"Unsupported own notification setting: {field_name}"
+            )
+
+        await self.repo.toggle_boolean_flag(
+            user_id=user_id,
+            field_name=field_name,
+        )
+
+        return True
+    
+    async def update_own_integer_notification_setting(
+        self,
+        user_id: int,
+        field_name: str,
+        value: int,
+    ) -> bool:
+        """
+        Обновляет личный числовой параметр уведомлений.
+
+        Допустимы только поля личного профиля пользователя.
+        """
+        allowed = await self.can_user_change_own_notification_settings(
+            user_id=user_id,
+        )
+
+        if not allowed:
+            return False
+
+        allowed_fields = {
+            "pre_lesson_offset_minutes",
+            "changes_window_days",
+            "global_extra_reminder",
+        }
+
+        if field_name not in allowed_fields:
+            raise ValueError(
+                f"Unsupported notification field: {field_name}"
+            )
+
+        await self.repo.update_integer_setting(
+            user_id=user_id,
+            field_name=field_name,
+            value=value,
+        )
+
+        return True
+
+# как thin wrapper можно оставить для удобства, чтобы не дублировать field_name в хендлерах. ниже оригинал
+    async def toggle_child_notifications_enabled(
+        self,
+        admin_user_id: int,
+        child_user_id: int,
+    ) -> bool:
+        return await self.toggle_child_boolean_notification_setting(
+            admin_user_id=admin_user_id,
+            child_user_id=child_user_id,
+            field_name="is_notifications_enabled",
+        )
+
+    if False:
+        async def toggle_child_notifications_enabled(
+            self,
+            admin_user_id: int,
+            child_user_id: int,
+        ) -> bool:
+            """
+            Администратор семьи меняет общий переключатель уведомлений ребёнка.
+
+            Изменяется реальное поле users.is_notifications_enabled ребёнка.
+            После включения lock ребёнок не сможет сам отменить это решение.
+            """
+            is_admin = await self.repo.is_family_admin_for_child(
+                admin_user_id=admin_user_id,
+                child_user_id=child_user_id,
+            )
+
+            if not is_admin:
+                return False
+
+            await self.repo.toggle_boolean_flag(
+                user_id=child_user_id,
+                field_name="is_notifications_enabled",
+            )
+
+            return True
+
+    async def toggle_child_boolean_notification_setting(
+        self,
+        admin_user_id: int,
+        child_user_id: int,
+        field_name: str,
+    ) -> bool:
+        """
+        Семейный администратор меняет boolean-настройку ребёнка.
+
+        Изменяется личный users-профиль ребёнка. Lock затем запрещает
+        ребёнку отменить решение администратора самостоятельно.
+        """
+        is_admin = await self.repo.is_family_admin_for_child(
+            admin_user_id=admin_user_id,
+            child_user_id=child_user_id,
+        )
+
+        if not is_admin:
+            return False
+
+        allowed_fields = {
+            "is_notifications_enabled",
+            "receive_schedule_changes",
+            "receive_extra_class_reminders",
+        }
+
+        if field_name not in allowed_fields:
+            raise ValueError(
+                f"Unsupported child notification setting: {field_name}"
+            )
+
+        await self.repo.toggle_boolean_flag(
+            user_id=child_user_id,
+            field_name=field_name,
+        )
+
+        return True
+    
+    async def update_child_morning_summary_time(
+        self,
+        admin_user_id: int,
+        child_user_id: int,
+        time_str: str | None,
+    ) -> bool:
+        """
+        Администратор семьи принудительно задаёт ребёнку время сводки.
+        """
+        is_admin = await self.repo.is_family_admin_for_child(
+            admin_user_id=admin_user_id,
+            child_user_id=child_user_id,
+        )
+
+        if not is_admin:
+            return False
+
+        await self.repo.update_morning_summary_time(
+            user_id=child_user_id,
+            time_str=time_str,
+        )
+
+        return True
+
+    async def update_child_integer_notification_setting(
+        self,
+        admin_user_id: int,
+        child_user_id: int,
+        field_name: str,
+        value: int,
+    ) -> bool:
+        """
+        Администратор семьи задаёт числовую настройку уведомлений ребёнка.
+        """
+        is_admin = await self.repo.is_family_admin_for_child(
+            admin_user_id=admin_user_id,
+            child_user_id=child_user_id,
+        )
+
+        if not is_admin:
+            return False
+
+        allowed_fields = {
+            "pre_lesson_offset_minutes",
+            "changes_window_days",
+            "global_extra_reminder",
+        }
+
+        if field_name not in allowed_fields:
+            raise ValueError(
+                f"Unsupported child notification field: {field_name}"
+            )
+
+        await self.repo.update_integer_setting(
+            user_id=child_user_id,
+            field_name=field_name,
+            value=value,
+        )
+
+        return True
+                                
 # для переключения флагов (toggles) и получения family_code по ID, чтобы изолировать SQL от хендлеров.
     async def get_family_code(self, family_id: int) -> str | None:
         return await self.repo.get_family_code_by_id(family_id)
-
+    
+# Удалить после рефакторинга, когда будет использоваться только notification_delivery_log
     async def toggle_user_flag(self, user_id: int, flag_name: str) -> None:
         await self.repo.toggle_boolean_flag(user_id, flag_name)
         
@@ -275,3 +613,14 @@ class ProfileService:
                 class_id=r['class_id']
             ) for r in rows
         ]
+# Сервисный метод для проверки доступа родителя к ребёнку через parent_child_settings.
+    async def parent_can_access_child(
+        self,
+        parent_user_id: int,
+        child_user_id: int,
+    ) -> bool:
+        """Проверяет доступ взрослого к ребёнку через parent_child_settings."""
+        return await self.repo.parent_can_access_child(
+            parent_user_id=parent_user_id,
+            child_user_id=child_user_id,
+        )

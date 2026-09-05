@@ -28,14 +28,14 @@ class ExtraClassStates(StatesGroup):
 # === ГЛАВНОЕ МЕНЮ И УМНАЯ МАРШРУТИЗАЦИЯ ===
 
 # === ГЛАВНОЕ МЕНЮ И УМНАЯ МАРШРУТИЗАЦИЯ ===
-
-def _get_rights(user_dto) -> tuple[bool, bool]:
-    """Возвращает права (can_add, can_edit). Наблюдатель может только смотреть."""
-    if user_dto.role == "observer":
-        return False, False
-    if user_dto.role == "child":
-        return True, getattr(user_dto, 'can_edit_extra_classes', True)
-    return True, True
+if False:
+    def _get_rights(user_dto) -> tuple[bool, bool]:
+        """Возвращает права (can_add, can_edit). Наблюдатель может только смотреть."""
+        if user_dto.role == "observer":
+            return False, False
+        if user_dto.role == "child":
+            return True, getattr(user_dto, 'can_edit_extra_classes', True)
+        return True, True
 
 @router.message(F.text == "➕ Доп. занятия")
 async def show_extra_menu(message: Message, profile_service: ProfileService):

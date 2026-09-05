@@ -171,15 +171,65 @@ async def process_group(
     
     # 2. Сохраняем в профиль
     target_user_id = data.get('editing_child_id', callback.from_user.id)
+    # дополнительная проверка: пользователь мог открыть старое FSM-состояние или попытаться подделать переход.
+    editing_child_id = data.get("editing_child_id")
+
+    if editing_child_id is not None:
+        is_admin = await profile_service.is_family_admin_for_child(
+            admin_user_id=callback.from_user.id,
+            child_user_id=editing_child_id,
+        )
+
+        if not is_admin:
+            await state.clear()
+
+            await callback.answer(
+                "Только администратор семьи может менять класс ребёнка.",
+                show_alert=True,
+            )
+            return
+
+    editing_own_profile_id = data.get("editing_own_profile_id")
+    if editing_own_profile_id is not None:
+        target_dto = await profile_service.get_user_profile_dto(
+            editing_own_profile_id,
+        )
+        if target_dto.role == "child":
+            allowed = await profile_service.can_user_change_own_notification_settings(
+                user_id=editing_own_profile_id,
+            )
+            if not allowed:
+                await state.clear()
+                await callback.answer(
+                    "🔒 Изменение профиля заблокировано "
+                    "администратором семьи.",
+                    show_alert=True,
+                )
+                return
+
     await profile_service.set_child_class_and_group(target_user_id, data['class_id'], final_group_string)
     
     # 3. ВЕТКА 1: Возврат в Настройки (если редактировали профиль ребенка через родителя)
     if 'editing_child_id' in data:
         await state.clear()
-        child_dto = await profile_service.get_user_profile_dto(target_user_id)
-        
-        text = UIRenderer.render_child_settings_menu(child_dto.name, child_dto.class_id)
-        kb = Keyboards.get_child_settings_kb(child_dto)
+        child_dto = await profile_service.get_user_profile_dto(
+            target_user_id,
+        )
+
+        is_locked = await profile_service.is_child_notification_settings_locked(
+            child_user_id=target_user_id,
+        )
+
+        text = UIRenderer.render_child_settings_menu(
+            child_dto.name,
+            child_dto.class_id,
+        )
+
+        kb = Keyboards.get_child_settings_kb(
+            child_dto=child_dto,
+            is_family_admin=True,
+            is_notifications_locked=is_locked,
+        )
         
         with contextlib.suppress(TelegramBadRequest):
             await callback.message.edit_text(f"✅ Подгруппа успешно обновлена.\n\n{text}", reply_markup=kb, parse_mode="HTML")
