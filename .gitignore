@@ -1,5 +1,7 @@
 # Database
 *.db
+*.db-shm
+*.db-wal
 *.db-journal
 schedule_bot.db
 schedule_bot.db.backup
