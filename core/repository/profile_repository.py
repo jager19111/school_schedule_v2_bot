@@ -82,6 +82,7 @@ class ProfileRepository(BaseRepository):
                 pre_lesson_offset_minutes,
                 receive_schedule_changes,
                 receive_extra_class_reminders,
+                can_manage_own_extra_classes,
                 changes_window_days,
                 is_notifications_enabled,
                 global_extra_reminder
@@ -116,11 +117,16 @@ class ProfileRepository(BaseRepository):
             """
             INSERT OR IGNORE INTO parent_child_settings (
                 parent_id,
-                child_id
+                child_id,
+                can_manage_extra_classes
             )
             SELECT
                 adult.user_id,
-                child.user_id
+                child.user_id,
+                CASE
+                    WHEN adult.role = 'parent' THEN 1
+                    ELSE 0
+                END
             FROM users AS adult
             JOIN users AS child
               ON child.family_id = adult.family_id
@@ -468,6 +474,172 @@ class ProfileRepository(BaseRepository):
         )
         return row is not None
 
+    async def get_extra_classes_access(
+        self,
+        actor_user_id: int,
+        target_child_id: int,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Возвращает права инициатора на допзанятия конкретного ребёнка.
+
+        Политика:
+        - ребёнок управляет только собственными занятиями;
+        - parent/observer видит ребёнка только через parent_child_settings;
+        - parent/observer редактирует только при can_manage_extra_classes = 1;
+        - несвязанный пользователь не получает строку доступа.
+        """
+        return await self._fetch_one(
+            """
+            SELECT
+                target.user_id AS target_child_id,
+
+                CASE
+                    WHEN target.user_id = ? THEN 1
+                    WHEN pcs.parent_id IS NOT NULL THEN 1
+                    ELSE 0
+                END AS can_view,
+
+                CASE
+                    WHEN target.user_id = ?
+                        AND target.can_manage_own_extra_classes = 1
+                    THEN 1
+
+                    WHEN COALESCE(
+                        pcs.can_manage_extra_classes,
+                        0
+                    ) = 1
+                    THEN 1
+
+                    ELSE 0
+                END AS can_manage
+            FROM users AS target
+            LEFT JOIN parent_child_settings AS pcs
+              ON pcs.child_id = target.user_id
+             AND pcs.parent_id = ?
+            LEFT JOIN users AS adult
+              ON adult.user_id = pcs.parent_id
+            WHERE target.user_id = ?
+              AND target.role = 'child'
+              AND (
+                    target.user_id = ?
+                    OR (
+                        adult.role IN ('parent', 'observer')
+                        AND adult.family_id = target.family_id
+                    )
+                  )
+            """,
+            (
+                actor_user_id,
+                actor_user_id,
+                actor_user_id,
+                target_child_id,
+                actor_user_id,
+            ),
+        )
+
+    async def get_adult_extra_classes_permissions(
+        self,
+        admin_user_id: int,
+        child_user_id: int,
+    ) -> List[Dict[str, Any]]:
+        """
+        Возвращает список взрослых и их прав управления занятиями ребёнка.
+
+        Список возвращается только если инициатор является администратором
+        семьи этого ребёнка. Сам администратор исключён: его право считается
+        системным и не должно переключаться через UI.
+        """
+        return await self._fetch_all(
+            """
+            SELECT
+                adult.user_id AS adult_user_id,
+                COALESCE(
+                    NULLIF(TRIM(adult.name), ''),
+                    'Пользователь ' || adult.user_id
+                ) AS adult_name,
+                adult.role AS adult_role,
+                pcs.child_id AS child_user_id,
+                pcs.can_manage_extra_classes
+            FROM families AS family
+            JOIN users AS child
+              ON child.family_id = family.id
+            JOIN parent_child_settings AS pcs
+              ON pcs.child_id = child.user_id
+            JOIN users AS adult
+              ON adult.user_id = pcs.parent_id
+            WHERE family.admin_user_id = ?
+              AND child.user_id = ?
+              AND child.role = 'child'
+              AND adult.role IN ('parent', 'observer')
+              AND adult.user_id != family.admin_user_id
+            ORDER BY
+                CASE adult.role
+                    WHEN 'parent' THEN 0
+                    ELSE 1
+                END,
+                adult_name,
+                adult.user_id
+            """,
+            (admin_user_id, child_user_id),
+        )
+
+    async def set_adult_extra_classes_permission(
+        self,
+        admin_user_id: int,
+        adult_user_id: int,
+        child_user_id: int,
+        can_manage: bool,
+    ) -> bool:
+        """
+        Устанавливает право другого взрослого на допзанятия ребёнка.
+
+        Изменение разрешено только families.admin_user_id.
+        Администратор не может менять собственную строку через этот метод.
+        """
+        changed = await self._execute(
+            """
+            UPDATE parent_child_settings
+            SET
+                can_manage_extra_classes = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE parent_id = ?
+              AND child_id = ?
+              AND parent_id != (
+                  SELECT admin_user_id
+                  FROM families
+                  WHERE id = (
+                      SELECT family_id
+                      FROM users
+                      WHERE user_id = ?
+                  )
+              )
+              AND EXISTS (
+                  SELECT 1
+                  FROM families AS family
+                  JOIN users AS child
+                    ON child.family_id = family.id
+                  JOIN users AS adult
+                    ON adult.user_id = ?
+                   AND adult.family_id = family.id
+                  WHERE family.admin_user_id = ?
+                    AND child.user_id = ?
+                    AND child.role = 'child'
+                    AND adult.role IN ('parent', 'observer')
+              )
+            """,
+            (
+                int(can_manage),
+                adult_user_id,
+                child_user_id,
+                child_user_id,
+                adult_user_id,
+                admin_user_id,
+                child_user_id,
+            ),
+        )
+
+        return changed == 1
+            
     async def is_family_admin_for_child(
         self,
         admin_user_id: int,
@@ -628,6 +800,7 @@ class ProfileRepository(BaseRepository):
             "is_notifications_enabled",
             "receive_schedule_changes",
             "receive_extra_class_reminders",
+            "can_manage_own_extra_classes",
         }
 
         if field_name not in allowed_fields:

@@ -58,6 +58,8 @@ class Database:
 
                     global_extra_reminder INTEGER NOT NULL DEFAULT 30
                         CHECK (global_extra_reminder BETWEEN 0 AND 180),
+                    can_manage_own_extra_classes INTEGER NOT NULL DEFAULT 1
+                        CHECK (can_manage_own_extra_classes IN (0, 1)),
                     changes_window_days INTEGER NOT NULL DEFAULT 3
                         CHECK (changes_window_days BETWEEN 0 AND 31),
                     global_extra_reminder INTEGER NOT NULL DEFAULT 30
@@ -87,7 +89,7 @@ class Database:
 
                     child_notification_settings_locked INTEGER NOT NULL DEFAULT 0
                         CHECK (child_notification_settings_locked IN (0, 1)),
-                    can_manage_extra_classes INTEGER NOT NULL DEFAULT 1
+                    can_manage_extra_classes INTEGER NOT NULL DEFAULT 0
                         CHECK (can_manage_extra_classes IN (0, 1)),
 
                     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,

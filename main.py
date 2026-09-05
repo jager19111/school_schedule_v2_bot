@@ -88,7 +88,7 @@ async def main():
     notification_service = NotificationService(bot, notification_repo, time_service=time_service, schedule_repo=schedule_repo, extra_classes_repo=extra_classes_repo)
     cleanup_job = UserCleanupJob(user_repo, time_service=time_service, dormant_days=60)
     admin_service = AdminService(admin_repo)
-    extra_classes_service = ExtraClassesService(extra_classes_repo=extra_classes_repo, time_service=time_service)
+    extra_classes_service = ExtraClassesService(extra_classes_repo=extra_classes_repo, profile_repo=profile_repo, time_service=time_service)
     
     # 4. Регистрация роутеров команд
     dp.include_router(registration.router)

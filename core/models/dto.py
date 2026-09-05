@@ -39,6 +39,7 @@ class UserProfileDTO:
     pre_lesson_offset_minutes: int = 10
     receive_schedule_changes: bool = True
     receive_extra_class_reminders: bool = True
+    can_manage_own_extra_classes: bool = True
     changes_window_days: int = 3
     is_notifications_enabled: bool = True
     global_extra_reminder: int = 30
@@ -167,7 +168,36 @@ class FamilyMemberDTO:
     name: str
     role: str
     class_id: Optional[str] = None
-    
+
+@dataclass
+class ExtraClassesAccessDTO:
+    """
+    Права конкретного инициатора на дополнительные занятия конкретного ребёнка.
+
+    can_view:
+        Можно увидеть список занятий ребёнка.
+
+    can_manage:
+        Можно создавать, изменять и удалять занятия ребёнка.
+    """
+    actor_user_id: int
+    target_child_id: int
+    can_view: bool
+    can_manage: bool
+
+@dataclass
+class AdultExtraClassesPermissionDTO:
+    """
+    Право конкретного взрослого на управление допзанятиями ребёнка.
+
+    Используется только в UI семейного администратора.
+    """
+    adult_user_id: int
+    adult_name: str
+    adult_role: str
+    child_user_id: int
+    can_manage_extra_classes: bool
+            
 # Уведомления
 
 @dataclass

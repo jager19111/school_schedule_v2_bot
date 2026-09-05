@@ -319,6 +319,56 @@ async def toggle_child_notifications_by_admin(
         "Настройки уведомлений ребёнка обновлены.",
     )
 
+@router.callback_query(F.data.startswith("child_ctl:own_extra_edit:"))
+async def toggle_child_own_extra_classes_management(
+    callback: CallbackQuery,
+    profile_service: ProfileService,
+) -> None:
+    """
+    Администратор разрешает или запрещает ребёнку
+    самостоятельно управлять собственными дополнительными занятиями.
+    """
+    try:
+        child_user_id = int(callback.data.split(":")[2])
+    except (IndexError, ValueError):
+        await _safe_callback_answer(
+            callback,
+            "Некорректный идентификатор ребёнка.",
+            show_alert=True,
+        )
+        return
+
+    if not await _require_family_admin_for_child(
+        callback=callback,
+        profile_service=profile_service,
+        child_user_id=child_user_id,
+    ):
+        return
+
+    changed = await profile_service.toggle_child_own_extra_classes_management(
+        admin_user_id=callback.from_user.id,
+        child_user_id=child_user_id,
+    )
+
+    if not changed:
+        await _safe_callback_answer(
+            callback,
+            "Не удалось изменить право ребёнка на редактирование занятий.",
+            show_alert=True,
+        )
+        return
+
+    await _refresh_child_control_menu(
+        callback=callback,
+        child_user_id=child_user_id,
+        profile_service=profile_service,
+    )
+
+    await _safe_callback_answer(
+        callback,
+        "Право ребёнка на управление занятиями обновлено.",
+    )
+    
 @router.callback_query(F.data.startswith("child_ctl:prelesson:"))
 async def toggle_child_pre_lesson_reminders(
     callback: CallbackQuery,
@@ -473,7 +523,164 @@ async def toggle_child_extra_class_reminders(
         callback,
         "Настройки дополнительных занятий ребёнка обновлены.",
     )
-            
+
+@router.callback_query(F.data.startswith("child_ctl:extra_permissions:"))
+async def show_adult_extra_classes_permissions(
+    callback: CallbackQuery,
+    profile_service: ProfileService,
+) -> None:
+    """
+    Показывает семейному администратору права взрослых
+    на дополнительные занятия выбранного ребёнка.
+    """
+    try:
+        child_user_id = int(callback.data.split(":")[2])
+    except (IndexError, ValueError):
+        await _safe_callback_answer(
+            callback,
+            "Некорректный идентификатор ребёнка.",
+            show_alert=True,
+        )
+        return
+
+    admin_user_id = callback.from_user.id
+
+    permissions = await profile_service.get_adult_extra_classes_permissions(
+        admin_user_id=admin_user_id,
+        child_user_id=child_user_id,
+    )
+
+    if permissions is None:
+        await _safe_callback_answer(
+            callback,
+            "Только администратор семьи может менять права взрослых.",
+            show_alert=True,
+        )
+        return
+
+    child_dto = await profile_service.get_user_profile_dto(
+        child_user_id,
+    )
+
+    text = UIRenderer.render_adult_extra_classes_permissions(
+        child_name=child_dto.name or f"Ученик {child_user_id}",
+        permissions=permissions,
+    )
+
+    keyboard = Keyboards.get_adult_extra_classes_permissions_kb(
+        child_user_id=child_user_id,
+        permissions=permissions,
+    )
+
+    await _safe_edit_text(
+        callback.message,
+        text,
+        reply_markup=keyboard,
+    )
+
+    await _safe_callback_answer(callback)
+
+@router.callback_query(F.data.startswith("extra_perm:toggle:"))
+async def toggle_adult_extra_classes_permission(
+    callback: CallbackQuery,
+    profile_service: ProfileService,
+) -> None:
+    """
+    Администратор включает или выключает право другого взрослого
+    управлять занятиями конкретного ребёнка.
+    """
+    try:
+        _, _, child_id_raw, adult_id_raw = callback.data.split(":")
+
+        child_user_id = int(child_id_raw)
+        adult_user_id = int(adult_id_raw)
+    except (IndexError, ValueError):
+        await _safe_callback_answer(
+            callback,
+            "Некорректные параметры права.",
+            show_alert=True,
+        )
+        return
+
+    admin_user_id = callback.from_user.id
+
+    permissions = await profile_service.get_adult_extra_classes_permissions(
+        admin_user_id=admin_user_id,
+        child_user_id=child_user_id,
+    )
+
+    if permissions is None:
+        await _safe_callback_answer(
+            callback,
+            "Только администратор семьи может менять права взрослых.",
+            show_alert=True,
+        )
+        return
+
+    selected_permission = next(
+        (
+            item
+            for item in permissions
+            if item.adult_user_id == adult_user_id
+        ),
+        None,
+    )
+
+    if selected_permission is None:
+        await _safe_callback_answer(
+            callback,
+            "Взрослый не найден среди участников семьи.",
+            show_alert=True,
+        )
+        return
+
+    changed = await profile_service.set_adult_extra_classes_permission(
+        admin_user_id=admin_user_id,
+        adult_user_id=adult_user_id,
+        child_user_id=child_user_id,
+        can_manage=not selected_permission.can_manage_extra_classes,
+    )
+
+    if not changed:
+        await _safe_callback_answer(
+            callback,
+            "Не удалось изменить право управления занятиями.",
+            show_alert=True,
+        )
+        return
+
+    refreshed_permissions = (
+        await profile_service.get_adult_extra_classes_permissions(
+            admin_user_id=admin_user_id,
+            child_user_id=child_user_id,
+        )
+    )
+
+    child_dto = await profile_service.get_user_profile_dto(
+        child_user_id,
+    )
+
+    text = UIRenderer.render_adult_extra_classes_permissions(
+        child_name=child_dto.name or f"Ученик {child_user_id}",
+        permissions=refreshed_permissions,
+    )
+
+    keyboard = Keyboards.get_adult_extra_classes_permissions_kb(
+        child_user_id=child_user_id,
+        permissions=refreshed_permissions,
+    )
+
+    await _safe_edit_text(
+        callback.message,
+        text,
+        reply_markup=keyboard,
+    )
+
+    await _safe_callback_answer(
+        callback,
+        "Права на дополнительные занятия обновлены.",
+    )
+                    
 @router.callback_query(F.data.startswith("child_ctl:class:"))
 async def child_settings_change_class(
     callback: CallbackQuery,

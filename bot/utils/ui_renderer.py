@@ -2,7 +2,7 @@ from typing import Any, Dict, List, Optional, Set
 from datetime import datetime, timedelta, timezone, date
 from core.models.dto import (ClassListDTO, FamilyCreatedDTO, AdminStatsDTO, DayScheduleDTO, ChildrenListDTO, ExtraClassListDTO,
                              WeekSummaryDTO, FullWeekScheduleDTO, UserProfileDTO, FamilyMemberDTO,
-                             MorningSummaryDTO, ChangeReminderDTO, LessonReminderDTO, ParentChildNotificationSettingsDTO
+                             MorningSummaryDTO, ChangeReminderDTO, LessonReminderDTO, ParentChildNotificationSettingsDTO, AdultExtraClassesPermissionDTO,
 )
 class UIRenderer:
     
@@ -193,7 +193,31 @@ class UIRenderer:
     @staticmethod
     def render_extra_no_children() -> tuple[str, None]:
         return "❌ У вас нет привязанных детей. Сначала добавьте ребенка в семью через меню настроек.", None
-    
+
+    @staticmethod
+    def render_adult_extra_classes_permissions(
+        child_name: str,
+        permissions: list[AdultExtraClassesPermissionDTO],
+    ) -> str:
+        """
+        Заголовок экрана прав взрослых на занятия конкретного ребёнка.
+        """
+        safe_child_name = child_name or "Ребёнок"
+
+        if not permissions:
+            return (
+                "🎨 <b>Права на дополнительные занятия</b>\n\n"
+                f"👤 Ребёнок: <b>{safe_child_name}</b>\n\n"
+                "Других взрослых в семье пока нет."
+            )
+
+        return (
+            "🎨 <b>Права взрослых на дополнительные занятия</b>\n\n"
+            f"👤 Ребёнок: <b>{safe_child_name}</b>\n\n"
+            "Включённое право позволяет взрослому добавлять, изменять "
+            "и удалять занятия этого ребёнка."
+        )
+            
  # ---------------   
     @staticmethod
     def render_already_registered(name: str | None) -> str:

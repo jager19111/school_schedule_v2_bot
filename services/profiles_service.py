@@ -7,7 +7,7 @@ from core.models.dto import (
     UserProfileDTO,
     ChildInfoDTO,
     FamilyMemberDTO,
-    ParentChildNotificationSettingsDTO,
+    ParentChildNotificationSettingsDTO, ExtraClassesAccessDTO,AdultExtraClassesPermissionDTO,
 )
 
 logger = logging.getLogger(__name__)
@@ -99,6 +99,9 @@ class ProfileService:
             ),
             receive_extra_class_reminders=bool(
                 row.get("receive_extra_class_reminders", True)
+            ),
+            can_manage_own_extra_classes=bool(
+                row.get("can_manage_own_extra_classes", True)
             ),       
             changes_window_days=row.get(
                 "changes_window_days",
@@ -520,7 +523,31 @@ class ProfileService:
         )
 
         return True
-    
+
+    async def toggle_child_own_extra_classes_management(
+        self,
+        admin_user_id: int,
+        child_user_id: int,
+    ) -> bool:
+        """
+        Администратор семьи разрешает или запрещает ребёнку
+        самостоятельно создавать, изменять и удалять свои допзанятия.
+        """
+        is_admin = await self.repo.is_family_admin_for_child(
+            admin_user_id=admin_user_id,
+            child_user_id=child_user_id,
+        )
+
+        if not is_admin:
+            return False
+
+        await self.repo.toggle_boolean_flag(
+            user_id=child_user_id,
+            field_name="can_manage_own_extra_classes",
+        )
+
+        return True
+        
     async def update_child_morning_summary_time(
         self,
         admin_user_id: int,
@@ -624,3 +651,98 @@ class ProfileService:
             parent_user_id=parent_user_id,
             child_user_id=child_user_id,
         )
+        
+    async def get_extra_classes_access(
+        self,
+        actor_user_id: int,
+        target_child_id: int,
+    ) -> ExtraClassesAccessDTO:
+        """
+        Возвращает права инициатора на допзанятия выбранного ребёнка.
+
+        Если строки доступа нет, возвращается запрет на просмотр и изменение.
+        """
+        row = await self.repo.get_extra_classes_access(
+            actor_user_id=actor_user_id,
+            target_child_id=target_child_id,
+        )
+
+        if row is None:
+            return ExtraClassesAccessDTO(
+                actor_user_id=actor_user_id,
+                target_child_id=target_child_id,
+                can_view=False,
+                can_manage=False,
+            )
+
+        return ExtraClassesAccessDTO(
+            actor_user_id=actor_user_id,
+            target_child_id=target_child_id,
+            can_view=bool(row["can_view"]),
+            can_manage=bool(row["can_manage"]),
+        )
+        
+    async def get_adult_extra_classes_permissions(
+        self,
+        admin_user_id: int,
+        child_user_id: int,
+    ) -> Optional[List[AdultExtraClassesPermissionDTO]]:
+        """
+        Возвращает права взрослых на занятия ребёнка.
+
+        None означает, что инициатор не является администратором семьи.
+        Пустой список означает, что кроме администратора взрослых нет.
+        """
+        is_admin = await self.repo.is_family_admin_for_child(
+            admin_user_id=admin_user_id,
+            child_user_id=child_user_id,
+        )
+
+        if not is_admin:
+            return None
+
+        rows = await self.repo.get_adult_extra_classes_permissions(
+            admin_user_id=admin_user_id,
+            child_user_id=child_user_id,
+        )
+
+        return [
+            AdultExtraClassesPermissionDTO(
+                adult_user_id=row["adult_user_id"],
+                adult_name=row["adult_name"],
+                adult_role=row["adult_role"],
+                child_user_id=row["child_user_id"],
+                can_manage_extra_classes=bool(
+                    row["can_manage_extra_classes"]
+                ),
+            )
+            for row in rows
+        ]
+
+    async def set_adult_extra_classes_permission(
+        self,
+        admin_user_id: int,
+        adult_user_id: int,
+        child_user_id: int,
+        can_manage: bool,
+    ) -> bool:
+        """
+        Администратор выдаёт или отзывает право взрослого
+        на управление занятиями конкретного ребёнка.
+        """
+        is_admin = await self.repo.is_family_admin_for_child(
+            admin_user_id=admin_user_id,
+            child_user_id=child_user_id,
+        )
+
+        if not is_admin:
+            return False
+
+        return await self.repo.set_adult_extra_classes_permission(
+            admin_user_id=admin_user_id,
+            adult_user_id=adult_user_id,
+            child_user_id=child_user_id,
+            can_manage=can_manage,
+        )
+        
+

@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta, timezone, date
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
 from core.models.dto import ( ClassListDTO, GroupListDTO, ChildrenListDTO, UserProfileDTO, TeacherListDTO, 
-                             FamilyMemberDTO, ParentChildNotificationSettingsDTO, ChildInfoDTO
+                             FamilyMemberDTO, ParentChildNotificationSettingsDTO, ChildInfoDTO, AdultExtraClassesPermissionDTO
 )
 
 class Keyboards:
@@ -218,6 +218,25 @@ class Keyboards:
                         ),
                         callback_data=(
                             f"child_ctl:extra:{child_dto.user_id}"
+                        ),
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text=(
+                            "✏️ Ребёнок редактирует свои занятия: "
+                            f"{'ВКЛ 🟢' if child_dto.can_manage_own_extra_classes else 'ВЫКЛ 🔴'}"
+                        ),
+                        callback_data=(
+                            f"child_ctl:own_extra_edit:{child_dto.user_id}"
+                        ),
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="👥 Права взрослых на доп. занятия",
+                        callback_data=(
+                            f"child_ctl:extra_permissions:{child_dto.user_id}"
                         ),
                     )
                 ],
@@ -671,3 +690,47 @@ class Keyboards:
                 ],
             ]
         )
+        
+    @staticmethod
+    def get_adult_extra_classes_permissions_kb(
+        child_user_id: int,
+        permissions: list[AdultExtraClassesPermissionDTO],
+    ) -> InlineKeyboardMarkup:
+        """
+        Клавиатура переключения прав взрослых для одного ребёнка.
+        """
+        buttons = []
+
+        for permission in permissions:
+            role_label = (
+                "👨‍👩‍👧 Родитель"
+                if permission.adult_role == "parent"
+                else "👁 Наблюдатель"
+            )
+
+            status = (
+                "ВКЛ 🟢"
+                if permission.can_manage_extra_classes
+                else "ВЫКЛ 🔴"
+            )
+
+            buttons.append([
+                InlineKeyboardButton(
+                    text=(
+                        f"{role_label}: {permission.adult_name} — {status}"
+                    ),
+                    callback_data=(
+                        "extra_perm:toggle:"
+                        f"{child_user_id}:{permission.adult_user_id}"
+                    ),
+                )
+            ])
+
+        buttons.append([
+            InlineKeyboardButton(
+                text="⬅️ Назад к ребёнку",
+                callback_data=f"family:child_settings:{child_user_id}",
+            )
+        ])
+
+        return InlineKeyboardMarkup(inline_keyboard=buttons)
