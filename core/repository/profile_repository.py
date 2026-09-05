@@ -936,6 +936,16 @@ class ProfileRepository(BaseRepository):
                 (user_id,),
             )
 
+            # Очищаем историю отправленных уведомлений, чтобы при перерегистрации
+            # старые логи не блокировали новые рассылки
+            await db.execute(
+                """
+                DELETE FROM notification_delivery_log
+                WHERE recipient_id = ?
+                """,
+                (user_id,),
+            )
+
             await db.commit()
 
         return True
@@ -950,6 +960,7 @@ class ProfileRepository(BaseRepository):
         Последствия:
         - удаляются parent_child_settings всей семьи;
         - удаляются extra_classes всей семьи;
+        - очищаются логи отправки уведомлений всей семьи;
         - все участники отвязываются от family_id;
         - сам администратор полностью сбрасывается;
         - остальные участники сохраняются как отдельные Telegram-профили,
@@ -978,6 +989,18 @@ class ProfileRepository(BaseRepository):
 
             family_id = family["id"]
 
+            # Получаем ID всех участников семьи до очистки связи (users.family_id)
+            members_cursor = await db.execute(
+                """
+                SELECT user_id
+                FROM users
+                WHERE family_id = ?
+                """,
+                (family_id,),
+            )
+            member_rows = await members_cursor.fetchall()
+            member_ids = [row["user_id"] for row in member_rows]
+
             # Сначала собираем связи и занятия, затем удаляем dependent data.
             await db.execute(
                 """
@@ -1003,6 +1026,17 @@ class ProfileRepository(BaseRepository):
                 """,
                 (family_id,),
             )
+
+            # Удаляем старые логи доставки уведомлений для всех участников семьи
+            if member_ids:
+                placeholders = ",".join("?" for _ in member_ids)
+                await db.execute(
+                    f"""
+                    DELETE FROM notification_delivery_log
+                    WHERE recipient_id IN ({placeholders})
+                    """,
+                    tuple(member_ids),
+                )
 
             # Все участники становятся независимыми.
             # Дети сохраняют class_id/group_id и могут продолжать смотреть

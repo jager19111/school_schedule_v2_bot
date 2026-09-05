@@ -152,9 +152,10 @@ async def main():
         replace_existing=True,
         coalesce=True,
         max_instances=1,
+        misfire_grace_time=90,
     )
     
-    # Оповещения об изменениях в N-дневном окне: интервал 45 минут[cite: 5, 7]
+    # Оповещения об изменениях в N-дневном окне: интервал 15 минут
     scheduler.add_job(
         notification_service.send_upcoming_changes,
         trigger="interval",
@@ -182,11 +183,14 @@ async def main():
     # Деактивация неактивных пользователей раз в сутки в 03:00[cite: 4]
     scheduler.add_job(
         cleanup_job.deactivate_dormant_users,
-        trigger='cron',
+        trigger="cron",
         hour=3,
         minute=0,
-        id='dormant_cleanup',
-        replace_existing=True
+        id="dormant_cleanup",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+        misfire_grace_time=3600,
     )
     
     scheduler.add_job(
@@ -200,9 +204,10 @@ async def main():
         max_instances=1,
         misfire_grace_time=3600,
     )
-    
-#TODO: добавить утреннюю сводку в 07:00 (для родителей и наблюдателей)
+
     #  настройка задачи утренней сводки:
+    # Проверяется каждую минуту: отправка происходит при совпадении
+    # current_time_str с users.morning_summary_time.
     scheduler.add_job(
         notification_service.send_morning_reminders,
         trigger="interval",

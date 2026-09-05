@@ -54,7 +54,8 @@ class ProfileService:
         Логика SQL полностью изолирована в ProfileRepository.
         """
         row = await self.repo.get_user_profile_for_dto(user_id)
-
+        if row:
+            await self.repo.update_last_active(user_id)
         if not row or not row.get("role"):
             return UserProfileDTO(
                 user_id=user_id,

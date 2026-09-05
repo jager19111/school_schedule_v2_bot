@@ -5,13 +5,13 @@ from core.models.dto import (ClassListDTO, FamilyCreatedDTO, AdminStatsDTO, DayS
                              MorningSummaryDTO, ChangeReminderDTO, LessonReminderDTO, ParentChildNotificationSettingsDTO, AdultExtraClassesPermissionDTO,
                              ProfileResetImpactDTO,
 )
+
 class UIRenderer:
 
     @staticmethod
     def escape_html(value: object | None, fallback: str = "—") -> str:
         """
         Экранирует динамические значения перед подстановкой в Telegram HTML.
-
         Статические строки с HTML-разметкой не передаются в этот метод.
         """
         if value is None:
@@ -57,11 +57,15 @@ class UIRenderer:
         return "Введите код семьи (family_code) для подключения:"
 
 #=======================
-#Дополнительные занятия
+# Дополнительные занятия
 #=======================
 
     DAYS_MAP_SHORT = {1: "Пн", 2: "Вт", 3: "Ср", 4: "Чт", 5: "Пт", 6: "Сб", 7: "Вс"}
-    # Клавиатура
+    FULL_DAYS_MAP = {
+        1: "Понедельник", 2: "Вторник", 3: "Среда", 
+        4: "Четверг", 5: "Пятница", 6: "Суббота", 7: "Воскресенье"
+    }
+
     @staticmethod
     def render_extra_classes_menu() -> tuple[str, None]:
         return "🎨 <b>Дополнительные занятия</b>\n\nУправление кружками и секциями:", None
@@ -117,12 +121,6 @@ class UIRenderer:
     @staticmethod
     def render_extra_class_locked() -> str:
         return "🔒 Редактирование и удаление занятий запрещено родителем."
-    
-# Словарь с полными названиями дней недели
-    FULL_DAYS_MAP = {
-        1: "Понедельник", 2: "Вторник", 3: "Среда", 
-        4: "Четверг", 5: "Пятница", 6: "Суббота", 7: "Воскресенье"
-    }
    
     @staticmethod
     def render_extra_classes_list(dto: 'ExtraClassListDTO', show_id: bool = False) -> tuple[str, None]:
@@ -141,12 +139,10 @@ class UIRenderer:
                 text += "───────────────\n"
                 text += f"📅 <b>{day_name}</b>\n"
                 text += "───────────────\n"
-                
-            loc_str = item.location if item.location and str(item.location).strip() != "-" else "Не указано"
             
-            # Экранируем пользовательский ввод
+            # ЭКРАНИРОВАНИЕ
+            safe_loc = UIRenderer.escape_html(item.location, "Не указано")
             safe_title = UIRenderer.escape_html(item.title)
-            safe_loc = UIRenderer.escape_html(loc_str)
             
             if show_id:
                 text += f"ID: <code>{item.id}</code> | 🕐 {item.time_start}-{item.time_end}\n"
@@ -180,7 +176,7 @@ class UIRenderer:
     def render_extra_class_delete_prompt(dto: ExtraClassListDTO) -> tuple[str, None]:
         if not dto.items:
             return "Список пуст. Удалять нечего.", None
-        text, _ = UIRenderer.render_extra_classes_list(dto, show_id=True) # <-- ИЗМЕНЕНО
+        text, _ = UIRenderer.render_extra_classes_list(dto, show_id=True)
         text += "\n🗑 <b>Введите ID занятия для удаления:</b>"
         return text, None
         
@@ -203,7 +199,7 @@ class UIRenderer:
     @staticmethod
     def render_adult_extra_classes_permissions(
         child_name: str,
-        permissions: list['AdultExtraClassesPermissionDTO'],
+        permissions: list[AdultExtraClassesPermissionDTO],
     ) -> str:
         """
         Заголовок экрана прав взрослых на занятия конкретного ребёнка.
@@ -223,10 +219,13 @@ class UIRenderer:
             "Включённое право позволяет взрослому добавлять, изменять "
             "и удалять занятия этого ребёнка."
         )
+            
  # ---------------   
     @staticmethod
     def render_already_registered(name: str | None) -> str:
-        greeting = f", {name}" if name else ""
+        # ЭКРАНИРОВАНИЕ
+        safe_name = UIRenderer.escape_html(name, "")
+        greeting = f", {safe_name}" if safe_name else ""
         return (
             f"👋 С возвращением{greeting}!\n\n"
             f"Вы уже зарегистрированы. Воспользуйтесь меню ниже:"
@@ -234,7 +233,9 @@ class UIRenderer:
 
     @staticmethod
     def render_final_success(name: str | None) -> str:
-        greeting = f", {name}" if name else ""
+        # ЭКРАНИРОВАНИЕ
+        safe_name = UIRenderer.escape_html(name, "")
+        greeting = f", {safe_name}" if safe_name else ""
         return (
             f"✅ Привет{greeting}! Регистрация завершена!\n\n"
             f"🤖 <b>Что я умею:</b>\n"
@@ -246,14 +247,13 @@ class UIRenderer:
 
     @staticmethod
     def render_success_join(name: str | None) -> str:
-        greeting = f", {name}" if name else ""
-        return (
-            f"✅ Вы успешно присоединены к семье!\n\n"
-        )
+        return "✅ Вы успешно присоединены к семье!\n\n"
 
     @staticmethod
     def render_family_created(dto: FamilyCreatedDTO, name: str | None) -> str:
-        greeting = f", {name}" if name else ""
+        # ЭКРАНИРОВАНИЕ
+        safe_name = UIRenderer.escape_html(name, "")
+        greeting = f", {safe_name}" if safe_name else ""
         return (
             f"✅ Привет{greeting}! <b>Семья успешно создана!</b>\n\n"
             f"🔑 Ваш код семьи: <code>{dto.family_code}</code>\n\n"
@@ -307,11 +307,6 @@ class UIRenderer:
     @staticmethod
     def render_school_search_menu() -> str:
         return "🏫 <b>Поиск по школе</b>\n\nВыберите нужный раздел:"
-# На удаление
-    @staticmethod
-    def render_parent_settings_menu(family_code: str) -> str:
-        code_text = f"<code>{family_code}</code>" if family_code else "Не в семье"
-        return f"⚙️ <b>Ваши настройки и семья</b>\n\nКод вашей семьи: {code_text}\nВыберите действие:"
 
     @staticmethod
     def render_family_management_menu() -> str:
@@ -319,8 +314,10 @@ class UIRenderer:
 
     @staticmethod
     def render_child_settings_menu(name: str, class_id: str) -> str:
-        cls_text = class_id if class_id else "Не выбран"
-        return f"⚙️ <b>Настройки профиля:</b> {name} ({cls_text})"
+        # ЭКРАНИРОВАНИЕ
+        safe_name = UIRenderer.escape_html(name, "Неизвестно")
+        safe_class = UIRenderer.escape_html(class_id, "Не выбран")
+        return f"⚙️ <b>Настройки профиля:</b> {safe_name} ({safe_class})"
 
     @staticmethod
     def render_parent_notification_children_menu() -> str:
@@ -335,17 +332,18 @@ class UIRenderer:
 
     @staticmethod
     def render_parent_child_notification_settings(
-        dto: 'ParentChildNotificationSettingsDTO',
+        dto: ParentChildNotificationSettingsDTO,
     ) -> str:
         """
         Экран индивидуальных настроек уведомлений взрослого по ребёнку.
         """
-        safe_child_name = UIRenderer.escape_html(dto.child_name)
+# ЭКРАНИРОВАНИЕ
+        safe_child = UIRenderer.escape_html(dto.child_name)
         safe_class = UIRenderer.escape_html(dto.child_class_id, "Класс не выбран")
 
         return (
             "🔔 <b>Уведомления по ребёнку</b>\n\n"
-            f"👤 Ребёнок: <b>{safe_child_name}</b>\n"
+            f"👤 Ребёнок: <b>{safe_child}</b>\n"
             f"🎓 Класс: {safe_class}\n\n"
             "Настройки ниже относятся только к вам. "
             "Другие взрослые и сам ребёнок управляют своими уведомлениями "
@@ -362,6 +360,7 @@ class UIRenderer:
         role_map = {"parent": "👨‍👩‍👧 Родитель", "child": "👶 Ребёнок", "observer": "👁 Наблюдатель"}
         role_name = role_map.get(user_dto.role, "Неизвестно")
         
+        # ЭКРАНИРОВАНИЕ
         safe_name = UIRenderer.escape_html(user_dto.name, "Не указано")
         safe_code = UIRenderer.escape_html(family_code)
         code_str = f"<code>{safe_code}</code>" if family_code else "Не в семье"
@@ -379,7 +378,7 @@ class UIRenderer:
         text += "Выберите действие:"
         
         return text
-
+    
     @staticmethod
     def render_family_members_menu(
         members: list['FamilyMemberDTO'], 
@@ -395,7 +394,8 @@ class UIRenderer:
             role_str = roles_ru.get(m.role, m.role)
             me_flag = " <i>(Вы)</i>" if m.user_id == current_user.user_id else ""
             
-            safe_name = UIRenderer.escape_html(m.name)
+            # ЭКРАНИРОВАНИЕ
+            safe_name = UIRenderer.escape_html(m.name, "Неизвестно")
             
             if m.role == 'child':
                 class_name = classes_dict.get(m.class_id, m.class_id) if m.class_id else "Класс не выбран"
@@ -414,15 +414,13 @@ class UIRenderer:
     @staticmethod
     def render_family_management_error() -> str:
         return "👨‍👩‍👧 <b>Управление семьей</b>\n\nВы не состоите в семье. Обратитесь к администратору семьи, запросите код и перерегистрируйте учетную запись."
-
-#    @staticmethod
-#    def render_notifications_menu() -> str:
-#        return "🔔 <b>Настройки уведомлений</b>\n\nЗдесь вы можете детально настроить, какие оповещения получать:"
     
 # Сводка
     @staticmethod
     def render_summary_time_prompt(name: str | None = None) -> str:
-        target = f" для {name}" if name else " вашей"
+        # ЭКРАНИРОВАНИЕ
+        safe_name = UIRenderer.escape_html(name)
+        target = f" для {safe_name}" if name else " вашей"
         return (
             f"⏰ Введите желаемое время{target} утренней сводки (например, 07:00, 7.30 или 715).\n\n"
             f"<i>Вы также можете полностью отключить утреннюю сводку кнопкой ниже.</i>"
@@ -432,9 +430,7 @@ class UIRenderer:
     def render_invalid_time_format() -> str:
         return "❌ Не удалось распознать время. Пожалуйста, введите в формате ЧЧ:ММ (например, 07:00)."
     
-    
     # Меню расписаний
-    
 
     MONTHS_MAP_GEN = {
         1: "января", 2: "февраля", 3: "марта", 4: "апреля", 5: "мая", 6: "июня",
@@ -448,7 +444,6 @@ class UIRenderer:
         return f"━━━━━━━━━━━━━━━━━\n📅 {day_name}, {date_obj.strftime('%d.%m.%Y')}\n━━━━━━━━━━━━━━━━━\n"
 
 # вывод расписания
-    # В классе UIRenderer:
 
     @staticmethod
     def render_child_day_schedule(dto: 'DayScheduleDTO', name: str | None = None) -> tuple[str, None]:
@@ -479,17 +474,18 @@ class UIRenderer:
                     l = first
                     icon = "🔄" if l['is_exchange'] else ("🚫" if l['is_cancelled'] else "📚")
                     
-                    safe_room = UIRenderer.escape_html(l.get('room_name'))
-                    room = f" → {safe_room}" if l.get('room_name') and l.get('room_name') != "—" else ""
+                    # ЭКРАНИРОВАНИЕ
+                    safe_room = UIRenderer.escape_html(l.get('room_name'), "")
+                    room = f" → {safe_room}" if safe_room and safe_room != "—" else ""
                     
-                    safe_subj = UIRenderer.escape_html(l.get('subject_name') or "Без предмета")
+                    safe_subj = UIRenderer.escape_html(l.get('subject_name'), "Без предмета")
                     name_str = "ОТМЕНА" if l['is_cancelled'] else safe_subj
                     
-                    safe_grp = UIRenderer.escape_html(l.get('group_name'))
-                    grp_label = f" ({safe_grp})" if l.get('group_id') != "ALL" and l.get('group_name') else ""
+                    safe_grp = UIRenderer.escape_html(l.get('group_name'), "")
+                    grp_label = f" ({safe_grp})" if l.get('group_id') != "ALL" and safe_grp else ""
                     
-                    safe_class = UIRenderer.escape_html(l.get('class_name'))
-                    class_label = f" [{safe_class}]" if l.get('class_name') else ""
+                    safe_class = UIRenderer.escape_html(l.get('class_name'), "")
+                    class_label = f" [{safe_class}]" if safe_class else ""
                     
                     text += f"{icon} {num_str} {time_str} | {name_str}{grp_label}{class_label}{room}\n"
                 else:
@@ -501,32 +497,34 @@ class UIRenderer:
                         icon = "🔄" if l['is_exchange'] else ("🚫" if l['is_cancelled'] else "")
                         icon_str = f"{icon} " if icon else ""
                         
-                        safe_room = UIRenderer.escape_html(l.get('room_name'))
-                        room = f" → {safe_room}" if l.get('room_name') and l.get('room_name') != "—" else ""
+                        # ЭКРАНИРОВАНИЕ
+                        safe_room = UIRenderer.escape_html(l.get('room_name'), "")
+                        room = f" → {safe_room}" if safe_room and safe_room != "—" else ""
                         
-                        safe_subj = UIRenderer.escape_html(l.get('subject_name') or "Без предмета")
+                        safe_subj = UIRenderer.escape_html(l.get('subject_name'), "Без предмета")
                         name_str = "ОТМЕНА" if l['is_cancelled'] else safe_subj
                         
                         raw_grp = l.get('group_name') or f"Группа {l.get('group_id')}"
                         safe_grp = UIRenderer.escape_html(raw_grp)
                         grp_label = f" ({safe_grp})" if l.get('group_id') != "ALL" else ""
                         
-                        safe_class = UIRenderer.escape_html(l.get('class_name'))
-                        class_label = f" [{safe_class}]" if l.get('class_name') else ""
+                        safe_class = UIRenderer.escape_html(l.get('class_name'), "")
+                        class_label = f" [{safe_class}]" if safe_class else ""
                         
                         text += f"  {prefix}{icon_str}{name_str}{grp_label}{class_label}{room}\n"
 
         if extra_lessons:
             text += "\n🎨 <b>Доп. занятия</b>\n\n"
             for i, l in enumerate(extra_lessons, 1):
-                safe_room = UIRenderer.escape_html(l.get('room_name'))
-                room = f" → {safe_room}" if l.get('room_name') and l.get('room_name') != "—" else ""
+                # ЭКРАНИРОВАНИЕ
+                safe_room = UIRenderer.escape_html(l.get('room_name'), "")
+                room = f" → {safe_room}" if safe_room and safe_room != "—" else ""
                 
-                safe_subj = UIRenderer.escape_html(l.get('subject_name'))
+                safe_subj = UIRenderer.escape_html(l.get('subject_name'), "Занятие")
                 text += f"🎸 {i}. {l['start_time']} - {l['end_time']} | {safe_subj}{room}\n"
 
         return text, None
-    
+
     @staticmethod
     def render_week_summary(dto: 'WeekSummaryDTO') -> tuple[str, None]:
         text = "📆 <b>Расписание на неделю</b>\n\n"
@@ -564,7 +562,9 @@ class UIRenderer:
 
     @staticmethod
     def render_search_day_select(name: str) -> str:
-        return f"📅 Выберите день недели для: <b>{name}</b>"
+        # ЭКРАНИРОВАНИЕ
+        safe_name = UIRenderer.escape_html(name)
+        return f"📅 Выберите день недели для: <b>{safe_name}</b>"
     
     # Выбор групп
     @staticmethod
@@ -577,10 +577,7 @@ class UIRenderer:
         )
         return text, None
     
-    
 # Уведомления
-
-    # Доработать!. TODO: Возможно, стоит удалить или объединить с render_notifications_menu
     @staticmethod
     def render_notifications_menu(user_dto: 'UserProfileDTO') -> str:
         """
@@ -591,33 +588,30 @@ class UIRenderer:
         """
         
         text = "🔔 <b>Настройки уведомлений</b>\n\n"
-         #text += f"2️⃣ Уведомления о дополнительных занятиях: {'✅ Включены' if user_dto.global_extra_reminder else '❌ Выключены'}\n"
         text += f"3️⃣ Утренние сводки: {'✅ Включены' if user_dto.morning_summary_time else '❌ Выключены'}\n"
         if user_dto.morning_summary_time:
             text += f"   ⏰ Время утренней сводки: {user_dto.morning_summary_time}\n"
         return text
         
     @staticmethod
-    def render_lesson_reminder(dto: 'LessonReminderDTO') -> str:
-        """
-        Формирует напоминание об уроке или дополнительном занятии.
-
-        Если получатель — взрослый, child_name содержит имя ребёнка и выводится
-        отдельной строкой. Для ребёнка child_name=None, имя не дублируется.
-        """
-        
+    def render_lesson_reminder(dto: LessonReminderDTO) -> str:
+        # ЭКРАНИРОВАНИЕ
         safe_child = UIRenderer.escape_html(dto.child_name)
-        safe_subject = UIRenderer.escape_html(dto.subject_name)
+        safe_subj = UIRenderer.escape_html(dto.subject_name)
         safe_room = UIRenderer.escape_html(dto.room_name, "—")
 
-        child_line = f"👤 Ребёнок: <b>{safe_child}</b>\n" if dto.child_name else ""
+        child_line = (
+            f"👤 Ребёнок: <b>{safe_child}</b>\n"
+            if dto.child_name
+            else ""
+        )
 
         if dto.is_extra:
             return (
                 "🎨 <b>Скоро дополнительное занятие</b>\n"
                 f"{child_line}"
                 f"🕐 Начало: <b>{dto.start_time}</b>\n"
-                f"📝 Занятие: <b>{safe_subject}</b>\n"
+                f"📝 Занятие: <b>{safe_subj}</b>\n"
                 f"📍 Место: {safe_room}"
             )
 
@@ -625,16 +619,21 @@ class UIRenderer:
             "⏰ <b>Скоро урок</b>\n"
             f"{child_line}"
             f"🕐 Начало: <b>{dto.start_time}</b>\n"
-            f"📚 Предмет: <b>{safe_subject}</b>\n"
+            f"📚 Предмет: <b>{safe_subj}</b>\n"
             f"🏫 Кабинет: {safe_room}"
         )
         
     @staticmethod
-    def render_change_reminder(dto: 'ChangeReminderDTO') -> str:
+    def render_change_reminder(dto: ChangeReminderDTO) -> str:
+        # ЭКРАНИРОВАНИЕ
         safe_child = UIRenderer.escape_html(dto.child_name)
-        safe_subject = UIRenderer.escape_html(dto.subject_name)
-        
-        child_line = f"👤 Ребёнок: <b>{safe_child}</b>\n" if dto.child_name else ""
+        safe_subj = UIRenderer.escape_html(dto.subject_name)
+
+        child_line = (
+            f"👤 Ребёнок: <b>{safe_child}</b>\n"
+            if dto.child_name
+            else ""
+        )
 
         if dto.is_cancelled:
             return (
@@ -642,7 +641,7 @@ class UIRenderer:
                 f"{child_line}"
                 f"📅 Дата: {dto.date}\n"
                 f"🔢 Урок: {dto.lesson_num}\n"
-                f"📚 Предмет: <b>{safe_subject}</b>"
+                f"📚 Предмет: <b>{safe_subj}</b>"
             )
 
         return (
@@ -650,17 +649,18 @@ class UIRenderer:
             f"{child_line}"
             f"📅 Дата: {dto.date}\n"
             f"🔢 Урок: {dto.lesson_num}\n"
-            f"📚 Предмет: <b>{safe_subject}</b>"
+            f"📚 Предмет: <b>{safe_subj}</b>"
         )
-        
+    if False:        
         @staticmethod
-        def render_morning_summary(dto: 'MorningSummaryDTO') -> str:
+        def render_morning_summary(dto: MorningSummaryDTO) -> str:
             from datetime import datetime
             date_obj = datetime.fromisoformat(dto.date_iso)
             date_str = date_obj.strftime('%d.%m')
             
             header = f"🌅 <b>Утренняя сводка на сегодня ({date_str})</b>"
             if dto.child_name:
+                # ЭКРАНИРОВАНИЕ
                 safe_child = UIRenderer.escape_html(dto.child_name)
                 safe_class = UIRenderer.escape_html(dto.class_id, "—")
                 header += f"\n👤 <b>{safe_child} ({safe_class})</b>"
@@ -692,13 +692,14 @@ class UIRenderer:
                         l = first
                         icon = "🔄" if l.is_exchange else ("🚫" if l.is_cancelled else "📚")
                         
-                        safe_room = UIRenderer.escape_html(l.room_name)
+                        # ЭКРАНИРОВАНИЕ
+                        safe_room = UIRenderer.escape_html(l.room_name, "")
                         room = f" → {safe_room}" if l.room_name and l.room_name != "—" else ""
                         
                         safe_subj = UIRenderer.escape_html(l.subject_name or "Без предмета")
                         name_str = "ОТМЕНА" if l.is_cancelled else safe_subj
                         
-                        safe_grp = UIRenderer.escape_html(l.group_name)
+                        safe_grp = UIRenderer.escape_html(l.group_name, "")
                         grp_label = f" ({safe_grp})" if l.group_name else ""
                         
                         text += f"{icon} {num_str} {time_str} | {name_str}{grp_label}{room}\n"
@@ -711,13 +712,14 @@ class UIRenderer:
                             icon = "🔄" if l.is_exchange else ("🚫" if l.is_cancelled else "")
                             icon_str = f"{icon} " if icon else ""
                             
-                            safe_room = UIRenderer.escape_html(l.room_name)
+                            # ЭКРАНИРОВАНИЕ
+                            safe_room = UIRenderer.escape_html(l.room_name, "")
                             room = f" → {safe_room}" if l.room_name and l.room_name != "—" else ""
                             
                             safe_subj = UIRenderer.escape_html(l.subject_name or "Без предмета")
                             name_str = "ОТМЕНА" if l.is_cancelled else safe_subj
                             
-                            safe_grp = UIRenderer.escape_html(l.group_name)
+                            safe_grp = UIRenderer.escape_html(l.group_name, "")
                             grp_label = f" ({safe_grp})" if l.group_name else ""
                             
                             text += f"  {prefix}{icon_str}{name_str}{grp_label}{room}\n"
@@ -725,12 +727,15 @@ class UIRenderer:
             if extra_lessons:
                 text += "\n🎨 <b>Доп. занятия</b>\n"
                 for i, l in enumerate(extra_lessons, 1):
-                    safe_room = UIRenderer.escape_html(l.room_name)
+                    # ЭКРАНИРОВАНИЕ
+                    safe_room = UIRenderer.escape_html(l.room_name, "")
                     room = f" → {safe_room}" if l.room_name and l.room_name != "—" else ""
+                    
                     safe_subj = UIRenderer.escape_html(l.subject_name)
                     text += f"🎸 {i}. {l.start_time} - {l.end_time} | {safe_subj}{room}\n"
                     
             return text + "\n"
+
     # Выбрать и доработать метод render_morning_summary, чтобы он корректно отображал сводку для одного ребёнка, учитывая его имя и класс.    
     @staticmethod
     def render_morning_summary(dto: MorningSummaryDTO) -> str:
@@ -786,7 +791,8 @@ class UIRenderer:
 
         return "\n".join(lines)
     
- # пкркрегистрация профиля   
+        
+ # перерегистрация профиля   
     @staticmethod
     def render_profile_reset_confirmation(
         dto: ProfileResetImpactDTO,
