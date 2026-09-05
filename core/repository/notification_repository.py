@@ -114,16 +114,6 @@ class NotificationRepository(BaseRepository):
                 group_id,
             ),
         )
-# legacy-метод. Удалить после рефакторинга, когда будет использоваться только notification_delivery_log
-    if False:
-        async def mark_lesson_notified(self, lesson_id: str) -> None:
-            """
-            Помечает урок как уведомлённый (is_notified = 1).
-            """
-            await self._execute(
-                "UPDATE schedule_cache SET is_notified = 1 WHERE id = ?",
-                (lesson_id,),
-            )
 
     # ---------- Уведомления об изменениях ----------
 # Требует рефакторинга: сейчас используется только notification_delivery_log, а не is_change_notified

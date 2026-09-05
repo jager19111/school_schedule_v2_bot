@@ -71,95 +71,125 @@ class ScheduleRepository(BaseRepository):
             js_content, nika_data = await self.fetcher.fetch()
 
             async with self._connection() as db:
-                # 1. Сырой дамп для дебага
-                await db.execute(
-                    "INSERT INTO raw_nika_cache (content, fetched_at) VALUES (?, CURRENT_TIMESTAMP)",
-                    (js_content,),
-                )
+                try:
+                    # Начинаем явную транзакцию
+                    await db.execute("BEGIN")
 
-                # 2. Очистка старых дампов (>7 дней)
-                await db.execute(
-                    "DELETE FROM raw_nika_cache WHERE fetched_at <= date('now', '-7 days')"
-                )
-
-                # 3. Нормализация
-                normalizer = NikaNormalizer(nika_data)
-                lessons: List[LessonInstance] = normalizer.build_class_lessons(target_dates)
-
-                # 4. UPSERT в schedule_cache с сохранением флагов нотификаций
-                for lesson in lessons:
+                    # 1. Сырой дамп для дебага
                     await db.execute(
-                        """
-                        INSERT INTO schedule_cache (
-                            id,
-                            date,
-                            period_id,
-                            class_id,
-                            lesson_num,
-                            group_id,
-                            group_name,
-                            subject_id,
-                            subject_name,
-                            teacher_id,
-                            teacher_name,
-                            room_id,
-                            room_name,
-                            start_time,
-                            end_time,
-                            is_exchange,
-                            is_cancelled,
-                            created_at
-                        )
-                        VALUES (
-                            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                            ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP
-                        )
-                        ON CONFLICT(id) DO UPDATE SET
-                            date = excluded.date,
-                            period_id = excluded.period_id,
-                            class_id = excluded.class_id,
-                            lesson_num = excluded.lesson_num,
-                            group_id = excluded.group_id,
-                            group_name = excluded.group_name,
-                            subject_id = excluded.subject_id,
-                            subject_name = excluded.subject_name,
-                            teacher_id = excluded.teacher_id,
-                            teacher_name = excluded.teacher_name,
-                            room_id = excluded.room_id,
-                            room_name = excluded.room_name,
-                            start_time = excluded.start_time,
-                            end_time = excluded.end_time,
-                            is_exchange = excluded.is_exchange,
-                            is_cancelled = excluded.is_cancelled,
-                            created_at = CURRENT_TIMESTAMP
-                        """,
-                        (
-                            lesson.id,
-                            lesson.date,
-                            lesson.period_id,
-                            lesson.class_id,
-                            lesson.lesson_num,
-                            lesson.group_id,
-                            lesson.group_name,
-                            lesson.subject_id,
-                            lesson.subject_name,
-                            lesson.teacher_id,
-                            lesson.teacher_name,
-                            lesson.room_id,
-                            lesson.room_name,
-                            lesson.start_time,
-                            lesson.end_time,
-                            int(lesson.is_exchange),
-                            int(lesson.is_cancelled),
-                        ),
+                        "INSERT INTO raw_nika_cache (content, fetched_at) VALUES (?, CURRENT_TIMESTAMP)",
+                        (js_content,),
                     )
 
-                await db.commit()
-                logger.info("✅ Расписание обновлено. Обработано %d уроков.", len(lessons))
+                    # 2. Очистка старых дампов (>7 дней)
+                    await db.execute(
+                        "DELETE FROM raw_nika_cache WHERE fetched_at <= date('now', '-7 days')"
+                    )
+
+                    # 3. Нормализация
+                    normalizer = NikaNormalizer(nika_data)
+                    lessons: List[LessonInstance] = normalizer.build_class_lessons(target_dates)
+
+                    # 4. Очистка старых уроков НА ОБНОВЛЯЕМЫЕ ДАТЫ
+                    # Если урок исчез из NIKA, он будет удален и не останется в кэше как "зомби"
+                    target_date_values = [
+                        target_date.isoformat()
+                        for target_date in target_dates
+                    ]
+                    
+                    if target_date_values:
+                        placeholders = ",".join(
+                            "?"
+                            for _ in target_date_values
+                        )
+                        await db.execute(
+                            f"""
+                            DELETE FROM schedule_cache
+                            WHERE date IN ({placeholders})
+                            """,
+                            tuple(target_date_values),
+                        )
+
+                    # 5. UPSERT в schedule_cache с сохранением флагов нотификаций
+                    for lesson in lessons:
+                        await db.execute(
+                            """
+                            INSERT INTO schedule_cache (
+                                id,
+                                date,
+                                period_id,
+                                class_id,
+                                lesson_num,
+                                group_id,
+                                group_name,
+                                subject_id,
+                                subject_name,
+                                teacher_id,
+                                teacher_name,
+                                room_id,
+                                room_name,
+                                start_time,
+                                end_time,
+                                is_exchange,
+                                is_cancelled,
+                                created_at
+                            )
+                            VALUES (
+                                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                                ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP
+                            )
+                            ON CONFLICT(id) DO UPDATE SET
+                                date = excluded.date,
+                                period_id = excluded.period_id,
+                                class_id = excluded.class_id,
+                                lesson_num = excluded.lesson_num,
+                                group_id = excluded.group_id,
+                                group_name = excluded.group_name,
+                                subject_id = excluded.subject_id,
+                                subject_name = excluded.subject_name,
+                                teacher_id = excluded.teacher_id,
+                                teacher_name = excluded.teacher_name,
+                                room_id = excluded.room_id,
+                                room_name = excluded.room_name,
+                                start_time = excluded.start_time,
+                                end_time = excluded.end_time,
+                                is_exchange = excluded.is_exchange,
+                                is_cancelled = excluded.is_cancelled,
+                                created_at = CURRENT_TIMESTAMP
+                            """,
+                            (
+                                lesson.id,
+                                lesson.date,
+                                lesson.period_id,
+                                lesson.class_id,
+                                lesson.lesson_num,
+                                lesson.group_id,
+                                lesson.group_name,
+                                lesson.subject_id,
+                                lesson.subject_name,
+                                lesson.teacher_id,
+                                lesson.teacher_name,
+                                lesson.room_id,
+                                lesson.room_name,
+                                lesson.start_time,
+                                lesson.end_time,
+                                int(lesson.is_exchange),
+                                int(lesson.is_cancelled),
+                            ),
+                        )
+
+                    # Подтверждаем транзакцию, если не было ошибок
+                    await db.commit()
+                    logger.info("✅ Расписание обновлено. Обработано %d уроков.", len(lessons))
+
+                except Exception:
+                    # Явный откат базы данных при любой ошибке (в парсере, при удалении или вставке)
+                    await db.rollback()
+                    raise
+
         except Exception as e:
             logger.error("❌ Ошибка обновления расписания из NIKA: %s", e)
             raise
-
     async def get_lessons_for_class(self, class_id: str, date_iso: str) -> List[Dict[str, Any]]:
         """
         Извлекает расписание класса на конкретную дату.

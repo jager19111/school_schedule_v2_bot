@@ -48,16 +48,6 @@ class ProfileService:
         
     # ========== ПРОФИЛЬ ПОЛЬЗОВАТЕЛЯ ==========
 
-    async def get_user_profile(self, user_id: int) -> Optional[Dict[str, Any]]:
-        """
-        Возвращает профиль пользователя (dict) и обновляет last_active_at.
-        """
-        row = await self.repo.get_user_row(user_id)
-        if row:
-            await self.repo.update_last_active(user_id)
-            return row
-        return None
-
     async def get_user_profile_dto(self, user_id: int) -> UserProfileDTO:
         """
         Возвращает DTO с информацией о пользователе. 
@@ -459,33 +449,6 @@ class ProfileService:
             field_name="is_notifications_enabled",
         )
 
-    if False:
-        async def toggle_child_notifications_enabled(
-            self,
-            admin_user_id: int,
-            child_user_id: int,
-        ) -> bool:
-            """
-            Администратор семьи меняет общий переключатель уведомлений ребёнка.
-
-            Изменяется реальное поле users.is_notifications_enabled ребёнка.
-            После включения lock ребёнок не сможет сам отменить это решение.
-            """
-            is_admin = await self.repo.is_family_admin_for_child(
-                admin_user_id=admin_user_id,
-                child_user_id=child_user_id,
-            )
-
-            if not is_admin:
-                return False
-
-            await self.repo.toggle_boolean_flag(
-                user_id=child_user_id,
-                field_name="is_notifications_enabled",
-            )
-
-            return True
-
     async def toggle_child_boolean_notification_setting(
         self,
         admin_user_id: int,
@@ -613,47 +576,7 @@ class ProfileService:
     async def get_family_code(self, family_id: int) -> str | None:
         return await self.repo.get_family_code_by_id(family_id)
     
-# Удалить после рефакторинга, когда будет использоваться только notification_delivery_log
-    async def toggle_user_flag(self, user_id: int, flag_name: str) -> None:
-        await self.repo.toggle_boolean_flag(user_id, flag_name)
-        
   # Сводка      
-    async def update_morning_summary_time(self, user_id: int, time_str: str | None) -> None:
-        """Обновляет индивидуальное время утренней рассылки."""
-        await self.repo.update_morning_summary_time(user_id, time_str)
-    # Перерегистрация    
-    async def get_profile_reset_impact(
-        self,
-        user_id: int,
-    ) -> Optional[ProfileResetImpactDTO]:
-        """
-        Возвращает последствия перерегистрации, не меняя данные.
-        """
-        row = await self.repo.get_profile_reset_impact(
-            user_id=user_id,
-        )
-
-        if row is None:
-            return None
-
-        is_family_admin = bool(row["is_family_admin"])
-
-        extra_classes_count = (
-            row["family_extra_classes_count"]
-            if is_family_admin
-            else row["own_extra_classes_count"]
-        )
-
-        return ProfileResetImpactDTO(
-            user_id=row["user_id"],
-            role=row.get("role"),
-            family_id=row.get("family_id"),
-            is_family_admin=is_family_admin,
-            family_members_count=row["family_members_count"],
-            children_count=row["children_count"],
-            extra_classes_count=extra_classes_count,
-        )
-        
     async def reset_user_profile(
         self,
         user_id: int,
@@ -680,9 +603,6 @@ class ProfileService:
             user_id=user_id,
         )
 
-    async def update_integer_setting(self, user_id: int, field_name: str, value: int) -> None:
-        await self.repo.update_integer_setting(user_id, field_name, value)
-    
     # метод получения состава семьи
     async def get_family_members(self, family_id: int) -> list[FamilyMemberDTO]:
         """Возвращает список всех участников семьи."""

@@ -98,21 +98,6 @@ class Keyboards:
         ])
 
     @staticmethod
-    def get_family_management_kb(dto: ChildrenListDTO, classes_dict: dict) -> InlineKeyboardMarkup:
-        buttons = []
-        for child in dto.children:
-            # Защита от пустого имени
-            name = child.name if child.name else f"Ученик {child.user_id}"
-            # Расшифровка класса (например, "016" -> "6А")
-            class_name = classes_dict.get(child.class_id, child.class_id) if child.class_id else "Класс не выбран"
-            
-            btn_text = f"🧒 {name} ({class_name})"
-            buttons.append([InlineKeyboardButton(text=btn_text, callback_data=f"family:child_settings:{child.user_id}")])
-            
-        buttons.append([InlineKeyboardButton(text="⬅️ Назад к настройкам", callback_data="settings:main")])
-        return InlineKeyboardMarkup(inline_keyboard=buttons)
-
-    @staticmethod
     def get_child_settings_kb(
         child_dto: UserProfileDTO,
         is_family_admin: bool,
@@ -330,20 +315,6 @@ class Keyboards:
         ])
         
 #-----------------------
-    if False:
-        @staticmethod
-        def get_settings_menu(user_dto: UserProfileDTO) -> InlineKeyboardMarkup:
-            """Динамическая клавиатура настроек на основе DTO[cite: 4]."""
-            kb_lines = [
-                [InlineKeyboardButton(text="🎓 Сменить класс", callback_data="settings:change_class")],
-                [InlineKeyboardButton(text="📚 Сменить группу", callback_data="settings:change_group")]
-            ]
-            
-            # Блокировка настроек уведомлений для ребенка, если включен контроль[cite: 3]
-            if not (user_dto.role == 'child' and user_dto.parent_control_notifications):
-                kb_lines.append([InlineKeyboardButton(text="🔔 Настройки уведомлений", callback_data="settings:notifications")])
-                
-            return InlineKeyboardMarkup(inline_keyboard=kb_lines)
 
     @staticmethod
     def get_parent_children_menu(dto: ChildrenListDTO) -> InlineKeyboardMarkup | None:

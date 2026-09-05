@@ -304,59 +304,7 @@ class ProfileRepository(BaseRepository):
             (int(locked), parent_user_id, child_user_id),
         )
         return changed == 1
-
-    async def check_parent_child_same_family(
-        self,
-        parent_user_id: int,
-        child_user_id: int,
-    ) -> bool:
-        """
-        Проверяет наличие действующей связи взрослый → ребёнок.
-
-        parent_child_settings является источником истины. Простого совпадения
-        family_id недостаточно: взрослый может быть в семье, но не иметь
-        разрешения на конкретного ребёнка.
-        """
-        return await self.parent_can_access_child(
-            parent_user_id=parent_user_id,
-            child_user_id=child_user_id,
-        )
-
-    async def get_parent_child_settings(
-        self,
-        parent_user_id: int,
-        child_user_id: int,
-    ) -> Optional[Dict[str, Any]]:
-        """
-        Возвращает настройки конкретного взрослого относительно ребёнка.
-
-        Возвращает None, если связи нет либо ребёнок не принадлежит взрослому.
-        """
-        return await self._fetch_one(
-            """
-            SELECT
-                pcs.parent_id,
-                pcs.child_id,
-                pcs.receive_morning_summary,
-                pcs.receive_pre_lesson_reminders,
-                pcs.receive_schedule_changes,
-                pcs.receive_extra_class_reminders,
-                pcs.child_notification_settings_locked,
-                pcs.can_manage_extra_classes
-            FROM parent_child_settings AS pcs
-            JOIN users AS adult
-              ON adult.user_id = pcs.parent_id
-            JOIN users AS child
-              ON child.user_id = pcs.child_id
-            WHERE pcs.parent_id = ?
-              AND pcs.child_id = ?
-              AND adult.family_id = child.family_id
-              AND adult.role IN ('parent', 'observer')
-              AND child.role = 'child'
-            """,
-            (parent_user_id, child_user_id),
-        )
-
+    
     async def get_parent_child_notification_settings_row(
         self,
         parent_user_id: int,

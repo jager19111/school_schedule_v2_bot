@@ -589,13 +589,25 @@ async def process_location(message: Message, state: FSMContext):
     await state.set_state(ExtraClassStates.waiting_for_reminder)
 
 @router.callback_query(ExtraClassStates.waiting_for_reminder, F.data == "skip_reminder")
-async def skip_reminder(callback: CallbackQuery, state: FSMContext, extra_classes_service: ExtraClassesService, profile_service: ProfileService):
+async def skip_reminder(
+    callback: CallbackQuery, 
+    state: FSMContext, 
+    extra_classes_service: ExtraClassesService, 
+    profile_service: ProfileService
+):
+    data = await state.get_data()
+    target_child_id = data.get("target_user_id")
+    
+    # Извлекаем дефолтное значение напоминания из настроек целевого ребёнка
+    target_profile = await profile_service.get_user_profile_dto(target_child_id)
+    reminder_minutes = target_profile.global_extra_reminder
+    
     await finalize_extra_class(
-    callback,
-    state,
-    extra_classes_service,
-    reminder_minutes=30,
-)
+        event=callback,
+        state=state,
+        extra_classes_service=extra_classes_service,
+        reminder_minutes=reminder_minutes,
+    )
     await callback.answer()
 
 @router.message(ExtraClassStates.waiting_for_reminder)
@@ -729,7 +741,6 @@ async def finalize_extra_class(
             text_success,
             parse_mode="HTML",
         )
-        
 # === ИЗМЕНЕНИЕ ЗАНЯТИЯ ===
 
 @router.callback_query(F.data.startswith("extra:edit:"))

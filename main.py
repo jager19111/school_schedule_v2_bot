@@ -132,10 +132,13 @@ async def main():
     # Предурочные напоминания: интервал 5 минут (0 < delta <= N)[cite: 5, 7]
     scheduler.add_job(
         notification_service.send_pre_lesson_reminders,
-        trigger='interval',
-        minutes=5,
-        id='pre_lesson_reminders',
-        replace_existing=True
+        trigger="interval",
+        minutes=1,
+        id="pre_lesson_reminders",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+        misfire_grace_time=90,
     )
     
     # Напоминания о дополнительных занятиях.
@@ -154,20 +157,26 @@ async def main():
     # Оповещения об изменениях в N-дневном окне: интервал 45 минут[cite: 5, 7]
     scheduler.add_job(
         notification_service.send_upcoming_changes,
-        trigger='interval',
-        minutes=45,
-        id='upcoming_changes',
-        replace_existing=True
+        trigger="interval",
+        minutes=15,
+        id="upcoming_changes",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+        misfire_grace_time=300,
     )
 
     # Фоновое обновление кэша из NIKA и чистка raw_nika_cache (>7 дней)[cite: 7]
     scheduler.add_job(
         scheduled_schedule_refresh,
-        trigger='interval',
-        minutes=45,
+        trigger="interval",
+        minutes=30,
         args=[schedule_repo, tz],
-        id='nika_refresh',
-        replace_existing=True
+        id="nika_refresh",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+        misfire_grace_time=600,
     )
 
     # Деактивация неактивных пользователей раз в сутки в 03:00[cite: 4]
@@ -187,17 +196,23 @@ async def main():
         minute=10,
         id="notification_delivery_cleanup",
         replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+        misfire_grace_time=3600,
     )
     
 #TODO: добавить утреннюю сводку в 07:00 (для родителей и наблюдателей)
     #  настройка задачи утренней сводки:
     scheduler.add_job(
         notification_service.send_morning_reminders,
-        trigger='interval',
+        trigger="interval",
         minutes=1,
-        id='morning_reminders',
-        replace_existing=True
-)
+        id="morning_reminders",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+        misfire_grace_time=90,
+    )
 
     scheduler.start()
     logger.info("Планировщик задач успешно запущен.")
