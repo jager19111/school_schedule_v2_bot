@@ -787,59 +787,6 @@ class ProfileRepository(BaseRepository):
         """
         Возвращает последствия перерегистрации пользователя.
 
-        Метод ничего не меняет. Он нужен только для экрана подтверждения.
-        """
-        return await self._fetch_one(
-            """
-            SELECT
-                u.user_id,
-                u.role,
-                u.family_id,
-
-                CASE
-                    WHEN family.admin_user_id = u.user_id THEN 1
-                    ELSE 0
-                END AS is_family_admin,
-
-                (
-                    SELECT COUNT(*)
-                    FROM users AS family_member
-                    WHERE family_member.family_id = u.family_id
-                ) AS family_members_count,
-
-                (
-                    SELECT COUNT(*)
-                    FROM users AS child
-                    WHERE child.family_id = u.family_id
-                      AND child.role = 'child'
-                ) AS children_count,
-
-                (
-                    SELECT COUNT(*)
-                    FROM extra_classes AS extra
-                    WHERE extra.family_id = u.family_id
-                ) AS family_extra_classes_count,
-
-                (
-                    SELECT COUNT(*)
-                    FROM extra_classes AS own_extra
-                    WHERE own_extra.user_id = u.user_id
-                ) AS own_extra_classes_count
-            FROM users AS u
-            LEFT JOIN families AS family
-              ON family.id = u.family_id
-            WHERE u.user_id = ?
-            """,
-            (user_id,),
-        )
-        
-    async def get_profile_reset_impact(
-        self,
-        user_id: int,
-    ) -> Optional[Dict[str, Any]]:
-        """
-        Возвращает последствия перерегистрации пользователя.
-
         Никаких изменений БД не выполняет. Нужен только для confirmation UI.
         """
         return await self._fetch_one(
