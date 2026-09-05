@@ -44,6 +44,7 @@ class BaseRepository:
         """
         async with aiosqlite.connect(self.db_path) as db:
             await db.execute("PRAGMA foreign_keys = ON")
+            await db.execute("PRAGMA busy_timeout = 5000")
             db.row_factory = aiosqlite.Row
 
             yield db

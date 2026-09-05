@@ -18,6 +18,10 @@ class Database:
         async with aiosqlite.connect(self.db_path) as db:
             await db.execute("PRAGMA foreign_keys = ON")
 
+            await db.execute("PRAGMA journal_mode = WAL")
+            await db.execute("PRAGMA synchronous = NORMAL")
+            await db.execute("PRAGMA busy_timeout = 5000")
+            
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS families (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -170,12 +174,38 @@ class Database:
 
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS raw_nika_cache (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+
+                    js_filename TEXT NOT NULL,
+                    raw_sha256 TEXT NOT NULL,
+
                     fetched_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     content TEXT NOT NULL
                 )
             """)
 
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS nika_source_state (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+
+                    js_filename TEXT NOT NULL,
+                    export_date TEXT,
+                    export_time TEXT,
+
+                    raw_sha256 TEXT NOT NULL,
+                    semantic_sha256 TEXT NOT NULL,
+
+                    last_checked_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    last_changed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+                    coverage_start_date TEXT,
+                    coverage_end_date TEXT,
+
+                    last_error TEXT,
+                    last_error_at TEXT
+                )
+            """)
+            
             await db.execute("""
                 CREATE INDEX IF NOT EXISTS idx_users_family_role
                 ON users(family_id, role)

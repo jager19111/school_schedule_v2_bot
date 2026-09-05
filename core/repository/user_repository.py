@@ -22,3 +22,13 @@ class UserRepository(BaseRepository):
         # cutoff_utc уже должен быть aware-UTC, но sqlite хранит TEXT/naive,
         # поэтому сюда передаём либо строку, либо naive datetime.
         return await self._execute(query, (cutoff_utc,))
+    
+    async def optimize_database(self) -> None:
+        """
+        Просит SQLite обновить внутренние статистики и оптимизировать
+        query planner.
+
+        Не удаляет данные и не делает VACUUM.
+        """
+        async with self._connection() as db:
+            await db.execute("PRAGMA optimize")

@@ -39,19 +39,50 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-async def scheduled_schedule_refresh(repo: ScheduleRepository, tz: ZoneInfo) -> None:
-    """Фоновая выгрузка и обновление расписания на 3 недели (текущая + 2 вперед)[cite: 7]."""
+async def scheduled_schedule_refresh(
+    schedule_repo: ScheduleRepository,
+    notification_service: NotificationService,
+    tz: ZoneInfo,
+) -> None:
+    """
+    Проверяет источник NIKA и обновляет кэш только при реальном изменении.
+
+    После meaningful schedule change сразу запускает уведомления о заменах.
+    """
     try:
         today = datetime.datetime.now(tz).date()
-        # Сдвигаем старт на понедельник текущей недели, чтобы прошлые дни не пропадали
-        monday = today - datetime.timedelta(days=today.isoweekday() - 1)
-        
-        # Генерируем даты на 21 день (текущая неделя + 2 следующие)
-        target_dates = [monday + datetime.timedelta(days=i) for i in range(21)]
-        await repo.refresh_from_remote(target_dates)
-    except Exception as e:
-        logger.error(f"Ошибка периодического обновления расписания: {e}")
 
+        monday = today - datetime.timedelta(
+            days=today.isoweekday() - 1
+        )
+
+        target_dates = [
+            monday + datetime.timedelta(days=offset)
+            for offset in range(21)
+        ]
+
+        result = await schedule_repo.refresh_if_changed(
+            target_dates=target_dates,
+        )
+
+        logger.info(
+            "NIKA refresh result: source_changed=%s, "
+            "schedule_changed=%s, revision=%s, lessons=%s, reason=%s",
+            result.source_changed,
+            result.schedule_changed,
+            result.js_filename,
+            result.lesson_count,
+            result.reason,
+        )
+
+        if result.schedule_changed:
+            await notification_service.send_upcoming_changes()
+
+    except Exception:
+        logger.exception(
+            "NIKA refresh job failed"
+        )
+        
 async def main():
     if not config.BOT_TOKEN:
         logger.error("Критическая ошибка: BOT_TOKEN не задан в .env файле!")
@@ -120,7 +151,11 @@ async def main():
 
     # 5. Первоначальная синхронизация кэша при старте
     logger.info("Синхронизация первичного кэша расписания...")
-    await scheduled_schedule_refresh(schedule_repo, tz)
+    await scheduled_schedule_refresh(
+    schedule_repo,
+    notification_service,
+    tz,
+)
 
     # ВРЕМЕННЫЙ smoke-test предурочного уведомления.
     # Удалить сразу после проверки.
@@ -171,13 +206,13 @@ async def main():
     scheduler.add_job(
         scheduled_schedule_refresh,
         trigger="interval",
-        minutes=30,
-        args=[schedule_repo, tz],
+        seconds=360,
+        args=[schedule_repo, notification_service, tz],
         id="nika_refresh",
         replace_existing=True,
         coalesce=True,
         max_instances=1,
-        misfire_grace_time=600,
+        misfire_grace_time=120,
     )
 
     # Деактивация неактивных пользователей раз в сутки в 03:00[cite: 4]

@@ -40,9 +40,20 @@ class UserCleanupJob:
             deactivated_count = await self.user_repo.deactivate_users_before(cutoff_utc)
 
             if deactivated_count > 0:
-                logger.info("💤 Переведено в спящий режим неактивных пользователей: %d", deactivated_count)
+                logger.info(
+                    "💤 Переведено в спящий режим "
+                    "неактивных пользователей: %d",
+                    deactivated_count,
+                )
             else:
-                logger.info("Очистка неактивных пользователей: никого не деактивировано.")
+                logger.info(
+                    "Очистка неактивных пользователей: "
+                    "никого не деактивировано."
+                )
+            await self.user_repo.optimize_database()
+            logger.info(
+                "SQLite PRAGMA optimize completed."
+            )
         except Exception as e:
             logger.error("Ошибка при очистке неактивных пользователей: %s", e, exc_info=True)
             
