@@ -608,6 +608,7 @@ class ProfileService:
                 row["own_extra_classes_count"]
             )
 
+
         return ProfileResetImpactDTO(
             user_id=row["user_id"],
             role=row.get("role"),
