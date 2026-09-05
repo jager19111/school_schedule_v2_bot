@@ -7,7 +7,6 @@ from services.time_service import TimeService
 
 logger = logging.getLogger(__name__)
 
-
 class UserCleanupJob:
     """
     Фоновая задача деактивации неактивных пользователей.
