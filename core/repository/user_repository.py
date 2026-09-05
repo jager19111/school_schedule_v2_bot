@@ -10,6 +10,7 @@ class UserRepository(BaseRepository):
     Пока содержит только деактивацию неактивных по времени.
     """
 
+
     async def deactivate_users_before(self, cutoff_utc: datetime) -> int:
         """
         Отключает уведомления пользователям, чья last_active_at <= cutoff_utc (UTC).

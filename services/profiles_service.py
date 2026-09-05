@@ -577,7 +577,6 @@ class ProfileService:
     async def get_family_code(self, family_id: int) -> str | None:
         return await self.repo.get_family_code_by_id(family_id)
 
-    
     async def get_profile_reset_impact(
         self,
         user_id: int,

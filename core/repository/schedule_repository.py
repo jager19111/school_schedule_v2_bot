@@ -636,6 +636,7 @@ class ScheduleRepository(BaseRepository):
                     ),
                 )
 
+
                 # Удаляем только обновляемый rolling horizon.
                 await db.execute(
                     f"""

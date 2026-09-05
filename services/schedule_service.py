@@ -109,7 +109,6 @@ class ScheduleService:
         }
         
 
-
     # Умная Логика времени
 
     async def get_smart_target_date(

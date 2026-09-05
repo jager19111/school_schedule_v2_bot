@@ -835,8 +835,7 @@ class ProfileRepository(BaseRepository):
             """,
             (user_id,),
         )
-
-                
+            
     async def reset_non_admin_user(
         self,
         user_id: int,
