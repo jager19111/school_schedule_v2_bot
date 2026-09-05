@@ -576,8 +576,52 @@ class ProfileService:
 # для переключения флагов (toggles) и получения family_code по ID, чтобы изолировать SQL от хендлеров.
     async def get_family_code(self, family_id: int) -> str | None:
         return await self.repo.get_family_code_by_id(family_id)
+
     
-  # Сводка      
+    async def get_profile_reset_impact(
+        self,
+        user_id: int,
+    ) -> Optional[ProfileResetImpactDTO]:
+        """
+        Возвращает последствия reset без выполнения destructive action.
+
+        Используется handler-ом для предупреждения пользователя
+        до нажатия «Да, перерегистрироваться».
+        """
+        row = await self.repo.get_profile_reset_impact(
+            user_id=user_id,
+        )
+
+        if row is None:
+            return None
+
+        is_family_admin = bool(
+            row["is_family_admin"]
+        )
+
+        if is_family_admin:
+            extra_classes_count = int(
+                row["family_extra_classes_count"]
+            )
+        else:
+            extra_classes_count = int(
+                row["own_extra_classes_count"]
+            )
+
+        return ProfileResetImpactDTO(
+            user_id=row["user_id"],
+            role=row.get("role"),
+            family_id=row.get("family_id"),
+            is_family_admin=is_family_admin,
+            family_members_count=int(
+                row["family_members_count"]
+            ),
+            children_count=int(
+                row["children_count"]
+            ),
+            extra_classes_count=extra_classes_count,
+        )
+          
     async def reset_user_profile(
         self,
         user_id: int,

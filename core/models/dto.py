@@ -25,14 +25,15 @@ class ActionResponseDTO:
 @dataclass
 class ProfileResetImpactDTO:
     """
-    Описание последствий перерегистрации пользователя.
+    Последствия сброса профиля/выхода из семьи.
 
-    Нужен для UI-confirmation до выполнения необратимой операции.
+    Используется только до подтверждения destructive action.
     """
     user_id: int
     role: Optional[str]
     family_id: Optional[int]
     is_family_admin: bool
+
     family_members_count: int = 0
     children_count: int = 0
     extra_classes_count: int = 0
