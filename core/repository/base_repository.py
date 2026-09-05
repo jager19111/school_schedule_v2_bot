@@ -34,8 +34,18 @@ class BaseRepository:
 
     @asynccontextmanager
     async def _connection(self) -> AsyncIterator[aiosqlite.Connection]:
+        """
+        Открывает SQLite-соединение с едиными настройками репозиториев.
+
+        - foreign_keys включаются для каждого соединения;
+        - row_factory позволяет обращаться к полям по имени:
+              row["role"]
+              row["family_id"]
+        """
         async with aiosqlite.connect(self.db_path) as db:
             await db.execute("PRAGMA foreign_keys = ON")
+            db.row_factory = aiosqlite.Row
+
             yield db
             
     def _process_row(self, row: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:

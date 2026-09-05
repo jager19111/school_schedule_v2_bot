@@ -831,16 +831,280 @@ class ProfileRepository(BaseRepository):
         )
         
     # Перерегистрация   
-# В файле core/repository/profile_repository.py
 
-    async def reset_user(self, user_id: int) -> None:
-        """Полностью очищает профиль пользователя для перерегистрации."""
-        # Используем пустую строку '', чтобы обойти ограничение NOT NULL в БД.
-        # Сервис корректно распознает её как "роль не выбрана".
-        await self._execute(
-            "UPDATE users SET role = '', family_id = NULL, class_id = NULL, group_id = NULL WHERE user_id = ?",
-            (user_id,)
+    async def get_profile_reset_impact(
+        self,
+        user_id: int,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Возвращает последствия перерегистрации пользователя.
+
+        Метод ничего не меняет. Он нужен только для экрана подтверждения.
+        """
+        return await self._fetch_one(
+            """
+            SELECT
+                u.user_id,
+                u.role,
+                u.family_id,
+
+                CASE
+                    WHEN family.admin_user_id = u.user_id THEN 1
+                    ELSE 0
+                END AS is_family_admin,
+
+                (
+                    SELECT COUNT(*)
+                    FROM users AS family_member
+                    WHERE family_member.family_id = u.family_id
+                ) AS family_members_count,
+
+                (
+                    SELECT COUNT(*)
+                    FROM users AS child
+                    WHERE child.family_id = u.family_id
+                      AND child.role = 'child'
+                ) AS children_count,
+
+                (
+                    SELECT COUNT(*)
+                    FROM extra_classes AS extra
+                    WHERE extra.family_id = u.family_id
+                ) AS family_extra_classes_count,
+
+                (
+                    SELECT COUNT(*)
+                    FROM extra_classes AS own_extra
+                    WHERE own_extra.user_id = u.user_id
+                ) AS own_extra_classes_count
+            FROM users AS u
+            LEFT JOIN families AS family
+              ON family.id = u.family_id
+            WHERE u.user_id = ?
+            """,
+            (user_id,),
         )
+        
+    async def reset_non_admin_user(
+        self,
+        user_id: int,
+    ) -> bool:
+        """
+        Сбрасывает профиль обычного участника семьи.
+
+        Возможные роли:
+        - child;
+        - parent, который не является family admin;
+        - observer.
+
+        Пользователь отвязывается от семьи. Семья и остальные участники
+        продолжают работать.
+        """
+        async with self._connection() as db:
+            await db.execute("BEGIN")
+
+            user_cursor = await db.execute(
+                """
+                SELECT
+                    user_id,
+                    role,
+                    family_id
+                FROM users
+                WHERE user_id = ?
+                """,
+                (user_id,),
+            )
+
+            user = await user_cursor.fetchone()
+
+            if user is None:
+                await db.rollback()
+                return False
+
+            user_role = user["role"]
+            family_id = user["family_id"]
+
+            admin_cursor = await db.execute(
+                """
+                SELECT 1
+                FROM families
+                WHERE admin_user_id = ?
+                """,
+                (user_id,),
+            )
+
+            is_admin = await admin_cursor.fetchone() is not None
+
+            if is_admin:
+                await db.rollback()
+                raise ValueError(
+                    "Family admin must use disband_family_by_admin"
+                )
+
+            # Если выходит ребёнок, его допзанятия нельзя оставить:
+            # extra_classes.family_id и user_id должны оставаться согласованными.
+            if user_role == "child":
+                await db.execute(
+                    """
+                    DELETE FROM extra_classes
+                    WHERE user_id = ?
+                    """,
+                    (user_id,),
+                )
+
+            # Удаляем отношения, где пользователь был взрослым или ребёнком.
+            await db.execute(
+                """
+                DELETE FROM parent_child_settings
+                WHERE parent_id = ?
+                   OR child_id = ?
+                """,
+                (user_id, user_id),
+            )
+
+            # Роль сохраняем допустимой для CHECK constraint.
+            # class/group очищаются, чтобы /start распознал профиль
+            # как незавершённо зарегистрированный.
+            await db.execute(
+                """
+                UPDATE users
+                SET
+                    role = 'child',
+                    family_id = NULL,
+                    class_id = NULL,
+                    group_id = NULL,
+                    teacher_id = NULL,
+                    morning_summary_time = NULL,
+                    pre_lesson_offset_minutes = 10,
+                    receive_schedule_changes = 1,
+                    receive_extra_class_reminders = 1,
+                    changes_window_days = 3,
+                    global_extra_reminder = 30,
+                    can_manage_own_extra_classes = 1,
+                    is_notifications_enabled = 1,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE user_id = ?
+                """,
+                (user_id,),
+            )
+
+            await db.commit()
+
+        return True
+
+    async def disband_family_by_admin(
+        self,
+        admin_user_id: int,
+    ) -> bool:
+        """
+        Расформировывает семью по инициативе её администратора.
+
+        Последствия:
+        - удаляются parent_child_settings всей семьи;
+        - удаляются extra_classes всей семьи;
+        - все участники отвязываются от family_id;
+        - сам администратор полностью сбрасывается;
+        - остальные участники сохраняются как отдельные Telegram-профили,
+          но больше не состоят в семье.
+
+        Автоматическая передача admin_user_id другому взрослому намеренно
+        не выполняется.
+        """
+        async with self._connection() as db:
+            await db.execute("BEGIN")
+
+            family_cursor = await db.execute(
+                """
+                SELECT id
+                FROM families
+                WHERE admin_user_id = ?
+                """,
+                (admin_user_id,),
+            )
+
+            family = await family_cursor.fetchone()
+
+            if family is None:
+                await db.rollback()
+                return False
+
+            family_id = family["id"]
+
+            # Сначала собираем связи и занятия, затем удаляем dependent data.
+            await db.execute(
+                """
+                DELETE FROM parent_child_settings
+                WHERE parent_id IN (
+                    SELECT user_id
+                    FROM users
+                    WHERE family_id = ?
+                )
+                OR child_id IN (
+                    SELECT user_id
+                    FROM users
+                    WHERE family_id = ?
+                )
+                """,
+                (family_id, family_id),
+            )
+
+            await db.execute(
+                """
+                DELETE FROM extra_classes
+                WHERE family_id = ?
+                """,
+                (family_id,),
+            )
+
+            # Все участники становятся независимыми.
+            # Дети сохраняют class_id/group_id и могут продолжать смотреть
+            # личное расписание; взрослые без family_id при /start пройдут
+            # новый flow семьи.
+            await db.execute(
+                """
+                UPDATE users
+                SET
+                    family_id = NULL,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE family_id = ?
+                """,
+                (family_id,),
+            )
+
+            # Администратора сбрасываем полностью.
+            await db.execute(
+                """
+                UPDATE users
+                SET
+                    role = 'child',
+                    class_id = NULL,
+                    group_id = NULL,
+                    teacher_id = NULL,
+                    morning_summary_time = NULL,
+                    pre_lesson_offset_minutes = 10,
+                    receive_schedule_changes = 1,
+                    receive_extra_class_reminders = 1,
+                    changes_window_days = 3,
+                    global_extra_reminder = 30,
+                    can_manage_own_extra_classes = 1,
+                    is_notifications_enabled = 1,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE user_id = ?
+                """,
+                (admin_user_id,),
+            )
+
+            await db.execute(
+                """
+                DELETE FROM families
+                WHERE id = ?
+                """,
+                (family_id,),
+            )
+
+            await db.commit()
+
+        return True
 
     async def update_integer_setting(self, user_id: int, field_name: str, value: int) -> None:
         """Безопасное обновление числовых настроек."""

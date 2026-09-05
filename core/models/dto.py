@@ -23,6 +23,21 @@ class ActionResponseDTO:
     data: Optional[Any] = None
 
 @dataclass
+class ProfileResetImpactDTO:
+    """
+    Описание последствий перерегистрации пользователя.
+
+    Нужен для UI-confirmation до выполнения необратимой операции.
+    """
+    user_id: int
+    role: Optional[str]
+    family_id: Optional[int]
+    is_family_admin: bool
+    family_members_count: int = 0
+    children_count: int = 0
+    extra_classes_count: int = 0
+    
+@dataclass
 class UserProfileDTO:
     """DTO личного профиля пользователя."""
 

@@ -253,12 +253,30 @@ async def process_group(
         return await callback.answer("✅ Класс и подгруппа успешно обновлены!")
 
     # 5. ВЕТКА 3: Стандартное завершение первой регистрации
-    user_dto = await profile_service.get_user_profile_dto(callback.from_user.id)
+    # ВЕТКА 3: стандартное завершение первой регистрации.
+    user_dto = await profile_service.get_user_profile_dto(
+        callback.from_user.id,
+    )
+
     await state.clear()
-    
-    text = UIRenderer.render_final_success(getattr(user_dto, 'name', 'Пользователь'))
+
+    text = UIRenderer.render_final_success(
+        getattr(user_dto, "name", "Пользователь"),
+    )
+
     await callback.message.delete()
-    await callback.message.answer(text, parse_mode="HTML")
-    
-    menu_text, menu_kb = UIRenderer.render_main_menu()
-    await callback.message.answer(menu_text, reply_markup=menu_kb)
+
+    await callback.message.answer(
+        text,
+        parse_mode="HTML",
+    )
+
+    menu_text = UIRenderer.render_main_menu()
+    menu_kb = Keyboards.get_main_menu()
+
+    await callback.message.answer(
+        menu_text,
+        reply_markup=menu_kb,
+    )
+
+    await callback.answer()

@@ -734,3 +734,26 @@ class Keyboards:
         ])
 
         return InlineKeyboardMarkup(inline_keyboard=buttons)
+    
+#перерегистрация
+    @staticmethod
+    def get_profile_reset_confirmation_kb() -> InlineKeyboardMarkup:
+        """
+        Подтверждение необратимой операции перерегистрации.
+        """
+        return InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="⚠️ Да, перерегистрироваться",
+                        callback_data="auth:restart_confirm",
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="⬅️ Отмена",
+                        callback_data="settings:main",
+                    )
+                ],
+            ]
+        )

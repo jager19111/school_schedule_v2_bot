@@ -166,11 +166,7 @@ class Database:
                     is_exchange INTEGER NOT NULL DEFAULT 0
                         CHECK (is_exchange IN (0, 1)),
                     is_cancelled INTEGER NOT NULL DEFAULT 0
-                        CHECK (is_cancelled IN (0, 1)),
-                    is_notified INTEGER NOT NULL DEFAULT 0.   --Удалть после рефакторинга, когда будет использоваться только notification_delivery_log
-                        CHECK (is_notified IN (0, 1)),
-                    is_change_notified INTEGER NOT NULL DEFAULT 0      --Удалть после рефакторинга, когда будет использоваться только notification_delivery_log
-                        CHECK (is_change_notified IN (0, 1)),
+                        CHECK (is_cancelled IN (0, 1)),                  
                     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 )
             """)
@@ -203,6 +199,11 @@ class Database:
                 ON extra_classes(day_of_week, user_id, time_start)
             """)
 
+            await db.execute("""
+                CREATE INDEX IF NOT EXISTS idx_notification_delivery_log_date
+                ON notification_delivery_log(notification_date)
+            """)
+            
             await db.execute("""
                 CREATE INDEX IF NOT EXISTS idx_schedule_date_class
                 ON schedule_cache(date, class_id)

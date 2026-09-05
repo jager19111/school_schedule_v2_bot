@@ -7,7 +7,7 @@ from core.models.dto import (
     UserProfileDTO,
     ChildInfoDTO,
     FamilyMemberDTO,
-    ParentChildNotificationSettingsDTO, ExtraClassesAccessDTO,AdultExtraClassesPermissionDTO,
+    ParentChildNotificationSettingsDTO, ExtraClassesAccessDTO,AdultExtraClassesPermissionDTO, ProfileResetImpactDTO,
 )
 
 logger = logging.getLogger(__name__)
@@ -622,8 +622,63 @@ class ProfileService:
         """Обновляет индивидуальное время утренней рассылки."""
         await self.repo.update_morning_summary_time(user_id, time_str)
     # Перерегистрация    
-    async def reset_user_profile(self, user_id: int) -> None:
-        await self.repo.reset_user(user_id)
+    async def get_profile_reset_impact(
+        self,
+        user_id: int,
+    ) -> Optional[ProfileResetImpactDTO]:
+        """
+        Возвращает последствия перерегистрации, не меняя данные.
+        """
+        row = await self.repo.get_profile_reset_impact(
+            user_id=user_id,
+        )
+
+        if row is None:
+            return None
+
+        is_family_admin = bool(row["is_family_admin"])
+
+        extra_classes_count = (
+            row["family_extra_classes_count"]
+            if is_family_admin
+            else row["own_extra_classes_count"]
+        )
+
+        return ProfileResetImpactDTO(
+            user_id=row["user_id"],
+            role=row.get("role"),
+            family_id=row.get("family_id"),
+            is_family_admin=is_family_admin,
+            family_members_count=row["family_members_count"],
+            children_count=row["children_count"],
+            extra_classes_count=extra_classes_count,
+        )
+        
+    async def reset_user_profile(
+        self,
+        user_id: int,
+    ) -> bool:
+        """
+        Выполняет подтверждённую перерегистрацию пользователя.
+
+        Family admin расформировывает всю семью.
+        Обычный участник выходит только сам.
+        """
+        impact = await self.get_profile_reset_impact(
+            user_id=user_id,
+        )
+
+        if impact is None:
+            return False
+
+        if impact.is_family_admin:
+            return await self.repo.disband_family_by_admin(
+                admin_user_id=user_id,
+            )
+
+        return await self.repo.reset_non_admin_user(
+            user_id=user_id,
+        )
 
     async def update_integer_setting(self, user_id: int, field_name: str, value: int) -> None:
         await self.repo.update_integer_setting(user_id, field_name, value)

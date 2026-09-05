@@ -772,12 +772,111 @@ async def _show_settings_menu(
 
 # ================= ПЕРЕРЕГИСТРАЦИЯ =================
 @router.callback_query(F.data == "auth:restart")
-async def process_restart(callback: CallbackQuery, state: FSMContext, profile_service: ProfileService):
-    await profile_service.reset_user_profile(callback.from_user.id)
+async def process_restart(
+    callback: CallbackQuery,
+    profile_service: ProfileService,
+) -> None:
+    """
+    Показывает последствия перерегистрации.
+
+    Никакие данные здесь не удаляются.
+    """
+    impact = await profile_service.get_profile_reset_impact(
+        user_id=callback.from_user.id,
+    )
+
+    if impact is None:
+        await _safe_callback_answer(
+            callback,
+            "Не удалось найти ваш профиль.",
+            show_alert=True,
+        )
+        return
+
+    text = UIRenderer.render_profile_reset_confirmation(
+        impact,
+    )
+
+    keyboard = Keyboards.get_profile_reset_confirmation_kb()
+
+    await _safe_edit_text(
+        callback.message,
+        text,
+        reply_markup=keyboard,
+    )
+
+    await _safe_callback_answer(callback)
+
+@router.callback_query(F.data == "auth:restart_confirm")
+async def confirm_restart(
+    callback: CallbackQuery,
+    state: FSMContext,
+    profile_service: ProfileService,
+) -> None:
+    """
+    Выполняет перерегистрацию только после явного подтверждения.
+    """
+    user_id = callback.from_user.id
+
+    try:
+        success = await profile_service.reset_user_profile(
+            user_id=user_id,
+        )
+
+    except ValueError as exc:
+        logger.warning(
+            "Profile reset rejected: user_id=%s, error=%s",
+            user_id,
+            exc,
+        )
+
+        await _safe_callback_answer(
+            callback,
+            "Не удалось перерегистрировать профиль.",
+            show_alert=True,
+        )
+        return
+
+    except Exception:
+        logger.exception(
+            "Profile reset failed: user_id=%s",
+            user_id,
+        )
+
+        await _safe_callback_answer(
+            callback,
+            "❌ Не удалось выполнить перерегистрацию. "
+            "Попробуйте ещё раз.",
+            show_alert=True,
+        )
+        return
+
+    if not success:
+        await _safe_callback_answer(
+            callback,
+            "Не удалось выполнить перерегистрацию.",
+            show_alert=True,
+        )
+        return
+
     await state.clear()
-    await callback.message.edit_text("🔄 Профиль сброшен. Отправьте /start для новой регистрации.")
-    await callback.answer()
-    
+
+    try:
+        await callback.message.edit_text(
+            "✅ Профиль сброшен.\n\n"
+            "Отправьте /start, чтобы пройти регистрацию заново."
+        )
+    except TelegramBadRequest as exc:
+        logger.debug(
+            "Restart confirmation message update skipped: %s",
+            exc,
+        )
+
+    await _safe_callback_answer(
+        callback,
+        "Профиль успешно сброшен.",
+    )
+        
 # ================= 3. УПРАВЛЕНИЕ СЕМЬЕЙ =================
 
 @router.callback_query(F.data == "settings:family")

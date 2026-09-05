@@ -20,7 +20,7 @@ from services.profiles_service import ProfileService
 from services.schedule_service import ScheduleService
 from services.notifications_service import NotificationService
 from services.extra_classes_service import ExtraClassesService
-from services.cleanup_service import UserCleanupJob
+from services.cleanup_service import UserCleanupJob, NotificationDeliveryCleanupJob
 from services.time_service import TimeService, TimeServiceConfig
 from services.admin_service import AdminService
 from bot.handlers import (
@@ -90,6 +90,8 @@ async def main():
     admin_service = AdminService(admin_repo)
     extra_classes_service = ExtraClassesService(extra_classes_repo=extra_classes_repo, profile_repo=profile_repo, time_service=time_service)
     
+    notification_delivery_cleanup_job = NotificationDeliveryCleanupJob(notification_repo=notification_repo, time_service=time_service, retention_days=35)
+        
     # 4. Регистрация роутеров команд
     dp.include_router(registration.router)
     dp.include_router(schedule_child.router)
@@ -177,6 +179,16 @@ async def main():
         id='dormant_cleanup',
         replace_existing=True
     )
+    
+    scheduler.add_job(
+        notification_delivery_cleanup_job.cleanup_old_deliveries,
+        trigger="cron",
+        hour=3,
+        minute=10,
+        id="notification_delivery_cleanup",
+        replace_existing=True,
+    )
+    
 #TODO: добавить утреннюю сводку в 07:00 (для родителей и наблюдателей)
     #  настройка задачи утренней сводки:
     scheduler.add_job(

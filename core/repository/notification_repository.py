@@ -9,10 +9,9 @@ from core.repository.base_repository import BaseRepository
 class NotificationRepository(BaseRepository):
     """
     Репозиторий для работы с уведомлениями.
+    schedule_cache хранит факты расписания.
+    notification_delivery_log хранит факт доставки конкретному получателю.
 
-    Отвечает только за выборку уроков/пользователей и обновление флагов:
-    - schedule_cache.is_notified
-    - schedule_cache.is_change_notified
     """
 
     # ---------- Предурочные уведомления ----------
@@ -116,17 +115,18 @@ class NotificationRepository(BaseRepository):
             ),
         )
 # legacy-метод. Удалить после рефакторинга, когда будет использоваться только notification_delivery_log
-    async def mark_lesson_notified(self, lesson_id: str) -> None:
-        """
-        Помечает урок как уведомлённый (is_notified = 1).
-        """
-        await self._execute(
-            "UPDATE schedule_cache SET is_notified = 1 WHERE id = ?",
-            (lesson_id,),
-        )
+    if False:
+        async def mark_lesson_notified(self, lesson_id: str) -> None:
+            """
+            Помечает урок как уведомлённый (is_notified = 1).
+            """
+            await self._execute(
+                "UPDATE schedule_cache SET is_notified = 1 WHERE id = ?",
+                (lesson_id,),
+            )
 
     # ---------- Уведомления об изменениях ----------
-
+# Требует рефакторинга: сейчас используется только notification_delivery_log, а не is_change_notified
     async def get_pending_changes(self) -> List[Dict[str, Any]]:
         """
         Возвращает все отмены и замены из schedule_cache.
@@ -222,16 +222,7 @@ class NotificationRepository(BaseRepository):
                 group_id,
             ),
         )
-# legacy-метод.Удалить после рефакторинга, когда будет использоваться только notification_delivery_log
-    async def mark_change_notified(self, lesson_id: str) -> None:
-        """
-        Помечает изменение расписания как уведомлённое.
-        """
-        await self._execute(
-            "UPDATE schedule_cache SET is_change_notified = 1 WHERE id = ?",
-            (lesson_id,),
-        )
-        
+            
     # ---------- Утренняя сводка ----------
     async def get_morning_summary_tasks(
         self,
@@ -432,3 +423,21 @@ class NotificationRepository(BaseRepository):
             ),
         )
         return changed == 1
+    
+    async def delete_notification_delivery_before(
+        self,
+        before_date_iso: str,
+    ) -> int:
+        """
+        Удаляет записи успешных доставок до указанной даты.
+
+        notification_date хранится как ISO YYYY-MM-DD, поэтому строковое
+        сравнение корректно соответствует хронологическому.
+        """
+        return await self._execute(
+            """
+            DELETE FROM notification_delivery_log
+            WHERE notification_date < ?
+            """,
+            (before_date_iso,),
+        )

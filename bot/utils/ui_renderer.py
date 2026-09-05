@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, timezone, date
 from core.models.dto import (ClassListDTO, FamilyCreatedDTO, AdminStatsDTO, DayScheduleDTO, ChildrenListDTO, ExtraClassListDTO,
                              WeekSummaryDTO, FullWeekScheduleDTO, UserProfileDTO, FamilyMemberDTO,
                              MorningSummaryDTO, ChangeReminderDTO, LessonReminderDTO, ParentChildNotificationSettingsDTO, AdultExtraClassesPermissionDTO,
+                             ProfileResetImpactDTO,
 )
 class UIRenderer:
     
@@ -750,3 +751,60 @@ class UIRenderer:
             )
 
         return "\n".join(lines)
+    
+ # пкркрегистрация профиля   
+    @staticmethod
+    def render_profile_reset_confirmation(
+        dto: ProfileResetImpactDTO,
+    ) -> str:
+        """
+        Текст подтверждения перерегистрации с учётом роли пользователя.
+        """
+        if dto.is_family_admin:
+            return (
+                "⚠️ <b>Расформировать семью и перерегистрироваться?</b>\n\n"
+                "Вы являетесь администратором семьи. "
+                "Автоматической передачи прав администратора другому "
+                "взрослому пока нет.\n\n"
+                "При подтверждении:\n"
+                f"• семья будет расформирована;\n"
+                f"• участников семьи: <b>{dto.family_members_count}</b>;\n"
+                f"• детей в семье: <b>{dto.children_count}</b>;\n"
+                f"• дополнительных занятий будет удалено: "
+                f"<b>{dto.extra_classes_count}</b>;\n"
+                "• связи родителей, наблюдателей и детей будут удалены;\n"
+                "• остальные пользователи останутся в боте, "
+                "но будут отвязаны от семьи.\n\n"
+                "Это действие нельзя отменить."
+            )
+
+        role_name = {
+            "child": "ребёнка",
+            "parent": "родителя",
+            "observer": "наблюдателя",
+            "teacher": "учителя",
+        }.get(dto.role, "пользователя")
+
+        extra_line = ""
+
+        if dto.role == "child" and dto.extra_classes_count > 0:
+            extra_line = (
+                f"\n• ваших дополнительных занятий будет удалено: "
+                f"<b>{dto.extra_classes_count}</b>;"
+            )
+
+        family_line = (
+            "\n• вы будете отвязаны от семьи;"
+            if dto.family_id is not None
+            else ""
+        )
+
+        return (
+            f"⚠️ <b>Перерегистрировать профиль {role_name}?</b>\n\n"
+            "При подтверждении:\n"
+            "• текущие настройки профиля будут сброшены;"
+            f"{family_line}"
+            f"{extra_line}\n"
+            "• вы сможете пройти регистрацию заново.\n\n"
+            "Это действие нельзя отменить."
+        )

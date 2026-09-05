@@ -2,6 +2,7 @@ import logging
 from datetime import timedelta
 
 from core.repository.user_repository import UserRepository
+from core.repository.notification_repository import NotificationRepository
 from services.time_service import TimeService
 
 logger = logging.getLogger(__name__)
@@ -44,3 +45,45 @@ class UserCleanupJob:
                 logger.info("Очистка неактивных пользователей: никого не деактивировано.")
         except Exception as e:
             logger.error("Ошибка при очистке неактивных пользователей: %s", e, exc_info=True)
+            
+            
+class NotificationDeliveryCleanupJob:
+    """
+    Очистка журнала успешных доставок уведомлений.
+
+    Журнал нужен для дедупликации текущего дня и краткой диагностики,
+    но не должен храниться бесконечно.
+    """
+
+    def __init__(
+        self,
+        notification_repo: NotificationRepository,
+        time_service: TimeService,
+        retention_days: int = 35,
+    ):
+        self.notification_repo = notification_repo
+        self.time_service = time_service
+        self.retention_days = retention_days
+
+    async def cleanup_old_deliveries(self) -> None:
+        try:
+            now = self.time_service.get_now_base()
+
+            before_date = (
+                now.date() - timedelta(days=self.retention_days)
+            ).isoformat()
+
+            deleted = await self.notification_repo.delete_notification_delivery_before(
+                before_date_iso=before_date,
+            )
+
+            logger.info(
+                "Notification delivery cleanup complete: before=%s, deleted=%d",
+                before_date,
+                deleted,
+            )
+
+        except Exception:
+            logger.exception(
+                "Notification delivery cleanup failed"
+            )
