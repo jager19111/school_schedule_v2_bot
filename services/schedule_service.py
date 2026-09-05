@@ -112,36 +112,56 @@ class ScheduleService:
 
     # Умная Логика времени
 
-    async def get_smart_target_date(self, class_id: str, group_id: str, user_id: int | None = None) -> str:
+    async def get_smart_target_date(
+        self,
+        class_id: str,
+        group_id: str,
+        user_id: int | None = None,
+    ) -> str:
         """
-        Возвращает ISO-дату. Если на сегодня уроки есть и они уже закончились,
-        возвращает завтрашний день. Иначе - сегодня.
+        Возвращает ближайшую дату, на которую есть ещё актуальное расписание.
+
+        Правило:
+        - если сегодня есть занятия и они ещё не завершились — вернуть сегодня;
+        - если занятия сегодня закончились — искать следующий день;
+        - если выходной, каникулы или пустое расписание — искать вперёд;
+        - поиск ограничен 8 календарными днями.
         """
         now = self.time_service.get_now_base()
-        today_iso = now.date().isoformat()
-        
-        day_dto = await self.get_daily_schedule_for_child(
-            class_id=class_id, group_id=group_id, date_iso=today_iso, user_id=user_id
-        )
-        
-        if not day_dto.lessons:
-            # Если сегодня уроков нет (например, воскресенье), переключаем на завтра
-            if now.isoweekday() == 7:
-                return (now + timedelta(days=1)).date().isoformat()
-            return today_iso
+        today = now.date()
 
-        # Ищем самое позднее время окончания
-        latest_end_time = "00:00"
-        for lesson in day_dto.lessons:
-            if lesson.get("end_time") and lesson["end_time"] > latest_end_time:
-                latest_end_time = lesson["end_time"]
-                
-        now_time_str = now.strftime("%H:%M")
-        if now_time_str > latest_end_time:
-            return (now + timedelta(days=1)).date().isoformat()
-            
-        return today_iso
+        for offset in range(8):
+            candidate_date = today + timedelta(days=offset)
 
+            candidate_iso = candidate_date.isoformat()
+
+            day_dto = await self.get_daily_schedule_for_child(
+                class_id=class_id,
+                group_id=group_id,
+                date_iso=candidate_iso,
+                user_id=user_id,
+            )
+
+            if not day_dto.lessons:
+                continue
+
+            if candidate_date != today:
+                return candidate_iso
+
+            latest_end_time = max(
+                (
+                    lesson.get("end_time", "00:00")
+                    for lesson in day_dto.lessons
+                ),
+                default="00:00",
+            )
+
+            if now.strftime("%H:%M") <= latest_end_time:
+                return candidate_iso
+
+        # Fallback: если кэш ещё не загружен на будущее, возвращаем сегодня.
+        return today.isoformat()
+    
     async def get_smart_week_start(self) -> str:
         """
         Возвращает понедельник текущей недели. Если сегодня воскресенье (или вечер субботы),

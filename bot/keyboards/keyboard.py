@@ -5,6 +5,18 @@ from core.models.dto import ( ClassListDTO, GroupListDTO, ChildrenListDTO, UserP
 )
 
 class Keyboards:
+    
+    @staticmethod
+    def _week_start_for_date(date_iso: str) -> str:
+        """Возвращает понедельник недели для переданной ISO-даты."""
+        date_value = datetime.fromisoformat(date_iso).date()
+
+        monday = date_value - timedelta(
+            days=date_value.isoweekday() - 1
+        )
+
+        return monday.isoformat()
+    
     @staticmethod
     def get_role_selection() -> InlineKeyboardMarkup:
         return InlineKeyboardMarkup(inline_keyboard=[
@@ -69,12 +81,12 @@ class Keyboards:
     @staticmethod
     def get_main_menu() -> ReplyKeyboardMarkup:
         """Универсальная нижняя клавиатура для всех ролей."""
-        kb = [
-            [KeyboardButton(text="📅 Мое расписание")],
-            [KeyboardButton(text="📆 Моя неделя"), KeyboardButton(text="🏫 Поиск по школе")],
+        keyboard = [
+            [KeyboardButton(text="📅 Моё расписание")],
+            [KeyboardButton(text="🏫 Поиск по школе")],
             [KeyboardButton(text="➕ Доп. занятия"), KeyboardButton(text="⚙️ Настройки")]
         ]
-        return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
+        return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
 
     @staticmethod
     def get_school_search_kb() -> InlineKeyboardMarkup:
@@ -413,19 +425,179 @@ class Keyboards:
 # Просмотр расписания
 
     @staticmethod
-    def get_day_nav_kb(current_date_iso: str) -> InlineKeyboardMarkup:
-        """Клавиатура: Предыдущий / Следующий день с привязкой к ID."""
-        curr_date = datetime.fromisoformat(current_date_iso).date()
-        prev_date = (curr_date - timedelta(days=1)).isoformat()
-        next_date = (curr_date + timedelta(days=1)).isoformat()
-        
-        return InlineKeyboardMarkup(inline_keyboard=[
-            [
-                InlineKeyboardButton(text="⬅️ Предыдущий", callback_data=f"sched:day:{prev_date}"),
-                InlineKeyboardButton(text="Следующий ➡️", callback_data=f"sched:day:{next_date}")
-            ]
-        ])
+    def get_schedule_day_kb(
+        current_date_iso: str,
+        *,
+        show_child_switch: bool,
+    ) -> InlineKeyboardMarkup:
+        """Навигация дневного расписания в Schedule Hub."""
+        current_date = datetime.fromisoformat(
+            current_date_iso
+        ).date()
 
+        previous_date = (
+            current_date - timedelta(days=1)
+        ).isoformat()
+
+        next_date = (
+            current_date + timedelta(days=1)
+        ).isoformat()
+
+        week_start_iso = Keyboards._week_start_for_date(
+            current_date_iso
+        )
+
+        buttons = [
+            [
+                InlineKeyboardButton(
+                    text="⬅️ Предыдущий",
+                    callback_data=f"sched:day:{previous_date}",
+                ),
+                InlineKeyboardButton(
+                    text="Следующий ➡️",
+                    callback_data=f"sched:day:{next_date}",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="📆 Показать неделю",
+                    callback_data=f"sched:week:{week_start_iso}",
+                ),
+            ],
+        ]
+
+        if show_child_switch:
+            buttons.append([
+                InlineKeyboardButton(
+                    text="👥 Сменить ребёнка",
+                    callback_data="sched:children",
+                ),
+            ])
+
+        return InlineKeyboardMarkup(
+            inline_keyboard=buttons,
+        )
+
+    @staticmethod
+    def get_schedule_week_kb(
+        week_start_iso: str,
+        *,
+        show_child_switch: bool,
+        is_full: bool = False,
+    ) -> InlineKeyboardMarkup:
+        """
+        Навигация недельного расписания.
+
+        Каждый день открывает дневной экран, откуда пользователь всегда
+        может вернуться к неделе через «📆 Показать неделю».
+        """
+        week_start = datetime.fromisoformat(
+            week_start_iso
+        ).date()
+
+        day_buttons = []
+
+        for offset in range(6):
+            target_date = week_start + timedelta(days=offset)
+
+            day_name = [
+                "Пн",
+                "Вт",
+                "Ср",
+                "Чт",
+                "Пт",
+                "Сб",
+            ][offset]
+
+            day_buttons.append(
+                InlineKeyboardButton(
+                    text=(
+                        f"{day_name} "
+                        f"{target_date.strftime('%d.%m')}"
+                    ),
+                    callback_data=(
+                        f"sched:day:{target_date.isoformat()}"
+                    ),
+                )
+            )
+
+        previous_week = (
+            week_start - timedelta(days=7)
+        ).isoformat()
+
+        next_week = (
+            week_start + timedelta(days=7)
+        ).isoformat()
+
+        if is_full:
+            details_button = InlineKeyboardButton(
+                text="🗓 Краткая неделя",
+                callback_data=f"sched:week:{week_start_iso}",
+            )
+        else:
+            details_button = InlineKeyboardButton(
+                text="📋 Подробно всю неделю",
+                callback_data=f"sched:full_week:{week_start_iso}",
+            )
+
+        buttons = [
+            day_buttons[:3],
+            day_buttons[3:],
+            [details_button],
+            [
+                InlineKeyboardButton(
+                    text="⬅️ Предыдущая неделя",
+                    callback_data=f"sched:week:{previous_week}",
+                ),
+                InlineKeyboardButton(
+                    text="Следующая неделя ➡️",
+                    callback_data=f"sched:week:{next_week}",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="📅 К ближайшему дню",
+                    callback_data="sched:smart_day",
+                ),
+            ],
+        ]
+
+        if show_child_switch:
+            buttons.append([
+                InlineKeyboardButton(
+                    text="👥 Сменить ребёнка",
+                    callback_data="sched:children",
+                ),
+            ])
+
+        return InlineKeyboardMarkup(
+            inline_keyboard=buttons,
+        )
+    
+    @staticmethod
+    def get_schedule_children_kb(
+        children: list[ChildInfoDTO],
+    ) -> InlineKeyboardMarkup:
+        """
+        Выбор ребёнка для единого Schedule Hub.
+        """
+        buttons = []
+
+        for child in children:
+            name = child.name or f"Ученик {child.user_id}"
+            class_name = child.class_id or "—"
+
+            buttons.append([
+                InlineKeyboardButton(
+                    text=f"👤 {name} ({class_name})",
+                    callback_data=f"sched:child:{child.user_id}",
+                ),
+            ])
+
+        return InlineKeyboardMarkup(
+            inline_keyboard=buttons,
+        )
+                    
     @staticmethod
     def get_search_days_kb(target_id: str, is_teacher: bool, week_start_iso: str, is_full: bool = False) -> InlineKeyboardMarkup:
         from datetime import datetime, timedelta
@@ -464,39 +636,7 @@ class Keyboards:
 
         return InlineKeyboardMarkup(inline_keyboard=buttons)
 
-    @staticmethod
-    def get_week_nav_kb(week_start_iso: str, is_full: bool = False) -> InlineKeyboardMarkup:
-        """Клавиатура недельного меню (Моя неделя) с привязкой к ID."""
-        from datetime import datetime, timedelta
-        start_date = datetime.fromisoformat(week_start_iso).date()
-        prev_week = (start_date - timedelta(days=7)).isoformat()
-        next_week = (start_date + timedelta(days=7)).isoformat()
-        
-        days = []
-        for i in range(6): # Пн-Сб
-            day_date_obj = start_date + timedelta(days=i)
-            day_date_iso = day_date_obj.isoformat()
-            day_name = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб"][i]
-            
-            # НОВОЕ: Динамическая подпись даты
-            btn_text = f"{day_name} {day_date_obj.strftime('%d.%m')}"
-            # Кнопка конкретного дня недели ведет на день
-            days.append(InlineKeyboardButton(text=btn_text, callback_data=f"sched:day:{day_date_iso}"))
-            
-        buttons = [days[0:3], days[3:6]]
-        
-        if not is_full:
-            buttons.append([InlineKeyboardButton(text="📋 Все дни подробно", callback_data=f"sched:full_week:{week_start_iso}")])
-        else:
-            buttons.append([InlineKeyboardButton(text="🗓 Краткая сводка", callback_data=f"sched:week:{week_start_iso}")])
-            
-        buttons.append([
-            InlineKeyboardButton(text="⬅️ Пред. неделя", callback_data=f"sched:week:{prev_week}"),
-            InlineKeyboardButton(text="След. неделя ➡️", callback_data=f"sched:week:{next_week}")
-        ])
-        
-        return InlineKeyboardMarkup(inline_keyboard=buttons)
-    
+  
     # Клавиатуры для поиска классов и учителей
 
     @staticmethod
