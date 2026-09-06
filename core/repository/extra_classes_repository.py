@@ -1,31 +1,35 @@
-# core/repository/extra_classes_repository.py
 from __future__ import annotations
 
-from typing import List, Dict, Any, Optional
-import logging
+from typing import Any, Optional
 
 from core.repository.base_repository import BaseRepository
 from services.time_service import TimeService
 
-logger = logging.getLogger(__name__)
+
+_UNSET = object()
+
 
 class ExtraClassesRepository(BaseRepository):
     """
-    Репозиторий для работы с доп. занятиями (extra_classes).
+    Репозиторий дополнительных занятий.
 
-    Только работа с БД: INSERT/SELECT/UPDATE/DELETE.
-    Вся бизнес-логика (валидация времени, выбор дня и т.п.) — в сервисах/хендлерах.
+    Владелец занятия — student_profiles.id.
+    Репозиторий не проверяет Telegram-права и семейные разрешения:
+    это обязанность ExtraClassesService.
     """
 
-    def __init__(self, db_path: str, time_service: TimeService):
+    def __init__(
+        self,
+        db_path: str,
+        time_service: TimeService,
+    ) -> None:
         super().__init__(db_path, time_service)
-
-    # ---------- CREATE ----------
 
     async def create_extra_class(
         self,
         *,
-        user_id: int,
+        family_id: int,
+        student_id: int,
         day_of_week: int,
         time_start: str,
         time_end: str,
@@ -34,142 +38,202 @@ class ExtraClassesRepository(BaseRepository):
         reminder_minutes: int = 30,
     ) -> int:
         """
-        Создаёт доп. занятие и возвращает его id.
+        Создаёт дополнительное занятие конкретному student profile.
         """
         query = """
-            INSERT INTO extra_classes (
-                family_id,
-                user_id,
-                day_of_week,
-                time_start,
-                time_end,
-                title,
-                location,
-                reminder_minutes
-            )
-            SELECT
-                u.family_id,
-                u.user_id,
-                ?,
-                ?,
-                ?,
-                ?,
-                ?,
-                ?
-            FROM users u
-            WHERE u.user_id = ?
-              AND u.role = 'child'
-              AND u.family_id IS NOT NULL
+        INSERT INTO extra_classes (
+            family_id,
+            student_id,
+            day_of_week,
+            time_start,
+            time_end,
+            title,
+            location,
+            reminder_minutes
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """
+
         params = (
+            family_id,
+            student_id,
             day_of_week,
             time_start,
             time_end,
             title,
             location,
             reminder_minutes,
-            user_id,
         )
 
         async with self._connection() as db:
             cursor = await db.execute(query, params)
-
-            if cursor.rowcount != 1:
-                raise ValueError(
-                    f"Cannot create extra class for child user_id={user_id}"
-                )
-
             await db.commit()
+
             return cursor.lastrowid
 
-    # ---------- READ ----------
-
-    async def get_extra_classes_for_user(
+    async def get_extra_classes_for_student(
         self,
         *,
-        user_id: int,
+        student_id: int,
         day_of_week: Optional[int] = None,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """
-        Возвращает список доп. занятий ребёнка.
-        Если day_of_week указан — фильтруем по нему, иначе возвращаем все.
+        Возвращает занятия одного student profile.
+
+        Если указан day_of_week, возвращает занятия только на этот день.
         """
         if day_of_week is None:
             query = """
-                SELECT id, family_id, user_id, day_of_week,
-                       time_start, time_end, title, location, reminder_minutes
-                FROM extra_classes
-                WHERE user_id = ?
-                ORDER BY day_of_week, time_start
+            SELECT
+                id,
+                family_id,
+                student_id,
+                day_of_week,
+                time_start,
+                time_end,
+                title,
+                location,
+                reminder_minutes,
+                created_at,
+                updated_at
+            FROM extra_classes
+            WHERE student_id = ?
+            ORDER BY
+                day_of_week,
+                time_start,
+                id
             """
-            return await self._fetch_all(query, (user_id,))
-        else:
-            query = """
-                SELECT id, family_id, user_id, day_of_week,
-                       time_start, time_end, title, location, reminder_minutes
-                FROM extra_classes
-                WHERE user_id = ? AND day_of_week = ?
-                ORDER BY time_start
-            """
-            return await self._fetch_all(query, (user_id, day_of_week))
 
-    # ---------- DELETE ----------
+            return await self._fetch_all(
+                query,
+                (student_id,),
+            )
+
+        query = """
+        SELECT
+            id,
+            family_id,
+            student_id,
+            day_of_week,
+            time_start,
+            time_end,
+            title,
+            location,
+            reminder_minutes,
+            created_at,
+            updated_at
+        FROM extra_classes
+        WHERE student_id = ?
+          AND day_of_week = ?
+        ORDER BY
+            time_start,
+            id
+        """
+
+        return await self._fetch_all(
+            query,
+            (student_id, day_of_week),
+        )
+
+    async def get_extra_class(
+        self,
+        *,
+        extra_id: int,
+        student_id: int,
+    ) -> Optional[dict[str, Any]]:
+        """
+        Возвращает одно занятие, только если оно принадлежит student_id.
+
+        Метод нужен сервису для безопасной partial update и проверки
+        итогового временного интервала.
+        """
+        query = """
+        SELECT
+            id,
+            family_id,
+            student_id,
+            day_of_week,
+            time_start,
+            time_end,
+            title,
+            location,
+            reminder_minutes,
+            created_at,
+            updated_at
+        FROM extra_classes
+        WHERE id = ?
+          AND student_id = ?
+        """
+
+        return await self._fetch_one(
+            query,
+            (extra_id, student_id),
+        )
 
     async def delete_extra_class(
         self,
         *,
         extra_id: int,
-        user_id: int,
+        student_id: int,
     ) -> bool:
         """
-        Удаляет доп. занятие по id, только если оно принадлежит user_id.
-        Возвращает True, если что-то удалено.
+        Удаляет занятие только при совпадении extra id и student id.
         """
         query = """
-            DELETE FROM extra_classes
-            WHERE id = ? AND user_id = ?
+        DELETE FROM extra_classes
+        WHERE id = ?
+          AND student_id = ?
         """
-        rowcount = await self._execute(query, (extra_id, user_id))
-        return rowcount > 0
 
-    # ---------- UPDATE ----------
+        rowcount = await self._execute(
+            query,
+            (extra_id, student_id),
+        )
+
+        return rowcount > 0
 
     async def update_extra_class(
         self,
         *,
         extra_id: int,
-        user_id: int,
+        student_id: int,
         day_of_week: Optional[int] = None,
         time_start: Optional[str] = None,
         time_end: Optional[str] = None,
         title: Optional[str] = None,
-        location: Optional[str] = None,
+        location: Optional[str] | object = _UNSET,
         reminder_minutes: Optional[int] = None,
     ) -> bool:
         """
-        Частичное обновление доп. занятия.
-        Только владелец (user_id) может обновить запись.
+        Частично обновляет занятие конкретного ученика.
+
+        location использует _UNSET, чтобы различать:
+        - location не передан: не изменять поле;
+        - location=None: очистить место занятия.
         """
-        fields = []
+        fields: list[str] = []
         params: list[Any] = []
-        
+
         if day_of_week is not None:
             fields.append("day_of_week = ?")
             params.append(day_of_week)
+
         if time_start is not None:
             fields.append("time_start = ?")
             params.append(time_start)
+
         if time_end is not None:
             fields.append("time_end = ?")
             params.append(time_end)
+
         if title is not None:
             fields.append("title = ?")
             params.append(title)
-# стоит использовать специальный sentinel _UNSET = object() и применять его для проверки, чтобы отличать "не передано" от "передано None". Но пока оставим так для добавления location и reminder_minutes, так как они могут быть None.
 
-        if location is not None:
+        if location is not _UNSET:
             fields.append("location = ?")
             params.append(location)
+
         if reminder_minutes is not None:
             fields.append("reminder_minutes = ?")
             params.append(reminder_minutes)
@@ -178,12 +242,24 @@ class ExtraClassesRepository(BaseRepository):
             return False
 
         fields.append("updated_at = CURRENT_TIMESTAMP")
-        params.extend([extra_id, user_id])
-        
+
+        params.extend(
+            [
+                extra_id,
+                student_id,
+            ]
+        )
+
         query = f"""
-            UPDATE extra_classes
-            SET {", ".join(fields)}
-            WHERE id = ? AND user_id = ?
+        UPDATE extra_classes
+        SET {", ".join(fields)}
+        WHERE id = ?
+          AND student_id = ?
         """
-        rowcount = await self._execute(query, tuple(params))
+
+        rowcount = await self._execute(
+            query,
+            tuple(params),
+        )
+
         return rowcount > 0

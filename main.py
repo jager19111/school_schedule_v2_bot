@@ -125,10 +125,11 @@ async def main():
     profile_service = ProfileService(profile_repo)
     notification_service = NotificationService(bot, notification_repo, time_service=time_service, schedule_repo=schedule_repo, extra_classes_repo=extra_classes_repo)
     cleanup_job = UserCleanupJob(user_repo, time_service=time_service, dormant_days=60)
+    students_service = StudentsService(student_repo, profile_service = profile_service)
     admin_service = AdminService(admin_repo)
-    extra_classes_service = ExtraClassesService(extra_classes_repo=extra_classes_repo, profile_repo=profile_repo, time_service=time_service)
+    extra_classes_service = ExtraClassesService(extra_classes_repo=extra_classes_repo, profile_service=profile_service, students_service=students_service, time_service=time_service)
     watch_targets_service = WatchTargetsService(repository=watch_target_repo)
-    students_service = StudentsService(repository=student_repo)
+
         
     notification_delivery_cleanup_job = NotificationDeliveryCleanupJob(notification_repo=notification_repo, time_service=time_service, retention_days=35)
         

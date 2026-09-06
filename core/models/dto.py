@@ -251,6 +251,24 @@ class ChildrenListDTO:
 # Доп задания
 
 @dataclass
+class ExtraClassDTO:
+    id: int
+
+    family_id: int
+    student_id: int
+
+    day_of_week: int
+    time_start: str
+    time_end: str
+
+    title: str
+    location: str | None
+    reminder_minutes: int
+
+    created_at: str | None = None
+    updated_at: str | None = None
+    
+@dataclass
 class ExtraClassItemDTO:
     """ 
     DTO для одного доп. занятия ребёнка.
@@ -289,19 +307,21 @@ class FamilyMemberDTO:
 @dataclass
 class ExtraClassesAccessDTO:
     """
-    Права конкретного инициатора на дополнительные занятия конкретного ребёнка.
+    Права инициатора на дополнительные занятия конкретного student profile.
 
     can_view:
-        Можно увидеть список занятий ребёнка.
+    Инициатор может видеть занятия ученика.
 
     can_manage:
-        Можно создавать, изменять и удалять занятия ребёнка.
+    Инициатор может создавать, изменять и удалять занятия ученика.
     """
     actor_user_id: int
-    target_child_id: int
+    target_student_id: int
+
     can_view: bool
     can_manage: bool
 
+# не использовать в новых методах. удалить после рефакторинга
 @dataclass
 class AdultExtraClassesPermissionDTO:
     """

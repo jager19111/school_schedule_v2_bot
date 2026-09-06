@@ -8,6 +8,7 @@ from core.models.dto import (
     StudentProfileDTO,
 )
 from core.repository.student_repository import StudentRepository
+from services.profiles_service import ProfileService
 
 
 class StudentsService:
@@ -17,9 +18,11 @@ class StudentsService:
 
     def __init__(
         self,
-        repository: StudentRepository,
+        student_repo: StudentRepository,
+        profile_service: ProfileService,
     ):
-        self.repo = repository
+        self.repo = student_repo
+        self.profile_service = profile_service
 
     @staticmethod
     def _student_dto_from_row(
@@ -205,6 +208,46 @@ class StudentsService:
         """
         row = await self.repo.get_student_by_telegram_user_id(
             telegram_user_id=telegram_user_id,
+        )
+
+        if row is None:
+            return None
+
+        return self._student_dto_from_row(row)
+    
+    
+            
+    async def ensure_telegram_student_profile(
+        self,
+        *,
+        telegram_user_id: int,
+    ) -> Optional[StudentProfileDTO]:
+        """
+        Создаёт или синхронизирует student profile Telegram-ребёнка.
+
+        Вызывать после завершения регистрации ребёнка, а также после
+        присоединения ребёнка к семье или изменения его класса/группы.
+        """
+        # 1. Запрашиваем DTO пользователя для получения актуального статуса
+        user = await self.profile_service.get_user_profile_dto(telegram_user_id)
+
+        # 2. Корректные методы проверки (Валидация бизнес-правил)
+        if user.role != "child":
+            return None
+        
+        if user.family_id is None:
+            return None
+
+        if user.class_id is None:
+            return None
+
+        # 3. Делегируем единый запрос репозиторию
+        row = await self.repo.upsert_telegram_student(
+            telegram_user_id=telegram_user_id,
+            family_id=user.family_id,
+            name=user.name or "Ученик",
+            class_id=user.class_id,
+            group_id=user.group_id or "ALL",
         )
 
         if row is None:

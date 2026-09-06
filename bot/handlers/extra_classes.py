@@ -9,43 +9,67 @@ from bot.keyboards.keyboard import Keyboards
 from services.time_service import TimeService
 from services.extra_classes_service import ExtraClassesService
 from services.profiles_service import ProfileService
+from services.students_service import StudentsService
 
 logger = logging.getLogger(__name__)
 router = Router()
 
 # Хелпер для проверки прав доступа к доп. занятиям
-async def _show_extra_menu_for_target(
+async def _show_extra_menu_for_student(
     *,
     message_obj: Message,
     actor_user_id: int,
-    target_child_id: int,
+    target_student_id: int,
     extra_classes_service: ExtraClassesService,
+    students_service: StudentsService,
     edit_message: bool,
     prefix: str = "",
 ) -> bool:
     """
-    Показывает меню дополнительных занятий конкретного ребёнка.
+    Показывает меню дополнительных занятий student profile.
 
-    Права вычисляются сервисом, а не handler-ом:
-    - ребёнок получает собственные занятия;
-    - взрослый может только просматривать, если есть parent_child_settings;
-    - взрослый может редактировать только при can_manage_extra_classes = 1.
+    Service проверяет actor access. Handler дополнительно получает
+    student profile только для корректного отображения имени, класса
+    и Telegram-статуса.
     """
     access = await extra_classes_service.get_access(
         actor_user_id=actor_user_id,
-        target_child_id=target_child_id,
+        target_student_id=target_student_id,
     )
 
     if not access.can_view:
         return False
 
-    text, _ = UIRenderer.render_extra_classes_menu()
+    student = None
+
+    actor_access = await students_service.get_student_for_adult(
+        adult_user_id=actor_user_id,
+        student_id=target_student_id,
+    )
+
+    if actor_access is not None:
+        student, _ = actor_access
+    else:
+        student = await students_service.get_student_by_telegram_user_id(
+            telegram_user_id=actor_user_id,
+        )
+
+    if (
+        student is None
+        or student.id != target_student_id
+        or not student.is_active
+    ):
+        return False
+
+    text, _ = UIRenderer.render_student_extra_classes_menu(
+        student,
+    )
 
     if prefix:
         text = f"{prefix}\n\n{text}"
 
     keyboard = Keyboards.get_extra_classes_menu(
-        target_user_id=target_child_id,
+        target_student_id=target_student_id,
         can_add=access.can_manage,
         can_edit=access.can_manage,
     )
@@ -63,33 +87,30 @@ async def _show_extra_menu_for_target(
                 reply_markup=keyboard,
                 parse_mode="HTML",
             )
+
     except Exception as exc:
-        # Не скрываем бизнес-ошибки выше; здесь защищаем только Telegram UI.
         logger.warning(
-            "Unable to render extra classes menu: actor_id=%s target_id=%s error=%s",
+            "Unable to render extra menu: "
+            "actor_id=%s student_id=%s error=%s",
             actor_user_id,
-            target_child_id,
+            target_student_id,
             exc,
         )
 
     return True
 
-
 async def _require_extra_manage_access(
     *,
     actor_user_id: int,
-    target_child_id: int,
+    target_student_id: int,
     extra_classes_service: ExtraClassesService,
 ) -> bool:
     """
-    Проверяет право создавать, изменять или удалять занятия ребёнка.
-
-    Проверка повторяется на каждом критичном шаге FSM, потому что callback
-    и FSM-данные нельзя считать доверенными.
+    Проверяет право редактировать допзанятия конкретного ученика.
     """
     access = await extra_classes_service.get_access(
         actor_user_id=actor_user_id,
-        target_child_id=target_child_id,
+        target_student_id=target_student_id,
     )
 
     return access.can_manage
@@ -113,48 +134,68 @@ class ExtraClassStates(StatesGroup):
 async def show_extra_menu(
     message: Message,
     profile_service: ProfileService,
+    students_service: StudentsService,
     extra_classes_service: ExtraClassesService,
 ) -> None:
     """
-    Открывает меню дополнительных занятий.
+    Открывает допзанятия.
 
-    Ребёнок открывает собственные занятия.
-    Parent/observer выбирает ребёнка из доступных ему связей.
+    child:
+    - открывает только свой связанный student profile.
+
+    parent/observer:
+    - выбирает любой доступный student profile,
+      включая virtual student.
     """
     actor_user_id = message.from_user.id
 
-    actor_dto = await profile_service.get_user_profile_dto(
+    actor = await profile_service.get_user_profile_dto(
         actor_user_id,
     )
 
-    if actor_dto.role == "child":
-        shown = await _show_extra_menu_for_target(
+    if actor.role == "child":
+        student = (
+            await students_service.get_student_by_telegram_user_id(
+                telegram_user_id=actor_user_id,
+            )
+        )
+
+        if student is None or not student.is_active:
+            await message.answer(
+                "❌ Для вашего Telegram-профиля не найден "
+                "активный профиль ученика."
+            )
+            return
+
+        shown = await _show_extra_menu_for_student(
             message_obj=message,
             actor_user_id=actor_user_id,
-            target_child_id=actor_user_id,
+            target_student_id=student.id,
             extra_classes_service=extra_classes_service,
+            students_service=students_service,
             edit_message=False,
         )
 
         if not shown:
             await message.answer(
-                "❌ Не удалось определить права на дополнительные занятия."
+                "❌ Не удалось определить доступ "
+                "к дополнительным занятиям."
             )
 
         return
 
-    if actor_dto.role not in ("parent", "observer"):
+    if actor.role not in ("parent", "observer"):
         await message.answer(
-            "❌ Дополнительные занятия доступны только детям, "
+            "❌ Дополнительные занятия доступны детям, "
             "родителям и наблюдателям."
         )
         return
 
-    children = await profile_service.get_children_for_parent(
-        actor_user_id,
+    students = await students_service.get_students_for_adult(
+        adult_user_id=actor_user_id,
     )
 
-    if not children:
+    if not students:
         text, _ = UIRenderer.render_extra_no_children()
 
         await message.answer(
@@ -163,90 +204,156 @@ async def show_extra_menu(
         )
         return
 
-    if len(children) == 1:
-        shown = await _show_extra_menu_for_target(
+    if len(students) == 1:
+        shown = await _show_extra_menu_for_student(
             message_obj=message,
             actor_user_id=actor_user_id,
-            target_child_id=children[0].user_id,
+            target_student_id=students[0].id,
             extra_classes_service=extra_classes_service,
+            students_service=students_service,
             edit_message=False,
         )
 
         if not shown:
             await message.answer(
-                "❌ У вас нет доступа к дополнительным занятиям ребёнка."
+                "❌ У вас нет доступа к занятиям ученика."
             )
 
         return
 
-    text, _ = UIRenderer.render_extra_child_select()
+    text, _ = UIRenderer.render_extra_student_select()
 
     await message.answer(
         text,
-        reply_markup=Keyboards.get_extra_children_select_kb(children),
+        reply_markup=Keyboards.get_extra_students_select_kb(
+            students,
+        ),
         parse_mode="HTML",
     )
-    
-@router.callback_query(F.data.startswith("extra:menu:"))
-async def show_extra_menu_cb(
+
+@router.callback_query(F.data == "extra:students")
+async def show_extra_students(
     callback: CallbackQuery,
     state: FSMContext,
     profile_service: ProfileService,
-    extra_classes_service: ExtraClassesService,
+    students_service: StudentsService,
 ) -> None:
-    """Открывает меню допзанятий выбранного ребёнка."""
+    """
+    Показывает selector student profiles взрослого.
+
+    Ребёнок не выбирает чужие профили: для него selector не нужен.
+    """
     await state.clear()
 
-    try:
-        target_child_id = int(callback.data.split(":")[2])
-    except (IndexError, ValueError):
+    actor_user_id = callback.from_user.id
+
+    actor = await profile_service.get_user_profile_dto(
+        actor_user_id,
+    )
+
+    if actor.role not in ("parent", "observer"):
         await callback.answer(
-            "Некорректный идентификатор ребёнка.",
+            "Смена ученика доступна только взрослым.",
             show_alert=True,
         )
         return
 
-    actor_user_id = callback.from_user.id
+    students = await students_service.get_students_for_adult(
+        adult_user_id=actor_user_id,
+    )
 
-    shown = await _show_extra_menu_for_target(
+    if not students:
+        text, _ = UIRenderer.render_extra_no_children()
+
+        await callback.message.edit_text(
+            text,
+            parse_mode="HTML",
+        )
+
+        await callback.answer()
+        return
+
+    text, _ = UIRenderer.render_extra_student_select()
+
+    await callback.message.edit_text(
+        text,
+        reply_markup=Keyboards.get_extra_students_select_kb(
+            students,
+        ),
+        parse_mode="HTML",
+    )
+
+    await callback.answer()
+        
+@router.callback_query(F.data.startswith("extra:menu:"))
+async def show_extra_menu_cb(
+    callback: CallbackQuery,
+    state: FSMContext,
+    extra_classes_service: ExtraClassesService,
+    students_service: StudentsService,
+) -> None:
+    """
+    Открывает меню занятий выбранного student profile.
+    """
+    await state.clear()
+
+    try:
+        target_student_id = int(
+            callback.data.split(":")[2]
+        )
+    except (IndexError, ValueError):
+        await callback.answer(
+            "Некорректный идентификатор ученика.",
+            show_alert=True,
+        )
+        return
+
+    shown = await _show_extra_menu_for_student(
         message_obj=callback.message,
-        actor_user_id=actor_user_id,
-        target_child_id=target_child_id,
+        actor_user_id=callback.from_user.id,
+        target_student_id=target_student_id,
         extra_classes_service=extra_classes_service,
+        students_service=students_service,
         edit_message=True,
     )
 
     if not shown:
         await callback.answer(
-            "У вас нет доступа к занятиям этого ребёнка.",
+            "У вас нет доступа к занятиям этого ученика.",
             show_alert=True,
         )
         return
 
     await callback.answer()
-    
-
 @router.callback_query(F.data == "extra:cancel")
 async def cancel_action(
     callback: CallbackQuery,
     state: FSMContext,
+    students_service: StudentsService,
     extra_classes_service: ExtraClassesService,
 ) -> None:
     """Отменяет FSM-действие и возвращает к доступному меню занятий."""
     data = await state.get_data()
 
-    target_child_id = data.get(
-        "target_user_id",
-        callback.from_user.id,
+    target_student_id = data.get(
+        "target_student_id",
     )
 
     await state.clear()
 
-    shown = await _show_extra_menu_for_target(
+    if not target_student_id:
+        await callback.answer(
+            "Состояние устарело. Откройте занятия заново.",
+            show_alert=True,
+        )
+        return
+
+    shown = await _show_extra_menu_for_student(
         message_obj=callback.message,
         actor_user_id=callback.from_user.id,
-        target_child_id=target_child_id,
+        target_student_id=target_student_id,
         extra_classes_service=extra_classes_service,
+        students_service=students_service,
         edit_message=True,
         prefix="❌ Действие отменено.",
     )
@@ -269,7 +376,7 @@ async def show_extra_list(
 ) -> None:
     """Показывает занятия ребёнка только при наличии view-права."""
     try:
-        target_child_id = int(callback.data.split(":")[2])
+        target_student_id = int(callback.data.split(":")[2])
     except (IndexError, ValueError):
         await callback.answer(
             "Некорректный идентификатор ребёнка.",
@@ -277,14 +384,14 @@ async def show_extra_list(
         )
         return
 
-    response = await extra_classes_service.get_user_extra_classes(
+    response = await extra_classes_service.get_student_extra_classes(
         actor_user_id=callback.from_user.id,
-        target_child_id=target_child_id,
+        target_student_id=target_student_id,
     )
 
     if not response.success:
         await callback.answer(
-            "У вас нет доступа к занятиям этого ребёнка.",
+            "У вас нет доступа к занятиям этого ученика.",
             show_alert=True,
         )
         return
@@ -297,7 +404,7 @@ async def show_extra_list(
         await callback.message.edit_text(
             text,
             reply_markup=Keyboards.get_back_to_extra_menu(
-                target_child_id,
+                target_student_id,
             ),
             parse_mode="HTML",
         )
@@ -305,7 +412,7 @@ async def show_extra_list(
         logger.warning(
             "Failed to show extra classes list: actor_id=%s target_id=%s error=%s",
             callback.from_user.id,
-            target_child_id,
+            target_student_id,
             exc,
         )
 
@@ -319,7 +426,7 @@ async def start_delete_extra(
 ) -> None:
     """Запускает удаление занятия при наличии manage-права."""
     try:
-        target_child_id = int(callback.data.split(":")[2])
+        target_student_id = int(callback.data.split(":")[2])
     except (IndexError, ValueError):
         await callback.answer(
             "Некорректный идентификатор ребёнка.",
@@ -331,20 +438,20 @@ async def start_delete_extra(
 
     can_manage = await _require_extra_manage_access(
         actor_user_id=actor_user_id,
-        target_child_id=target_child_id,
+        target_student_id=target_student_id,
         extra_classes_service=extra_classes_service,
     )
 
     if not can_manage:
         await callback.answer(
-            "🔒 У вас нет права удалять занятия этого ребёнка.",
+            "🔒 У вас нет права удалять занятия этого ученика.",
             show_alert=True,
         )
         return
 
-    list_response = await extra_classes_service.get_user_extra_classes(
-        actor_user_id=actor_user_id,
-        target_child_id=target_child_id,
+    list_response = await extra_classes_service.get_student_extra_classes(
+        actor_user_id=callback.from_user.id,
+        target_student_id=target_student_id,
     )
 
     if not list_response.success:
@@ -362,7 +469,7 @@ async def start_delete_extra(
         await callback.message.edit_text(
             text,
             reply_markup=Keyboards.get_back_to_extra_menu(
-                target_child_id,
+                target_student_id,
             ),
             parse_mode="HTML",
         )
@@ -371,7 +478,7 @@ async def start_delete_extra(
         return
 
     await state.update_data(
-        target_user_id=target_child_id,
+        target_student_id=target_student_id,
         extra_actor_user_id=actor_user_id,
     )
 
@@ -392,15 +499,16 @@ async def process_delete_id(
     message: Message,
     state: FSMContext,
     extra_classes_service: ExtraClassesService,
+    students_service: StudentsService,
 ) -> None:
     """Финально удаляет занятие с повторной service-проверкой прав."""
     data = await state.get_data()
 
     actor_user_id = message.from_user.id
-    target_child_id = data.get("target_user_id")
+    target_student_id = data.get("target_student_id")
     state_actor_id = data.get("extra_actor_user_id")
 
-    if not target_child_id or state_actor_id != actor_user_id:
+    if not target_student_id or state_actor_id != actor_user_id:
         await state.clear()
 
         await message.answer(
@@ -422,7 +530,7 @@ async def process_delete_id(
 
     response = await extra_classes_service.delete_extra_class(
         actor_user_id=actor_user_id,
-        target_child_id=target_child_id,
+        target_student_id=target_student_id,
         extra_id=int(raw_extra_id),
     )
 
@@ -448,11 +556,12 @@ async def process_delete_id(
 
     text_deleted, _ = UIRenderer.render_extra_class_deleted()
 
-    shown = await _show_extra_menu_for_target(
+    shown = await _show_extra_menu_for_student(
         message_obj=message,
         actor_user_id=actor_user_id,
-        target_child_id=target_child_id,
+        target_student_id=target_student_id,
         extra_classes_service=extra_classes_service,
+        students_service=students_service,
         edit_message=False,
         prefix=text_deleted,
     )
@@ -473,7 +582,7 @@ async def start_add_extra(
 ) -> None:
     """Запускает FSM добавления занятия при наличии manage-права."""
     try:
-        target_child_id = int(callback.data.split(":")[2])
+        target_student_id = int(callback.data.split(":")[2])
     except (IndexError, ValueError):
         await callback.answer(
             "Некорректный идентификатор ребёнка.",
@@ -485,7 +594,7 @@ async def start_add_extra(
 
     can_manage = await _require_extra_manage_access(
         actor_user_id=actor_user_id,
-        target_child_id=target_child_id,
+        target_student_id=target_student_id,
         extra_classes_service=extra_classes_service,
     )
 
@@ -497,7 +606,7 @@ async def start_add_extra(
         return
 
     await state.update_data(
-        target_user_id=target_child_id,
+        target_student_id=target_student_id,
         extra_actor_user_id=actor_user_id,
     )
 
@@ -588,30 +697,41 @@ async def process_location(message: Message, state: FSMContext):
     await message.answer(text, reply_markup=Keyboards.get_skip_cancel_keyboard("skip_reminder"), parse_mode="HTML")
     await state.set_state(ExtraClassStates.waiting_for_reminder)
 
-@router.callback_query(ExtraClassStates.waiting_for_reminder, F.data == "skip_reminder")
+@router.callback_query(
+    ExtraClassStates.waiting_for_reminder,
+    F.data == "skip_reminder",
+)
 async def skip_reminder(
-    callback: CallbackQuery, 
-    state: FSMContext, 
-    extra_classes_service: ExtraClassesService, 
-    profile_service: ProfileService
-):
-    data = await state.get_data()
-    target_child_id = data.get("target_user_id")
-    
-    # Извлекаем дефолтное значение напоминания из настроек целевого ребёнка
-    target_profile = await profile_service.get_user_profile_dto(target_child_id)
-    reminder_minutes = target_profile.global_extra_reminder
-    
+    callback: CallbackQuery,
+    state: FSMContext,
+    extra_classes_service: ExtraClassesService,
+    profile_service: ProfileService,
+    students_service: StudentsService,
+) -> None:
+    """
+    Берёт default reminder у инициатора действия.
+
+    Virtual student не имеет Telegram users.user_id, поэтому нельзя
+    читать global_extra_reminder у самого student profile.
+    """
+    actor_profile = await profile_service.get_user_profile_dto(
+        callback.from_user.id,
+    )
+
+    reminder_minutes = actor_profile.global_extra_reminder or 30
+
     await finalize_extra_class(
         event=callback,
         state=state,
         extra_classes_service=extra_classes_service,
+        students_service=students_service,
         reminder_minutes=reminder_minutes,
     )
+
     await callback.answer()
 
 @router.message(ExtraClassStates.waiting_for_reminder)
-async def process_reminder(message: Message, state: FSMContext, extra_classes_service: ExtraClassesService, profile_service: ProfileService):
+async def process_reminder(message: Message, state: FSMContext, extra_classes_service: ExtraClassesService, profile_service: ProfileService, students_service: StudentsService,):
     reminder_text = message.text.strip()
     if not reminder_text.isdigit():
         text, _ = UIRenderer.render_extra_class_invalid_reminder()
@@ -621,6 +741,7 @@ async def process_reminder(message: Message, state: FSMContext, extra_classes_se
     message,
     state,
     extra_classes_service,
+    students_service=students_service,
     reminder_minutes=int(reminder_text),
 )
 
@@ -628,21 +749,22 @@ async def finalize_extra_class(
     event: Message | CallbackQuery,
     state: FSMContext,
     extra_classes_service: ExtraClassesService,
+    students_service: StudentsService,
     reminder_minutes: int,
 ) -> None:
     """
     Финальное создание дополнительного занятия.
 
     Перед записью сервис повторно проверяет:
-        actor_user_id -> target_child_id -> can_manage_extra_classes
+        actor_user_id -> target_student_id -> can_manage_extra_classes
     """
     data = await state.get_data()
 
     actor_user_id = event.from_user.id
-    target_child_id = data.get("target_user_id")
+    target_student_id = data.get("target_student_id")
     state_actor_id = data.get("extra_actor_user_id")
 
-    if not target_child_id or state_actor_id != actor_user_id:
+    if not target_student_id or state_actor_id != actor_user_id:
         await state.clear()
 
         if isinstance(event, CallbackQuery):
@@ -660,7 +782,7 @@ async def finalize_extra_class(
 
     response = await extra_classes_service.add_extra_class(
         actor_user_id=actor_user_id,
-        target_child_id=target_child_id,
+        target_student_id=target_student_id,
         day_of_week=data["day_of_week"],
         time_start=data["time_start"],
         time_end=data["time_end"],
@@ -709,11 +831,12 @@ async def finalize_extra_class(
     text_success, _ = UIRenderer.render_extra_class_success()
 
     if isinstance(event, CallbackQuery):
-        shown = await _show_extra_menu_for_target(
+        shown = await _show_extra_menu_for_student(
             message_obj=event.message,
             actor_user_id=actor_user_id,
-            target_child_id=target_child_id,
+            target_student_id=target_student_id,
             extra_classes_service=extra_classes_service,
+            students_service=students_service,
             edit_message=False,
             prefix=text_success,
         )
@@ -727,12 +850,15 @@ async def finalize_extra_class(
         await event.answer()
         return
 
-    shown = await _show_extra_menu_for_target(
-        message_obj=event,
+    shown = await _show_extra_menu_for_student(
+        message_obj=event.message
+        if isinstance(event, CallbackQuery)
+        else event,
         actor_user_id=actor_user_id,
-        target_child_id=target_child_id,
+        target_student_id=target_student_id,
         extra_classes_service=extra_classes_service,
-        edit_message=False,
+        students_service=students_service,
+        edit_message=isinstance(event, CallbackQuery),
         prefix=text_success,
     )
 
@@ -751,7 +877,7 @@ async def start_edit_extra(
 ) -> None:
     """Запускает редактирование занятия при наличии manage-права."""
     try:
-        target_child_id = int(callback.data.split(":")[2])
+        target_student_id = int(callback.data.split(":")[2])
     except (IndexError, ValueError):
         await callback.answer(
             "Некорректный идентификатор ребёнка.",
@@ -763,20 +889,20 @@ async def start_edit_extra(
 
     can_manage = await _require_extra_manage_access(
         actor_user_id=actor_user_id,
-        target_child_id=target_child_id,
+        target_student_id=target_student_id,
         extra_classes_service=extra_classes_service,
     )
 
     if not can_manage:
         await callback.answer(
-            "🔒 У вас нет права редактировать занятия этого ребёнка.",
+            "🔒 У вас нет права редактировать занятия этого ученика.",
             show_alert=True,
         )
         return
 
-    list_response = await extra_classes_service.get_user_extra_classes(
-        actor_user_id=actor_user_id,
-        target_child_id=target_child_id,
+    list_response = await extra_classes_service.get_student_extra_classes(
+        actor_user_id=callback.from_user.id,
+        target_student_id=target_student_id,
     )
 
     if not list_response.success:
@@ -794,7 +920,7 @@ async def start_edit_extra(
         await callback.message.edit_text(
             text,
             reply_markup=Keyboards.get_back_to_extra_menu(
-                target_child_id,
+                target_student_id,
             ),
             parse_mode="HTML",
         )
@@ -803,7 +929,7 @@ async def start_edit_extra(
         return
 
     await state.update_data(
-        target_user_id=target_child_id,
+        target_student_id=target_student_id,
         extra_actor_user_id=actor_user_id,
     )
 
@@ -829,15 +955,15 @@ async def process_edit_id(
     Принимает ID занятия для редактирования.
 
     Повторно проверяет права через service, потому что FSM-состояние
-    может устареть, а target_user_id нельзя считать доверенным.
+    может устареть, а target_student_id нельзя считать доверенным.
     """
     data = await state.get_data()
 
     actor_user_id = message.from_user.id
-    target_child_id = data.get("target_user_id")
+    target_student_id = data.get("target_student_id")
     state_actor_id = data.get("extra_actor_user_id")
 
-    if not target_child_id or state_actor_id != actor_user_id:
+    if not target_student_id or state_actor_id != actor_user_id:
         await state.clear()
 
         await message.answer(
@@ -860,16 +986,16 @@ async def process_edit_id(
 
     extra_id = int(raw_extra_id)
 
-    list_response = await extra_classes_service.get_user_extra_classes(
+    list_response = await extra_classes_service.get_student_extra_classes(
         actor_user_id=actor_user_id,
-        target_child_id=target_child_id,
+        target_student_id=target_student_id,
     )
 
     if not list_response.success:
         await state.clear()
 
         await message.answer(
-            "🔒 У вас больше нет доступа к занятиям этого ребёнка."
+            "🔒 У вас больше нет доступа к занятиям этого ученика."
         )
         return
 
@@ -887,7 +1013,7 @@ async def process_edit_id(
 
     can_manage = await _require_extra_manage_access(
         actor_user_id=actor_user_id,
-        target_child_id=target_child_id,
+        target_student_id=target_student_id,
         extra_classes_service=extra_classes_service,
     )
 
@@ -915,10 +1041,10 @@ async def choose_edit_field(callback: CallbackQuery, state: FSMContext):
     
     # 1. Защита от старых кнопок и подмены FSM
     actor_user_id = callback.from_user.id
-    target_child_id = data.get("target_user_id")
+    target_student_id = data.get("target_student_id")
     state_actor_id = data.get("extra_actor_user_id")
 
-    if not target_child_id or state_actor_id != actor_user_id:
+    if not target_student_id or state_actor_id != actor_user_id:
         await state.clear()
         await callback.answer(
             "❌ Меню устарело. Начните редактирование заново.", 
@@ -960,15 +1086,15 @@ async def choose_edit_field(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 @router.callback_query(ExtraClassStates.waiting_for_edit_value, F.data.startswith("extraday:"))
-async def process_edit_day(callback: CallbackQuery, state: FSMContext, extra_classes_service: ExtraClassesService, profile_service: ProfileService):
+async def process_edit_day(callback: CallbackQuery, state: FSMContext, extra_classes_service: ExtraClassesService, profile_service: ProfileService, students_service: StudentsService):
     day_num = int(callback.data.split(":")[1])
     data = await state.get_data()
     
     actor_user_id = callback.from_user.id
-    target_child_id = data.get("target_user_id")
+    target_student_id = data.get("target_student_id")
     state_actor_id = data.get("extra_actor_user_id")
 
-    if not target_child_id or state_actor_id != actor_user_id:
+    if not target_student_id or state_actor_id != actor_user_id:
         await state.clear()
         await callback.answer(
             "❌ Состояние редактирования устарело. Откройте меню заново.",
@@ -980,7 +1106,7 @@ async def process_edit_day(callback: CallbackQuery, state: FSMContext, extra_cla
 
     response = await extra_classes_service.update_extra_class(
         actor_user_id=actor_user_id,
-        target_child_id=target_child_id,
+        target_student_id=target_student_id,
         extra_id=class_id,
         day_of_week=day_num,
     )
@@ -996,11 +1122,12 @@ async def process_edit_day(callback: CallbackQuery, state: FSMContext, extra_cla
     
     text_updated, _ = UIRenderer.render_extra_class_updated()
     
-    shown = await _show_extra_menu_for_target(
+    shown = await _show_extra_menu_for_student(
         message_obj=callback.message,
         actor_user_id=actor_user_id,
-        target_child_id=target_child_id,
+        target_student_id=target_student_id,
         extra_classes_service=extra_classes_service,
+        students_service=students_service,
         edit_message=True,
         prefix=text_updated,
     )
@@ -1012,14 +1139,14 @@ async def process_edit_day(callback: CallbackQuery, state: FSMContext, extra_cla
 
 
 @router.message(ExtraClassStates.waiting_for_edit_value)
-async def process_edit_value(message: Message, state: FSMContext, time_service: TimeService, extra_classes_service: ExtraClassesService, profile_service: ProfileService):
+async def process_edit_value(message: Message, state: FSMContext, time_service: TimeService, extra_classes_service: ExtraClassesService, profile_service: ProfileService, students_service: StudentsService):
     data = await state.get_data()
     
     actor_user_id = message.from_user.id
-    target_child_id = data.get("target_user_id")
+    target_student_id = data.get("target_student_id")
     state_actor_id = data.get("extra_actor_user_id")
 
-    if not target_child_id or state_actor_id != actor_user_id:
+    if not target_student_id or state_actor_id != actor_user_id:
         await state.clear()
         await message.answer(
             "❌ Состояние редактирования устарело. "
@@ -1054,7 +1181,7 @@ async def process_edit_value(message: Message, state: FSMContext, time_service: 
 
     response = await extra_classes_service.update_extra_class(
         actor_user_id=actor_user_id,
-        target_child_id=target_child_id,
+        target_student_id=target_student_id,
         extra_id=class_id,
         **kwargs
     )
@@ -1072,13 +1199,14 @@ async def process_edit_value(message: Message, state: FSMContext, time_service: 
     
     text_updated, _ = UIRenderer.render_extra_class_updated()
     
-    shown = await _show_extra_menu_for_target(
+    shown = await _show_extra_menu_for_student(
         message_obj=message,
         actor_user_id=actor_user_id,
-        target_child_id=target_child_id,
+        target_student_id=target_student_id,
         extra_classes_service=extra_classes_service,
+        students_service=students_service,
         edit_message=False,
-        prefix=text_updated,
+        prefix=text_updated
     )
     
     if not shown:
@@ -1086,14 +1214,14 @@ async def process_edit_value(message: Message, state: FSMContext, time_service: 
 
 
 @router.message(ExtraClassStates.waiting_for_edit_time_end)
-async def process_edit_time_end(message: Message, state: FSMContext, time_service: TimeService, extra_classes_service: ExtraClassesService, profile_service: ProfileService):
+async def process_edit_time_end(message: Message, state: FSMContext, time_service: TimeService, extra_classes_service: ExtraClassesService, profile_service: ProfileService, students_service: StudentsService):
     data = await state.get_data()
     
     actor_user_id = message.from_user.id
-    target_child_id = data.get("target_user_id")
+    target_student_id = data.get("target_student_id")
     state_actor_id = data.get("extra_actor_user_id")
 
-    if not target_child_id or state_actor_id != actor_user_id:
+    if not target_student_id or state_actor_id != actor_user_id:
         await state.clear()
         await message.answer(
             "❌ Состояние редактирования устарело. "
@@ -1113,7 +1241,7 @@ async def process_edit_time_end(message: Message, state: FSMContext, time_servic
 
     response = await extra_classes_service.update_extra_class(
         actor_user_id=actor_user_id,
-        target_child_id=target_child_id,
+        target_student_id=target_student_id,
         extra_id=data["edit_id"],
         time_start=data["time_start"],
         time_end=norm_time
@@ -1132,16 +1260,16 @@ async def process_edit_time_end(message: Message, state: FSMContext, time_servic
     
     text_updated, _ = UIRenderer.render_extra_class_updated()
     
-    shown = await _show_extra_menu_for_target(
+    shown = await _show_extra_menu_for_student(
         message_obj=message,
         actor_user_id=actor_user_id,
-        target_child_id=target_child_id,
+        target_student_id=target_student_id,
         extra_classes_service=extra_classes_service,
+        students_service=students_service,
         edit_message=False,
         prefix=text_updated,
     )
     
     if not shown:
         await message.answer(text_updated, parse_mode="HTML")
-        
         

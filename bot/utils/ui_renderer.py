@@ -187,9 +187,9 @@ class UIRenderer:
     @staticmethod
     def render_extra_class_not_found() -> tuple[str, None]:
         return "❌ Занятие с таким ID не найдено или вам не принадлежит. Введите правильный ID:", None
-    
+ # Переимоновать в render_extra_student_select   
     @staticmethod
-    def render_extra_child_select() -> tuple[str, None]:
+    def render_extra_student_select() -> tuple[str, None]:
         return "👥 <b>Выберите ребенка</b>\n\nДля кого вы хотите настроить дополнительные занятия?", None
 
     @staticmethod
@@ -219,7 +219,38 @@ class UIRenderer:
             "Включённое право позволяет взрослому добавлять, изменять "
             "и удалять занятия этого ребёнка."
         )
-            
+
+    @staticmethod
+    def render_student_extra_classes_menu(
+        student: StudentProfileDTO,
+    ) -> tuple[str, None]:
+        """
+        Заголовок меню допзанятий конкретного student profile.
+        """
+        student_name = UIRenderer.escape_html(student.name)
+
+        telegram_status = (
+            "📱 Telegram подключён"
+            if student.telegram_user_id is not None
+            else "🧒 Без Telegram"
+        )
+
+        group_text = (
+            "Весь класс"
+            if student.group_id == "ALL"
+            else f"Группа {student.group_id}"
+        )
+
+        return (
+            "🎨 <b>Дополнительные занятия</b>\n\n"
+            f"👤 Ученик: <b>{student_name}</b>\n"
+            f"🎓 Класс: <b>{student.class_id}</b>\n"
+            f"👥 {group_text}\n"
+            f"{telegram_status}\n\n"
+            "Выберите действие:",
+            None,
+        )
+                    
  # ---------------   
     @staticmethod
     def render_already_registered(name: str | None) -> str:
@@ -949,10 +980,25 @@ class UIRenderer:
 
         extra_line = ""
 
-        if dto.role == "child" and dto.extra_classes_count > 0:
-            extra_line = (
-                f"\n• ваших дополнительных занятий будет удалено: "
-                f"<b>{dto.extra_classes_count}</b>;"
+        if dto.role == "child":
+            extra_line = ""
+
+            if dto.extra_classes_count > 0:
+                extra_line = (
+                    "\n\n"
+                    f"🎨 Дополнительные занятия ученика: "
+                    f"<b>{dto.extra_classes_count}</b>\n"
+                    "Они сохранятся в профиле ученика и будут доступны "
+                    "взрослым семьи."
+                )
+
+            return (
+                "⚠️ <b>Перерегистрироваться?</b>\n\n"
+                "Ваш Telegram-профиль будет сброшен.\n"
+                "Профиль ученика, школьное расписание и дополнительные "
+                "занятия сохранятся."
+                f"{extra_line}\n\n"
+                "После сброса потребуется пройти регистрацию заново."
             )
 
         family_line = (

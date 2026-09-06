@@ -428,4 +428,78 @@ class StudentRepository(BaseRepository):
             """,
             (telegram_user_id,),
         )
-        
+            
+
+    async def upsert_telegram_student(
+            self,
+            *,
+            telegram_user_id: int,
+            family_id: int,
+            name: str,
+            class_id: str,
+            group_id: str,
+        ) -> Optional[Dict[str, Any]]:
+            """
+            Инкапсулирует логику создания/обновления Telegram-ребёнка
+            и синхронизации прав доступа в рамках одной транзакции.
+            """
+            async with self._connection() as db:
+                await db.execute("BEGIN")
+                try:
+                    # 1. Проверяем наличие профиля
+                    cursor = await db.execute(
+                        "SELECT id FROM student_profiles WHERE telegram_user_id = ?",
+                        (telegram_user_id,)
+                    )
+                    row = await cursor.fetchone()
+
+                    # 2. Обновляем или создаем запись
+                    if row:
+                        await db.execute(
+                            """
+                            UPDATE student_profiles
+                            SET family_id = ?, name = ?, class_id = ?, group_id = ?, is_active = 1, updated_at = CURRENT_TIMESTAMP
+                            WHERE telegram_user_id = ?
+                            """,
+                            (family_id, name, class_id, group_id, telegram_user_id)
+                        )
+                    else:
+                        await db.execute(
+                            """
+                            INSERT INTO student_profiles (family_id, telegram_user_id, name, class_id, group_id, is_active)
+                            VALUES (?, ?, ?, ?, ?, 1)
+                            """,
+                            (family_id, telegram_user_id, name, class_id, group_id)
+                        )
+
+                    # Cleanup неактуальных прав при смене семьи
+                    await db.execute(
+                        """
+                        DELETE FROM parent_student_settings
+                        WHERE student_id = (
+                            SELECT id
+                            FROM student_profiles
+                            WHERE telegram_user_id = ?
+                        )
+                        AND parent_user_id NOT IN (
+                            SELECT user_id
+                            FROM users
+                            WHERE family_id = ?
+                                AND role IN ('parent', 'observer')
+                        )
+                        """,
+                        (
+                            telegram_user_id,
+                            family_id,
+                        ),
+                    )
+
+                    # 3. Синхронизируем настройки взрослых (метод уже есть в репозитории)
+                    await self._ensure_parent_student_settings_for_family(db=db, family_id=family_id)
+                    
+                    await db.commit()
+                except Exception:
+                    await db.rollback()
+                    raise
+
+            return await self.get_student_by_telegram_user_id(telegram_user_id=telegram_user_id)

@@ -38,13 +38,13 @@ class NotificationService:
         self.schedule_repo = schedule_repo
         self.extra_classes_repo = extra_classes_repo
 
-    async def _safe_send(self, user_id: int, text: str) -> bool:
+    async def _safe_send(self, student_id: int, text: str) -> bool:
         """Внутренний метод для 100% отказоустойчивости отправки."""
         try:
-            await self.bot.send_message(chat_id=user_id, text=text, parse_mode="HTML")
+            await self.bot.send_message(chat_id=student_id, text=text, parse_mode="HTML")
             return True
         except Exception as e:
-            logger.warning("Failed to send notification to %s: %s", user_id, e)
+            logger.warning("Failed to send notification to %s: %s", student_id, e)
             return False
 
     # ---------- 1. Утренняя сводка ----------
@@ -57,7 +57,7 @@ class NotificationService:
         на которых он подписан через parent_child_settings.
 
         Успешные доставки логируются отдельно по каждой паре:
-            recipient_id + target_child_id + date.
+            recipient_id + target_student_id + date.
         """
         now = self.time_service.get_now_base()
         current_time_str = now.strftime("%H:%M")
@@ -87,9 +87,9 @@ class NotificationService:
         for task in tasks:
             try:
                 recipient_id = int(task["recipient_id"])
-                target_child_id = int(task["target_child_id"])
+                target_student_id = int(task["target_student_id"])
 
-                source_id = f"morning_summary:{target_child_id}"
+                source_id = f"morning_summary:{target_student_id}"
 
                 already_sent = await self.repo.is_notification_delivered(
                     notification_type="morning_summary",
@@ -148,8 +148,8 @@ class NotificationService:
                             )
                         )
 
-                raw_extras = await self.extra_classes_repo.get_extra_classes_for_user(
-                    user_id=target_child_id,
+                raw_extras = await self.extra_classes_repo.get_extra_classes_for_student(
+                    student_id=target_student_id,
                     day_of_week=weekday,
                 )
 
@@ -173,9 +173,9 @@ class NotificationService:
                 if not lessons_dtos:
                     logger.debug(
                         "Morning summary skipped: no lessons, "
-                        "recipient_id=%s, child_id=%s",
+                        "recipient_id=%s, student_id=%s",
                         recipient_id,
-                        target_child_id,
+                        target_student_id,
                     )
                     continue
 
@@ -234,7 +234,7 @@ class NotificationService:
                 final_text = "\n\n───────────────\n\n".join(rendered_parts)
 
                 sent = await self._safe_send(
-                    user_id=recipient_id,
+                    student_id=recipient_id,
                     text=final_text,
                 )
 
@@ -244,19 +244,19 @@ class NotificationService:
                         "children=%s",
                         recipient_id,
                         [
-                            task["target_child_id"]
+                            task["target_student_id"]
                             for task, _ in entries
                         ],
                     )
                     continue
 
                 for task, _ in entries:
-                    target_child_id = int(task["target_child_id"])
+                    target_student_id = int(task["target_student_id"])
 
                     await self.repo.record_notification_delivery(
                         notification_type="morning_summary",
                         notification_date=today_iso,
-                        source_id=f"morning_summary:{target_child_id}",
+                        source_id=f"morning_summary:{target_student_id}",
                         recipient_id=recipient_id,
                     )
 
@@ -265,7 +265,7 @@ class NotificationService:
                     "children=%s",
                     recipient_id,
                     [
-                        task["target_child_id"]
+                        task["target_student_id"]
                         for task, _ in entries
                     ],
                 )
@@ -354,7 +354,7 @@ class NotificationService:
                     )
 
                     sent = await self._safe_send(
-                        user_id=recipient_id,
+                        student_id=recipient_id,
                         text=UIRenderer.render_change_reminder(dto),
                     )
 
@@ -376,10 +376,10 @@ class NotificationService:
 
                     logger.info(
                         "Schedule change delivered: change_id=%s, "
-                        "child_id=%s, watch_target=%s, "
+                        "student_id=%s, watch_target=%s, "
                         "recipient_id=%s, recipient_kind=%s",
                         change["id"],
-                        recipient.get("child_id"),
+                        recipient.get("student_id"),
                         recipient.get("watch_target_title"),
                         recipient_id,
                         recipient["recipient_kind"],
@@ -474,7 +474,7 @@ class NotificationService:
                     )
 
                     sent = await self._safe_send(
-                        user_id=recipient_id,
+                        student_id=recipient_id,
                         text=UIRenderer.render_lesson_reminder(dto),
                     )
 
@@ -496,9 +496,9 @@ class NotificationService:
 
                     logger.info(
                         "Pre-lesson reminder delivered: lesson_id=%s, "
-                        "child_id=%s, recipient_id=%s, recipient_kind=%s",
+                        "student_id=%s, recipient_id=%s, recipient_kind=%s",
                         lesson["id"],
-                        recipient["child_id"],
+                        recipient["student_id"],
                         recipient_id,
                         recipient["recipient_kind"],
                     )
@@ -568,11 +568,11 @@ class NotificationService:
                 ).total_seconds() / 60.0
 
                 logger.debug(
-                    "Extra candidate: extra_id=%s, child_id=%s, "
+                    "Extra candidate: extra_id=%s, student_id=%s, "
                     "recipient_id=%s, recipient_kind=%s, start=%s, "
                     "offset=%s, delta=%.2f",
                     extra_id,
-                    extra["child_id"],
+                    extra["student_id"],
                     recipient_id,
                     extra["recipient_kind"],
                     extra["time_start"],
@@ -613,7 +613,7 @@ class NotificationService:
                 )
 
                 sent = await self._safe_send(
-                    user_id=recipient_id,
+                    student_id=recipient_id,
                     text=UIRenderer.render_lesson_reminder(dto),
                 )
 
@@ -634,10 +634,10 @@ class NotificationService:
                 )
 
                 logger.info(
-                    "Extra reminder delivered: extra_id=%s, child_id=%s, "
+                    "Extra reminder delivered: extra_id=%s, student_id=%s, "
                     "recipient_id=%s, recipient_kind=%s, log_created=%s",
                     extra_id,
-                    extra["child_id"],
+                    extra["student_id"],
                     recipient_id,
                     extra["recipient_kind"],
                     logged,

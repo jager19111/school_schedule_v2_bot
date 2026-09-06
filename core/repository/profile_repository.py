@@ -1249,7 +1249,9 @@ class ProfileRepository(BaseRepository):
                 (
                     SELECT COUNT(*)
                     FROM extra_classes AS own_extra
-                    WHERE own_extra.user_id = u.user_id
+                    JOIN student_profiles AS own_student
+                        ON own_student.id = own_extra.student_id
+                    WHERE own_student.telegram_user_id = u.user_id
                 ) AS own_extra_classes_count
 
             FROM users AS u
@@ -1321,10 +1323,19 @@ class ProfileRepository(BaseRepository):
             # Если выходит ребёнок, его допзанятия нельзя оставить:
             # extra_classes.family_id и user_id должны оставаться согласованными.
             if user_role == "child":
+                """
+                Telegram child сбрасывает только Telegram-профиль.
+
+                student_profile и его extra_classes сохраняются:
+                профиль ученика превращается в virtual student.
+                """
                 await db.execute(
                     """
-                    DELETE FROM extra_classes
-                    WHERE user_id = ?
+                    UPDATE student_profiles
+                    SET
+                        telegram_user_id = NULL,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE telegram_user_id = ?
                     """,
                     (user_id,),
                 )
@@ -1339,6 +1350,15 @@ class ProfileRepository(BaseRepository):
                 (user_id, user_id),
             )
 
+            if user_role in ("parent", "observer"):
+                await db.execute(
+                    """
+                    DELETE FROM parent_student_settings
+                    WHERE parent_user_id = ?
+                    """,
+                    (user_id,),
+                )
+    
             # Роль сохраняем допустимой для CHECK constraint.
             # class/group очищаются, чтобы /start распознал профиль
             # как незавершённо зарегистрированный.

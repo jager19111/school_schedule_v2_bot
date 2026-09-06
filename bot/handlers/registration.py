@@ -8,6 +8,7 @@ from aiogram.fsm.state import StatesGroup, State
 from aiogram.exceptions import TelegramBadRequest
 
 from services.profiles_service import ProfileService
+from services.students_service import StudentsService
 from core.repository.schedule_repository import ScheduleRepository
 from services.schedule_service import ScheduleService
 from bot.utils.ui_renderer import UIRenderer
@@ -391,7 +392,8 @@ async def process_group(
     callback: CallbackQuery, 
     state: FSMContext, 
     profile_service: ProfileService, 
-    schedule_service: ScheduleService
+    schedule_service: ScheduleService,
+    students_service: StudentsService
 ):
     main_group_id = callback.data.split(":")[1]
     data = await state.get_data()
@@ -431,6 +433,18 @@ async def process_group(
             return
 
         await state.clear()
+
+#  Проверка успешности создания профиля при инвайте
+        student = await students_service.ensure_telegram_student_profile(
+            telegram_user_id=callback.from_user.id,
+        )
+        if student is None:
+            await callback.answer(
+                "❌ Регистрация завершена не полностью. "
+                "Не удалось создать профиль ученика.",
+                show_alert=True,
+            )
+            return
 
         user_dto = await profile_service.get_user_profile_dto(
             callback.from_user.id,
@@ -486,6 +500,7 @@ async def process_group(
             )
             return
 
+    # Блок двойной защиты от подделки FSM-состояния
     editing_own_profile_id = data.get("editing_own_profile_id")
     if editing_own_profile_id is not None:
         target_dto = await profile_service.get_user_profile_dto(
@@ -506,6 +521,17 @@ async def process_group(
 
     await profile_service.set_child_class_and_group(target_user_id, data['class_id'], final_group_string)
     
+#  Проверка синхронизации профиля при обычной регистрации/настройке
+    student = await students_service.ensure_telegram_student_profile(
+        telegram_user_id=target_user_id,
+    )
+    if student is None:
+        await state.clear()
+        await callback.answer(
+            "❌ Не удалось синхронизировать профиль ученика.",
+            show_alert=True,
+        )
+        return
     # 3. ВЕТКА 1: Возврат в Настройки (если редактировали профиль ребенка через родителя)
     if 'editing_child_id' in data:
         await state.clear()
@@ -550,7 +576,6 @@ async def process_group(
         return await callback.answer("✅ Класс и подгруппа успешно обновлены!")
 
     # 5. ВЕТКА 3: Стандартное завершение первой регистрации
-    # ВЕТКА 3: стандартное завершение первой регистрации.
     user_dto = await profile_service.get_user_profile_dto(
         callback.from_user.id,
     )

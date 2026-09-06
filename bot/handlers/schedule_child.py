@@ -226,11 +226,15 @@ async def _render_day(
     """
     Строит дневное расписание для child или watch target.
     """
-    day_dto = await schedule_service.get_daily_schedule_for_child(
+    day_dto = await schedule_service.get_daily_schedule_for_student(
         class_id=target.class_id,
         group_id=target.group_id,
         date_iso=date_iso,
-        user_id=target.telegram_user_id
+        student_id=(
+            target.target_id
+            if target.kind == "student"
+            else None
+        ),
     )
 
     child_name = None
@@ -293,7 +297,7 @@ async def _render_week(
             class_id=target.class_id,
             group_id=target.group_id,
             week_start_iso=week_start_iso,
-            user_id=target.telegram_user_id
+            student_id=target.target_id,
         )
 
         rendered = UIRenderer.render_full_week_schedule(
@@ -304,7 +308,7 @@ async def _render_week(
             class_id=target.class_id,
             group_id=target.group_id,
             week_start_iso=week_start_iso,
-            user_id=target.telegram_user_id,
+            student_id=target.target_id,
         )
 
         rendered = UIRenderer.render_week_summary(
@@ -461,7 +465,7 @@ async def open_schedule_hub(
     target_date_iso = await schedule_service.get_smart_target_date(
         class_id=target.class_id,
         group_id=target.group_id,
-        user_id=target.telegram_user_id
+        student_id=target.target_id,
     )
 
     text, keyboard = await _render_day(
@@ -470,6 +474,7 @@ async def open_schedule_hub(
         date_iso=target_date_iso,
         profile_service=profile_service,
         schedule_service=schedule_service,
+        students_service=students_service,
         watch_targets_service=watch_targets_service,
     )
 
@@ -570,7 +575,7 @@ async def select_schedule_target(
     target_date_iso = await schedule_service.get_smart_target_date(
         class_id=target.class_id,
         group_id=target.group_id,
-        user_id=target.telegram_user_id
+        student_id=target.target_id,
     )
 
     text, keyboard = await _render_day(
@@ -642,7 +647,7 @@ async def open_watch_target_schedule(
     target_date_iso = await schedule_service.get_smart_target_date(
         class_id=target.class_id,
         group_id=target.group_id,
-        user_id=None,
+        student_id=None,
     )
 
     text, keyboard = await _render_day(
@@ -692,7 +697,7 @@ async def go_to_smart_day(
     target_date_iso = await schedule_service.get_smart_target_date(
         class_id=target.class_id,
         group_id=target.group_id,
-        user_id=target.telegram_user_id
+        student_id=target.target_id,
     )
 
     text, keyboard = await _render_day(

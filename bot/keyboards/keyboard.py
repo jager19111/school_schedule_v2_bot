@@ -350,20 +350,61 @@ class Keyboards:
     
     # Доп занятия  ExtraClassesService
     @staticmethod
-    def get_extra_classes_menu(target_user_id: int, can_add: bool = True, can_edit: bool = True) -> InlineKeyboardMarkup:
-        """Динамическая клавиатура с привязкой к ID ребенка и проверкой прав."""
+    def get_extra_classes_menu(
+        *,
+        target_student_id: int,
+        can_add: bool,
+        can_edit: bool,
+    ) -> InlineKeyboardMarkup:
+        """
+        Меню допзанятий конкретного student profile.
+
+        Все callback payload содержат student_profiles.id,
+        а не Telegram users.user_id.
+        """
         buttons = []
+
         if can_add:
-            buttons.append([InlineKeyboardButton(text="➕ Добавить занятие", callback_data=f"extra:add:{target_user_id}")])
-            
-        buttons.append([InlineKeyboardButton(text="📋 Список занятий", callback_data=f"extra:list:{target_user_id}")])
-        
+            buttons.append([
+                InlineKeyboardButton(
+                    text="➕ Добавить занятие",
+                    callback_data=f"extra:add:{target_student_id}",
+                )
+            ])
+
+        buttons.append([
+            InlineKeyboardButton(
+                text="📋 Список занятий",
+                callback_data=f"extra:list:{target_student_id}",
+            )
+        ])
+
         if can_edit:
-            buttons.append([InlineKeyboardButton(text="✏️ Изменить занятие", callback_data=f"extra:edit:{target_user_id}")])
-            buttons.append([InlineKeyboardButton(text="🗑 Удалить занятие", callback_data=f"extra:delete:{target_user_id}")])
-            
-        return InlineKeyboardMarkup(inline_keyboard=buttons)
- 
+            buttons.append([
+                InlineKeyboardButton(
+                    text="✏️ Изменить занятие",
+                    callback_data=f"extra:edit:{target_student_id}",
+                )
+            ])
+
+            buttons.append([
+                InlineKeyboardButton(
+                    text="🗑 Удалить занятие",
+                    callback_data=f"extra:delete:{target_student_id}",
+                )
+            ])
+
+        buttons.append([
+            InlineKeyboardButton(
+                text="⬅️ К выбору ученика",
+                callback_data="extra:students",
+            )
+        ])
+
+        return InlineKeyboardMarkup(
+            inline_keyboard=buttons,
+        )
+    
     @staticmethod
     def get_extra_edit_fields_kb(class_id: int) -> InlineKeyboardMarkup:
         """Клавиатура выбора поля для правки занятия."""
@@ -796,14 +837,61 @@ class Keyboards:
         )
 
 # Возможно нужно удалить, так как есть get_parent_children_menu, но она не используется в коде.
+        @staticmethod
+        def get_extra_children_select_kb(children: list) -> InlineKeyboardMarkup:
+            """Клавиатура выбора ребенка для родителя."""
+            buttons = []
+            for child in children:
+                buttons.append([InlineKeyboardButton(text=f"👦/👧 {child.name}", callback_data=f"extra:menu:{child.user_id}")])
+            return InlineKeyboardMarkup(inline_keyboard=buttons)
+        
     @staticmethod
-    def get_extra_children_select_kb(children: list) -> InlineKeyboardMarkup:
-        """Клавиатура выбора ребенка для родителя."""
+    def get_extra_students_select_kb(
+        students: list[StudentProfileDTO],
+    ) -> InlineKeyboardMarkup:
+        """
+        Выбор student profile для работы с допзанятиями.
+
+        Доступ к каждой кнопке уже предварительно отфильтрован
+        StudentsService.get_students_for_adult(), но service всё равно
+        повторно проверяет права на каждом действии.
+        """
         buttons = []
-        for child in children:
-            buttons.append([InlineKeyboardButton(text=f"👦/👧 {child.name}", callback_data=f"extra:menu:{child.user_id}")])
-        return InlineKeyboardMarkup(inline_keyboard=buttons)
-    
+
+        for student in students:
+            icon = (
+                "📱"
+                if student.telegram_user_id is not None
+                else "🧒"
+            )
+
+            group_text = (
+                "Весь класс"
+                if student.group_id == "ALL"
+                else f"Группа {student.group_id}"
+            )
+
+            buttons.append([
+                InlineKeyboardButton(
+                    text=(
+                        f"{icon} {student.name} · "
+                        f"{student.class_id} · {group_text}"
+                    ),
+                    callback_data=f"extra:menu:{student.id}",
+                )
+            ])
+
+        buttons.append([
+            InlineKeyboardButton(
+                text="⬅️ Назад",
+                callback_data="settings:main",
+            )
+        ])
+
+        return InlineKeyboardMarkup(
+            inline_keyboard=buttons,
+        )
+                
     @staticmethod
     def get_parent_notification_children_kb(
         children: list[ChildInfoDTO],

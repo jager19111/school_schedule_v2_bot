@@ -343,16 +343,19 @@ class Database:
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS extra_classes (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    
                     family_id INTEGER NOT NULL,
-                    user_id INTEGER NOT NULL,
-                    student_id INTEGER,
+                    student_id INTEGER NOT NULL,
 
                     day_of_week INTEGER NOT NULL
                         CHECK (day_of_week BETWEEN 1 AND 7),
+                        
                     time_start TEXT NOT NULL,
                     time_end TEXT NOT NULL,
+                    
                     title TEXT NOT NULL,
                     location TEXT,
+                    
                     reminder_minutes INTEGER NOT NULL DEFAULT 30
                         CHECK (reminder_minutes BETWEEN 0 AND 180),
 
@@ -360,7 +363,6 @@ class Database:
                     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
                     FOREIGN KEY (family_id) REFERENCES families(id) ON DELETE CASCADE,
-                    FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
                     FOREIGN KEY (student_id) REFERENCES student_profiles(id) ON DELETE CASCADE
                 )
             """)
@@ -460,8 +462,8 @@ class Database:
             """)
 
             await db.execute("""
-                CREATE INDEX IF NOT EXISTS idx_extra_classes_day_user
-                ON extra_classes(day_of_week, user_id, time_start)
+                CREATE INDEX IF NOT EXISTS idx_extra_classes_student_day
+                ON extra_classes(student_id, day_of_week, time_start);
             """)
 
             await db.execute("""

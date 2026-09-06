@@ -17,16 +17,23 @@ class ScheduleService:
         self.extra_repo = extra_classes_repo
         self.time_service = time_service
 
-    async def get_daily_schedule_for_child(
+    async def get_daily_schedule_for_student(
         self,
         *,
         class_id: str,
         group_id: str,
         date_iso: str,
-        user_id: int | None = None,
+        student_id: int | None = None,
     ) -> DayScheduleDTO:
         """
-        Возвращает расписание для ребёнка на день (основное + доп. занятия).
+        Возвращает расписание student profile на день.
+
+        school lessons:
+        - определяются по class_id и group_id;
+
+        extra classes:
+        - принадлежат student_profiles.id;
+        - не зависят от Telegram users.user_id.
         """
         # 1. Базовые уроки по классу
         base_lessons = await self.schedule_repo.get_lessons_for_class(
@@ -49,17 +56,22 @@ class ScheduleService:
             if "ALL" in user_groups or l_group == "ALL" or l_group in user_groups or is_nominal_tree:
                 filtered_base.append(lesson)
 
-        # 3. Доп. занятия пользователя
+        # 3. Дополнительные занятия конкретного student profile.
         extra_lessons: list[dict] = []
-        if user_id is not None:
+
+        if student_id is not None:
             date_obj = self.time_service.date_from_iso(date_iso)
             weekday = date_obj.isoweekday()
 
-            extra_rows = await self.extra_repo.get_extra_classes_for_user(
-                user_id=user_id,
+            extra_rows = await self.extra_repo.get_extra_classes_for_student(
+                student_id=student_id,
                 day_of_week=weekday,
             )
-            extra_lessons = [self._map_extra_to_lesson(row, date_iso) for row in extra_rows]
+
+            extra_lessons = [
+                self._map_extra_to_lesson(row, date_iso)
+                for row in extra_rows
+            ]
 
         # 4. Мердж и безопасная сортировка
         combined = filtered_base + extra_lessons
@@ -88,34 +100,49 @@ class ScheduleService:
 
         return DayScheduleDTO(date_iso=date_iso, lessons=combined)
 
-    def _map_extra_to_lesson(self, row: Dict[str, Any], date_iso: str) -> Dict[str, Any]:
+    def _map_extra_to_lesson(
+        self,
+        row: Dict[str, Any],
+        date_iso: str,
+    ) -> Dict[str, Any]:
         """
-        Преобразует запись extra_classes в lesson-словарь,
-        совместимый с рендером расписания.
+        Преобразует extra_classes-запись в lesson-словарь,
+        совместимый с UIRenderer расписания.
         """
         return {
             "id": f"extra-{row['id']}",
             "date": date_iso,
+
             "lesson_num": None,
+            "display_num": "•",
+
             "start_time": row["time_start"],
             "end_time": row["time_end"],
+
             "subject_name": row["title"],
             "room_name": row.get("location") or "—",
+
             "is_extra": True,
             "is_cancelled": False,
             "is_exchange": False,
-            "class_id": row["user_id"],
+
+            # Допзанятие не является школьным уроком класса.
+            "class_id": None,
             "group_id": "ALL",
+            "group_name": None,
+
+            # Полезно для дальнейших diagnostics и notifications.
+            "student_id": row["student_id"],
         }
         
-
     # Умная Логика времени
 
     async def get_smart_target_date(
         self,
+        *,
         class_id: str,
         group_id: str,
-        user_id: int | None = None,
+        student_id: int | None = None,
     ) -> str:
         """
         Возвращает ближайшую дату, на которую есть ещё актуальное расписание.
@@ -134,11 +161,11 @@ class ScheduleService:
 
             candidate_iso = candidate_date.isoformat()
 
-            day_dto = await self.get_daily_schedule_for_child(
+            day_dto = await self.get_daily_schedule_for_student(
                 class_id=class_id,
                 group_id=group_id,
                 date_iso=candidate_iso,
-                user_id=user_id,
+                student_id=student_id,
             )
 
             if not day_dto.lessons:
@@ -179,7 +206,7 @@ class ScheduleService:
         return monday.date().isoformat()
 
     async def get_week_schedule_summary(
-        self, class_id: str, group_id: str, week_start_iso: str, user_id: int | None = None
+        self, class_id: str, group_id: str, week_start_iso: str, student_id: int | None = None
     ) -> WeekSummaryDTO:
         """Собирает сводку (кол-во уроков, замен, доп. занятий) на неделю."""
         from datetime import timedelta
@@ -188,8 +215,8 @@ class ScheduleService:
         
         for i in range(6): # Пн - Сб
             current_date_iso = (start_date + timedelta(days=i)).isoformat()
-            day_dto = await self.get_daily_schedule_for_child(
-                class_id=class_id, group_id=group_id, date_iso=current_date_iso, user_id=user_id
+            day_dto = await self.get_daily_schedule_for_student(
+                class_id=class_id, group_id=group_id, date_iso=current_date_iso, student_id=student_id
             )
             
             # Считаем уникальные номера основных уроков (set автоматически уберет дубли подгрупп)
@@ -221,15 +248,15 @@ class ScheduleService:
         return WeekSummaryDTO(week_start_iso=week_start_iso, days=day_summaries)
         
     async def get_full_week_schedule(
-        self, class_id: str, group_id: str, week_start_iso: str, user_id: int | None = None
+        self, class_id: str, group_id: str, week_start_iso: str, student_id: int | None = None
     ) -> FullWeekScheduleDTO:
         """Собирает полное расписание на всю неделю."""
         start_date = self.time_service.date_from_iso(week_start_iso)
         days = []
         for i in range(6):
             current_date_iso = (start_date + timedelta(days=i)).isoformat()
-            day_dto = await self.get_daily_schedule_for_child(
-                class_id=class_id, group_id=group_id, date_iso=current_date_iso, user_id=user_id
+            day_dto = await self.get_daily_schedule_for_student(
+                class_id=class_id, group_id=group_id, date_iso=current_date_iso, student_id=student_id
             )
             days.append(day_dto)
         return FullWeekScheduleDTO(week_start_iso=week_start_iso, days=days)
