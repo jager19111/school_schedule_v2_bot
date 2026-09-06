@@ -1,7 +1,8 @@
 from datetime import datetime, timedelta, timezone, date
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
 from core.models.dto import ( ClassListDTO, GroupListDTO, ChildrenListDTO, UserProfileDTO, TeacherListDTO, 
-                             FamilyMemberDTO, ParentChildNotificationSettingsDTO, ChildInfoDTO, AdultExtraClassesPermissionDTO
+                             FamilyMemberDTO, ParentChildNotificationSettingsDTO, ChildInfoDTO, AdultExtraClassesPermissionDTO,
+                             FamilyInviteDTO,
 )
 
 class Keyboards:
@@ -728,6 +729,13 @@ class Keyboards:
                 )
             ])
 
+            buttons.append([
+                InlineKeyboardButton(
+                    text="📬 Активные приглашения",
+                    callback_data="family:invites",
+                )
+            ])
+            
         buttons.append([
             InlineKeyboardButton(
                 text="⬅️ Назад к настройкам",
@@ -980,6 +988,125 @@ class Keyboards:
                     InlineKeyboardButton(
                         text="⬅️ К семье",
                         callback_data="settings:family",
+                    )
+                ],
+            ]
+        )
+        
+    @staticmethod
+    def get_active_family_invites_kb(
+        invites: list[FamilyInviteDTO],
+    ) -> InlineKeyboardMarkup:
+        """
+        Список active invites family admin.
+        """
+        buttons = []
+
+        role_icons = {
+            "child": "👶",
+            "parent": "👨‍👩‍👧",
+            "observer": "👁",
+        }
+
+        role_names = {
+            "child": "Ребёнок",
+            "parent": "Родитель",
+            "observer": "Наблюдатель",
+        }
+
+        for invite in invites:
+            icon = role_icons.get(
+                invite.intended_role,
+                "📨",
+            )
+
+            role_name = role_names.get(
+                invite.intended_role,
+                "Участник",
+            )
+
+            buttons.append([
+                InlineKeyboardButton(
+                    text=(
+                        f"{icon} {role_name} · "
+                        f"до {invite.expires_at}"
+                    ),
+                    callback_data=(
+                        f"family:invite:{invite.id}"
+                    ),
+                )
+            ])
+
+        buttons.append([
+            InlineKeyboardButton(
+                text="📨 Создать приглашение",
+                callback_data="family:invite_menu",
+            )
+        ])
+
+        buttons.append([
+            InlineKeyboardButton(
+                text="⬅️ К семье",
+                callback_data="settings:family",
+            )
+        ])
+
+        return InlineKeyboardMarkup(
+            inline_keyboard=buttons,
+        )
+        
+    @staticmethod
+    def get_family_invite_details_kb(
+        *,
+        invite_id: int,
+        share_link: str,
+    ) -> InlineKeyboardMarkup:
+        """
+        Действия над active invite.
+        """
+        return InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="📤 Отправить приглашение",
+                        url=share_link,
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="🚫 Отозвать приглашение",
+                        callback_data=(
+                            f"family:invite_revoke:{invite_id}"
+                        ),
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="⬅️ К приглашениям",
+                        callback_data="family:invites",
+                    )
+                ],
+            ]
+        )
+        
+    @staticmethod
+    def get_family_invite_revoke_confirmation_kb(
+        invite_id: int,
+    ) -> InlineKeyboardMarkup:
+        return InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="🚫 Да, отозвать",
+                        callback_data=(
+                            f"family:invite_revoke_confirm:{invite_id}"
+                        ),
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="⬅️ Отмена",
+                        callback_data=f"family:invite:{invite_id}",
                     )
                 ],
             ]

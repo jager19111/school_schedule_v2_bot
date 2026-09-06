@@ -218,6 +218,92 @@ class ProfileService:
 
         return result["intended_role"]
     
+    # Helper конвертации DTO
+    @staticmethod
+    def _family_invite_dto_from_row(
+        row: Dict[str, Any],
+    ) -> FamilyInviteDTO:
+        return FamilyInviteDTO(
+            id=row["id"],
+            token=row["token"],
+            family_id=row["family_id"],
+            intended_role=row["intended_role"],
+            expires_at=row["expires_at"],
+            max_uses=row["max_uses"],
+            uses_count=row["uses_count"],
+            is_revoked=bool(row["is_revoked"]),
+            created_at=row.get("created_at"),
+            used_by_user_id=row.get("used_by_user_id"),
+            used_at=row.get("used_at"),
+        )
+
+    async def get_active_family_invites(
+        self,
+        *,
+        admin_user_id: int,
+        family_id: int,
+    ) -> Optional[List[FamilyInviteDTO]]:
+        """
+        Возвращает активные invites, если пользователь является family admin.
+
+        None означает отсутствие admin-права.
+        Пустой список означает, что active invites отсутствуют.
+        """
+        is_admin = await self.repo.is_family_admin(
+            user_id=admin_user_id,
+            family_id=family_id,
+        )
+
+        if not is_admin:
+            return None
+
+        rows = await self.repo.get_active_family_invites(
+            family_id=family_id,
+            admin_user_id=admin_user_id,
+        )
+
+        return [
+            self._family_invite_dto_from_row(row)
+            for row in rows
+        ]
+
+    async def get_active_family_invite_by_id(
+        self,
+        *,
+        invite_id: int,
+        family_id: int,
+        admin_user_id: int,
+    ) -> Optional[FamilyInviteDTO]:
+        """
+        Возвращает active invite для admin family.
+        """
+        row = await self.repo.get_active_family_invite_by_id(
+            invite_id=invite_id,
+            family_id=family_id,
+            admin_user_id=admin_user_id,
+        )
+
+        if row is None:
+            return None
+
+        return self._family_invite_dto_from_row(row)
+
+    async def revoke_family_invite(
+        self,
+        *,
+        invite_id: int,
+        family_id: int,
+        admin_user_id: int,
+    ) -> bool:
+        """
+        Отзывает active invite от имени family admin.
+        """
+        return await self.repo.revoke_family_invite(
+            invite_id=invite_id,
+            family_id=family_id,
+            admin_user_id=admin_user_id,
+        )
+                                
 # Переименовать позже в join_family_by_code()        
     async def link_child_to_parent(self, user_id: int, family_code: str, role: str = "child") -> bool:
         """

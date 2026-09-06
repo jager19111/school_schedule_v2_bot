@@ -434,7 +434,137 @@ class ProfileRepository(BaseRepository):
             except Exception:
                 await db.rollback()
                 raise
-                                
+
+    async def get_active_family_invites(
+        self,
+        *,
+        family_id: int,
+        admin_user_id: int,
+    ) -> List[Dict[str, Any]]:
+        """
+        Возвращает активные неиспользованные приглашения семьи.
+
+        Запрос сам проверяет admin_user_id, чтобы observer или обычный
+        parent не смогли получить список через поддельный callback.
+        """
+        return await self._fetch_all(
+            """
+            SELECT
+                invite.id,
+                invite.token,
+                invite.family_id,
+                invite.intended_role,
+                invite.expires_at,
+                invite.max_uses,
+                invite.uses_count,
+                invite.is_revoked,
+                invite.created_at,
+                invite.used_by_user_id,
+                invite.used_at
+
+            FROM family_invites AS invite
+
+            JOIN families AS family
+              ON family.id = invite.family_id
+
+            WHERE invite.family_id = ?
+              AND family.admin_user_id = ?
+              AND invite.is_revoked = 0
+              AND invite.expires_at > CURRENT_TIMESTAMP
+              AND invite.uses_count < invite.max_uses
+
+            ORDER BY invite.created_at DESC, invite.id DESC
+            """,
+            (
+                family_id,
+                admin_user_id,
+            ),
+        )
+
+    async def get_active_family_invite_by_id(
+        self,
+        *,
+        invite_id: int,
+        family_id: int,
+        admin_user_id: int,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Возвращает invite только если он принадлежит семье текущего admin
+        и ещё пригоден для использования.
+        """
+        return await self._fetch_one(
+            """
+            SELECT
+                invite.id,
+                invite.token,
+                invite.family_id,
+                invite.intended_role,
+                invite.expires_at,
+                invite.max_uses,
+                invite.uses_count,
+                invite.is_revoked,
+                invite.created_at,
+                invite.used_by_user_id,
+                invite.used_at
+
+            FROM family_invites AS invite
+
+            JOIN families AS family
+              ON family.id = invite.family_id
+
+            WHERE invite.id = ?
+              AND invite.family_id = ?
+              AND family.admin_user_id = ?
+              AND invite.is_revoked = 0
+              AND invite.expires_at > CURRENT_TIMESTAMP
+              AND invite.uses_count < invite.max_uses
+            """,
+            (
+                invite_id,
+                family_id,
+                admin_user_id,
+            ),
+        )
+
+    async def revoke_family_invite(
+        self,
+        *,
+        invite_id: int,
+        family_id: int,
+        admin_user_id: int,
+    ) -> bool:
+        """
+        Отзывает неиспользованное invite.
+
+        Использованный invite отзывать бессмысленно: его token уже невалиден
+        из-за uses_count == max_uses.
+        """
+        changed = await self._execute(
+            """
+            UPDATE family_invites
+            SET
+                is_revoked = 1
+            WHERE id = ?
+              AND family_id = ?
+              AND is_revoked = 0
+              AND uses_count < max_uses
+              AND EXISTS (
+                  SELECT 1
+                  FROM families
+                  WHERE id = ?
+                    AND admin_user_id = ?
+              )
+            """,
+            (
+                invite_id,
+                family_id,
+                family_id,
+                admin_user_id,
+            ),
+        )
+
+        return changed == 1
+                                                    
     async def create_family_and_link(self, admin_user_id: int) -> str:
         """
         Создаёт новую семью и привязывает создателя как администратора-родителя.

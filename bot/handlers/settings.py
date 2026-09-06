@@ -879,6 +879,13 @@ async def confirm_restart(
     )
         
 # ================= 3. УПРАВЛЕНИЕ СЕМЬЕЙ =================
+# Порядок хендлеров важен
+#1. family:invite_menu
+#2. family:invite_role:
+#3. family:invite_revoke_confirm:
+#4. family:invite_revoke:
+#5. family:invite:
+#6. family:invites
 @router.callback_query(F.data == "family:invite_menu")
 async def show_family_invite_menu(
     callback: CallbackQuery,
@@ -1061,8 +1068,299 @@ async def create_family_invite(
         callback,
         "Приглашение создано.",
     )
-       
-       
+
+@router.callback_query(
+    F.data.startswith("family:invite_revoke_confirm:")
+)
+async def revoke_family_invite(
+    callback: CallbackQuery,
+    profile_service: ProfileService,
+) -> None:
+    """
+    Отзывает invite после явного подтверждения.
+    """
+    try:
+        invite_id = int(
+            callback.data.split(":")[2]
+        )
+    except (IndexError, ValueError):
+        await _safe_callback_answer(
+            callback,
+            "Некорректный идентификатор приглашения.",
+            show_alert=True,
+        )
+        return
+
+    user_dto = await profile_service.get_user_profile_dto(
+        callback.from_user.id,
+    )
+
+    if not user_dto.family_id:
+        await _safe_callback_answer(
+            callback,
+            "Вы не состоите в семье.",
+            show_alert=True,
+        )
+        return
+
+    revoked = await profile_service.revoke_family_invite(
+        invite_id=invite_id,
+        family_id=user_dto.family_id,
+        admin_user_id=callback.from_user.id,
+    )
+
+    if not revoked:
+        await _safe_callback_answer(
+            callback,
+            "Приглашение уже использовано, отозвано или недоступно.",
+            show_alert=True,
+        )
+        return
+
+    invites = await profile_service.get_active_family_invites(
+        admin_user_id=callback.from_user.id,
+        family_id=user_dto.family_id,
+    )
+
+    text = (
+        "✅ <b>Приглашение отозвано.</b>\n\n"
+        "Ссылка больше не позволит присоединиться к семье.\n\n"
+        + UIRenderer.render_active_family_invites(invites)
+    )
+
+    keyboard = Keyboards.get_active_family_invites_kb(
+        invites,
+    )
+
+    await _safe_edit_text(
+        callback.message,
+        text,
+        reply_markup=keyboard,
+    )
+
+    await _safe_callback_answer(
+        callback,
+        "Приглашение отозвано.",
+    )
+    
+@router.callback_query(
+    F.data.startswith("family:invite_revoke:")
+)         
+async def confirm_family_invite_revoke(
+    callback: CallbackQuery,
+    profile_service: ProfileService,
+) -> None:
+    """
+    Показывает confirmation перед revoke active invite.
+    """
+    try:
+        invite_id = int(
+            callback.data.split(":")[2]
+        )
+    except (IndexError, ValueError):
+        await _safe_callback_answer(
+            callback,
+            "Некорректный идентификатор приглашения.",
+            show_alert=True,
+        )
+        return
+
+    user_dto = await profile_service.get_user_profile_dto(
+        callback.from_user.id,
+    )
+
+    if not user_dto.family_id:
+        await _safe_callback_answer(
+            callback,
+            "Вы не состоите в семье.",
+            show_alert=True,
+        )
+        return
+
+    invite = await profile_service.get_active_family_invite_by_id(
+        invite_id=invite_id,
+        family_id=user_dto.family_id,
+        admin_user_id=callback.from_user.id,
+    )
+
+    if invite is None:
+        await _safe_callback_answer(
+            callback,
+            "Приглашение уже недействительно.",
+            show_alert=True,
+        )
+        return
+
+    text = UIRenderer.render_family_invite_revoke_confirmation(
+        invite,
+    )
+
+    keyboard = Keyboards.get_family_invite_revoke_confirmation_kb(
+        invite_id=invite.id,
+    )
+
+    await _safe_edit_text(
+        callback.message,
+        text,
+        reply_markup=keyboard,
+    )
+
+    await _safe_callback_answer(callback)
+
+@router.callback_query(F.data.startswith("family:invite:"))
+async def show_family_invite_details(
+    callback: CallbackQuery,
+    bot: Bot,
+    profile_service: ProfileService,
+) -> None:
+    """
+    Показывает active invite и позволяет повторно отправить ссылку.
+    """
+    try:
+        invite_id = int(
+            callback.data.split(":")[2]
+        )
+    except (IndexError, ValueError):
+        await _safe_callback_answer(
+            callback,
+            "Некорректный идентификатор приглашения.",
+            show_alert=True,
+        )
+        return
+
+    user_dto = await profile_service.get_user_profile_dto(
+        callback.from_user.id,
+    )
+
+    if not user_dto.family_id:
+        await _safe_callback_answer(
+            callback,
+            "Вы не состоите в семье.",
+            show_alert=True,
+        )
+        return
+
+    invite = await profile_service.get_active_family_invite_by_id(
+        invite_id=invite_id,
+        family_id=user_dto.family_id,
+        admin_user_id=callback.from_user.id,
+    )
+
+    if invite is None:
+        await _safe_callback_answer(
+            callback,
+            "Приглашение не найдено, уже использовано, отозвано "
+            "или срок его действия истёк.",
+            show_alert=True,
+        )
+        return
+
+    me = await bot.get_me()
+
+    if not me.username:
+        await _safe_callback_answer(
+            callback,
+            "Bot username не задан, невозможно сформировать ссылку.",
+            show_alert=True,
+        )
+        return
+
+    deep_link = (
+        f"https://t.me/{me.username}"
+        f"?start=join_{invite.token}"
+    )
+
+    role_for_recipient = {
+        "child": "ребёнка",
+        "parent": "родителя",
+        "observer": "наблюдателя",
+    }[invite.intended_role]
+
+    share_text = (
+        "👋 Вас пригласили присоединиться к семье "
+        "школьного расписания.\n\n"
+        f"Роль: {role_for_recipient}.\n"
+        "Откройте ссылку и завершите регистрацию."
+    )
+
+    share_link = (
+        "https://t.me/share/url?"
+        + urlencode(
+            {
+                "url": deep_link,
+                "text": share_text,
+            }
+        )
+    )
+
+    text = UIRenderer.render_family_invite_details(
+        invite,
+    )
+
+    keyboard = Keyboards.get_family_invite_details_kb(
+        invite_id=invite.id,
+        share_link=share_link,
+    )
+
+    await _safe_edit_text(
+        callback.message,
+        text,
+        reply_markup=keyboard,
+    )
+
+    await _safe_callback_answer(callback)
+
+                  
+@router.callback_query(F.data == "family:invites")
+async def show_active_family_invites(
+    callback: CallbackQuery,
+    profile_service: ProfileService,
+) -> None:
+    """
+    Показывает family admin список активных invites.
+    """
+    user_dto = await profile_service.get_user_profile_dto(
+        callback.from_user.id,
+    )
+
+    if not user_dto.family_id:
+        await _safe_callback_answer(
+            callback,
+            "Вы не состоите в семье.",
+            show_alert=True,
+        )
+        return
+
+    invites = await profile_service.get_active_family_invites(
+        admin_user_id=callback.from_user.id,
+        family_id=user_dto.family_id,
+    )
+
+    if invites is None:
+        await _safe_callback_answer(
+            callback,
+            "Только администратор семьи может видеть приглашения.",
+            show_alert=True,
+        )
+        return
+
+    text = UIRenderer.render_active_family_invites(
+        invites,
+    )
+
+    keyboard = Keyboards.get_active_family_invites_kb(
+        invites,
+    )
+
+    await _safe_edit_text(
+        callback.message,
+        text,
+        reply_markup=keyboard,
+    )
+
+    await _safe_callback_answer(callback)
+
+   
 @router.callback_query(F.data == "settings:family")
 async def show_family_management(
     callback: CallbackQuery, 

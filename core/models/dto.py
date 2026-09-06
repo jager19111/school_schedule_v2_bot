@@ -18,20 +18,23 @@ class FamilyCreatedDTO:
 @dataclass
 class FamilyInviteDTO:
     """
-    Role-specific приглашение в семью.
-
-    Invite может быть показан в UI, передан в deep link и проверен
-    перед финальным consume.
+    Role-specific invite в семью.
     """
     id: int
+
     token: str
     family_id: int
     intended_role: str
+
     expires_at: str
 
     max_uses: int = 1
     uses_count: int = 0
     is_revoked: bool = False
+
+    created_at: Optional[str] = None
+    used_by_user_id: Optional[int] = None
+    used_at: Optional[str] = None
     
 @dataclass
 class ActionResponseDTO:

@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone, date
 from core.models.dto import (ClassListDTO, FamilyCreatedDTO, AdminStatsDTO, DayScheduleDTO, ChildrenListDTO, ExtraClassListDTO,
                              WeekSummaryDTO, FullWeekScheduleDTO, UserProfileDTO, FamilyMemberDTO,
                              MorningSummaryDTO, ChangeReminderDTO, LessonReminderDTO, ParentChildNotificationSettingsDTO, AdultExtraClassesPermissionDTO,
-                             ProfileResetImpactDTO,
+                             ProfileResetImpactDTO, FamilyInviteDTO,
 )
 
 class UIRenderer:
@@ -264,7 +264,9 @@ class UIRenderer:
             f"• Контролировать внеурочные занятия\n\n"
             f"Настройка завершена. Вы можете просматривать расписание через меню ⬇️"
         )
-
+    #-----------------    
+    #ИНВАЙТЫ
+    #-----------------
     @staticmethod
     def render_family_invite_role_menu() -> str:
         return (
@@ -289,7 +291,95 @@ class UIRenderer:
             "Приглашённый пользователь откроет ссылку и автоматически "
             "начнёт регистрацию в назначенной роли."
         )
-                
+
+    @staticmethod
+    def _family_invite_role_label(
+        intended_role: str,
+    ) -> str:
+        return {
+            "child": "👶 Ребёнок с Telegram",
+            "parent": "👨‍👩‍👧 Родитель",
+            "observer": "👁 Наблюдатель",
+        }.get(
+            intended_role,
+            "Неизвестная роль",
+        )
+
+    @staticmethod
+    def render_active_family_invites(
+        invites: list[FamilyInviteDTO],
+    ) -> str:
+        """
+        Рендерит список active role-specific family invites.
+        """
+        if not invites:
+            return (
+                "📬 <b>Активные приглашения</b>\n\n"
+                "Сейчас нет активных приглашений."
+            )
+
+        lines = [
+            "📬 <b>Активные приглашения</b>",
+            "",
+            "Выберите приглашение для просмотра, повторной "
+            "отправки или отзыва.",
+            "",
+        ]
+
+        for invite in invites:
+            role_label = UIRenderer._family_invite_role_label(
+                invite.intended_role,
+            )
+
+            lines.append(
+                f"{role_label}\n"
+                f"⏳ До: <code>{invite.expires_at}</code>\n"
+                f"📊 Использований: "
+                f"<b>{invite.uses_count} / {invite.max_uses}</b>\n"
+            )
+
+        return "\n".join(lines)
+
+    @staticmethod
+    def render_family_invite_details(
+        invite: FamilyInviteDTO,
+    ) -> str:
+        """
+        Рендерит один active invite.
+        """
+        role_label = UIRenderer._family_invite_role_label(
+            invite.intended_role,
+        )
+
+        return (
+            "📨 <b>Приглашение в семью</b>\n\n"
+            f"Роль: <b>{role_label}</b>\n"
+            f"Создано: <code>{invite.created_at or '—'}</code>\n"
+            f"Действует до: <code>{invite.expires_at}</code>\n"
+            f"Использований: "
+            f"<b>{invite.uses_count} / {invite.max_uses}</b>\n\n"
+            "Вы можете отправить ссылку приглашённому человеку "
+            "или отозвать приглашение."
+        )
+
+    @staticmethod
+    def render_family_invite_revoke_confirmation(
+        invite: FamilyInviteDTO,
+    ) -> str:
+        role_label = UIRenderer._family_invite_role_label(
+            invite.intended_role,
+        )
+
+        return (
+            "⚠️ <b>Отозвать приглашение?</b>\n\n"
+            f"Роль: <b>{role_label}</b>\n"
+            f"Действует до: <code>{invite.expires_at}</code>\n\n"
+            "После отзыва ссылка больше не позволит "
+            "присоединиться к семье."
+        )
+    #-----------------    
+
+    #-----------------                                            
     @staticmethod
     def render_class_selection(dto: ClassListDTO) -> str:
         if not dto.classes:
