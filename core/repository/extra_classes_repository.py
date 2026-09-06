@@ -28,7 +28,7 @@ class ExtraClassesRepository(BaseRepository):
     async def create_extra_class(
         self,
         *,
-        family_id: int,
+        family_id: int | None,
         student_id: int,
         day_of_week: int,
         time_start: str,

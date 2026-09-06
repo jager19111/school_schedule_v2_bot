@@ -153,6 +153,11 @@ async def show_extra_menu(
         actor_user_id,
     )
 
+# Защита
+    if not actor.is_fully_registered:
+        await message.answer(UIRenderer.render_unregistered_error())
+
+    
     if actor.role == "child":
         student = (
             await students_service.get_student_by_telegram_user_id(

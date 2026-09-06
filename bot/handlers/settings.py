@@ -8,7 +8,7 @@ from aiogram.exceptions import TelegramBadRequest
 from services.profiles_service import ProfileService
 from bot.utils.ui_renderer import UIRenderer
 from bot.keyboards.keyboard import Keyboards
-from core.models.dto import ChildrenListDTO, ClassListDTO, GroupListDTO
+from core.models.dto import ChildrenListDTO, ClassListDTO, GroupListDTO, StudentProfileDTO
 from services.students_service import StudentsService
 
 from aiogram.fsm.context import FSMContext
@@ -1399,47 +1399,68 @@ async def show_family_management(
         await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
     await callback.answer()
 
-@router.callback_query(F.data == "settings:children_notifications")
+@router.callback_query(
+    F.data == "settings:children_notifications"
+)
 async def show_children_notification_settings(
     callback: CallbackQuery,
     profile_service: ProfileService,
+    students_service: StudentsService,
 ) -> None:
     """
-    Показывает взрослому список детей, по которым он может настроить
-    персональные подписки.
+    Открывает selector student profiles для personal adult subscriptions.
+
+    Показывает:
+    - virtual students;
+    - Telegram-linked students;
+    - только student profiles, доступные текущему adult.
     """
-    parent_id = callback.from_user.id
+    adult_user_id = callback.from_user.id
 
-    parent_dto = await profile_service.get_user_profile_dto(parent_id)
+    adult_dto = await profile_service.get_user_profile_dto(
+        adult_user_id,
+    )
 
-    if parent_dto.role not in ("parent", "observer"):
-        await callback.answer(
-            "Эта настройка доступна только родителям и наблюдателям.",
+    if adult_dto.role not in ("parent", "observer"):
+        await _safe_callback_answer(
+            callback,
+            "Раздел доступен только родителям и наблюдателям.",
             show_alert=True,
         )
         return
 
-    children = await profile_service.get_children_for_parent(parent_id)
+    students = await students_service.get_students_for_adult(
+        adult_user_id=adult_user_id,
+    )
 
-    if not children:
-        await callback.message.edit_text(
-            "👥 У вас пока нет детей, доступных для настройки уведомлений.\n\n"
-            "Сначала добавьте ребёнка в семью.",
-            reply_markup=Keyboards.get_settings_main_kb(parent_dto),
-            parse_mode="HTML",
+    if not students:
+        await _safe_edit_text(
+            callback.message,
+            (
+                "🔔 <b>Уведомления по ученикам</b>\n\n"
+                "У вас пока нет доступных профилей учеников."
+            ),
+            reply_markup=Keyboards.get_settings_main_kb(
+                adult_dto,
+            ),
         )
-        await callback.answer()
+
+        await _safe_callback_answer(callback)
         return
 
-    text = UIRenderer.render_parent_notification_children_menu()
-    keyboard = Keyboards.get_parent_notification_children_kb(children)
+    text = UIRenderer.render_parent_student_notification_menu()
 
-    await callback.message.edit_text(
+    keyboard = Keyboards.get_student_notification_select_kb(
+        students,
+    )
+
+    await _safe_edit_text(
+        callback.message,
         text,
         reply_markup=keyboard,
-        parse_mode="HTML",
     )
-    await callback.answer()
+
+    await _safe_callback_answer(callback)
 
 @router.callback_query(F.data.startswith("pcn:child:"))
 async def show_parent_child_notification_settings(
@@ -3237,4 +3258,262 @@ async def delete_virtual_student(
     await _safe_callback_answer(
         callback,
         "🗑 Ученик удалён.",
+    )
+    
+    
+#PSN
+
+@router.callback_query(
+    F.data.startswith("psn:student:")
+)
+async def show_parent_student_notification_settings(
+    callback: CallbackQuery,
+    profile_service: ProfileService,
+) -> None:
+    """
+    Показывает настройки текущего взрослого
+    для выбранного student profile.
+    """
+    try:
+        student_id = int(
+            callback.data.split(":")[2]
+        )
+    except (IndexError, ValueError):
+        await _safe_callback_answer(
+            callback,
+            "Некорректный идентификатор ученика.",
+            show_alert=True,
+        )
+        return
+
+    dto = await profile_service.get_parent_student_notification_settings(
+        parent_user_id=callback.from_user.id,
+        student_id=student_id,
+    )
+
+    if dto is None:
+        await _safe_callback_answer(
+            callback,
+            "У вас нет доступа к настройкам этого ученика.",
+            show_alert=True,
+        )
+        return
+
+    text = UIRenderer.render_parent_student_notification_settings(
+        dto,
+    )
+
+    keyboard = (
+        Keyboards.get_parent_student_notification_settings_kb(
+            dto,
+        )
+    )
+
+    await _safe_edit_text(
+        callback.message,
+        text,
+        reply_markup=keyboard,
+    )
+
+    await _safe_callback_answer(callback)
+    
+@router.callback_query(
+    F.data.startswith("psn:toggle:")
+)
+async def toggle_parent_student_notification_setting(
+    callback: CallbackQuery,
+    profile_service: ProfileService,
+) -> None:
+    """
+    Переключает одну personal adult subscription
+    по student profile.
+    """
+    try:
+        _prefix, _action, setting_token, raw_student_id = (
+            callback.data.split(":")
+        )
+
+        student_id = int(raw_student_id)
+
+    except (IndexError, ValueError):
+        await _safe_callback_answer(
+            callback,
+            "Некорректные данные настройки.",
+            show_alert=True,
+        )
+        return
+
+    setting_map = {
+        "morning": "receive_morning_summary",
+        "prelesson": "receive_pre_lesson_reminders",
+        "changes": "receive_schedule_changes",
+        "extra": "receive_extra_class_reminders",
+    }
+
+    setting_name = setting_map.get(setting_token)
+
+    if setting_name is None:
+        await _safe_callback_answer(
+            callback,
+            "Неизвестный тип уведомления.",
+            show_alert=True,
+        )
+        return
+
+    changed = (
+        await profile_service.toggle_parent_student_notification_setting(
+            parent_user_id=callback.from_user.id,
+            student_id=student_id,
+            setting_name=setting_name,
+        )
+    )
+
+    if not changed:
+        await _safe_callback_answer(
+            callback,
+            "Не удалось изменить настройку. "
+            "Возможно, доступ к ученику был отозван.",
+            show_alert=True,
+        )
+        return
+
+    dto = await profile_service.get_parent_student_notification_settings(
+        parent_user_id=callback.from_user.id,
+        student_id=student_id,
+    )
+
+    if dto is None:
+        await _safe_callback_answer(
+            callback,
+            "Настройки больше недоступны.",
+            show_alert=True,
+        )
+        return
+
+    text = UIRenderer.render_parent_student_notification_settings(
+        dto,
+    )
+
+    keyboard = (
+        Keyboards.get_parent_student_notification_settings_kb(
+            dto,
+        )
+    )
+
+    await _safe_edit_text(
+        callback.message,
+        text,
+        reply_markup=keyboard,
+    )
+
+    await _safe_callback_answer(
+        callback,
+        "✅ Настройка обновлена.",
+    )
+        
+@router.callback_query(
+    F.data.startswith("student:claim:")
+)
+async def create_student_claim_invite(
+    callback: CallbackQuery,
+    bot: Bot,
+    students_service: StudentsService,
+) -> None:
+    """
+    Family admin выпускает одноразовый claim link
+    для existing virtual student.
+    """
+    try:
+        student_id = int(
+            callback.data.split(":")[2]
+        )
+    except (IndexError, ValueError):
+        await _safe_callback_answer(
+            callback,
+            "Некорректный идентификатор ученика.",
+            show_alert=True,
+        )
+        return
+
+    admin_user_id = callback.from_user.id
+
+    invite = await students_service.create_student_claim_invite(
+        admin_user_id=admin_user_id,
+        student_id=student_id,
+        expires_in_hours=24,
+    )
+
+    if invite is None:
+        await _safe_callback_answer(
+            callback,
+            "Не удалось создать ссылку. "
+            "Проверьте, что ученик virtual и вы администратор семьи.",
+            show_alert=True,
+        )
+        return
+
+    me = await bot.get_me()
+
+    if not me.username:
+        logger.error(
+            "Bot username is empty: cannot build student claim link."
+        )
+
+        await _safe_callback_answer(
+            callback,
+            "Не удалось создать ссылку: у bot не задан username.",
+            show_alert=True,
+        )
+        return
+
+    deep_link = (
+        f"https://t.me/{me.username}"
+        f"?start=claim_{invite.token}"
+    )
+
+    share_text = (
+        "Открой эту ссылку, чтобы привязать Telegram "
+        "к профилю школьного расписания."
+    )
+
+    share_link = (
+        "https://t.me/share/url?"
+        + urlencode(
+            {
+                "url": deep_link,
+                "text": share_text,
+            }
+        )
+    )
+
+    student = StudentProfileDTO(
+        id=invite.student_id,
+        family_id=invite.family_id,
+        telegram_user_id=None,
+        name=invite.student_name or "Ученик",
+        class_id=invite.student_class_id or "—",
+        group_id=invite.student_group_id or "ALL",
+    )
+
+    text = UIRenderer.render_student_claim_invite_created(
+        student=student,
+        expires_at=invite.expires_at,
+        deep_link=deep_link,
+    )
+
+    keyboard = Keyboards.get_student_claim_invite_result_kb(
+        share_link=share_link,
+        deep_link=deep_link,
+        student_id=invite.student_id,
+    )
+
+    await _safe_edit_text(
+        callback.message,
+        text,
+        reply_markup=keyboard,
+    )
+
+    await _safe_callback_answer(
+        callback,
+        "✅ Ссылка для привязки создана.",
     )

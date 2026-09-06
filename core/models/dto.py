@@ -83,26 +83,55 @@ class StudentProfileDTO:
     """
     Доменный профиль ученика.
 
+    family_id:
+    - задан для ученика семьи;
+    - None для самостоятельного Telegram-ребёнка.
+
     telegram_user_id:
-    - None для виртуального ученика;
-    - user_id Telegram-профиля, если ребёнок подключил bot.
+    - None для virtual student;
+    - Telegram user_id, если ребёнок подключён к bot.
     """
     id: int
 
-    family_id: int
+    family_id: int | None
 
     name: str
-
     class_id: str
     group_id: str
 
-    telegram_user_id: Optional[int] = None
-
+    telegram_user_id: int | None = None
     is_active: bool = True
 
-    created_at: Optional[str] = None
-    updated_at: Optional[str] = None
+    created_at: str | None = None
+    updated_at: str | None = None
 
+@dataclass
+class StudentClaimInviteDTO:
+    """
+    Одноразовое приглашение привязать Telegram account
+    к существующему virtual student profile.
+    """
+    id: int
+
+    token: str
+
+    student_id: int
+    family_id: int
+
+    created_by_user_id: int
+
+    expires_at: str
+
+    is_revoked: bool = False
+
+    used_by_user_id: int | None = None
+    created_at: str | None = None
+    used_at: str | None = None
+
+    student_name: str | None = None
+    student_class_id: str | None = None
+    student_group_id: str | None = None
+    
 @dataclass
 class StudentAccessDTO:
     """
@@ -240,7 +269,35 @@ class ParentChildNotificationSettingsDTO:
     receive_pre_lesson_reminders: bool = True
     receive_schedule_changes: bool = True
     receive_extra_class_reminders: bool = True
-    
+
+@dataclass
+class ParentStudentNotificationSettingsDTO:
+    """
+    Персональные настройки уведомлений взрослого
+    по конкретному student profile.
+
+    Это не настройки Telegram-ребёнка из users.
+    Они принадлежат связи:
+
+    parent/observer
+    → parent_student_settings
+    → student_profiles.id
+    """
+    parent_user_id: int
+    student_id: int
+
+    student_name: str
+    student_class_id: str
+    student_group_id: str
+    telegram_user_id: int | None = None
+
+    receive_morning_summary: bool = True
+    receive_pre_lesson_reminders: bool = True
+    receive_schedule_changes: bool = True
+    receive_extra_class_reminders: bool = True
+
+    can_manage_extra_classes: bool = False
+        
 @dataclass
 class ChildrenListDTO:
     """ DTO для списка детей родителя. 
@@ -254,13 +311,12 @@ class ChildrenListDTO:
 class ExtraClassDTO:
     id: int
 
-    family_id: int
+    family_id: int | None
     student_id: int
 
     day_of_week: int
     time_start: str
     time_end: str
-
     title: str
     location: str | None
     reminder_minutes: int
@@ -334,7 +390,24 @@ class AdultExtraClassesPermissionDTO:
     adult_role: str
     child_user_id: int
     can_manage_extra_classes: bool
-            
+
+@dataclass
+class AdultStudentExtraClassesPermissionDTO:
+    """
+    Право взрослого управлять дополнительными занятиями
+    конкретного student profile.
+
+    Family admin не обязан присутствовать в этом списке,
+    потому что его право является implicit и всегда равно True.
+    """
+    adult_user_id: int
+    adult_name: str
+    adult_role: str
+
+    student_id: int
+
+    can_manage_extra_classes: bool
+                
 # Уведомления
 
 @dataclass

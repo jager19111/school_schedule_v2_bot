@@ -421,6 +421,12 @@ async def open_schedule_hub(
     Если доступно несколько целей — пользователь выбирает.
     """
     actor_user_id = message.from_user.id
+# Защита
+    actor = await profile_service.get_user_profile_dto(actor_user_id)
+    if not actor.is_fully_registered:
+        await message.answer(UIRenderer.render_unregistered_error())
+        return
+
 
     targets = await _get_schedule_targets(
         actor_user_id=actor_user_id,

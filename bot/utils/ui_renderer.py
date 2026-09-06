@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone, date
 from core.models.dto import (ClassListDTO, FamilyCreatedDTO, AdminStatsDTO, DayScheduleDTO, ChildrenListDTO, ExtraClassListDTO,
                              WeekSummaryDTO, FullWeekScheduleDTO, UserProfileDTO, FamilyMemberDTO,
                              MorningSummaryDTO, ChangeReminderDTO, LessonReminderDTO, ParentChildNotificationSettingsDTO, AdultExtraClassesPermissionDTO,
-                             ProfileResetImpactDTO, FamilyInviteDTO, ScheduleWatchTargetDTO, StudentProfileDTO,
+                             ProfileResetImpactDTO, FamilyInviteDTO, ScheduleWatchTargetDTO, StudentProfileDTO, ParentStudentNotificationSettingsDTO
 )
 
 class UIRenderer:
@@ -464,7 +464,7 @@ class UIRenderer:
         safe_name = UIRenderer.escape_html(name, "Неизвестно")
         safe_class = UIRenderer.escape_html(class_id, "Не выбран")
         return f"⚙️ <b>Настройки профиля:</b> {safe_name} ({safe_class})"
-
+# Старый метод
     @staticmethod
     def render_parent_notification_children_menu() -> str:
         """
@@ -476,6 +476,75 @@ class UIRenderer:
             "аккаунту и не изменяют настройки других взрослых."
         )
 
+    @staticmethod
+    def render_parent_student_notification_menu() -> str:
+        """
+        Экран выбора student profile для настройки подписок взрослого.
+        """
+        return (
+            "🔔 <b>Уведомления по ученикам</b>\n\n"
+            "Выберите ученика, для которого хотите настроить "
+            "свои уведомления.\n\n"
+            "Настройки применяются только к вам и не изменяют "
+            "личные настройки Telegram-ребёнка."
+        )
+
+    @staticmethod
+    def render_parent_student_notification_settings(
+        dto: ParentStudentNotificationSettingsDTO,
+    ) -> str:
+        """
+        Показывает personal subscriptions взрослого
+        по выбранному student profile.
+        """
+        student_name = UIRenderer.escape_html(
+            dto.student_name,
+            fallback=f"Ученик {dto.student_id}",
+        )
+
+        class_id = UIRenderer.escape_html(
+            dto.student_class_id,
+            fallback="—",
+        )
+
+        group_text = (
+            "Весь класс"
+            if dto.student_group_id == "ALL"
+            else f"Группа {UIRenderer.escape_html(dto.student_group_id)}"
+        )
+
+        telegram_status = (
+            "📱 <b>Telegram подключён</b>"
+            if dto.telegram_user_id is not None
+            else "🧒 <b>Telegram пока не подключён</b>"
+        )
+
+        def status(value: bool) -> str:
+            return "ВКЛ 🟢" if value else "ВЫКЛ 🔴"
+
+        manage_status = (
+            "✅ Можно управлять"
+            if dto.can_manage_extra_classes
+            else "👁 Только просмотр"
+        )
+
+        return (
+            "🔔 <b>Уведомления по ученику</b>\n\n"
+            f"👤 Ученик: <b>{student_name}</b>\n"
+            f"🎓 Класс: <b>{class_id}</b>\n"
+            f"👥 {group_text}\n"
+            f"{telegram_status}\n\n"
+            "<b>Ваши подписки</b>\n"
+            f"🌅 Утренняя сводка: {status(dto.receive_morning_summary)}\n"
+            f"⏰ Напоминания об уроках: "
+            f"{status(dto.receive_pre_lesson_reminders)}\n"
+            f"🔄 Изменения расписания: "
+            f"{status(dto.receive_schedule_changes)}\n"
+            f"🎨 Доп. занятия: "
+            f"{status(dto.receive_extra_class_reminders)}\n\n"
+            f"Права на кружки: {manage_status}"
+        )
+            
     @staticmethod
     def render_parent_child_notification_settings(
         dto: ParentChildNotificationSettingsDTO,
@@ -1183,3 +1252,92 @@ class UIRenderer:
             "может быть удалён полностью."
         )
         
+    @staticmethod
+    def render_student_claim_invite_created(
+        *,
+        student: StudentProfileDTO,
+        expires_at: str,
+        deep_link: str,
+    ) -> str:
+        """
+        Экран family admin после выпуска claim token.
+        """
+        student_name = UIRenderer.escape_html(
+            student.name,
+            fallback="Ученик",
+        )
+
+        class_id = UIRenderer.escape_html(
+            student.class_id,
+            fallback="—",
+        )
+
+        group_text = (
+            "Весь класс"
+            if student.group_id == "ALL"
+            else f"Группа {UIRenderer.escape_html(student.group_id)}"
+        )
+
+        return (
+            "📱 <b>Ссылка для привязки Telegram</b>\n\n"
+            f"👤 Ученик: <b>{student_name}</b>\n"
+            f"🎓 Класс: <b>{class_id}</b>\n"
+            f"👥 {group_text}\n\n"
+            "Отправьте ссылку ребёнку. После открытия ссылки он "
+            "подтвердит профиль, введёт имя и выберет класс/группу.\n\n"
+            f"Ссылка действует до: <code>{expires_at}</code>\n\n"
+            f"<code>{deep_link}</code>"
+        )
+        
+    @staticmethod
+    def render_student_claim_confirmation(
+        *,
+        student_name: str,
+        class_id: str,
+        group_id: str,
+    ) -> str:
+        """
+        Ребёнок должен явно подтвердить, что это его profile.
+        """
+        safe_name = UIRenderer.escape_html(
+            student_name,
+            fallback="Ученик",
+        )
+
+        safe_class = UIRenderer.escape_html(
+            class_id,
+            fallback="—",
+        )
+
+        group_text = (
+            "Весь класс"
+            if group_id == "ALL"
+            else f"Группа {UIRenderer.escape_html(group_id)}"
+        )
+
+        return (
+            "📱 <b>Привязка Telegram-профиля</b>\n\n"
+            "Вас пригласили привязать Telegram к профилю ученика:\n\n"
+            f"👤 <b>{safe_name}</b>\n"
+            f"🎓 Класс: <b>{safe_class}</b>\n"
+            f"👥 {group_text}\n\n"
+            "После подтверждения вы сможете изменить имя, "
+            "класс и группу.\n\n"
+            "Это ваш профиль?"
+        )
+        
+    @staticmethod
+    def render_student_claim_name_prompt() -> str:
+        return (
+            "✏️ <b>Имя ученика</b>\n\n"
+            "Введите имя, которое будет отображаться у ученика "
+            "в расписании и настройках семьи."
+        )
+        
+    @staticmethod
+    def render_student_claim_cancelled() -> str:
+        return (
+            "❌ Привязка Telegram отменена.\n\n"
+            "Ссылка не использована. Ребёнок может открыть её "
+            "повторно, пока не истечёт срок действия."
+        )

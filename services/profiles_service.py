@@ -6,7 +6,7 @@ from core.repository.profile_repository import ProfileRepository
 from core.models.dto import (
     UserProfileDTO,
     ChildInfoDTO,
-    FamilyMemberDTO,
+    FamilyMemberDTO,ParentStudentNotificationSettingsDTO, AdultStudentExtraClassesPermissionDTO,
     ParentChildNotificationSettingsDTO, ExtraClassesAccessDTO,AdultExtraClassesPermissionDTO, ProfileResetImpactDTO, FamilyInviteDTO,
 )
 
@@ -958,5 +958,137 @@ class ProfileService:
             child_user_id=child_user_id,
             can_manage=can_manage,
         )
-        
 
+    # ========== НАСТРОЙКИ ВЗРОСЛЫЙ → STUDENT PROFILE ==========
+
+    async def get_parent_student_notification_settings(
+        self,
+        *,
+        parent_user_id: int,
+        student_id: int,
+    ) -> Optional[ParentStudentNotificationSettingsDTO]:
+        """
+        Возвращает настройки уведомлений взрослого
+        по конкретному student profile.
+        """
+        row = await self.repo.get_parent_student_notification_settings_row(
+            parent_user_id=parent_user_id,
+            student_id=student_id,
+        )
+
+        if row is None:
+            return None
+
+        return ParentStudentNotificationSettingsDTO(
+            parent_user_id=row["parent_user_id"],
+            student_id=row["student_id"],
+
+            student_name=row["student_name"] or (
+                f"Ученик {student_id}"
+            ),
+            student_class_id=row["student_class_id"] or "—",
+            student_group_id=row["student_group_id"] or "ALL",
+            telegram_user_id=row.get("telegram_user_id"),
+
+            receive_morning_summary=bool(
+                row["receive_morning_summary"]
+            ),
+            receive_pre_lesson_reminders=bool(
+                row["receive_pre_lesson_reminders"]
+            ),
+            receive_schedule_changes=bool(
+                row["receive_schedule_changes"]
+            ),
+            receive_extra_class_reminders=bool(
+                row["receive_extra_class_reminders"]
+            ),
+
+            can_manage_extra_classes=bool(
+                row["can_manage_extra_classes"]
+            ),
+        )
+
+    async def toggle_parent_student_notification_setting(
+        self,
+        *,
+        parent_user_id: int,
+        student_id: int,
+        setting_name: str,
+    ) -> bool:
+        """
+        Переключает личную подписку взрослого на student profile.
+        """
+        return await self.repo.toggle_parent_student_notification_setting(
+            parent_user_id=parent_user_id,
+            student_id=student_id,
+            setting_name=setting_name,
+        )           
+
+    async def is_family_admin_for_student(
+        self,
+        *,
+        admin_user_id: int,
+        student_id: int,
+    ) -> bool:
+        """
+        Проверяет полномочия family admin над student profile.
+        """
+        return await self.repo.is_family_admin_for_student(
+            admin_user_id=admin_user_id,
+            student_id=student_id,
+        )
+
+    async def get_adult_student_extra_classes_permissions(
+        self,
+        *,
+        admin_user_id: int,
+        student_id: int,
+    ) -> Optional[List[AdultStudentExtraClassesPermissionDTO]]:
+        """
+        Возвращает права non-admin взрослых на кружки ученика.
+
+        None:
+        пользователь не является family admin.
+
+        []:
+        в семье нет других взрослых.
+        """
+        rows = await self.repo.get_adult_student_extra_classes_permissions(
+            admin_user_id=admin_user_id,
+            student_id=student_id,
+        )
+
+        if rows is None:
+            return None
+
+        return [
+            AdultStudentExtraClassesPermissionDTO(
+                adult_user_id=row["adult_user_id"],
+                adult_name=row["adult_name"],
+                adult_role=row["adult_role"],
+                student_id=row["student_id"],
+                can_manage_extra_classes=bool(
+                    row["can_manage_extra_classes"]
+                ),
+            )
+            for row in rows
+        ]
+
+    async def set_adult_student_extra_classes_permission(
+        self,
+        *,
+        admin_user_id: int,
+        adult_user_id: int,
+        student_id: int,
+        can_manage: bool,
+    ) -> bool:
+        """
+        Family admin изменяет право другого adult
+        на управление кружками student profile.
+        """
+        return await self.repo.set_adult_student_extra_classes_permission(
+            admin_user_id=admin_user_id,
+            adult_user_id=adult_user_id,
+            student_id=student_id,
+            can_manage=can_manage,
+        )

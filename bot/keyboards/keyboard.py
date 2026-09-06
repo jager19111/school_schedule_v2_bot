@@ -2,7 +2,7 @@ from datetime import datetime, timedelta, timezone, date
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
 from core.models.dto import ( ClassListDTO, GroupListDTO, ChildrenListDTO, UserProfileDTO, TeacherListDTO, 
                              FamilyMemberDTO, ParentChildNotificationSettingsDTO, ChildInfoDTO, AdultExtraClassesPermissionDTO,
-                             FamilyInviteDTO, ScheduleWatchTargetDTO, ScheduleViewTargetDTO, StudentProfileDTO,
+                             FamilyInviteDTO, ScheduleWatchTargetDTO, ScheduleViewTargetDTO, StudentProfileDTO, ParentStudentNotificationSettingsDTO,
 )
 
 class Keyboards:
@@ -920,8 +920,128 @@ class Keyboards:
         ])
 
         return InlineKeyboardMarkup(inline_keyboard=buttons)
-    
-    
+
+    @staticmethod
+    def get_student_notification_select_kb(
+        students: list[StudentProfileDTO],
+    ) -> InlineKeyboardMarkup:
+        """
+        Выбор student profile для персональных подписок взрослого.
+
+        В список передаются только профили, доступные текущему взрослому
+        через StudentsService.get_students_for_adult().
+        """
+        buttons = []
+
+        for student in students:
+            icon = (
+                "📱"
+                if student.telegram_user_id is not None
+                else "🧒"
+            )
+
+            group_label = (
+                "весь класс"
+                if student.group_id == "ALL"
+                else f"группа {student.group_id}"
+            )
+
+            buttons.append([
+                InlineKeyboardButton(
+                    text=(
+                        f"{icon} {student.name} · "
+                        f"{student.class_id} · {group_label}"
+                    ),
+                    callback_data=f"psn:student:{student.id}",
+                )
+            ])
+
+        buttons.append([
+            InlineKeyboardButton(
+                text="⬅️ К настройкам",
+                callback_data="settings:main",
+            )
+        ])
+
+        return InlineKeyboardMarkup(
+            inline_keyboard=buttons,
+        )
+            
+
+    @staticmethod
+    def get_parent_student_notification_settings_kb(
+        dto: ParentStudentNotificationSettingsDTO,
+    ) -> InlineKeyboardMarkup:
+        """
+        Переключатели personal adult subscriptions
+        по конкретному student profile.
+        """
+        def status(value: bool) -> str:
+            return "ВКЛ 🟢" if value else "ВЫКЛ 🔴"
+
+        student_id = dto.student_id
+
+        return InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text=(
+                            "🌅 Утренняя сводка: "
+                            f"{status(dto.receive_morning_summary)}"
+                        ),
+                        callback_data=(
+                            f"psn:toggle:morning:{student_id}"
+                        ),
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text=(
+                            "⏰ Напоминания об уроках: "
+                            f"{status(dto.receive_pre_lesson_reminders)}"
+                        ),
+                        callback_data=(
+                            f"psn:toggle:prelesson:{student_id}"
+                        ),
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text=(
+                            "🔄 Изменения расписания: "
+                            f"{status(dto.receive_schedule_changes)}"
+                        ),
+                        callback_data=(
+                            f"psn:toggle:changes:{student_id}"
+                        ),
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text=(
+                            "🎨 Доп. занятия: "
+                            f"{status(dto.receive_extra_class_reminders)}"
+                        ),
+                        callback_data=(
+                            f"psn:toggle:extra:{student_id}"
+                        ),
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="⬅️ К ученикам",
+                        callback_data="settings:children_notifications",
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="⚙️ Главные настройки",
+                        callback_data="settings:main",
+                    )
+                ],
+            ]
+        )
+            
     @staticmethod
     def get_parent_child_notification_settings_kb(
         dto: ParentChildNotificationSettingsDTO,
@@ -1514,11 +1634,24 @@ class Keyboards:
         """
         Карточка student profile.
 
-        Удаление доступно только family admin и только для virtual student.
+        Virtual student:
+        - family admin может создать claim link;
+        - family admin может удалить profile.
+
+        Telegram-linked student:
+        - claim невозможен;
+        - удаление отдельным flow не поддерживается.
         """
         buttons = []
 
         if telegram_user_id is None and is_family_admin:
+            buttons.append([
+                InlineKeyboardButton(
+                    text="📱 Привязать Telegram",
+                    callback_data=f"student:claim:{student_id}",
+                )
+            ])
+
             buttons.append([
                 InlineKeyboardButton(
                     text="🗑 Удалить ученика",
@@ -1529,7 +1662,7 @@ class Keyboards:
         if telegram_user_id is not None:
             buttons.append([
                 InlineKeyboardButton(
-                    text="ℹ️ Telegram-профиль подключён",
+                    text="📱 Telegram-профиль подключён",
                     callback_data="family:students",
                 )
             ])
@@ -1544,7 +1677,72 @@ class Keyboards:
         return InlineKeyboardMarkup(
             inline_keyboard=buttons,
         )
-        
+
+    @staticmethod
+    def get_student_claim_invite_result_kb(
+        *,
+        share_link: str,
+        deep_link: str,
+        student_id: int,
+    ) -> InlineKeyboardMarkup:
+        """
+        Кнопки после выпуска claim invite.
+
+        share_link открывает стандартный Telegram share sheet.
+        deep_link можно скопировать/переслать вручную.
+        """
+        return InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="📤 Отправить ссылку ребёнку",
+                        url=share_link,
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="📎 Открыть ссылку",
+                        url=deep_link,
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="🔄 Создать новую ссылку",
+                        callback_data=f"student:claim:{student_id}",
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="⬅️ К ученику",
+                        callback_data=f"student:show:{student_id}",
+                    )
+                ],
+            ]
+        )
+
+    @staticmethod
+    def get_student_claim_confirmation_kb() -> InlineKeyboardMarkup:
+        """
+        Подтверждение привязки Telegram к existing student profile.
+        Token хранится только в FSM, а не в callback_data.
+        """
+        return InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="✅ Это я",
+                        callback_data="claim:confirm",
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="❌ Отмена",
+                        callback_data="claim:cancel",
+                    )
+                ],
+            ]
+        )
+                    
     @staticmethod
     def get_student_class_selection_kb(
         dto: ClassListDTO,
@@ -1645,3 +1843,93 @@ class Keyboards:
                 ],
             ]
         )
+        
+    @staticmethod
+    def get_claim_cancel_keyboard() -> InlineKeyboardMarkup:
+        return InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="❌ Отмена",
+                        callback_data="claim:cancel",
+                    )
+                ]
+            ]
+        )
+        
+    @staticmethod
+    def get_claim_class_selection_kb(
+        dto: ClassListDTO,
+    ) -> InlineKeyboardMarkup:
+        buttons = []
+        row = []
+
+        for class_id, class_name in dto.classes.items():
+            row.append(
+                InlineKeyboardButton(
+                    text=class_name,
+                    callback_data=f"claim:class:{class_id}",
+                )
+            )
+
+            if len(row) == 3:
+                buttons.append(row)
+                row = []
+
+        if row:
+            buttons.append(row)
+
+        buttons.append([
+            InlineKeyboardButton(
+                text="❌ Отмена",
+                callback_data="claim:cancel",
+            )
+        ])
+
+        return InlineKeyboardMarkup(
+            inline_keyboard=buttons,
+        )
+        
+    @staticmethod
+    def get_claim_group_selection_kb(
+        dto: GroupListDTO,
+    ) -> InlineKeyboardMarkup:
+        buttons = [
+            [
+                InlineKeyboardButton(
+                    text="Весь класс",
+                    callback_data="claim:group:ALL",
+                )
+            ]
+        ]
+
+        for group_id in ("0", "1"):
+            group_name = dto.groups.get(group_id)
+
+            if group_name is None:
+                continue
+
+            buttons.append([
+                InlineKeyboardButton(
+                    text=group_name,
+                    callback_data=f"claim:group:{group_id}",
+                )
+            ])
+
+        buttons.append([
+            InlineKeyboardButton(
+                text="⬅️ К выбору класса",
+                callback_data="claim:back_to_class",
+            )
+        ])
+
+        buttons.append([
+            InlineKeyboardButton(
+                text="❌ Отмена",
+                callback_data="claim:cancel",
+            )
+        ])
+
+        return InlineKeyboardMarkup(
+            inline_keyboard=buttons,
+        )    

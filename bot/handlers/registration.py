@@ -25,6 +25,11 @@ class RegistrationStates(StatesGroup):
     waiting_for_family_code = State()
     waiting_for_class = State()
     waiting_for_group = State()
+    
+    waiting_for_claim_confirmation = State()
+    waiting_for_claim_name = State()
+    waiting_for_claim_class = State()
+    waiting_for_claim_group = State()
 
 @router.message(Command("start"))
 async def cmd_start(
@@ -32,6 +37,7 @@ async def cmd_start(
     command: CommandObject,
     state: FSMContext,
     profile_service: ProfileService,
+    students_service: StudentsService,
 ) -> None:
     """
     Старт bot и обработка deep-link family invite.
@@ -50,6 +56,83 @@ async def cmd_start(
     )
 
     payload = (command.args or "").strip()
+
+    # -------------------------------
+    # Deep link student claim flow
+    # -------------------------------
+    if payload.startswith("claim_"):
+        token = payload.removeprefix("claim_")
+
+        # Ребёнок, уже состоящий в семье, не может быть silently
+        # переведён в другую семью через forwarded link.
+        if user_dto.family_id is not None:
+            await message.answer(
+                "⚠️ Вы уже состоите в семье.\n\n"
+                "Для использования ссылки сначала выйдите "
+                "из текущей семьи через настройки."
+            )
+
+            await state.clear()
+            return
+
+        # Пока не объединяем автоматом standalone profile
+        # с существующим family virtual student profile.
+        current_student = (
+            await students_service.get_student_by_telegram_user_id(
+                telegram_user_id=user_id,
+            )
+        )
+
+        if current_student is not None:
+            await message.answer(
+                "⚠️ У вас уже есть самостоятельный профиль ученика.\n\n"
+                "Чтобы привязаться к семейному профилю, сначала "
+                "выполните перерегистрацию через настройки."
+            )
+
+            await state.clear()
+            return
+
+        invite = (
+            await students_service.get_valid_student_claim_invite(
+                token=token,
+            )
+        )
+
+        if invite is None:
+            await message.answer(
+                "❌ Ссылка для привязки недействительна, "
+                "уже использована, отозвана или срок её действия истёк."
+            )
+
+            await state.clear()
+            return
+
+        await state.clear()
+
+        await state.update_data(
+            claim_token=token,
+            claim_student_id=invite.student_id,
+            claim_actor_user_id=user_id,
+        )
+
+        text = UIRenderer.render_student_claim_confirmation(
+            student_name=invite.student_name or "Ученик",
+            class_id=invite.student_class_id or "—",
+            group_id=invite.student_group_id or "ALL",
+        )
+
+        await message.answer(
+            text,
+            reply_markup=Keyboards.get_student_claim_confirmation_kb(),
+            parse_mode="HTML",
+        )
+
+        await state.set_state(
+            RegistrationStates.waiting_for_claim_confirmation,
+        )
+
+        return
 
     # -------------------------------
     # Deep link invite flow
@@ -137,6 +220,292 @@ async def cmd_start(
         RegistrationStates.waiting_for_role,
     )
 
+@router.callback_query(
+    RegistrationStates.waiting_for_claim_confirmation,
+    F.data == "claim:confirm",
+)
+async def confirm_student_claim(
+    callback: CallbackQuery,
+    state: FSMContext,
+) -> None:
+    """
+    Ребёнок явно подтверждает, что virtual student profile его.
+    """
+    data = await state.get_data()
+
+    if data.get("claim_actor_user_id") != callback.from_user.id:
+        await state.clear()
+
+        await callback.answer(
+            "❌ Состояние привязки устарело. "
+            "Откройте ссылку заново.",
+            show_alert=True,
+        )
+        return
+
+    await callback.message.edit_text(
+        UIRenderer.render_student_claim_name_prompt(),
+        reply_markup=Keyboards.get_claim_cancel_keyboard(),
+        parse_mode="HTML",
+    )
+
+    await state.set_state(
+        RegistrationStates.waiting_for_claim_name,
+    )
+
+    await callback.answer()
+
+@router.callback_query(
+    F.data == "claim:cancel"
+)
+async def cancel_student_claim(
+    callback: CallbackQuery,
+    state: FSMContext,
+) -> None:
+    """
+    Cancel не отзывает token: ссылка действует до expires_at,
+    пока не будет использована либо заменена admin-ом.
+    """
+    await state.clear()
+
+    await callback.message.edit_text(
+        UIRenderer.render_student_claim_cancelled(),
+        parse_mode="HTML",
+    )
+
+    await callback.answer()
+
+@router.message(
+    RegistrationStates.waiting_for_claim_name
+)
+async def process_student_claim_name(
+    message: Message,
+    state: FSMContext,
+    schedule_service: ScheduleService,
+) -> None:
+    """
+    Собирает новое имя перед привязкой Telegram profile.
+    """
+    data = await state.get_data()
+
+    if data.get("claim_actor_user_id") != message.from_user.id:
+        await state.clear()
+
+        await message.answer(
+            "❌ Состояние привязки устарело. "
+            "Откройте ссылку заново."
+        )
+        return
+
+    name = message.text.strip()
+
+    if not name:
+        await message.answer(
+            "❌ Введите имя ученика.",
+            reply_markup=Keyboards.get_claim_cancel_keyboard(),
+        )
+        return
+
+    if len(name) > 64:
+        await message.answer(
+            "❌ Имя слишком длинное. Используйте до 64 символов.",
+            reply_markup=Keyboards.get_claim_cancel_keyboard(),
+        )
+        return
+
+    class_dto = await schedule_service.get_classes_list()
+
+    await state.update_data(
+        claim_name=name,
+    )
+
+    await message.answer(
+        UIRenderer.render_class_selection(class_dto),
+        reply_markup=Keyboards.get_claim_class_selection_kb(
+            class_dto,
+        ),
+        parse_mode="HTML",
+    )
+
+    await state.set_state(
+        RegistrationStates.waiting_for_claim_class,
+    )
+
+@router.callback_query(
+    RegistrationStates.waiting_for_claim_class,
+    F.data.startswith("claim:class:"),
+)
+async def process_student_claim_class(
+    callback: CallbackQuery,
+    state: FSMContext,
+    schedule_service: ScheduleService,
+) -> None:
+    try:
+        class_id = callback.data.split(":")[2]
+    except IndexError:
+        await callback.answer(
+            "Некорректный класс.",
+            show_alert=True,
+        )
+        return
+
+    data = await state.get_data()
+
+    if data.get("claim_actor_user_id") != callback.from_user.id:
+        await state.clear()
+
+        await callback.answer(
+            "❌ Состояние привязки устарело.",
+            show_alert=True,
+        )
+        return
+
+    groups_dto = await schedule_service.get_groups_list()
+
+    await state.update_data(
+        claim_class_id=class_id,
+    )
+
+    text, _ = UIRenderer.render_main_group_selection()
+
+    await callback.message.edit_text(
+        text,
+        reply_markup=Keyboards.get_claim_group_selection_kb(
+            groups_dto,
+        ),
+        parse_mode="HTML",
+    )
+
+    await state.set_state(
+        RegistrationStates.waiting_for_claim_group,
+    )
+
+    await callback.answer()
+
+@router.callback_query(
+    RegistrationStates.waiting_for_claim_group,
+    F.data == "claim:back_to_class",
+)
+async def back_to_student_claim_class(
+    callback: CallbackQuery,
+    state: FSMContext,
+    schedule_service: ScheduleService,
+) -> None:
+    data = await state.get_data()
+
+    if data.get("claim_actor_user_id") != callback.from_user.id:
+        await state.clear()
+
+        await callback.answer(
+            "❌ Состояние привязки устарело.",
+            show_alert=True,
+        )
+        return
+
+    class_dto = await schedule_service.get_classes_list()
+
+    await callback.message.edit_text(
+        UIRenderer.render_class_selection(class_dto),
+        reply_markup=Keyboards.get_claim_class_selection_kb(
+            class_dto,
+        ),
+        parse_mode="HTML",
+    )
+
+    await state.set_state(
+        RegistrationStates.waiting_for_claim_class,
+    )
+
+    await callback.answer()
+
+@router.callback_query(
+    RegistrationStates.waiting_for_claim_group,
+    F.data.startswith("claim:group:"),
+)
+async def process_student_claim_group(
+    callback: CallbackQuery,
+    state: FSMContext,
+    students_service: StudentsService,
+    profile_service: ProfileService,
+) -> None:
+    try:
+        group_id = callback.data.split(":")[2]
+    except IndexError:
+        await callback.answer(
+            "Некорректная группа.",
+            show_alert=True,
+        )
+        return
+
+    data = await state.get_data()
+
+    actor_user_id = callback.from_user.id
+
+    claim_actor_user_id = data.get("claim_actor_user_id")
+    token = data.get("claim_token")
+    name = data.get("claim_name")
+    class_id = data.get("claim_class_id")
+
+    if (
+        claim_actor_user_id != actor_user_id
+        or not token
+        or not name
+        or not class_id
+    ):
+        await state.clear()
+
+        await callback.answer(
+            "❌ Состояние привязки устарело. "
+            "Откройте ссылку заново.",
+            show_alert=True,
+        )
+        return
+
+    response = await students_service.consume_student_claim_invite(
+        token=token,
+        telegram_user_id=actor_user_id,
+        name=name,
+        class_id=class_id,
+        group_id=group_id,
+    )
+
+    await state.clear()
+
+    if not response.success:
+        await callback.answer(
+            "❌ Не удалось привязать профиль. "
+            "Возможно, ссылка уже использована, истекла "
+            "или ученик уже привязан к Telegram.",
+            show_alert=True,
+        )
+        return
+
+    user_dto = await profile_service.get_user_profile_dto(
+        actor_user_id,
+    )
+
+    text = UIRenderer.render_final_success(
+        user_dto.name,
+    )
+
+    try:
+        await callback.message.delete()
+    except TelegramBadRequest:
+        pass
+
+    await callback.message.answer(
+        "✅ <b>Telegram успешно привязан!</b>\n\n"
+        f"{text}",
+        parse_mode="HTML",
+    )
+
+    await callback.message.answer(
+        UIRenderer.render_main_menu(),
+        reply_markup=Keyboards.get_main_menu(),
+    )
+
+    await callback.answer()
+                        
 @router.callback_query(RegistrationStates.waiting_for_role, F.data.startswith("role:"))
 async def process_role(callback: CallbackQuery, state: FSMContext, profile_service: ProfileService):
     role = callback.data.split(":")[1]

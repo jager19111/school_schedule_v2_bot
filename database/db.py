@@ -78,7 +78,7 @@ class Database:
                 CREATE TABLE IF NOT EXISTS student_profiles (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
 
-                    family_id INTEGER NOT NULL,
+                    family_id INTEGER,
 
                     telegram_user_id INTEGER UNIQUE,
 
@@ -344,7 +344,7 @@ class Database:
                 CREATE TABLE IF NOT EXISTS extra_classes (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     
-                    family_id INTEGER NOT NULL,
+                    family_id INTEGER,
                     student_id INTEGER NOT NULL,
 
                     day_of_week INTEGER NOT NULL

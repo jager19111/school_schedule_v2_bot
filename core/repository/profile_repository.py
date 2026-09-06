@@ -1322,7 +1322,7 @@ class ProfileRepository(BaseRepository):
 
             # Если выходит ребёнок, его допзанятия нельзя оставить:
             # extra_classes.family_id и user_id должны оставаться согласованными.
-            if user_role == "child":
+            if user_role == "child" and family_id is not None:
                 """
                 Telegram child сбрасывает только Telegram-профиль.
 
@@ -1575,3 +1575,268 @@ class ProfileRepository(BaseRepository):
                 await db.execute("UPDATE users SET role = ? WHERE user_id = ?", (role, user_id))
             
             await db.commit()
+            
+    # Виртуальный ученик          
+    async def get_parent_student_notification_settings_row(
+        self,
+        *,
+        parent_user_id: int,
+        student_id: int,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Возвращает персональные настройки adult → student.
+
+        Доступ возможен только для parent/observer, состоящего
+        в той же семье, что и student profile.
+        """
+        return await self._fetch_one(
+            """
+            SELECT
+                settings.parent_user_id,
+                settings.student_id,
+
+                student.name AS student_name,
+                student.class_id AS student_class_id,
+                student.group_id AS student_group_id,
+                student.telegram_user_id,
+
+                settings.receive_morning_summary,
+                settings.receive_pre_lesson_reminders,
+                settings.receive_schedule_changes,
+                settings.receive_extra_class_reminders,
+
+                settings.can_manage_extra_classes
+
+            FROM parent_student_settings AS settings
+            JOIN users AS adult
+                ON adult.user_id = settings.parent_user_id
+            JOIN student_profiles AS student
+                ON student.id = settings.student_id
+
+            WHERE settings.parent_user_id = ?
+            AND settings.student_id = ?
+            AND adult.role IN ('parent', 'observer')
+            AND adult.family_id = student.family_id
+            AND student.is_active = 1
+            """,
+            (
+                parent_user_id,
+                student_id,
+            ),
+        )
+        
+    async def toggle_parent_student_notification_setting(
+        self,
+        *,
+        parent_user_id: int,
+        student_id: int,
+        setting_name: str,
+    ) -> bool:
+        """
+        Переключает одну из личных подписок взрослого
+        на конкретный student profile.
+
+        Безопасность:
+        - поле проверяется whitelist-ом;
+        - взрослый может менять только собственную строку;
+        - student обязан принадлежать той же семье.
+        """
+        allowed_fields = {
+            "receive_morning_summary",
+            "receive_pre_lesson_reminders",
+            "receive_schedule_changes",
+            "receive_extra_class_reminders",
+        }
+
+        if setting_name not in allowed_fields:
+            raise ValueError(
+                f"Unsupported parent-student setting: {setting_name}"
+            )
+
+        changed = await self._execute(
+            f"""
+            UPDATE parent_student_settings
+            SET
+                {setting_name} = CASE
+                    WHEN {setting_name} = 1 THEN 0
+                    ELSE 1
+                END,
+                updated_at = CURRENT_TIMESTAMP
+
+            WHERE parent_user_id = ?
+            AND student_id = ?
+
+            AND EXISTS (
+                SELECT 1
+                FROM users AS adult
+                JOIN student_profiles AS student
+                    ON student.id = ?
+                WHERE adult.user_id = ?
+                    AND adult.user_id = parent_student_settings.parent_user_id
+                    AND adult.role IN ('parent', 'observer')
+                    AND adult.family_id = student.family_id
+                    AND student.is_active = 1
+            )
+            """,
+            (
+                parent_user_id,
+                student_id,
+
+                student_id,
+                parent_user_id,
+            ),
+        )
+
+        return changed == 1
+
+    async def is_family_admin_for_student(
+        self,
+        *,
+        admin_user_id: int,
+        student_id: int,
+    ) -> bool:
+        """
+        Проверяет, является ли Telegram-пользователь family admin
+        семьи, которой принадлежит student profile.
+        """
+        row = await self._fetch_one(
+            """
+            SELECT 1 AS is_admin
+            FROM student_profiles AS student
+            JOIN families AS family
+                ON family.id = student.family_id
+
+            WHERE student.id = ?
+            AND student.is_active = 1
+            AND family.admin_user_id = ?
+            """,
+            (
+                student_id,
+                admin_user_id,
+            ),
+        )
+
+        return row is not None
+
+    async def get_adult_student_extra_classes_permissions(
+        self,
+        *,
+        admin_user_id: int,
+        student_id: int,
+    ) -> Optional[List[Dict[str, Any]]]:
+        """
+        Возвращает права всех non-admin adults семьи
+        на допзанятия выбранного student profile.
+
+        None:
+        инициатор не является family admin.
+
+        []:
+        family admin существует, но других взрослых в семье нет.
+        """
+        is_admin = await self.is_family_admin_for_student(
+            admin_user_id=admin_user_id,
+            student_id=student_id,
+        )
+
+        if not is_admin:
+            return None
+
+        return await self._fetch_all(
+            """
+            SELECT
+                adult.user_id AS adult_user_id,
+
+                COALESCE(
+                    NULLIF(TRIM(adult.name), ''),
+                    CAST(adult.user_id AS TEXT)
+                ) AS adult_name,
+
+                adult.role AS adult_role,
+
+                settings.student_id,
+
+                settings.can_manage_extra_classes
+
+            FROM parent_student_settings AS settings
+            JOIN student_profiles AS student
+                ON student.id = settings.student_id
+            JOIN families AS family
+                ON family.id = student.family_id
+            JOIN users AS adult
+                ON adult.user_id = settings.parent_user_id
+
+            WHERE settings.student_id = ?
+            AND family.admin_user_id = ?
+            AND adult.role IN ('parent', 'observer')
+            AND adult.user_id != family.admin_user_id
+            AND adult.family_id = student.family_id
+
+            ORDER BY
+                CASE adult.role
+                    WHEN 'parent' THEN 0
+                    ELSE 1
+                END,
+                adult_name COLLATE NOCASE,
+                adult.user_id
+            """,
+            (
+                student_id,
+                admin_user_id,
+            ),
+        )
+        
+    async def set_adult_student_extra_classes_permission(
+        self,
+        *,
+        admin_user_id: int,
+        adult_user_id: int,
+        student_id: int,
+        can_manage: bool,
+    ) -> bool:
+        """
+        Family admin выдаёт/отзывает право другому adult
+        управлять занятиями указанного student profile.
+
+        Admin не может отозвать собственное implicit право:
+        его право не хранится как ограничение в UI.
+        """
+        changed = await self._execute(
+            """
+            UPDATE parent_student_settings
+            SET
+                can_manage_extra_classes = ?,
+                updated_at = CURRENT_TIMESTAMP
+
+            WHERE parent_user_id = ?
+            AND student_id = ?
+
+            AND EXISTS (
+                SELECT 1
+                FROM student_profiles AS student
+                JOIN families AS family
+                    ON family.id = student.family_id
+                JOIN users AS adult
+                    ON adult.user_id = parent_student_settings.parent_user_id
+
+                WHERE student.id = ?
+                    AND student.is_active = 1
+                    AND family.admin_user_id = ?
+                    AND adult.user_id = ?
+                    AND adult.user_id != family.admin_user_id
+                    AND adult.role IN ('parent', 'observer')
+                    AND adult.family_id = student.family_id
+            )
+            """,
+            (
+                int(can_manage),
+                adult_user_id,
+                student_id,
+
+                student_id,
+                admin_user_id,
+                adult_user_id,
+            ),
+        )
+
+        return changed == 1
