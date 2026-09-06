@@ -12,6 +12,7 @@ from core.models.dto import ScheduleViewTargetDTO
 from services.profiles_service import ProfileService
 from services.schedule_service import ScheduleService
 from services.watch_targets_service import WatchTargetsService
+from services.students_service import StudentsService
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -42,16 +43,18 @@ async def _get_schedule_targets(
     *,
     actor_user_id: int,
     profile_service: ProfileService,
+    students_service: StudentsService,
     watch_targets_service: WatchTargetsService,
 ) -> list[ScheduleViewTargetDTO]:
     """
-    Возвращает доступные пользователю цели Schedule Hub.
+    Возвращает все доступные цели Schedule Hub.
 
-    Parent/observer получают:
-    - разрешённых детей из family relationship;
-    - собственные включённые watch targets.
+    Child:
+    - только свой student_profile.
 
-    Child получает только собственный профиль.
+    Parent / observer:
+    - доступные student_profiles семьи;
+    - собственные активные watch targets.
     """
     actor_dto = await profile_service.get_user_profile_dto(
         actor_user_id,
@@ -59,42 +62,52 @@ async def _get_schedule_targets(
 
     targets: list[ScheduleViewTargetDTO] = []
 
-    if actor_dto.role == "child" and actor_dto.class_id:
+    # Telegram-ребёнок видит только свой student profile.
+    if actor_dto.role == "child":
+        student = await students_service.get_student_by_telegram_user_id(
+            telegram_user_id=actor_user_id,
+        )
+
+        if student is None:
+            logger.warning(
+                "Child user_id=%s has no student_profile",
+                actor_user_id,
+            )
+            return []
+
         targets.append(
             ScheduleViewTargetDTO(
-                kind="child",
-                target_id=actor_user_id,
-                class_id=actor_dto.class_id,
-                group_id=actor_dto.group_id or "ALL",
-                title=actor_dto.name or "Моё расписание",
-                child_user_id=actor_user_id,
+                kind="student",
+                target_id=student.id,
+                class_id=student.class_id,
+                group_id=student.group_id,
+                title=student.name,
+                telegram_user_id=student.telegram_user_id,
             )
         )
 
         return targets
 
+    # Parent / observer получают доступных student profiles.
     if actor_dto.role in ("parent", "observer"):
-        children = await profile_service.get_children_for_parent(
-            actor_user_id,
+        students = await students_service.get_students_for_adult(
+            adult_user_id=actor_user_id,
         )
 
-        for child in children:
-            if not child.class_id:
-                continue
-
+        for student in students:
             targets.append(
                 ScheduleViewTargetDTO(
-                    kind="child",
-                    target_id=child.user_id,
-                    class_id=child.class_id,
-                    group_id=child.group_id or "ALL",
-                    title=child.name or (
-                        f"Ученик {child.user_id}"
-                    ),
-                    child_user_id=child.user_id,
+                    kind="student",
+                    target_id=student.id,
+                    class_id=student.class_id,
+                    group_id=student.group_id,
+                    title=student.name,
+                    telegram_user_id=student.telegram_user_id,
+                    is_enabled=student.is_active,
                 )
             )
 
+    # Любой пользователь может иметь личные watch targets.
     watch_targets = await watch_targets_service.get_targets(
         owner_user_id=actor_user_id,
         enabled_only=True,
@@ -110,13 +123,12 @@ async def _get_schedule_targets(
                 title=watch_target.title or (
                     f"Класс {watch_target.class_id}"
                 ),
-                child_user_id=None,
+                telegram_user_id=None,
                 is_enabled=watch_target.is_enabled,
             )
         )
 
     return targets
-
 
 async def _resolve_schedule_target(
     *,
@@ -124,12 +136,13 @@ async def _resolve_schedule_target(
     target_kind: str,
     target_id: int,
     profile_service: ProfileService,
+    students_service: StudentsService,
     watch_targets_service: WatchTargetsService,
 ) -> Optional[ScheduleViewTargetDTO]:
     """
-    Проверяет доступ к target и возвращает нормализованную цель.
+    Проверяет доступ пользователя к конкретной цели Schedule Hub.
 
-    Это security boundary для callback/FSM.
+    Это обязательная security boundary для callbacks и FSM.
     """
     if target_kind == "watch":
         watch_target = await watch_targets_service.get_target(
@@ -137,10 +150,7 @@ async def _resolve_schedule_target(
             target_id=target_id,
         )
 
-        if watch_target is None:
-            return None
-
-        if not watch_target.is_enabled:
+        if watch_target is None or not watch_target.is_enabled:
             return None
 
         return ScheduleViewTargetDTO(
@@ -151,57 +161,57 @@ async def _resolve_schedule_target(
             title=watch_target.title or (
                 f"Класс {watch_target.class_id}"
             ),
-            child_user_id=None,
+            telegram_user_id=None,
             is_enabled=True,
         )
 
-    if target_kind != "child":
+    if target_kind != "student":
         return None
 
     actor_dto = await profile_service.get_user_profile_dto(
         actor_user_id,
     )
 
-    if actor_user_id == target_id:
-        if actor_dto.role != "child" or not actor_dto.class_id:
+    # Child может открыть только student_profile,
+    # связанный с его Telegram account.
+    if actor_dto.role == "child":
+        student = await students_service.get_student_by_telegram_user_id(
+            telegram_user_id=actor_user_id,
+        )
+
+        if student is None or student.id != target_id:
             return None
 
         return ScheduleViewTargetDTO(
-            kind="child",
-            target_id=target_id,
-            class_id=actor_dto.class_id,
-            group_id=actor_dto.group_id or "ALL",
-            title=actor_dto.name or "Моё расписание",
-            child_user_id=target_id,
+            kind="student",
+            target_id=student.id,
+            class_id=student.class_id,
+            group_id=student.group_id,
+            title=student.name,
+            telegram_user_id=student.telegram_user_id,
+            is_enabled=student.is_active,
         )
 
-    if actor_dto.role not in ("parent", "observer"):
-        return None
-
-    has_access = await profile_service.parent_can_access_child(
-        parent_user_id=actor_user_id,
-        child_user_id=target_id,
+    # Parent / observer используют parent_student_settings.
+    result = await students_service.get_student_for_adult(
+        adult_user_id=actor_user_id,
+        student_id=target_id,
     )
 
-    if not has_access:
+    if result is None:
         return None
 
-    child_dto = await profile_service.get_user_profile_dto(
-        target_id,
-    )
-
-    if child_dto.role != "child" or not child_dto.class_id:
-        return None
+    student, _access = result
 
     return ScheduleViewTargetDTO(
-        kind="child",
-        target_id=target_id,
-        class_id=child_dto.class_id,
-        group_id=child_dto.group_id or "ALL",
-        title=child_dto.name or f"Ученик {target_id}",
-        child_user_id=target_id,
+        kind="student",
+        target_id=student.id,
+        class_id=student.class_id,
+        group_id=student.group_id,
+        title=student.name,
+        telegram_user_id=student.telegram_user_id,
+        is_enabled=student.is_active,
     )
-
 
 async def _render_day(
     *,
@@ -210,6 +220,7 @@ async def _render_day(
     date_iso: str,
     profile_service: ProfileService,
     schedule_service: ScheduleService,
+    students_service: StudentsService,
     watch_targets_service: WatchTargetsService,
 ):
     """
@@ -219,12 +230,12 @@ async def _render_day(
         class_id=target.class_id,
         group_id=target.group_id,
         date_iso=date_iso,
-        user_id=target.child_user_id,
+        user_id=target.telegram_user_id
     )
 
     child_name = None
 
-    if target.kind == "child" and target.target_id != actor_user_id:
+    if target.kind == "student" and target.telegram_user_id != actor_user_id:
         child_name = target.title
 
     rendered = UIRenderer.render_child_day_schedule(
@@ -241,9 +252,17 @@ async def _render_day(
             f"{text}"
         )
 
+    elif target.kind == "student" and target.telegram_user_id is None:
+        text = (
+            "🧒 <b>Ученик без Telegram</b>\n"
+            f"👤 {UIRenderer.escape_html(target.title)}\n\n"
+            f"{text}"
+        )
+        
     available_targets = await _get_schedule_targets(
         actor_user_id=actor_user_id,
         profile_service=profile_service,
+        students_service=students_service,
         watch_targets_service=watch_targets_service,
     )
 
@@ -263,6 +282,7 @@ async def _render_week(
     is_full: bool,
     profile_service: ProfileService,
     schedule_service: ScheduleService,
+    students_service: StudentsService,
     watch_targets_service: WatchTargetsService,
 ):
     """
@@ -273,7 +293,7 @@ async def _render_week(
             class_id=target.class_id,
             group_id=target.group_id,
             week_start_iso=week_start_iso,
-            user_id=target.child_user_id,
+            user_id=target.telegram_user_id
         )
 
         rendered = UIRenderer.render_full_week_schedule(
@@ -284,7 +304,7 @@ async def _render_week(
             class_id=target.class_id,
             group_id=target.group_id,
             week_start_iso=week_start_iso,
-            user_id=target.child_user_id,
+            user_id=target.telegram_user_id,
         )
 
         rendered = UIRenderer.render_week_summary(
@@ -300,15 +320,25 @@ async def _render_week(
             f"{text}"
         )
 
-    elif target.target_id != actor_user_id:
-        text = (
-            f"🧒 <b>{UIRenderer.escape_html(target.title)}</b>\n\n"
-            f"{text}"
-        )
+    elif target.kind == "student":
+        if target.telegram_user_id is None:
+            prefix = (
+                "🧒 <b>Ученик без Telegram</b>\n"
+                f"👤 {UIRenderer.escape_html(target.title)}\n\n"
+            )
+        elif target.telegram_user_id != actor_user_id:
+            prefix = (
+                f"🧒 <b>{UIRenderer.escape_html(target.title)}</b>\n\n"
+            )
+        else:
+            prefix = ""
 
+        text = prefix + text
+        
     available_targets = await _get_schedule_targets(
         actor_user_id=actor_user_id,
         profile_service=profile_service,
+        students_service=students_service,
         watch_targets_service=watch_targets_service,
     )
 
@@ -339,6 +369,7 @@ async def _get_fsm_schedule_target(
     callback: CallbackQuery,
     state: FSMContext,
     profile_service: ProfileService,
+    students_service: StudentsService,
     watch_targets_service: WatchTargetsService,
 ) -> Optional[ScheduleViewTargetDTO]:
     """
@@ -362,6 +393,7 @@ async def _get_fsm_schedule_target(
         target_kind=target_kind,
         target_id=target_id,
         profile_service=profile_service,
+        students_service=students_service,
         watch_targets_service=watch_targets_service,
     )
 
@@ -375,6 +407,7 @@ async def open_schedule_hub(
     state: FSMContext,
     profile_service: ProfileService,
     schedule_service: ScheduleService,
+    students_service: StudentsService,
     watch_targets_service: WatchTargetsService,
 ) -> None:
     """
@@ -388,6 +421,7 @@ async def open_schedule_hub(
     targets = await _get_schedule_targets(
         actor_user_id=actor_user_id,
         profile_service=profile_service,
+        students_service=students_service,
         watch_targets_service=watch_targets_service,
     )
 
@@ -427,7 +461,7 @@ async def open_schedule_hub(
     target_date_iso = await schedule_service.get_smart_target_date(
         class_id=target.class_id,
         group_id=target.group_id,
-        user_id=target.child_user_id,
+        user_id=target.telegram_user_id
     )
 
     text, keyboard = await _render_day(
@@ -451,6 +485,7 @@ async def show_schedule_targets(
     callback: CallbackQuery,
     state: FSMContext,
     profile_service: ProfileService,
+    students_service: StudentsService,
     watch_targets_service: WatchTargetsService,
 ) -> None:
     """
@@ -460,6 +495,7 @@ async def show_schedule_targets(
         actor_user_id=callback.from_user.id,
         profile_service=profile_service,
         watch_targets_service=watch_targets_service,
+        students_service=students_service,
     )
 
     if not targets:
@@ -490,6 +526,7 @@ async def select_schedule_target(
     state: FSMContext,
     profile_service: ProfileService,
     schedule_service: ScheduleService,
+    students_service: StudentsService,
     watch_targets_service: WatchTargetsService,
 ) -> None:
     """
@@ -514,6 +551,7 @@ async def select_schedule_target(
         target_id=target_id,
         profile_service=profile_service,
         watch_targets_service=watch_targets_service,
+        students_service=students_service,
     )
 
     if target is None:
@@ -532,7 +570,7 @@ async def select_schedule_target(
     target_date_iso = await schedule_service.get_smart_target_date(
         class_id=target.class_id,
         group_id=target.group_id,
-        user_id=target.child_user_id,
+        user_id=target.telegram_user_id
     )
 
     text, keyboard = await _render_day(
@@ -541,6 +579,7 @@ async def select_schedule_target(
         date_iso=target_date_iso,
         profile_service=profile_service,
         schedule_service=schedule_service,
+        students_service=students_service,
         watch_targets_service=watch_targets_service,
     )
 
@@ -559,6 +598,7 @@ async def open_watch_target_schedule(
     state: FSMContext,
     profile_service: ProfileService,
     schedule_service: ScheduleService,
+    students_service: StudentsService,
     watch_targets_service: WatchTargetsService,
 ) -> None:
     """
@@ -583,6 +623,7 @@ async def open_watch_target_schedule(
         target_id=target_id,
         profile_service=profile_service,
         watch_targets_service=watch_targets_service,
+        students_service=students_service,
     )
 
     if target is None:
@@ -611,6 +652,7 @@ async def open_watch_target_schedule(
         profile_service=profile_service,
         schedule_service=schedule_service,
         watch_targets_service=watch_targets_service,
+        students_service=students_service,
     )
 
     await _safe_edit_schedule_message(
@@ -628,12 +670,14 @@ async def go_to_smart_day(
     state: FSMContext,
     profile_service: ProfileService,
     schedule_service: ScheduleService,
+    students_service: StudentsService,
     watch_targets_service: WatchTargetsService,
 ) -> None:
     target = await _get_fsm_schedule_target(
         callback=callback,
         state=state,
         profile_service=profile_service,
+        students_service=students_service,
         watch_targets_service=watch_targets_service,
     )
 
@@ -648,7 +692,7 @@ async def go_to_smart_day(
     target_date_iso = await schedule_service.get_smart_target_date(
         class_id=target.class_id,
         group_id=target.group_id,
-        user_id=target.child_user_id,
+        user_id=target.telegram_user_id
     )
 
     text, keyboard = await _render_day(
@@ -657,6 +701,7 @@ async def go_to_smart_day(
         date_iso=target_date_iso,
         profile_service=profile_service,
         schedule_service=schedule_service,
+        students_service=students_service,
         watch_targets_service=watch_targets_service,
     )
 
@@ -675,6 +720,7 @@ async def show_schedule_day(
     state: FSMContext,
     profile_service: ProfileService,
     schedule_service: ScheduleService,
+    students_service: StudentsService,
     watch_targets_service: WatchTargetsService,
 ) -> None:
     try:
@@ -691,6 +737,7 @@ async def show_schedule_day(
         state=state,
         profile_service=profile_service,
         watch_targets_service=watch_targets_service,
+        students_service=students_service,
     )
 
     if target is None:
@@ -707,6 +754,7 @@ async def show_schedule_day(
         date_iso=date_iso,
         profile_service=profile_service,
         schedule_service=schedule_service,
+        students_service=students_service,
         watch_targets_service=watch_targets_service,
     )
 
@@ -725,6 +773,7 @@ async def show_schedule_week(
     state: FSMContext,
     profile_service: ProfileService,
     schedule_service: ScheduleService,
+    students_service: StudentsService,
     watch_targets_service: WatchTargetsService,
 ) -> None:
     try:
@@ -741,6 +790,7 @@ async def show_schedule_week(
         state=state,
         profile_service=profile_service,
         watch_targets_service=watch_targets_service,
+        students_service=students_service,
     )
 
     if target is None:
@@ -758,6 +808,7 @@ async def show_schedule_week(
         is_full=False,
         profile_service=profile_service,
         schedule_service=schedule_service,
+        students_service=students_service,
         watch_targets_service=watch_targets_service,
     )
 
@@ -776,6 +827,7 @@ async def show_full_schedule_week(
     state: FSMContext,
     profile_service: ProfileService,
     schedule_service: ScheduleService,
+    students_service: StudentsService,
     watch_targets_service: WatchTargetsService,
 ) -> None:
     try:
@@ -792,6 +844,7 @@ async def show_full_schedule_week(
         state=state,
         profile_service=profile_service,
         watch_targets_service=watch_targets_service,
+        students_service=students_service,
     )
 
     if target is None:
@@ -809,6 +862,7 @@ async def show_full_schedule_week(
         is_full=True,
         profile_service=profile_service,
         schedule_service=schedule_service,
+        students_service=students_service,
         watch_targets_service=watch_targets_service,
     )
 

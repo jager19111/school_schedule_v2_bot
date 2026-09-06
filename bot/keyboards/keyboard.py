@@ -2,7 +2,7 @@ from datetime import datetime, timedelta, timezone, date
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
 from core.models.dto import ( ClassListDTO, GroupListDTO, ChildrenListDTO, UserProfileDTO, TeacherListDTO, 
                              FamilyMemberDTO, ParentChildNotificationSettingsDTO, ChildInfoDTO, AdultExtraClassesPermissionDTO,
-                             FamilyInviteDTO, ScheduleWatchTargetDTO, ScheduleViewTargetDTO
+                             FamilyInviteDTO, ScheduleWatchTargetDTO, ScheduleViewTargetDTO, StudentProfileDTO,
 )
 
 class Keyboards:
@@ -586,17 +586,25 @@ class Keyboards:
         targets: list[ScheduleViewTargetDTO],
     ) -> InlineKeyboardMarkup:
         """
-        Выбор цели Schedule Hub: ребёнок или самостоятельный класс.
+        Выбор цели Schedule Hub.
+
+        student — реальный или virtual student profile.
+        watch — самостоятельный отслеживаемый класс.
         """
         buttons = []
 
         for target in targets:
-            if target.kind == "child":
-                icon = "🧒"
+            if target.kind == "student":
+                icon = (
+                    "📱"
+                    if target.telegram_user_id is not None
+                    else "🧒"
+                )
 
                 callback_data = (
-                    f"sched:target:child:{target.target_id}"
+                    f"sched:target:student:{target.target_id}"
                 )
+
             else:
                 icon = "🎓"
 
@@ -752,6 +760,14 @@ class Keyboards:
                     )
                 ])
 
+        if current_user.role in ("parent", "observer"):
+            buttons.append([
+                InlineKeyboardButton(
+                    text="🧒 Ученики семьи",
+                    callback_data="family:students",
+                )
+            ])
+            
         # Только creator/admin семьи может выдавать invites.
         if is_family_admin:
             buttons.append([
@@ -1343,6 +1359,200 @@ class Keyboards:
                     InlineKeyboardButton(
                         text="⬅️ Отмена",
                         callback_data=f"watch:target:{target_id}",
+                    )
+                ],
+            ]
+        )
+        
+    @staticmethod
+    def get_family_students_kb(
+        students: list[StudentProfileDTO],
+        *,
+        is_family_admin: bool,
+    ) -> InlineKeyboardMarkup:
+        """
+        Список student_profiles семьи.
+
+        Parent/observer видит учеников, доступных через
+        parent_student_settings. Family admin может добавить ученика.
+        """
+        buttons = []
+
+        for student in students:
+            telegram_status = (
+                "📱"
+                if student.telegram_user_id is not None
+                else "🧒"
+            )
+
+            class_text = student.class_id or "—"
+
+            buttons.append([
+                InlineKeyboardButton(
+                    text=(
+                        f"{telegram_status} {student.name} "
+                        f"({class_text})"
+                    ),
+                    callback_data=f"student:show:{student.id}",
+                )
+            ])
+
+        if is_family_admin:
+            buttons.append([
+                InlineKeyboardButton(
+                    text="➕ Добавить ученика",
+                    callback_data="student:add",
+                )
+            ])
+
+        buttons.append([
+            InlineKeyboardButton(
+                text="⬅️ К семье",
+                callback_data="settings:family",
+            )
+        ])
+
+        return InlineKeyboardMarkup(
+            inline_keyboard=buttons,
+        )
+        
+    @staticmethod
+    def get_student_details_kb(
+        *,
+        student_id: int,
+        telegram_user_id: int | None,
+        is_family_admin: bool,
+    ) -> InlineKeyboardMarkup:
+        """
+        Карточка student profile.
+
+        Удаление доступно только family admin и только для virtual student.
+        """
+        buttons = []
+
+        if telegram_user_id is None and is_family_admin:
+            buttons.append([
+                InlineKeyboardButton(
+                    text="🗑 Удалить ученика",
+                    callback_data=f"student:delete:{student_id}",
+                )
+            ])
+
+        if telegram_user_id is not None:
+            buttons.append([
+                InlineKeyboardButton(
+                    text="ℹ️ Telegram-профиль подключён",
+                    callback_data="family:students",
+                )
+            ])
+
+        buttons.append([
+            InlineKeyboardButton(
+                text="⬅️ К ученикам",
+                callback_data="family:students",
+            )
+        ])
+
+        return InlineKeyboardMarkup(
+            inline_keyboard=buttons,
+        )
+        
+    @staticmethod
+    def get_student_class_selection_kb(
+        dto: ClassListDTO,
+    ) -> InlineKeyboardMarkup:
+        buttons = []
+        row = []
+
+        for class_id, class_name in dto.classes.items():
+            row.append(
+                InlineKeyboardButton(
+                    text=class_name,
+                    callback_data=f"student:class:{class_id}",
+                )
+            )
+
+            if len(row) == 3:
+                buttons.append(row)
+                row = []
+
+        if row:
+            buttons.append(row)
+
+        buttons.append([
+            InlineKeyboardButton(
+                text="⬅️ К ученикам",
+                callback_data="family:students",
+            )
+        ])
+
+        return InlineKeyboardMarkup(
+            inline_keyboard=buttons,
+        )
+        
+    @staticmethod
+    def get_student_group_selection_kb(
+        dto: GroupListDTO,
+    ) -> InlineKeyboardMarkup:
+        """
+        Выбор группы virtual student.
+
+        Начинаем с ALL и основных групп NIKA 0/1.
+        """
+        buttons = [
+            [
+                InlineKeyboardButton(
+                    text="Весь класс",
+                    callback_data="student:group:ALL",
+                )
+            ]
+        ]
+
+        primary_groups = {
+            "0",
+            "1",
+        }
+
+        for group_id, group_name in dto.groups.items():
+            if group_id not in primary_groups:
+                continue
+
+            buttons.append([
+                InlineKeyboardButton(
+                    text=group_name,
+                    callback_data=f"student:group:{group_id}",
+                )
+            ])
+
+        buttons.append([
+            InlineKeyboardButton(
+                text="⬅️ К выбору класса",
+                callback_data="student:add",
+            )
+        ])
+
+        return InlineKeyboardMarkup(
+            inline_keyboard=buttons,
+        )
+        
+    @staticmethod
+    def get_student_delete_confirmation_kb(
+        student_id: int,
+    ) -> InlineKeyboardMarkup:
+        return InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="🗑 Да, удалить ученика",
+                        callback_data=(
+                            f"student:delete_confirm:{student_id}"
+                        ),
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="⬅️ Отмена",
+                        callback_data=f"student:show:{student_id}",
                     )
                 ],
             ]

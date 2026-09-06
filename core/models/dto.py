@@ -63,8 +63,8 @@ class ScheduleViewTargetDTO:
     Универсальная цель Schedule Hub.
 
     kind:
-    - child: ученик с Telegram-профилем;
-    - watch: самостоятельный отслеживаемый класс.
+    - student: student_profiles;
+    - watch: schedule_watch_targets.
     """
     kind: str
 
@@ -75,9 +75,46 @@ class ScheduleViewTargetDTO:
 
     title: str
 
-    child_user_id: Optional[int] = None
+    telegram_user_id: Optional[int] = None
     is_enabled: bool = True
-            
+
+@dataclass
+class StudentProfileDTO:
+    """
+    Доменный профиль ученика.
+
+    telegram_user_id:
+    - None для виртуального ученика;
+    - user_id Telegram-профиля, если ребёнок подключил bot.
+    """
+    id: int
+
+    family_id: int
+
+    name: str
+
+    class_id: str
+    group_id: str
+
+    telegram_user_id: Optional[int] = None
+
+    is_active: bool = True
+
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+
+@dataclass
+class StudentAccessDTO:
+    """
+    Права взрослого на конкретный student profile.
+    """
+    adult_user_id: int
+    student_id: int
+
+    can_view: bool
+    can_manage_extra_classes: bool
+    is_family_admin: bool
+                    
 @dataclass
 class ActionResponseDTO:
     """ DTO для ответа на действие (например, создание семьи, обновление профиля и т.п.). 

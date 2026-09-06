@@ -75,6 +75,101 @@ class Database:
             """)
 
             await db.execute("""
+                CREATE TABLE IF NOT EXISTS student_profiles (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+                    family_id INTEGER NOT NULL,
+
+                    telegram_user_id INTEGER UNIQUE,
+
+                    name TEXT NOT NULL,
+
+                    class_id TEXT NOT NULL,
+                    group_id TEXT NOT NULL DEFAULT 'ALL',
+
+                    is_active INTEGER NOT NULL DEFAULT 1
+                        CHECK (is_active IN (0, 1)),
+
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+                    FOREIGN KEY (family_id)
+                        REFERENCES families(id)
+                        ON DELETE CASCADE,
+
+                    FOREIGN KEY (telegram_user_id)
+                        REFERENCES users(user_id)
+                        ON DELETE SET NULL
+                )
+            """)
+
+            await db.execute("""
+                CREATE INDEX IF NOT EXISTS idx_student_profiles_family
+                ON student_profiles(
+                    family_id,
+                    is_active
+                )
+            """)
+
+            await db.execute("""
+                CREATE INDEX IF NOT EXISTS idx_student_profiles_telegram
+                ON student_profiles(telegram_user_id)
+            """)
+
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS parent_student_settings (
+                    parent_user_id INTEGER NOT NULL,
+                    student_id INTEGER NOT NULL,
+
+                    receive_morning_summary INTEGER NOT NULL DEFAULT 1
+                        CHECK (receive_morning_summary IN (0, 1)),
+
+                    receive_pre_lesson_reminders INTEGER NOT NULL DEFAULT 1
+                        CHECK (receive_pre_lesson_reminders IN (0, 1)),
+
+                    receive_schedule_changes INTEGER NOT NULL DEFAULT 1
+                        CHECK (receive_schedule_changes IN (0, 1)),
+
+                    receive_extra_class_reminders INTEGER NOT NULL DEFAULT 1
+                        CHECK (receive_extra_class_reminders IN (0, 1)),
+
+                    child_notification_settings_locked INTEGER NOT NULL DEFAULT 0
+                        CHECK (
+                            child_notification_settings_locked IN (0, 1)
+                        ),
+
+                    can_manage_extra_classes INTEGER NOT NULL DEFAULT 0
+                        CHECK (can_manage_extra_classes IN (0, 1)),
+
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+                    PRIMARY KEY (
+                        parent_user_id,
+                        student_id
+                    ),
+
+                    FOREIGN KEY (parent_user_id)
+                        REFERENCES users(user_id)
+                        ON DELETE CASCADE,
+
+                    FOREIGN KEY (student_id)
+                        REFERENCES student_profiles(id)
+                        ON DELETE CASCADE
+                )
+            """)
+
+            await db.execute("""
+                CREATE INDEX IF NOT EXISTS idx_parent_student_parent
+                ON parent_student_settings(parent_user_id)
+            """)
+
+            await db.execute("""
+                CREATE INDEX IF NOT EXISTS idx_parent_student_student
+                ON parent_student_settings(student_id)
+            """)
+            
+            await db.execute("""
                 CREATE TABLE IF NOT EXISTS parent_child_settings (
                     parent_id INTEGER NOT NULL,
                     child_id INTEGER NOT NULL,
@@ -104,6 +199,47 @@ class Database:
                 )
             """)
 
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS student_claim_invites (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+                    token TEXT NOT NULL UNIQUE,
+
+                    student_id INTEGER NOT NULL,
+                    created_by_user_id INTEGER NOT NULL,
+
+                    expires_at TEXT NOT NULL,
+
+                    is_revoked INTEGER NOT NULL DEFAULT 0
+                        CHECK (is_revoked IN (0, 1)),
+
+                    used_by_user_id INTEGER,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    used_at TEXT,
+
+                    FOREIGN KEY (student_id)
+                        REFERENCES student_profiles(id)
+                        ON DELETE CASCADE,
+
+                    FOREIGN KEY (created_by_user_id)
+                        REFERENCES users(user_id)
+                        ON DELETE CASCADE,
+
+                    FOREIGN KEY (used_by_user_id)
+                        REFERENCES users(user_id)
+                        ON DELETE SET NULL
+                )
+            """)
+
+            await db.execute("""
+                CREATE INDEX IF NOT EXISTS idx_student_claim_invites_student
+                ON student_claim_invites(
+                    student_id,
+                    is_revoked,
+                    expires_at
+                )
+            """)
+            
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS family_invites (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -209,6 +345,7 @@ class Database:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     family_id INTEGER NOT NULL,
                     user_id INTEGER NOT NULL,
+                    student_id INTEGER,
 
                     day_of_week INTEGER NOT NULL
                         CHECK (day_of_week BETWEEN 1 AND 7),
@@ -223,7 +360,8 @@ class Database:
                     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
                     FOREIGN KEY (family_id) REFERENCES families(id) ON DELETE CASCADE,
-                    FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+                    FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
+                    FOREIGN KEY (student_id) REFERENCES student_profiles(id) ON DELETE CASCADE
                 )
             """)
 

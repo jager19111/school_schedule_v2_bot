@@ -9,7 +9,7 @@ from services.profiles_service import ProfileService
 from bot.utils.ui_renderer import UIRenderer
 from bot.keyboards.keyboard import Keyboards
 from core.models.dto import ChildrenListDTO, ClassListDTO, GroupListDTO
-
+from services.students_service import StudentsService
 
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
@@ -136,6 +136,9 @@ class SettingsStates(StatesGroup):
     waiting_for_my_time = State()
     waiting_for_child_time = State()
     waiting_for_watch_group = State()
+    
+    waiting_for_virtual_student_name = State()
+    waiting_for_virtual_student_group = State()
 
 
 
@@ -1676,7 +1679,59 @@ async def toggle_my_notifications(
 
     await callback.answer("Настройки уведомлений обновлены.")
     
-        
+async def _show_family_students_menu(
+    *,
+    callback: CallbackQuery,
+    profile_service: ProfileService,
+    students_service: StudentsService,
+) -> None:
+    """
+    Рендерит список student_profiles, доступных текущему взрослому.
+    """
+    user_dto = await profile_service.get_user_profile_dto(
+        callback.from_user.id,
+    )
+
+    if user_dto.role not in ("parent", "observer"):
+        await _safe_callback_answer(
+            callback,
+            "Раздел учеников доступен только взрослым.",
+            show_alert=True,
+        )
+        return
+
+    if not user_dto.family_id:
+        await _safe_callback_answer(
+            callback,
+            "Вы не состоите в семье.",
+            show_alert=True,
+        )
+        return
+
+    is_family_admin = await profile_service.is_family_admin(
+        user_id=callback.from_user.id,
+        family_id=user_dto.family_id,
+    )
+
+    students = await students_service.get_students_for_adult(
+        adult_user_id=callback.from_user.id,
+    )
+
+    text = UIRenderer.render_family_students(
+        students,
+    )
+
+    keyboard = Keyboards.get_family_students_kb(
+        students,
+        is_family_admin=is_family_admin,
+    )
+
+    await _safe_edit_text(
+        callback.message,
+        text,
+        reply_markup=keyboard,
+    )
+            
     # ================= 5. ВВОД ВРЕМЕНИ СВОДКИ (FSM) =================
 
 @router.callback_query(F.data == "settings:my_summary_time")
@@ -2767,4 +2822,419 @@ async def delete_watch_target(
     await _safe_callback_answer(
         callback,
         "Класс удалён.",
+    )
+    
+# Виртуальный ученик
+
+@router.callback_query(F.data == "family:students")
+async def show_family_students(
+    callback: CallbackQuery,
+    profile_service: ProfileService,
+    students_service: StudentsService,
+) -> None:
+    await _show_family_students_menu(
+        callback=callback,
+        profile_service=profile_service,
+        students_service=students_service,
+    )
+
+    await _safe_callback_answer(callback)
+    
+@router.callback_query(F.data == "student:add")
+async def start_add_virtual_student(
+    callback: CallbackQuery,
+    state: FSMContext,
+    profile_service: ProfileService,
+) -> None:
+    user_dto = await profile_service.get_user_profile_dto(
+        callback.from_user.id,
+    )
+
+    if not user_dto.family_id:
+        await _safe_callback_answer(
+            callback,
+            "Вы не состоите в семье.",
+            show_alert=True,
+        )
+        return
+
+    is_family_admin = await profile_service.is_family_admin(
+        user_id=callback.from_user.id,
+        family_id=user_dto.family_id,
+    )
+
+    if not is_family_admin:
+        await _safe_callback_answer(
+            callback,
+            "Только администратор семьи может добавлять учеников.",
+            show_alert=True,
+        )
+        return
+
+    await state.update_data(
+        virtual_student_admin_id=callback.from_user.id,
+        virtual_student_family_id=user_dto.family_id,
+    )
+
+    await _safe_edit_text(
+        callback.message,
+        UIRenderer.render_virtual_student_name_prompt(),
+        reply_markup=Keyboards.get_cancel_keyboard(),
+    )
+
+    await state.set_state(
+        SettingsStates.waiting_for_virtual_student_name,
+    )
+
+    await _safe_callback_answer(callback)
+    
+@router.message(
+    SettingsStates.waiting_for_virtual_student_name
+)
+async def process_virtual_student_name(
+    message: Message,
+    state: FSMContext,
+    schedule_service: ScheduleService,
+) -> None:
+    name = message.text.strip()
+
+    if not name:
+        await message.answer(
+            "❌ Введите имя ученика."
+        )
+        return
+
+    if len(name) > 64:
+        await message.answer(
+            "❌ Имя слишком длинное. Используйте до 64 символов."
+        )
+        return
+
+    data = await state.get_data()
+
+    if data.get("virtual_student_admin_id") != message.from_user.id:
+        await state.clear()
+
+        await message.answer(
+            "❌ Состояние добавления устарело. "
+            "Откройте управление семьёй заново."
+        )
+        return
+
+    class_dto = await schedule_service.get_classes_list()
+
+    await state.update_data(
+        virtual_student_name=name,
+    )
+
+    await message.answer(
+        "🎓 <b>Выберите класс ученика</b>",
+        reply_markup=Keyboards.get_student_class_selection_kb(
+            class_dto,
+        ),
+        parse_mode="HTML",
+    )
+
+    await state.set_state(
+        SettingsStates.waiting_for_virtual_student_group,
+    )
+    
+@router.callback_query(
+    SettingsStates.waiting_for_virtual_student_group,
+    F.data.startswith("student:class:"),
+)
+async def select_virtual_student_class(
+    callback: CallbackQuery,
+    state: FSMContext,
+    schedule_service: ScheduleService,
+) -> None:
+    try:
+        class_id = callback.data.split(":")[2]
+    except IndexError:
+        await _safe_callback_answer(
+            callback,
+            "Некорректный класс.",
+            show_alert=True,
+        )
+        return
+
+    data = await state.get_data()
+
+    if data.get("virtual_student_admin_id") != callback.from_user.id:
+        await state.clear()
+
+        await _safe_callback_answer(
+            callback,
+            "Состояние добавления устарело.",
+            show_alert=True,
+        )
+        return
+
+    groups_dto = await schedule_service.get_groups_list()
+
+    await state.update_data(
+        virtual_student_class_id=class_id,
+    )
+
+    await _safe_edit_text(
+        callback.message,
+        (
+            "👥 <b>Выберите группу ученика</b>\n\n"
+            "Если группа неизвестна, выберите «Весь класс»."
+        ),
+        reply_markup=Keyboards.get_student_group_selection_kb(
+            groups_dto,
+        ),
+    )
+
+    await _safe_callback_answer(callback)
+    
+@router.callback_query(
+    SettingsStates.waiting_for_virtual_student_group,
+    F.data.startswith("student:group:"),
+)
+async def create_virtual_student(
+    callback: CallbackQuery,
+    state: FSMContext,
+    students_service: StudentsService,
+    profile_service: ProfileService,
+) -> None:
+    try:
+        group_id = callback.data.split(":")[2]
+    except IndexError:
+        await _safe_callback_answer(
+            callback,
+            "Некорректная группа.",
+            show_alert=True,
+        )
+        return
+
+    data = await state.get_data()
+
+    admin_user_id = data.get("virtual_student_admin_id")
+    family_id = data.get("virtual_student_family_id")
+    name = data.get("virtual_student_name")
+    class_id = data.get("virtual_student_class_id")
+
+    if (
+        admin_user_id != callback.from_user.id
+        or not family_id
+        or not name
+        or not class_id
+    ):
+        await state.clear()
+
+        await _safe_callback_answer(
+            callback,
+            "Состояние добавления устарело.",
+            show_alert=True,
+        )
+        return
+
+    response = await students_service.create_virtual_student(
+        admin_user_id=admin_user_id,
+        family_id=family_id,
+        name=name,
+        class_id=class_id,
+        group_id=group_id,
+    )
+
+    await state.clear()
+
+    if not response.success:
+        await _safe_callback_answer(
+            callback,
+            "Не удалось добавить ученика. "
+            "Проверьте права администратора семьи.",
+            show_alert=True,
+        )
+        return
+
+    await _show_family_students_menu(
+        callback=callback,
+        profile_service=profile_service,
+        students_service=students_service,
+    )
+
+    await _safe_callback_answer(
+        callback,
+        "✅ Ученик добавлен.",
+    )
+    
+@router.callback_query(
+    F.data.startswith("student:show:")
+)
+async def show_student_details(
+    callback: CallbackQuery,
+    students_service: StudentsService,
+    schedule_service: ScheduleService,
+) -> None:
+    try:
+        student_id = int(callback.data.split(":")[2])
+    except (IndexError, ValueError):
+        await _safe_callback_answer(
+            callback,
+            "Некорректный идентификатор ученика.",
+            show_alert=True,
+        )
+        return
+
+    result = await students_service.get_student_for_adult(
+        adult_user_id=callback.from_user.id,
+        student_id=student_id,
+    )
+
+    if result is None:
+        await _safe_callback_answer(
+            callback,
+            "Ученик не найден или у вас нет доступа.",
+            show_alert=True,
+        )
+        return
+
+    student, access = result
+
+    classes_dto = await schedule_service.get_classes_list()
+    groups_dto = await schedule_service.get_groups_list()
+
+    class_name = classes_dto.classes.get(
+        student.class_id,
+        student.class_id,
+    )
+
+    group_name = (
+        "Весь класс"
+        if student.group_id == "ALL"
+        else groups_dto.groups.get(
+            student.group_id,
+            f"Группа {student.group_id}",
+        )
+    )
+
+    text = UIRenderer.render_student_details(
+        student=student,
+        class_name=class_name,
+        group_name=group_name,
+    )
+
+    keyboard = Keyboards.get_student_details_kb(
+        student_id=student.id,
+        telegram_user_id=student.telegram_user_id,
+        is_family_admin=access.is_family_admin,
+    )
+
+    await _safe_edit_text(
+        callback.message,
+        text,
+        reply_markup=keyboard,
+    )
+
+    await _safe_callback_answer(callback)
+    
+@router.callback_query(
+    F.data.startswith("student:delete:")
+)
+async def confirm_delete_virtual_student(
+    callback: CallbackQuery,
+    students_service: StudentsService,
+) -> None:
+    try:
+        student_id = int(callback.data.split(":")[2])
+    except (IndexError, ValueError):
+        await _safe_callback_answer(
+            callback,
+            "Некорректный идентификатор ученика.",
+            show_alert=True,
+        )
+        return
+
+    result = await students_service.get_student_for_adult(
+        adult_user_id=callback.from_user.id,
+        student_id=student_id,
+    )
+
+    if result is None:
+        await _safe_callback_answer(
+            callback,
+            "Ученик не найден или у вас нет доступа.",
+            show_alert=True,
+        )
+        return
+
+    student, access = result
+
+    if not access.is_family_admin:
+        await _safe_callback_answer(
+            callback,
+            "Только администратор семьи может удалять учеников.",
+            show_alert=True,
+        )
+        return
+
+    if student.telegram_user_id is not None:
+        await _safe_callback_answer(
+            callback,
+            "Нельзя удалить ученика с подключённым Telegram. "
+            "Сначала потребуется отдельный flow отвязки профиля.",
+            show_alert=True,
+        )
+        return
+
+    text = UIRenderer.render_virtual_student_delete_confirmation(
+        student,
+    )
+
+    keyboard = Keyboards.get_student_delete_confirmation_kb(
+        student.id,
+    )
+
+    await _safe_edit_text(
+        callback.message,
+        text,
+        reply_markup=keyboard,
+    )
+
+    await _safe_callback_answer(callback)
+    
+@router.callback_query(
+    F.data.startswith("student:delete_confirm:")
+)
+async def delete_virtual_student(
+    callback: CallbackQuery,
+    students_service: StudentsService,
+    profile_service: ProfileService,
+) -> None:
+    try:
+        student_id = int(callback.data.split(":")[2])
+    except (IndexError, ValueError):
+        await _safe_callback_answer(
+            callback,
+            "Некорректный идентификатор ученика.",
+            show_alert=True,
+        )
+        return
+
+    response = await students_service.delete_virtual_student(
+        admin_user_id=callback.from_user.id,
+        student_id=student_id,
+    )
+
+    if not response.success:
+        await _safe_callback_answer(
+            callback,
+            "Не удалось удалить ученика. "
+            "Возможно, Telegram уже подключён или у вас нет прав.",
+            show_alert=True,
+        )
+        return
+
+    await _show_family_students_menu(
+        callback=callback,
+        profile_service=profile_service,
+        students_service=students_service,
+    )
+
+    await _safe_callback_answer(
+        callback,
+        "🗑 Ученик удалён.",
     )

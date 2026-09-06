@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone, date
 from core.models.dto import (ClassListDTO, FamilyCreatedDTO, AdminStatsDTO, DayScheduleDTO, ChildrenListDTO, ExtraClassListDTO,
                              WeekSummaryDTO, FullWeekScheduleDTO, UserProfileDTO, FamilyMemberDTO,
                              MorningSummaryDTO, ChangeReminderDTO, LessonReminderDTO, ParentChildNotificationSettingsDTO, AdultExtraClassesPermissionDTO,
-                             ProfileResetImpactDTO, FamilyInviteDTO, ScheduleWatchTargetDTO,
+                             ProfileResetImpactDTO, FamilyInviteDTO, ScheduleWatchTargetDTO, StudentProfileDTO,
 )
 
 class UIRenderer:
@@ -1045,3 +1045,95 @@ class UIRenderer:
             "Он используется только для вашего самостоятельного "
             "просмотра расписания."
         )
+        
+        
+# Виртуальный ученик
+    @staticmethod
+    def render_family_students(
+        students: list[StudentProfileDTO],
+    ) -> str:
+        if not students:
+            return (
+                "🧒 <b>Ученики семьи</b>\n\n"
+                "В семье пока нет профилей учеников.\n\n"
+                "Администратор семьи может добавить ученика "
+                "с Telegram или без Telegram."
+            )
+
+        lines = [
+            "🧒 <b>Ученики семьи</b>",
+            "",
+            "Выберите ученика для просмотра профиля.",
+            "",
+        ]
+
+        for student in students:
+            name = UIRenderer.escape_html(
+                student.name,
+            )
+
+            telegram_status = (
+                "📱 Telegram подключён"
+                if student.telegram_user_id is not None
+                else "🧒 Telegram пока не подключён"
+            )
+
+            group_text = (
+                "Весь класс"
+                if student.group_id == "ALL"
+                else f"Группа {student.group_id}"
+            )
+
+            lines.append(
+                f"• <b>{name}</b>\n"
+                f"  🎓 Класс: {student.class_id}\n"
+                f"  👥 {group_text}\n"
+                f"  {telegram_status}\n"
+            )
+
+        return "\n".join(lines)
+    
+    @staticmethod
+    def render_student_details(
+        student: StudentProfileDTO,
+        class_name: str,
+        group_name: str,
+    ) -> str:
+        telegram_text = (
+            "📱 <b>Telegram подключён</b>"
+            if student.telegram_user_id is not None
+            else "🧒 <b>Telegram пока не подключён</b>"
+        )
+
+        return (
+            "🧒 <b>Профиль ученика</b>\n\n"
+            f"Имя: <b>{UIRenderer.escape_html(student.name)}</b>\n"
+            f"Класс: <b>{UIRenderer.escape_html(class_name)}</b>\n"
+            f"Группа: <b>{UIRenderer.escape_html(group_name)}</b>\n"
+            f"{telegram_text}\n\n"
+            "Профиль ученика существует независимо от Telegram-аккаунта."
+        )
+        
+    @staticmethod
+    def render_virtual_student_name_prompt() -> str:
+        return (
+            "🧒 <b>Добавить ученика без Telegram</b>\n\n"
+            "Введите имя ребёнка."
+        )
+        
+    @staticmethod
+    def render_virtual_student_delete_confirmation(
+        student: StudentProfileDTO,
+    ) -> str:
+        return (
+            "⚠️ <b>Удалить ученика?</b>\n\n"
+            f"Ученик: <b>{UIRenderer.escape_html(student.name)}</b>\n"
+            f"Класс: <b>{student.class_id}</b>\n\n"
+            "Будут удалены:\n"
+            "• профиль ученика;\n"
+            "• его дополнительные занятия;\n"
+            "• настройки уведомлений взрослых.\n\n"
+            "Telegram-профиль отсутствует, поэтому этот ученик "
+            "может быть удалён полностью."
+        )
+        
