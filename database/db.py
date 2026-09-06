@@ -164,7 +164,46 @@ class Database:
                     expires_at
                 )
             """)
-            
+
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS schedule_watch_targets (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+                    owner_user_id INTEGER NOT NULL,
+
+                    class_id TEXT NOT NULL,
+                    group_id TEXT NOT NULL DEFAULT 'ALL',
+
+                    title TEXT,
+
+                    is_enabled INTEGER NOT NULL DEFAULT 1
+                        CHECK (is_enabled IN (0, 1)),
+                    receive_schedule_changes INTEGER NOT NULL DEFAULT 1
+                        CHECK (receive_schedule_changes IN (0, 1)),
+                        
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+                    FOREIGN KEY (owner_user_id)
+                        REFERENCES users(user_id)
+                        ON DELETE CASCADE,
+
+                    UNIQUE (
+                        owner_user_id,
+                        class_id,
+                        group_id
+                    )
+                )
+            """)
+
+            await db.execute("""
+                CREATE INDEX IF NOT EXISTS idx_watch_targets_owner
+                ON schedule_watch_targets(
+                    owner_user_id,
+                    is_enabled
+                )
+            """)
+                        
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS extra_classes (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,

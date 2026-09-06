@@ -1,5 +1,5 @@
 import logging
-from datetime import timedelta
+from typing import Optional
 
 from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest
@@ -8,8 +8,10 @@ from aiogram.types import CallbackQuery, Message
 
 from bot.keyboards.keyboard import Keyboards
 from bot.utils.ui_renderer import UIRenderer
+from core.models.dto import ScheduleViewTargetDTO
 from services.profiles_service import ProfileService
 from services.schedule_service import ScheduleService
+from services.watch_targets_service import WatchTargetsService
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -21,10 +23,7 @@ async def _safe_edit_schedule_message(
     keyboard,
 ) -> None:
     """
-    Безопасно обновляет schedule-message.
-
-    TelegramBadRequest «message is not modified» не является ошибкой
-    бизнес-логики и не должен ломать navigation flow.
+    Безопасно обновляет Schedule Hub message.
     """
     try:
         await callback.message.edit_text(
@@ -39,100 +38,194 @@ async def _safe_edit_schedule_message(
         )
 
 
-async def _get_schedule_target(
+async def _get_schedule_targets(
     *,
     actor_user_id: int,
-    target_user_id: int,
     profile_service: ProfileService,
-):
+    watch_targets_service: WatchTargetsService,
+) -> list[ScheduleViewTargetDTO]:
     """
-    Возвращает DTO целевого ребёнка после проверки доступа.
+    Возвращает доступные пользователю цели Schedule Hub.
 
-    - ребёнок может открыть только себя;
-    - parent/observer может открыть только ребёнка из parent_child_settings.
+    Parent/observer получают:
+    - разрешённых детей из family relationship;
+    - собственные включённые watch targets.
+
+    Child получает только собственный профиль.
     """
     actor_dto = await profile_service.get_user_profile_dto(
         actor_user_id,
     )
 
-    if actor_user_id == target_user_id:
-        if actor_dto.role != "child":
+    targets: list[ScheduleViewTargetDTO] = []
+
+    if actor_dto.role == "child" and actor_dto.class_id:
+        targets.append(
+            ScheduleViewTargetDTO(
+                kind="child",
+                target_id=actor_user_id,
+                class_id=actor_dto.class_id,
+                group_id=actor_dto.group_id or "ALL",
+                title=actor_dto.name or "Моё расписание",
+                child_user_id=actor_user_id,
+            )
+        )
+
+        return targets
+
+    if actor_dto.role in ("parent", "observer"):
+        children = await profile_service.get_children_for_parent(
+            actor_user_id,
+        )
+
+        for child in children:
+            if not child.class_id:
+                continue
+
+            targets.append(
+                ScheduleViewTargetDTO(
+                    kind="child",
+                    target_id=child.user_id,
+                    class_id=child.class_id,
+                    group_id=child.group_id or "ALL",
+                    title=child.name or (
+                        f"Ученик {child.user_id}"
+                    ),
+                    child_user_id=child.user_id,
+                )
+            )
+
+    watch_targets = await watch_targets_service.get_targets(
+        owner_user_id=actor_user_id,
+        enabled_only=True,
+    )
+
+    for watch_target in watch_targets:
+        targets.append(
+            ScheduleViewTargetDTO(
+                kind="watch",
+                target_id=watch_target.id,
+                class_id=watch_target.class_id,
+                group_id=watch_target.group_id,
+                title=watch_target.title or (
+                    f"Класс {watch_target.class_id}"
+                ),
+                child_user_id=None,
+                is_enabled=watch_target.is_enabled,
+            )
+        )
+
+    return targets
+
+
+async def _resolve_schedule_target(
+    *,
+    actor_user_id: int,
+    target_kind: str,
+    target_id: int,
+    profile_service: ProfileService,
+    watch_targets_service: WatchTargetsService,
+) -> Optional[ScheduleViewTargetDTO]:
+    """
+    Проверяет доступ к target и возвращает нормализованную цель.
+
+    Это security boundary для callback/FSM.
+    """
+    if target_kind == "watch":
+        watch_target = await watch_targets_service.get_target(
+            owner_user_id=actor_user_id,
+            target_id=target_id,
+        )
+
+        if watch_target is None:
             return None
 
-        return actor_dto
+        if not watch_target.is_enabled:
+            return None
+
+        return ScheduleViewTargetDTO(
+            kind="watch",
+            target_id=watch_target.id,
+            class_id=watch_target.class_id,
+            group_id=watch_target.group_id,
+            title=watch_target.title or (
+                f"Класс {watch_target.class_id}"
+            ),
+            child_user_id=None,
+            is_enabled=True,
+        )
+
+    if target_kind != "child":
+        return None
+
+    actor_dto = await profile_service.get_user_profile_dto(
+        actor_user_id,
+    )
+
+    if actor_user_id == target_id:
+        if actor_dto.role != "child" or not actor_dto.class_id:
+            return None
+
+        return ScheduleViewTargetDTO(
+            kind="child",
+            target_id=target_id,
+            class_id=actor_dto.class_id,
+            group_id=actor_dto.group_id or "ALL",
+            title=actor_dto.name or "Моё расписание",
+            child_user_id=target_id,
+        )
 
     if actor_dto.role not in ("parent", "observer"):
         return None
 
     has_access = await profile_service.parent_can_access_child(
         parent_user_id=actor_user_id,
-        child_user_id=target_user_id,
+        child_user_id=target_id,
     )
 
     if not has_access:
         return None
 
-    target_dto = await profile_service.get_user_profile_dto(
-        target_user_id,
+    child_dto = await profile_service.get_user_profile_dto(
+        target_id,
     )
 
-    if target_dto.role != "child":
+    if child_dto.role != "child" or not child_dto.class_id:
         return None
 
-    return target_dto
-
-
-async def _has_multiple_children(
-    *,
-    actor_user_id: int,
-    profile_service: ProfileService,
-) -> bool:
-    actor_dto = await profile_service.get_user_profile_dto(
-        actor_user_id,
+    return ScheduleViewTargetDTO(
+        kind="child",
+        target_id=target_id,
+        class_id=child_dto.class_id,
+        group_id=child_dto.group_id or "ALL",
+        title=child_dto.name or f"Ученик {target_id}",
+        child_user_id=target_id,
     )
-
-    if actor_dto.role not in ("parent", "observer"):
-        return False
-
-    children = await profile_service.get_children_for_parent(
-        actor_user_id,
-    )
-
-    return len(children) > 1
 
 
 async def _render_day(
     *,
     actor_user_id: int,
-    target_user_id: int,
+    target: ScheduleViewTargetDTO,
     date_iso: str,
     profile_service: ProfileService,
     schedule_service: ScheduleService,
+    watch_targets_service: WatchTargetsService,
 ):
     """
-    Возвращает готовые text и keyboard для дневного экрана.
+    Строит дневное расписание для child или watch target.
     """
-    target_dto = await _get_schedule_target(
-        actor_user_id=actor_user_id,
-        target_user_id=target_user_id,
-        profile_service=profile_service,
-    )
-
-    if target_dto is None or not target_dto.class_id:
-        return None, None
-
     day_dto = await schedule_service.get_daily_schedule_for_child(
-        class_id=target_dto.class_id,
-        group_id=target_dto.group_id,
+        class_id=target.class_id,
+        group_id=target.group_id,
         date_iso=date_iso,
-        user_id=target_user_id,
+        user_id=target.child_user_id,
     )
 
-    child_name = (
-        target_dto.name
-        if target_user_id != actor_user_id
-        else None
-    )
+    child_name = None
+
+    if target.kind == "child" and target.target_id != actor_user_id:
+        child_name = target.title
 
     rendered = UIRenderer.render_child_day_schedule(
         day_dto,
@@ -141,12 +234,22 @@ async def _render_day(
 
     text = rendered[0] if isinstance(rendered, tuple) else rendered
 
+    if target.kind == "watch":
+        text = (
+            "🎓 <b>Отслеживаемый класс</b>\n"
+            f"📌 {UIRenderer.escape_html(target.title)}\n\n"
+            f"{text}"
+        )
+
+    available_targets = await _get_schedule_targets(
+        actor_user_id=actor_user_id,
+        profile_service=profile_service,
+        watch_targets_service=watch_targets_service,
+    )
+
     keyboard = Keyboards.get_schedule_day_kb(
         current_date_iso=date_iso,
-        show_child_switch=await _has_multiple_children(
-            actor_user_id=actor_user_id,
-            profile_service=profile_service,
-        ),
+        show_target_switch=len(available_targets) > 1,
     )
 
     return text, keyboard
@@ -155,199 +258,186 @@ async def _render_day(
 async def _render_week(
     *,
     actor_user_id: int,
-    target_user_id: int,
+    target: ScheduleViewTargetDTO,
     week_start_iso: str,
+    is_full: bool,
     profile_service: ProfileService,
     schedule_service: ScheduleService,
-    is_full: bool,
+    watch_targets_service: WatchTargetsService,
 ):
     """
-    Возвращает готовые text и keyboard для краткой или полной недели.
+    Строит краткое или подробное недельное расписание.
     """
-    target_dto = await _get_schedule_target(
-        actor_user_id=actor_user_id,
-        target_user_id=target_user_id,
-        profile_service=profile_service,
-    )
-
-    if target_dto is None or not target_dto.class_id:
-        return None, None
-
     if is_full:
-        dto = await schedule_service.get_full_week_schedule(
-            class_id=target_dto.class_id,
-            group_id=target_dto.group_id,
+        week_dto = await schedule_service.get_full_week_schedule(
+            class_id=target.class_id,
+            group_id=target.group_id,
             week_start_iso=week_start_iso,
-            user_id=target_user_id,
+            user_id=target.child_user_id,
         )
 
-        rendered = UIRenderer.render_full_week_schedule(dto)
+        rendered = UIRenderer.render_full_week_schedule(
+            week_dto,
+        )
     else:
-        dto = await schedule_service.get_week_schedule_summary(
-            class_id=target_dto.class_id,
-            group_id=target_dto.group_id,
+        week_dto = await schedule_service.get_week_schedule_summary(
+            class_id=target.class_id,
+            group_id=target.group_id,
             week_start_iso=week_start_iso,
-            user_id=target_user_id,
+            user_id=target.child_user_id,
         )
 
-        rendered = UIRenderer.render_week_summary(dto)
+        rendered = UIRenderer.render_week_summary(
+            week_dto,
+        )
 
     text = rendered[0] if isinstance(rendered, tuple) else rendered
 
-    if target_user_id != actor_user_id and target_dto.name:
+    if target.kind == "watch":
         text = (
-            f"👤 <b>{UIRenderer.escape_html(target_dto.name)}</b>\n\n"
+            "🎓 <b>Отслеживаемый класс</b>\n"
+            f"📌 {UIRenderer.escape_html(target.title)}\n\n"
             f"{text}"
         )
 
+    elif target.target_id != actor_user_id:
+        text = (
+            f"🧒 <b>{UIRenderer.escape_html(target.title)}</b>\n\n"
+            f"{text}"
+        )
+
+    available_targets = await _get_schedule_targets(
+        actor_user_id=actor_user_id,
+        profile_service=profile_service,
+        watch_targets_service=watch_targets_service,
+    )
+
     keyboard = Keyboards.get_schedule_week_kb(
         week_start_iso=week_start_iso,
-        show_child_switch=await _has_multiple_children(
-            actor_user_id=actor_user_id,
-            profile_service=profile_service,
-        ),
+        show_target_switch=len(available_targets) > 1,
         is_full=is_full,
     )
 
     return text, keyboard
 
 
-async def _open_schedule_children_selector(
+async def _save_schedule_target_to_fsm(
+    *,
+    state: FSMContext,
+    actor_user_id: int,
+    target: ScheduleViewTargetDTO,
+) -> None:
+    await state.update_data(
+        schedule_actor_user_id=actor_user_id,
+        schedule_target_kind=target.kind,
+        schedule_target_id=target.target_id,
+    )
+
+
+async def _get_fsm_schedule_target(
     *,
     callback: CallbackQuery,
+    state: FSMContext,
     profile_service: ProfileService,
-) -> None:
+    watch_targets_service: WatchTargetsService,
+) -> Optional[ScheduleViewTargetDTO]:
     """
-    Показывает взрослому список детей для Schedule Hub.
+    Загружает target из FSM и повторно проверяет доступ.
     """
-    children = await profile_service.get_children_for_parent(
-        callback.from_user.id,
+    data = await state.get_data()
+
+    actor_user_id = callback.from_user.id
+
+    if data.get("schedule_actor_user_id") != actor_user_id:
+        return None
+
+    target_kind = data.get("schedule_target_kind")
+    target_id = data.get("schedule_target_id")
+
+    if not target_kind or not target_id:
+        return None
+
+    return await _resolve_schedule_target(
+        actor_user_id=actor_user_id,
+        target_kind=target_kind,
+        target_id=target_id,
+        profile_service=profile_service,
+        watch_targets_service=watch_targets_service,
     )
 
-    if not children:
-        await callback.answer(
-            "У вас нет привязанных детей.",
-            show_alert=True,
-        )
-        return
 
-    text = (
-        "👥 <b>Выберите ребёнка для просмотра расписания</b>"
-    )
-
-    keyboard = Keyboards.get_schedule_children_kb(
-        children,
-    )
-
-    await _safe_edit_schedule_message(
-        callback,
-        text,
-        keyboard,
-    )
-
-    await callback.answer()
-
-
-@router.message(F.text == "📅 Моё расписание")
+@router.message(F.text.in_({
+    "📅 Моё расписание",
+    "📅 Мое расписание",
+}))
 async def open_schedule_hub(
     message: Message,
     state: FSMContext,
     profile_service: ProfileService,
     schedule_service: ScheduleService,
+    watch_targets_service: WatchTargetsService,
 ) -> None:
     """
-    Единственная точка входа в личное расписание.
+    Единственная точка входа в расписание.
 
-    Ребёнок открывает собственное расписание.
-    Parent/observer с одним ребёнком открывает его сразу.
-    Parent/observer с несколькими детьми выбирает ребёнка.
+    Если доступна одна цель — открывается сразу.
+    Если доступно несколько целей — пользователь выбирает.
     """
     actor_user_id = message.from_user.id
 
-    actor_dto = await profile_service.get_user_profile_dto(
-        actor_user_id,
-    )
-
-    if actor_dto.role == "child":
-        if not actor_dto.class_id:
-            await message.answer(
-                UIRenderer.render_unregistered_error()
-            )
-            return
-
-        target_user_id = actor_user_id
-
-    elif actor_dto.role in ("parent", "observer"):
-        children = await profile_service.get_children_for_parent(
-            actor_user_id,
-        )
-
-        if not children:
-            await message.answer(
-                "У вас нет привязанных детей. "
-                "Добавьте ребёнка через настройки семьи."
-            )
-            return
-
-        if len(children) > 1:
-            await state.update_data(
-                schedule_actor_user_id=actor_user_id,
-                schedule_target_user_id=None,
-            )
-
-            await message.answer(
-                "👥 <b>Выберите ребёнка для просмотра расписания</b>",
-                reply_markup=Keyboards.get_schedule_children_kb(
-                    children,
-                ),
-                parse_mode="HTML",
-            )
-            return
-
-        target_user_id = children[0].user_id
-
-    else:
-        await message.answer(
-            "Расписание для этой роли пока недоступно."
-        )
-        return
-
-    target_dto = await _get_schedule_target(
+    targets = await _get_schedule_targets(
         actor_user_id=actor_user_id,
-        target_user_id=target_user_id,
         profile_service=profile_service,
+        watch_targets_service=watch_targets_service,
     )
 
-    if target_dto is None or not target_dto.class_id:
+    if not targets:
         await message.answer(
-            "Профиль ребёнка ещё не настроен: не выбран класс."
+            "У вас пока нет доступных учеников или "
+            "отслеживаемых классов.\n\n"
+            "Добавьте класс через:\n"
+            "⚙️ Настройки → 🎓 Мои отслеживаемые классы."
         )
         return
 
-    await state.update_data(
-        schedule_actor_user_id=actor_user_id,
-        schedule_target_user_id=target_user_id,
+    if len(targets) > 1:
+        await state.update_data(
+            schedule_actor_user_id=actor_user_id,
+            schedule_target_kind=None,
+            schedule_target_id=None,
+        )
+
+        await message.answer(
+            "🎯 <b>Выберите расписание</b>",
+            reply_markup=Keyboards.get_schedule_targets_kb(
+                targets,
+            ),
+            parse_mode="HTML",
+        )
+        return
+
+    target = targets[0]
+
+    await _save_schedule_target_to_fsm(
+        state=state,
+        actor_user_id=actor_user_id,
+        target=target,
     )
 
     target_date_iso = await schedule_service.get_smart_target_date(
-        class_id=target_dto.class_id,
-        group_id=target_dto.group_id,
-        user_id=target_user_id,
+        class_id=target.class_id,
+        group_id=target.group_id,
+        user_id=target.child_user_id,
     )
 
     text, keyboard = await _render_day(
         actor_user_id=actor_user_id,
-        target_user_id=target_user_id,
+        target=target,
         date_iso=target_date_iso,
         profile_service=profile_service,
         schedule_service=schedule_service,
+        watch_targets_service=watch_targets_service,
     )
-
-    if text is None:
-        await message.answer(
-            "Не удалось открыть расписание."
-        )
-        return
 
     await message.answer(
         text,
@@ -356,67 +446,103 @@ async def open_schedule_hub(
     )
 
 
-@router.callback_query(F.data.startswith("sched:child:"))
-async def select_schedule_child(
+@router.callback_query(F.data == "sched:targets")
+async def show_schedule_targets(
+    callback: CallbackQuery,
+    state: FSMContext,
+    profile_service: ProfileService,
+    watch_targets_service: WatchTargetsService,
+) -> None:
+    """
+    Показывает selector цели из day/week schedule screen.
+    """
+    targets = await _get_schedule_targets(
+        actor_user_id=callback.from_user.id,
+        profile_service=profile_service,
+        watch_targets_service=watch_targets_service,
+    )
+
+    if not targets:
+        await callback.answer(
+            "Нет доступных целей расписания.",
+            show_alert=True,
+        )
+        return
+
+    await state.update_data(
+        schedule_actor_user_id=callback.from_user.id,
+        schedule_target_kind=None,
+        schedule_target_id=None,
+    )
+
+    await _safe_edit_schedule_message(
+        callback,
+        "🎯 <b>Выберите расписание</b>",
+        Keyboards.get_schedule_targets_kb(targets),
+    )
+
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("sched:target:"))
+async def select_schedule_target(
     callback: CallbackQuery,
     state: FSMContext,
     profile_service: ProfileService,
     schedule_service: ScheduleService,
+    watch_targets_service: WatchTargetsService,
 ) -> None:
     """
-    Взрослый выбирает ребёнка для единого Schedule Hub.
+    Выбирает child или watch target.
     """
     try:
-        target_user_id = int(
-            callback.data.split(":")[2]
-        )
+        _, _, target_kind, target_id_raw = callback.data.split(":")
+
+        target_id = int(target_id_raw)
     except (IndexError, ValueError):
         await callback.answer(
-            "Некорректный идентификатор ребёнка.",
+            "Некорректная цель расписания.",
             show_alert=True,
         )
         return
 
     actor_user_id = callback.from_user.id
 
-    target_dto = await _get_schedule_target(
+    target = await _resolve_schedule_target(
         actor_user_id=actor_user_id,
-        target_user_id=target_user_id,
+        target_kind=target_kind,
+        target_id=target_id,
         profile_service=profile_service,
+        watch_targets_service=watch_targets_service,
     )
 
-    if target_dto is None or not target_dto.class_id:
+    if target is None:
         await callback.answer(
-            "У вас нет доступа к ребёнку или его профиль не настроен.",
+            "Цель недоступна или была удалена.",
             show_alert=True,
         )
         return
 
-    await state.update_data(
-        schedule_actor_user_id=actor_user_id,
-        schedule_target_user_id=target_user_id,
+    await _save_schedule_target_to_fsm(
+        state=state,
+        actor_user_id=actor_user_id,
+        target=target,
     )
 
     target_date_iso = await schedule_service.get_smart_target_date(
-        class_id=target_dto.class_id,
-        group_id=target_dto.group_id,
-        user_id=target_user_id,
+        class_id=target.class_id,
+        group_id=target.group_id,
+        user_id=target.child_user_id,
     )
 
     text, keyboard = await _render_day(
         actor_user_id=actor_user_id,
-        target_user_id=target_user_id,
+        target=target,
         date_iso=target_date_iso,
         profile_service=profile_service,
         schedule_service=schedule_service,
+        watch_targets_service=watch_targets_service,
     )
-
-    if text is None:
-        await callback.answer(
-            "Не удалось открыть расписание ребёнка.",
-            show_alert=True,
-        )
-        return
 
     await _safe_edit_schedule_message(
         callback,
@@ -427,61 +553,73 @@ async def select_schedule_child(
     await callback.answer()
 
 
-async def _get_fsm_schedule_target(
-    *,
+@router.callback_query(F.data.startswith("sched:watch:"))
+async def open_watch_target_schedule(
     callback: CallbackQuery,
     state: FSMContext,
     profile_service: ProfileService,
-):
+    schedule_service: ScheduleService,
+    watch_targets_service: WatchTargetsService,
+) -> None:
     """
-    Возвращает target_user_id из FSM и подтверждает доступ.
-
-    Нельзя доверять только FSM: пользователь мог сменить роль, выйти
-    из семьи или потерять доступ к ребёнку между нажатиями кнопок.
+    Открывает watch target из карточки отслеживаемого класса.
     """
-    data = await state.get_data()
+    try:
+        target_id = int(
+            callback.data.split(":")[2]
+        )
+    except (IndexError, ValueError):
+        await callback.answer(
+            "Некорректный класс.",
+            show_alert=True,
+        )
+        return
 
     actor_user_id = callback.from_user.id
 
-    state_actor_user_id = data.get(
-        "schedule_actor_user_id"
-    )
-
-    target_user_id = data.get(
-        "schedule_target_user_id"
-    )
-
-    if state_actor_user_id != actor_user_id or not target_user_id:
-        return None
-
-    target_dto = await _get_schedule_target(
+    target = await _resolve_schedule_target(
         actor_user_id=actor_user_id,
-        target_user_id=target_user_id,
+        target_kind="watch",
+        target_id=target_id,
         profile_service=profile_service,
+        watch_targets_service=watch_targets_service,
     )
 
-    if target_dto is None or not target_dto.class_id:
-        return None
+    if target is None:
+        await callback.answer(
+            "Класс недоступен или отслеживание выключено.",
+            show_alert=True,
+        )
+        return
 
-    return target_user_id
+    await _save_schedule_target_to_fsm(
+        state=state,
+        actor_user_id=actor_user_id,
+        target=target,
+    )
 
+    target_date_iso = await schedule_service.get_smart_target_date(
+        class_id=target.class_id,
+        group_id=target.group_id,
+        user_id=None,
+    )
 
-@router.callback_query(F.data == "sched:children")
-async def switch_schedule_child(
-    callback: CallbackQuery,
-    state: FSMContext,
-    profile_service: ProfileService,
-) -> None:
-    """Открывает выбор ребёнка из любого schedule-экрана."""
-    await _open_schedule_children_selector(
-        callback=callback,
+    text, keyboard = await _render_day(
+        actor_user_id=actor_user_id,
+        target=target,
+        date_iso=target_date_iso,
         profile_service=profile_service,
+        schedule_service=schedule_service,
+        watch_targets_service=watch_targets_service,
     )
 
-    await state.update_data(
-        schedule_actor_user_id=callback.from_user.id,
-        schedule_target_user_id=None,
+    await _safe_edit_schedule_message(
+        callback,
+        text,
+        keyboard,
     )
+
+    await callback.answer()
 
 
 @router.callback_query(F.data == "sched:smart_day")
@@ -490,41 +628,36 @@ async def go_to_smart_day(
     state: FSMContext,
     profile_service: ProfileService,
     schedule_service: ScheduleService,
+    watch_targets_service: WatchTargetsService,
 ) -> None:
-    """Возвращает к ближайшему актуальному дню расписания."""
-    target_user_id = await _get_fsm_schedule_target(
+    target = await _get_fsm_schedule_target(
         callback=callback,
         state=state,
         profile_service=profile_service,
+        watch_targets_service=watch_targets_service,
     )
 
-    if target_user_id is None:
+    if target is None:
         await callback.answer(
-            "Сессия просмотра устарела. Откройте расписание заново.",
+            "Сессия просмотра устарела. "
+            "Откройте расписание заново.",
             show_alert=True,
         )
         return
 
-    actor_user_id = callback.from_user.id
-
-    target_dto = await _get_schedule_target(
-        actor_user_id=actor_user_id,
-        target_user_id=target_user_id,
-        profile_service=profile_service,
-    )
-
     target_date_iso = await schedule_service.get_smart_target_date(
-        class_id=target_dto.class_id,
-        group_id=target_dto.group_id,
-        user_id=target_user_id,
+        class_id=target.class_id,
+        group_id=target.group_id,
+        user_id=target.child_user_id,
     )
 
     text, keyboard = await _render_day(
-        actor_user_id=actor_user_id,
-        target_user_id=target_user_id,
+        actor_user_id=callback.from_user.id,
+        target=target,
         date_iso=target_date_iso,
         profile_service=profile_service,
         schedule_service=schedule_service,
+        watch_targets_service=watch_targets_service,
     )
 
     await _safe_edit_schedule_message(
@@ -542,8 +675,8 @@ async def show_schedule_day(
     state: FSMContext,
     profile_service: ProfileService,
     schedule_service: ScheduleService,
+    watch_targets_service: WatchTargetsService,
 ) -> None:
-    """Показывает выбранный день расписания."""
     try:
         date_iso = callback.data.split(":")[2]
     except IndexError:
@@ -553,33 +686,29 @@ async def show_schedule_day(
         )
         return
 
-    target_user_id = await _get_fsm_schedule_target(
+    target = await _get_fsm_schedule_target(
         callback=callback,
         state=state,
         profile_service=profile_service,
+        watch_targets_service=watch_targets_service,
     )
 
-    if target_user_id is None:
+    if target is None:
         await callback.answer(
-            "Сессия просмотра устарела. Откройте расписание заново.",
+            "Сессия просмотра устарела. "
+            "Откройте расписание заново.",
             show_alert=True,
         )
         return
 
     text, keyboard = await _render_day(
         actor_user_id=callback.from_user.id,
-        target_user_id=target_user_id,
+        target=target,
         date_iso=date_iso,
         profile_service=profile_service,
         schedule_service=schedule_service,
+        watch_targets_service=watch_targets_service,
     )
-
-    if text is None:
-        await callback.answer(
-            "Не удалось открыть расписание.",
-            show_alert=True,
-        )
-        return
 
     await _safe_edit_schedule_message(
         callback,
@@ -596,8 +725,8 @@ async def show_schedule_week(
     state: FSMContext,
     profile_service: ProfileService,
     schedule_service: ScheduleService,
+    watch_targets_service: WatchTargetsService,
 ) -> None:
-    """Показывает краткое недельное расписание."""
     try:
         week_start_iso = callback.data.split(":")[2]
     except IndexError:
@@ -607,34 +736,30 @@ async def show_schedule_week(
         )
         return
 
-    target_user_id = await _get_fsm_schedule_target(
+    target = await _get_fsm_schedule_target(
         callback=callback,
         state=state,
         profile_service=profile_service,
+        watch_targets_service=watch_targets_service,
     )
 
-    if target_user_id is None:
+    if target is None:
         await callback.answer(
-            "Сессия просмотра устарела. Откройте расписание заново.",
+            "Сессия просмотра устарела. "
+            "Откройте расписание заново.",
             show_alert=True,
         )
         return
 
     text, keyboard = await _render_week(
         actor_user_id=callback.from_user.id,
-        target_user_id=target_user_id,
+        target=target,
         week_start_iso=week_start_iso,
+        is_full=False,
         profile_service=profile_service,
         schedule_service=schedule_service,
-        is_full=False,
+        watch_targets_service=watch_targets_service,
     )
-
-    if text is None:
-        await callback.answer(
-            "Не удалось открыть недельное расписание.",
-            show_alert=True,
-        )
-        return
 
     await _safe_edit_schedule_message(
         callback,
@@ -651,8 +776,8 @@ async def show_full_schedule_week(
     state: FSMContext,
     profile_service: ProfileService,
     schedule_service: ScheduleService,
+    watch_targets_service: WatchTargetsService,
 ) -> None:
-    """Показывает подробное расписание всей недели."""
     try:
         week_start_iso = callback.data.split(":")[2]
     except IndexError:
@@ -662,38 +787,35 @@ async def show_full_schedule_week(
         )
         return
 
-    target_user_id = await _get_fsm_schedule_target(
+    target = await _get_fsm_schedule_target(
         callback=callback,
         state=state,
         profile_service=profile_service,
+        watch_targets_service=watch_targets_service,
     )
 
-    if target_user_id is None:
+    if target is None:
         await callback.answer(
-            "Сессия просмотра устарела. Откройте расписание заново.",
+            "Сессия просмотра устарела. "
+            "Откройте расписание заново.",
             show_alert=True,
         )
         return
 
     text, keyboard = await _render_week(
         actor_user_id=callback.from_user.id,
-        target_user_id=target_user_id,
+        target=target,
         week_start_iso=week_start_iso,
+        is_full=True,
         profile_service=profile_service,
         schedule_service=schedule_service,
-        is_full=True,
+        watch_targets_service=watch_targets_service,
     )
-
-    if text is None:
-        await callback.answer(
-            "Не удалось открыть подробное расписание.",
-            show_alert=True,
-        )
-        return
 
     if len(text) > 3900:
         await callback.answer(
-            "Подробная неделя слишком длинная. Используйте просмотр по дням.",
+            "Подробная неделя слишком длинная. "
+            "Используйте просмотр по дням.",
             show_alert=True,
         )
         return

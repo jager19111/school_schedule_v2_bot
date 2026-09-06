@@ -2,7 +2,7 @@ from datetime import datetime, timedelta, timezone, date
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
 from core.models.dto import ( ClassListDTO, GroupListDTO, ChildrenListDTO, UserProfileDTO, TeacherListDTO, 
                              FamilyMemberDTO, ParentChildNotificationSettingsDTO, ChildInfoDTO, AdultExtraClassesPermissionDTO,
-                             FamilyInviteDTO,
+                             FamilyInviteDTO, ScheduleWatchTargetDTO, ScheduleViewTargetDTO
 )
 
 class Keyboards:
@@ -289,6 +289,12 @@ class Keyboards:
             ])
             buttons.append([
                 InlineKeyboardButton(
+                    text="🎓 Мои отслеживаемые классы",
+                    callback_data="watch:menu",
+                )
+            ])
+            buttons.append([
+                InlineKeyboardButton(
                     text="🔔 Уведомления по детям",
                     callback_data="settings:children_notifications",
                 )
@@ -429,7 +435,7 @@ class Keyboards:
     def get_schedule_day_kb(
         current_date_iso: str,
         *,
-        show_child_switch: bool,
+        show_target_switch: bool
     ) -> InlineKeyboardMarkup:
         """Навигация дневного расписания в Schedule Hub."""
         current_date = datetime.fromisoformat(
@@ -467,12 +473,12 @@ class Keyboards:
             ],
         ]
 
-        if show_child_switch:
+        if show_target_switch:
             buttons.append([
                 InlineKeyboardButton(
-                    text="👥 Сменить ребёнка",
-                    callback_data="sched:children",
-                ),
+                    text="🎯 Сменить цель",
+                    callback_data="sched:targets",
+                )
             ])
 
         return InlineKeyboardMarkup(
@@ -483,7 +489,7 @@ class Keyboards:
     def get_schedule_week_kb(
         week_start_iso: str,
         *,
-        show_child_switch: bool,
+        show_target_switch: bool,
         is_full: bool = False,
     ) -> InlineKeyboardMarkup:
         """
@@ -563,12 +569,12 @@ class Keyboards:
             ],
         ]
 
-        if show_child_switch:
+        if show_target_switch:
             buttons.append([
                 InlineKeyboardButton(
-                    text="👥 Сменить ребёнка",
-                    callback_data="sched:children",
-                ),
+                    text="🎯 Сменить цель",
+                    callback_data="sched:targets",
+                )
             ])
 
         return InlineKeyboardMarkup(
@@ -576,29 +582,55 @@ class Keyboards:
         )
     
     @staticmethod
-    def get_schedule_children_kb(
-        children: list[ChildInfoDTO],
+    def get_schedule_targets_kb(
+        targets: list[ScheduleViewTargetDTO],
     ) -> InlineKeyboardMarkup:
         """
-        Выбор ребёнка для единого Schedule Hub.
+        Выбор цели Schedule Hub: ребёнок или самостоятельный класс.
         """
         buttons = []
 
-        for child in children:
-            name = child.name or f"Ученик {child.user_id}"
-            class_name = child.class_id or "—"
+        for target in targets:
+            if target.kind == "child":
+                icon = "🧒"
+
+                callback_data = (
+                    f"sched:target:child:{target.target_id}"
+                )
+            else:
+                icon = "🎓"
+
+                callback_data = (
+                    f"sched:target:watch:{target.target_id}"
+                )
+
+            group_text = (
+                "Весь класс"
+                if target.group_id == "ALL"
+                else f"Группа {target.group_id}"
+            )
 
             buttons.append([
                 InlineKeyboardButton(
-                    text=f"👤 {name} ({class_name})",
-                    callback_data=f"sched:child:{child.user_id}",
-                ),
+                    text=(
+                        f"{icon} {target.title} "
+                        f"· {group_text}"
+                    ),
+                    callback_data=callback_data,
+                )
             ])
+
+        buttons.append([
+            InlineKeyboardButton(
+                text="⬅️ Назад",
+                callback_data="settings:main",
+            )
+        ])
 
         return InlineKeyboardMarkup(
             inline_keyboard=buttons,
         )
-                    
+             
     @staticmethod
     def get_search_days_kb(target_id: str, is_teacher: bool, week_start_iso: str, is_full: bool = False) -> InlineKeyboardMarkup:
         from datetime import datetime, timedelta
@@ -1107,6 +1139,210 @@ class Keyboards:
                     InlineKeyboardButton(
                         text="⬅️ Отмена",
                         callback_data=f"family:invite:{invite_id}",
+                    )
+                ],
+            ]
+        )
+        
+        
+        
+    @staticmethod
+    def get_watch_targets_menu_kb(
+        targets: list[ScheduleWatchTargetDTO],
+    ) -> InlineKeyboardMarkup:
+        """
+        Список самостоятельных классов пользователя.
+        """
+        buttons = []
+
+        for target in targets:
+            status = "🟢" if target.is_enabled else "⚫"
+
+            label = target.title or (
+                f"Класс {target.class_id}"
+            )
+
+            group_label = (
+                "Весь класс"
+                if target.group_id == "ALL"
+                else f"Группа {target.group_id}"
+            )
+
+            buttons.append([
+                InlineKeyboardButton(
+                    text=(
+                        f"{status} {label} · {group_label}"
+                    ),
+                    callback_data=f"watch:target:{target.id}",
+                )
+            ])
+
+        buttons.append([
+            InlineKeyboardButton(
+                text="➕ Добавить класс",
+                callback_data="watch:add",
+            )
+        ])
+
+        buttons.append([
+            InlineKeyboardButton(
+                text="⬅️ К настройкам",
+                callback_data="settings:main",
+            )
+        ])
+
+        return InlineKeyboardMarkup(
+            inline_keyboard=buttons,
+        )
+        
+    @staticmethod
+    def get_watch_class_selection_kb(
+        dto: ClassListDTO,
+    ) -> InlineKeyboardMarkup:
+        buttons = []
+        row = []
+
+        for class_id, class_name in dto.classes.items():
+            row.append(
+                InlineKeyboardButton(
+                    text=class_name,
+                    callback_data=f"watch:class:{class_id}",
+                )
+            )
+
+            if len(row) == 3:
+                buttons.append(row)
+                row = []
+
+        if row:
+            buttons.append(row)
+
+        buttons.append([
+            InlineKeyboardButton(
+                text="⬅️ Назад",
+                callback_data="watch:menu",
+            )
+        ])
+
+        return InlineKeyboardMarkup(
+            inline_keyboard=buttons,
+        )
+        
+        
+    @staticmethod
+    def get_watch_group_selection_kb(
+        dto: GroupListDTO,
+    ) -> InlineKeyboardMarkup:
+        """
+        Выбор группы для самостоятельно отслеживаемого класса.
+
+        На первом этапе используем весь класс и основные группы.
+        """
+        buttons = [
+            [
+                InlineKeyboardButton(
+                    text="Весь класс",
+                    callback_data="watch:group:ALL",
+                )
+            ]
+        ]
+
+        primary_groups = {
+            "0",
+            "1",
+        }
+
+        for group_id, group_name in dto.groups.items():
+            if group_id not in primary_groups:
+                continue
+
+            buttons.append([
+                InlineKeyboardButton(
+                    text=group_name,
+                    callback_data=f"watch:group:{group_id}",
+                )
+            ])
+
+        buttons.append([
+            InlineKeyboardButton(
+                text="⬅️ Назад к выбору класса",
+                callback_data="watch:add",
+            )
+        ])
+
+        return InlineKeyboardMarkup(
+            inline_keyboard=buttons,
+        )
+        
+    @staticmethod
+    def get_watch_target_details_kb(
+        target_id: int,
+        is_enabled: bool,
+        receive_schedule_changes: bool,
+    ) -> InlineKeyboardMarkup:
+        status_text = (
+            "⚫ Выключить отслеживание"
+            if is_enabled
+            else "🟢 Включить отслеживание"
+        )
+        changes_text = (
+            "🔄 Изменения: ВКЛ 🟢"
+            if receive_schedule_changes
+            else "🔄 Изменения: ВЫКЛ 🔴"
+        )
+        return InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="📅 Открыть расписание",
+                        callback_data=f"watch:open:{target_id}",
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text=changes_text,
+                        callback_data=f"watch:changes:{target_id}",
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text=status_text,
+                        callback_data=f"watch:toggle:{target_id}",
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="🗑 Удалить класс",
+                        callback_data=f"watch:delete:{target_id}",
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="⬅️ К списку классов",
+                        callback_data="watch:menu",
+                    )
+                ],
+            ]
+        )
+        
+    @staticmethod
+    def get_watch_target_delete_confirmation_kb(
+        target_id: int,
+    ) -> InlineKeyboardMarkup:
+        return InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="🗑 Да, удалить класс",
+                        callback_data=(
+                            f"watch:delete_confirm:{target_id}"
+                        ),
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="⬅️ Отмена",
+                        callback_data=f"watch:target:{target_id}",
                     )
                 ],
             ]

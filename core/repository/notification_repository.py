@@ -149,7 +149,8 @@ class NotificationRepository(BaseRepository):
         """
         Формирует адресный fan-out уведомления об изменении расписания.
 
-        Возвращает ребёнка и подписанных на него взрослых.
+        Возвращает ребёнка, подписанных на него взрослых, а также
+        пользователей, которые самостоятельно отслеживают этот класс.
         changes_window_days принадлежит получателю, а не ребёнку.
         """
         return await self._fetch_all(
@@ -160,7 +161,8 @@ class NotificationRepository(BaseRepository):
                 child.user_id AS recipient_id,
                 child.changes_window_days AS changes_window_days,
                 'child' AS recipient_kind,
-                NULL AS child_name
+                NULL AS child_name,
+                NULL AS watch_target_title
             FROM users AS child
             WHERE child.class_id = ?
               AND (
@@ -183,7 +185,8 @@ class NotificationRepository(BaseRepository):
                 COALESCE(
                     NULLIF(TRIM(child.name), ''),
                     'Ученик ' || child.user_id
-                ) AS child_name
+                ) AS child_name,
+                NULL AS watch_target_title
             FROM users AS child
             JOIN parent_child_settings AS pcs
               ON pcs.child_id = child.user_id
@@ -201,18 +204,51 @@ class NotificationRepository(BaseRepository):
               AND adult.is_notifications_enabled = 1
               AND child.receive_schedule_changes = 1
 
+            UNION ALL
+
+            -- Получатель: владелец самостоятельно отслеживаемого класса.
+            SELECT
+                NULL AS child_id,
+                watch.owner_user_id AS recipient_id,
+                owner.changes_window_days AS changes_window_days,
+                'watch' AS recipient_kind,
+                NULL AS child_name,
+                COALESCE(
+                    NULLIF(TRIM(watch.title), ''),
+                    'Класс ' || watch.class_id
+                ) AS watch_target_title
+            FROM schedule_watch_targets AS watch
+            JOIN users AS owner
+              ON owner.user_id = watch.owner_user_id
+            WHERE watch.class_id = ?
+              AND (
+                    watch.group_id = ?
+                    OR watch.group_id = 'ALL'
+                    OR ? = 'ALL'
+                  )
+              AND watch.is_enabled = 1
+              AND watch.receive_schedule_changes = 1
+              AND owner.is_notifications_enabled = 1
+              AND owner.receive_schedule_changes = 1
+
             ORDER BY recipient_id, child_id
             """,
             (
+                # child recipient
                 class_id,
                 group_id,
                 group_id,
+                # adult recipient by child
+                class_id,
+                group_id,
+                group_id,
+                # watch target recipient
                 class_id,
                 group_id,
                 group_id,
             ),
         )
-            
+        
     # ---------- Утренняя сводка ----------
     async def get_morning_summary_tasks(
         self,

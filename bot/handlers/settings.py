@@ -8,7 +8,7 @@ from aiogram.exceptions import TelegramBadRequest
 from services.profiles_service import ProfileService
 from bot.utils.ui_renderer import UIRenderer
 from bot.keyboards.keyboard import Keyboards
-from core.models.dto import ChildrenListDTO
+from core.models.dto import ChildrenListDTO, ClassListDTO, GroupListDTO
 
 
 from aiogram.fsm.context import FSMContext
@@ -16,7 +16,7 @@ from aiogram.fsm.state import StatesGroup, State
 from services.time_service import TimeService
 from services.schedule_service import ScheduleService
 from bot.handlers.registration import RegistrationStates
-
+from services.watch_targets_service import WatchTargetsService
 
 
 
@@ -135,6 +135,7 @@ async def _require_own_notification_settings_access(
 class SettingsStates(StatesGroup):
     waiting_for_my_time = State()
     waiting_for_child_time = State()
+    waiting_for_watch_group = State()
 
 
 
@@ -2175,3 +2176,595 @@ async def settings_change_class(
     await state.set_state(RegistrationStates.waiting_for_class)
 
     await _safe_callback_answer(callback)
+    
+# Меню watch targets    
+@router.callback_query(F.data == "watch:menu")
+async def show_watch_targets_menu(
+    callback: CallbackQuery,
+    watch_targets_service: WatchTargetsService,
+) -> None:
+    """
+    Показывает самостоятельные отслеживаемые классы пользователя.
+    """
+    targets = await watch_targets_service.get_targets(
+        owner_user_id=callback.from_user.id,
+    )
+
+    text = UIRenderer.render_watch_targets_menu(
+        targets,
+    )
+
+    keyboard = Keyboards.get_watch_targets_menu_kb(
+        targets,
+    )
+
+    await _safe_edit_text(
+        callback.message,
+        text,
+        reply_markup=keyboard,
+    )
+
+    await _safe_callback_answer(callback)
+
+@router.callback_query(F.data == "watch:add")
+async def start_add_watch_target(
+    callback: CallbackQuery,
+    state: FSMContext,
+    schedule_service: ScheduleService,
+) -> None:
+    """
+    Запускает выбор класса для direct watch target.
+    """
+    class_dto = await schedule_service.get_classes_list()
+
+    if not class_dto.classes:
+        await _safe_callback_answer(
+            callback,
+            "Расписание школы ещё не загружено. "
+            "Попробуйте позже.",
+            show_alert=True,
+        )
+        return
+
+    text = (
+        "🎓 <b>Добавить отслеживаемый класс</b>\n\n"
+        "Выберите класс, расписание которого хотите отслеживать."
+    )
+
+    keyboard = Keyboards.get_watch_class_selection_kb(
+        class_dto,
+    )
+
+    await _safe_edit_text(
+        callback.message,
+        text,
+        reply_markup=keyboard,
+    )
+
+    await state.set_state(
+        SettingsStates.waiting_for_watch_group,
+    )
+
+    await state.update_data(
+        watch_target_owner_id=callback.from_user.id,
+        watch_target_stage="class",
+    )
+
+    await _safe_callback_answer(callback)
+    
+@router.callback_query(
+    SettingsStates.waiting_for_watch_group,
+    F.data.startswith("watch:class:"),
+)
+async def select_watch_target_class(
+    callback: CallbackQuery,
+    state: FSMContext,
+    schedule_service: ScheduleService,
+) -> None:
+    try:
+        class_id = callback.data.split(":")[2]
+    except IndexError:
+        await _safe_callback_answer(
+            callback,
+            "Некорректный класс.",
+            show_alert=True,
+        )
+        return
+
+    data = await state.get_data()
+
+    if data.get("watch_target_owner_id") != callback.from_user.id:
+        await state.clear()
+
+        await _safe_callback_answer(
+            callback,
+            "Состояние добавления устарело.",
+            show_alert=True,
+        )
+        return
+
+    groups_dto = await schedule_service.get_groups_list()
+
+    await state.update_data(
+        watch_target_class_id=class_id,
+        watch_target_stage="group",
+    )
+
+    text = (
+        "👥 <b>Выберите группу</b>\n\n"
+        "Если группа неизвестна или класс не делится на группы, "
+        "выберите «Весь класс»."
+    )
+
+    keyboard = Keyboards.get_watch_group_selection_kb(
+        groups_dto,
+    )
+
+    await _safe_edit_text(
+        callback.message,
+        text,
+        reply_markup=keyboard,
+    )
+
+    await _safe_callback_answer(callback)
+    
+@router.callback_query(
+    SettingsStates.waiting_for_watch_group,
+    F.data.startswith("watch:group:"),
+)
+async def select_watch_target_group(
+    callback: CallbackQuery,
+    state: FSMContext,
+    schedule_service: ScheduleService,
+    watch_targets_service: WatchTargetsService,
+) -> None:
+    try:
+        group_id = callback.data.split(":")[2]
+    except IndexError:
+        await _safe_callback_answer(
+            callback,
+            "Некорректная группа.",
+            show_alert=True,
+        )
+        return
+
+    data = await state.get_data()
+
+    owner_user_id = data.get("watch_target_owner_id")
+    class_id = data.get("watch_target_class_id")
+
+    if (
+        owner_user_id != callback.from_user.id
+        or not class_id
+    ):
+        await state.clear()
+
+        await _safe_callback_answer(
+            callback,
+            "Состояние добавления устарело.",
+            show_alert=True,
+        )
+        return
+
+    class_dto = await schedule_service.get_classes_list()
+
+    title = class_dto.classes.get(
+        class_id,
+        f"Класс {class_id}",
+    )
+
+    response = await watch_targets_service.add_target(
+        owner_user_id=owner_user_id,
+        class_id=class_id,
+        group_id=group_id,
+        title=title,
+    )
+
+    await state.clear()
+
+    if not response.success:
+        if response.error_code == "duplicate":
+            error_text = (
+                "⚠️ Этот класс и группа уже добавлены "
+                "в отслеживание."
+            )
+        elif response.error_code == "limit_reached":
+            error_text = (
+                "⚠️ Достигнут лимит отслеживаемых классов "
+                "(10)."
+            )
+        else:
+            error_text = (
+                "❌ Не удалось добавить отслеживаемый класс."
+            )
+
+        await _safe_callback_answer(
+            callback,
+            error_text,
+            show_alert=True,
+        )
+        return
+
+    targets = await watch_targets_service.get_targets(
+        owner_user_id=owner_user_id,
+    )
+
+    text = (
+        "✅ <b>Класс добавлен в отслеживание.</b>\n\n"
+        + UIRenderer.render_watch_targets_menu(targets)
+    )
+
+    keyboard = Keyboards.get_watch_targets_menu_kb(
+        targets,
+    )
+
+    await _safe_edit_text(
+        callback.message,
+        text,
+        reply_markup=keyboard,
+    )
+
+    await _safe_callback_answer(
+        callback,
+        "Класс добавлен.",
+    )
+    
+@router.callback_query(
+    F.data.startswith("watch:target:")
+)
+async def show_watch_target_details(
+    callback: CallbackQuery,
+    watch_targets_service: WatchTargetsService,
+    schedule_service: ScheduleService,
+) -> None:
+    try:
+        target_id = int(callback.data.split(":")[2])
+    except (IndexError, ValueError):
+        await _safe_callback_answer(
+            callback,
+            "Некорректный идентификатор класса.",
+            show_alert=True,
+        )
+        return
+
+    targets = await watch_targets_service.get_targets(
+        owner_user_id=callback.from_user.id,
+    )
+
+    target = next(
+        (
+            item
+            for item in targets
+            if item.id == target_id
+        ),
+        None,
+    )
+
+    if target is None:
+        await _safe_callback_answer(
+            callback,
+            "Класс не найден или у вас нет доступа.",
+            show_alert=True,
+        )
+        return
+
+    classes_dto = await schedule_service.get_classes_list()
+    groups_dto = await schedule_service.get_groups_list()
+
+    class_name = classes_dto.classes.get(
+        target.class_id,
+        target.class_id,
+    )
+
+    group_name = (
+        "Весь класс"
+        if target.group_id == "ALL"
+        else groups_dto.groups.get(
+            target.group_id,
+            f"Группа {target.group_id}",
+        )
+    )
+
+    text = UIRenderer.render_watch_target_details(
+        target=target,
+        class_name=class_name,
+        group_name=group_name,
+    )
+
+    keyboard = Keyboards.get_watch_target_details_kb(
+        target_id=target.id,
+        is_enabled=target.is_enabled,
+        receive_schedule_changes=target.receive_schedule_changes,
+    )
+
+    await _safe_edit_text(
+        callback.message,
+        text,
+        reply_markup=keyboard,
+    )
+
+    await _safe_callback_answer(callback)
+
+@router.callback_query(
+    F.data.startswith("watch:toggle:")
+)
+async def toggle_watch_target(
+    callback: CallbackQuery,
+    watch_targets_service: WatchTargetsService,
+    schedule_service: ScheduleService
+) -> None:
+    try:
+        target_id = int(callback.data.split(":")[2])
+    except (IndexError, ValueError):
+        await _safe_callback_answer(
+            callback,
+            "Некорректный идентификатор класса.",
+            show_alert=True,
+        )
+        return
+
+    targets = await watch_targets_service.get_targets(
+        owner_user_id=callback.from_user.id,
+    )
+
+    target = next(
+        (
+            item
+            for item in targets
+            if item.id == target_id
+        ),
+        None,
+    )
+
+    if target is None:
+        await _safe_callback_answer(
+            callback,
+            "Класс не найден.",
+            show_alert=True,
+        )
+        return
+
+    response = await watch_targets_service.set_target_enabled(
+        owner_user_id=callback.from_user.id,
+        target_id=target_id,
+        is_enabled=not target.is_enabled,
+    )
+
+    if not response.success:
+        await _safe_callback_answer(
+            callback,
+            "Не удалось изменить состояние класса.",
+            show_alert=True,
+        )
+        return
+
+    await _safe_callback_answer(
+        callback,
+        "Отслеживание обновлено.",
+    )
+
+    # Повторный callback покажет свежую карточку.
+    await show_watch_target_details(
+        callback=callback,
+        watch_targets_service=watch_targets_service,
+        schedule_service=schedule_service,
+    )    
+
+@router.callback_query(
+    F.data.startswith("watch:changes:")
+)
+async def toggle_watch_target_schedule_changes(
+    callback: CallbackQuery,
+    watch_targets_service: WatchTargetsService,
+    schedule_service: ScheduleService,
+) -> None:
+    """
+    Включает или выключает уведомления об изменениях
+    только для одного watch target.
+    """
+    try:
+        target_id = int(
+            callback.data.split(":")[2]
+        )
+    except (IndexError, ValueError):
+        await _safe_callback_answer(
+            callback,
+            "Некорректный идентификатор класса.",
+            show_alert=True,
+        )
+        return
+
+    target = await watch_targets_service.get_target(
+        owner_user_id=callback.from_user.id,
+        target_id=target_id,
+    )
+
+    if target is None:
+        await _safe_callback_answer(
+            callback,
+            "Класс не найден или у вас нет доступа.",
+            show_alert=True,
+        )
+        return
+
+    response = await watch_targets_service.set_target_receive_schedule_changes(
+        owner_user_id=callback.from_user.id,
+        target_id=target_id,
+        receive_schedule_changes=(
+            not target.receive_schedule_changes
+        ),
+    )
+
+    if not response.success:
+        await _safe_callback_answer(
+            callback,
+            "Не удалось изменить настройки уведомлений.",
+            show_alert=True,
+        )
+        return
+
+    refreshed_target = await watch_targets_service.get_target(
+        owner_user_id=callback.from_user.id,
+        target_id=target_id,
+    )
+
+    classes_dto = await schedule_service.get_classes_list()
+    groups_dto = await schedule_service.get_groups_list()
+
+    class_name = classes_dto.classes.get(
+        refreshed_target.class_id,
+        refreshed_target.class_id,
+    )
+
+    group_name = (
+        "Весь класс"
+        if refreshed_target.group_id == "ALL"
+        else groups_dto.groups.get(
+            refreshed_target.group_id,
+            f"Группа {refreshed_target.group_id}",
+        )
+    )
+
+    text = UIRenderer.render_watch_target_details(
+        target=refreshed_target,
+        class_name=class_name,
+        group_name=group_name,
+    )
+
+    keyboard = Keyboards.get_watch_target_details_kb(
+        target_id=refreshed_target.id,
+        is_enabled=refreshed_target.is_enabled,
+        receive_schedule_changes=(
+            refreshed_target.receive_schedule_changes
+        ),
+    )
+
+    await _safe_edit_text(
+        callback.message,
+        text,
+        reply_markup=keyboard,
+    )
+
+    state_text = (
+        "включены"
+        if refreshed_target.receive_schedule_changes
+        else "выключены"
+    )
+
+    await _safe_callback_answer(
+        callback,
+        f"Уведомления об изменениях {state_text}.",
+    )
+    
+@router.callback_query(
+    F.data.startswith("watch:delete:")
+)
+async def confirm_delete_watch_target(
+    callback: CallbackQuery,
+    watch_targets_service: WatchTargetsService,
+) -> None:
+    try:
+        target_id = int(callback.data.split(":")[2])
+    except (IndexError, ValueError):
+        await _safe_callback_answer(
+            callback,
+            "Некорректный идентификатор класса.",
+            show_alert=True,
+        )
+        return
+
+    targets = await watch_targets_service.get_targets(
+        owner_user_id=callback.from_user.id,
+    )
+
+    target = next(
+        (
+            item
+            for item in targets
+            if item.id == target_id
+        ),
+        None,
+    )
+
+    if target is None:
+        await _safe_callback_answer(
+            callback,
+            "Класс не найден.",
+            show_alert=True,
+        )
+        return
+
+    title = target.title or f"Класс {target.class_id}"
+
+    text = (
+        "⚠️ <b>Удалить отслеживаемый класс?</b>\n\n"
+        f"Класс: <b>{UIRenderer.escape_html(title)}</b>\n\n"
+        "Расписание школы не будет удалено. "
+        "Будет удалена только ваша личная цель отслеживания."
+    )
+
+    keyboard = Keyboards.get_watch_target_delete_confirmation_kb(
+        target_id,
+    )
+
+    await _safe_edit_text(
+        callback.message,
+        text,
+        reply_markup=keyboard,
+    )
+
+    await _safe_callback_answer(callback)
+    
+@router.callback_query(
+    F.data.startswith("watch:delete_confirm:")
+)
+async def delete_watch_target(
+    callback: CallbackQuery,
+    watch_targets_service: WatchTargetsService,
+) -> None:
+    try:
+        target_id = int(callback.data.split(":")[2])
+    except (IndexError, ValueError):
+        await _safe_callback_answer(
+            callback,
+            "Некорректный идентификатор класса.",
+            show_alert=True,
+        )
+        return
+
+    response = await watch_targets_service.delete_target(
+        owner_user_id=callback.from_user.id,
+        target_id=target_id,
+    )
+
+    if not response.success:
+        await _safe_callback_answer(
+            callback,
+            "Класс не найден или уже удалён.",
+            show_alert=True,
+        )
+        return
+
+    targets = await watch_targets_service.get_targets(
+        owner_user_id=callback.from_user.id,
+    )
+
+    text = (
+        "✅ <b>Отслеживаемый класс удалён.</b>\n\n"
+        + UIRenderer.render_watch_targets_menu(targets)
+    )
+
+    keyboard = Keyboards.get_watch_targets_menu_kb(
+        targets,
+    )
+
+    await _safe_edit_text(
+        callback.message,
+        text,
+        reply_markup=keyboard,
+    )
+
+    await _safe_callback_answer(
+        callback,
+        "Класс удалён.",
+    )

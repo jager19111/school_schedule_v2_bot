@@ -35,7 +35,49 @@ class FamilyInviteDTO:
     created_at: Optional[str] = None
     used_by_user_id: Optional[int] = None
     used_at: Optional[str] = None
-    
+
+@dataclass
+class ScheduleWatchTargetDTO:
+    """
+    Самостоятельно отслеживаемый класс/группа.
+
+    Не связан с профилем ребёнка и не требует family_id.
+    """
+    id: int
+
+    owner_user_id: int
+
+    class_id: str
+    group_id: str
+
+    title: Optional[str] = None
+    is_enabled: bool = True
+    receive_schedule_changes: bool = True
+
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+
+@dataclass
+class ScheduleViewTargetDTO:
+    """
+    Универсальная цель Schedule Hub.
+
+    kind:
+    - child: ученик с Telegram-профилем;
+    - watch: самостоятельный отслеживаемый класс.
+    """
+    kind: str
+
+    target_id: int
+
+    class_id: str
+    group_id: str
+
+    title: str
+
+    child_user_id: Optional[int] = None
+    is_enabled: bool = True
+            
 @dataclass
 class ActionResponseDTO:
     """ DTO для ответа на действие (например, создание семьи, обновление профиля и т.п.). 
@@ -251,6 +293,7 @@ class LessonReminderDTO:
     room_name: str
     is_extra: bool = False
     child_name: Optional[str] = None
+    
 
 @dataclass
 class ChangeReminderDTO:
@@ -265,6 +308,7 @@ class ChangeReminderDTO:
     subject_name: str
     is_cancelled: bool
     child_name: Optional[str] = None
+    watch_target_title: Optional[str] = None
 
 @dataclass
 class MorningLessonDTO:

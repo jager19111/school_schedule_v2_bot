@@ -346,6 +346,11 @@ class NotificationService:
                             if recipient["recipient_kind"] == "adult"
                             else None
                         ),
+                        watch_target_title=(
+                            recipient["watch_target_title"]
+                            if recipient["recipient_kind"] == "watch"
+                            else None
+                        ),
                     )
 
                     sent = await self._safe_send(
@@ -371,10 +376,11 @@ class NotificationService:
 
                     logger.info(
                         "Schedule change delivered: change_id=%s, "
-                        "child_id=%s, recipient_id=%s, "
-                        "recipient_kind=%s",
+                        "child_id=%s, watch_target=%s, "
+                        "recipient_id=%s, recipient_kind=%s",
                         change["id"],
-                        recipient["child_id"],
+                        recipient.get("child_id"),
+                        recipient.get("watch_target_title"),
                         recipient_id,
                         recipient["recipient_kind"],
                     )

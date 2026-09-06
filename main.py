@@ -15,6 +15,7 @@ from core.repository.admin_repository import AdminRepository
 from core.repository.profile_repository import ProfileRepository
 from core.repository.notification_repository import NotificationRepository
 from core.repository.extra_classes_repository import ExtraClassesRepository
+from core.repository.watch_target_repository import WatchTargetRepository
 
 from services.profiles_service import ProfileService
 from services.schedule_service import ScheduleService
@@ -23,6 +24,8 @@ from services.extra_classes_service import ExtraClassesService
 from services.cleanup_service import UserCleanupJob, NotificationDeliveryCleanupJob
 from services.time_service import TimeService, TimeServiceConfig
 from services.admin_service import AdminService
+from services.watch_targets_service import WatchTargetsService
+
 from bot.handlers import (
     registration,
     schedule_child,
@@ -112,7 +115,8 @@ async def main():
     profile_repo = ProfileRepository(db_path=config.DB_PATH, time_service=time_service)
     notification_repo = NotificationRepository(db_path=config.DB_PATH, time_service=time_service)
     extra_classes_repo = ExtraClassesRepository(db_path=config.DB_PATH, time_service=time_service)
-    
+    watch_target_repo = WatchTargetRepository(db_path=config.DB_PATH, time_service=time_service)
+        
     # 5. Сервисы
     schedule_service = ScheduleService(schedule_repo=schedule_repo, extra_classes_repo=extra_classes_repo, time_service=time_service)
     profile_service = ProfileService(profile_repo)
@@ -120,6 +124,7 @@ async def main():
     cleanup_job = UserCleanupJob(user_repo, time_service=time_service, dormant_days=60)
     admin_service = AdminService(admin_repo)
     extra_classes_service = ExtraClassesService(extra_classes_repo=extra_classes_repo, profile_repo=profile_repo, time_service=time_service)
+    watch_targets_service = WatchTargetsService(repository=watch_target_repo)
     
     notification_delivery_cleanup_job = NotificationDeliveryCleanupJob(notification_repo=notification_repo, time_service=time_service, retention_days=35)
         
@@ -139,6 +144,7 @@ async def main():
         admin_service=admin_service,
         time_service=time_service,
         extra_classes_service=extra_classes_service,
+        watch_targets_service=watch_targets_service,
         schedule_repo=schedule_repo,
         user_repository=user_repo,
         profile_repo=profile_repo,

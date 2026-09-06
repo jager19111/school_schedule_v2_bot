@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone, date
 from core.models.dto import (ClassListDTO, FamilyCreatedDTO, AdminStatsDTO, DayScheduleDTO, ChildrenListDTO, ExtraClassListDTO,
                              WeekSummaryDTO, FullWeekScheduleDTO, UserProfileDTO, FamilyMemberDTO,
                              MorningSummaryDTO, ChangeReminderDTO, LessonReminderDTO, ParentChildNotificationSettingsDTO, AdultExtraClassesPermissionDTO,
-                             ProfileResetImpactDTO, FamilyInviteDTO,
+                             ProfileResetImpactDTO, FamilyInviteDTO, ScheduleWatchTargetDTO,
 )
 
 class UIRenderer:
@@ -744,16 +744,23 @@ class UIRenderer:
         safe_child = UIRenderer.escape_html(dto.child_name)
         safe_subj = UIRenderer.escape_html(dto.subject_name)
 
-        child_line = (
-            f"👤 Ребёнок: <b>{safe_child}</b>\n"
-            if dto.child_name
-            else ""
-        )
+        if dto.watch_target_title:
+            target_line = (
+                "🎓 Отслеживаемый класс: "
+                f"<b>{UIRenderer.escape_html(dto.watch_target_title)}</b>\n"
+            )
+        elif dto.child_name:
+            target_line = (
+                "👤 Ребёнок: "
+                f"<b>{UIRenderer.escape_html(dto.child_name)}</b>\n"
+            )
+        else:
+            target_line = ""
 
         if dto.is_cancelled:
             return (
                 "🚫 <b>Отмена урока</b>\n"
-                f"{child_line}"
+                f"{target_line}"
                 f"📅 Дата: {dto.date}\n"
                 f"🔢 Урок: {dto.lesson_num}\n"
                 f"📚 Предмет: <b>{safe_subj}</b>"
@@ -761,7 +768,7 @@ class UIRenderer:
 
         return (
             "🔄 <b>Изменение в расписании</b>\n"
-            f"{child_line}"
+            f"{target_line}"
             f"📅 Дата: {dto.date}\n"
             f"🔢 Урок: {dto.lesson_num}\n"
             f"📚 Предмет: <b>{safe_subj}</b>"
@@ -962,4 +969,79 @@ class UIRenderer:
             f"{extra_line}\n"
             "• вы сможете пройти регистрацию заново.\n\n"
             "Это действие нельзя отменить."
+        )
+        
+    @staticmethod
+    def render_watch_targets_menu(
+        targets: list[ScheduleWatchTargetDTO],
+    ) -> str:
+        if not targets:
+            return (
+                "🎓 <b>Мои отслеживаемые классы</b>\n\n"
+                "Вы пока не добавили ни одного класса.\n\n"
+                "Добавьте класс, чтобы самостоятельно смотреть "
+                "расписание без привязки к профилю ребёнка."
+            )
+
+        lines = [
+            "🎓 <b>Мои отслеживаемые классы</b>",
+            "",
+            "Выберите класс для управления.",
+            "",
+        ]
+
+        for target in targets:
+            title = UIRenderer.escape_html(
+                target.title or f"Класс {target.class_id}"
+            )
+
+            group = (
+                "Весь класс"
+                if target.group_id == "ALL"
+                else f"Группа {target.group_id}"
+            )
+
+            status = (
+                "🟢 включено"
+                if target.is_enabled
+                else "⚫ выключено"
+            )
+
+            lines.append(
+                f"• <b>{title}</b> — {group}, {status}"
+            )
+
+        return "\n".join(lines)
+    
+    @staticmethod
+    def render_watch_target_details(
+        target: ScheduleWatchTargetDTO,
+        class_name: str,
+        group_name: str,
+    ) -> str:
+        title = UIRenderer.escape_html(
+            target.title or class_name
+        )
+
+        status = (
+            "🟢 Включено"
+            if target.is_enabled
+            else "⚫ Выключено"
+        )
+        changes_status = (
+            "🟢 Включены"
+            if target.receive_schedule_changes
+            else "🔴 Выключены"
+        )
+        return (
+            "🎓 <b>Отслеживаемый класс</b>\n\n"
+            f"Название: <b>{title}</b>\n"
+            f"Класс: <b>{UIRenderer.escape_html(class_name)}</b>\n"
+            f"Группа: <b>{UIRenderer.escape_html(group_name)}</b>\n"
+            f"Изменения расписания: {changes_status}\n\n"                
+            f"Статус: {status}\n\n"
+        
+            "Этот класс не связан с профилем ребёнка. "
+            "Он используется только для вашего самостоятельного "
+            "просмотра расписания."
         )
