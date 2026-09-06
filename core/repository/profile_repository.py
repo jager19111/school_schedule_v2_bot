@@ -1,6 +1,7 @@
 # core/repository/profile_repository.py
 from __future__ import annotations
-
+import secrets
+from datetime import datetime, timedelta, timezone
 import aiosqlite
 import logging
 import uuid
@@ -139,6 +140,301 @@ class ProfileRepository(BaseRepository):
         
     # ========== FAMILIES ==========
 
+    async def is_family_admin(
+        self,
+        user_id: int,
+        family_id: int,
+    ) -> bool:
+        """
+        Проверяет, является ли пользователь администратором конкретной семьи.
+        """
+        row = await self._fetch_one(
+            """
+            SELECT 1 AS is_admin
+            FROM families
+            WHERE id = ?
+              AND admin_user_id = ?
+            """,
+            (family_id, user_id),
+        )
+
+        return row is not None
+ 
+    async def create_family_invite(
+        self,
+        *,
+        family_id: int,
+        created_by_user_id: int,
+        intended_role: str,
+        expires_in_hours: int = 24,
+        max_uses: int = 1,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Создаёт одноразовое приглашение с фиксированной ролью.
+
+        Только family admin может выпускать invite.
+        """
+        allowed_roles = {
+            "child",
+            "parent",
+            "observer",
+        }
+
+        if intended_role not in allowed_roles:
+            raise ValueError(
+                f"Unsupported invite role: {intended_role}"
+            )
+
+        if not 1 <= max_uses <= 10:
+            raise ValueError(
+                "max_uses must be in range 1..10"
+            )
+
+        if not 1 <= expires_in_hours <= 168:
+            raise ValueError(
+                "expires_in_hours must be in range 1..168"
+            )
+
+        is_admin = await self.is_family_admin(
+            user_id=created_by_user_id,
+            family_id=family_id,
+        )
+
+        if not is_admin:
+            return None
+
+        token = secrets.token_urlsafe(24)
+
+        expires_at = (
+            datetime.now(timezone.utc)
+            + timedelta(hours=expires_in_hours)
+        ).strftime("%Y-%m-%d %H:%M:%S")
+
+        async with self._connection() as db:
+            cursor = await db.execute(
+                """
+                INSERT INTO family_invites (
+                    token,
+                    family_id,
+                    created_by_user_id,
+                    intended_role,
+                    expires_at,
+                    max_uses
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    token,
+                    family_id,
+                    created_by_user_id,
+                    intended_role,
+                    expires_at,
+                    max_uses,
+                ),
+            )
+
+            await db.commit()
+
+            invite_id = cursor.lastrowid
+
+        return await self._fetch_one(
+            """
+            SELECT
+                id,
+                token,
+                family_id,
+                intended_role,
+                expires_at,
+                max_uses,
+                uses_count,
+                is_revoked,
+                created_at
+            FROM family_invites
+            WHERE id = ?
+            """,
+            (invite_id,),
+        )
+
+    async def get_valid_family_invite(
+        self,
+        token: str,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Возвращает активное invite, которое можно использовать.
+
+        Проверяет:
+        - invite не отозван;
+        - срок не истёк;
+        - uses_count меньше max_uses;
+        - семья ещё существует.
+        """
+        return await self._fetch_one(
+            """
+            SELECT
+                invite.id,
+                invite.token,
+                invite.family_id,
+                invite.intended_role,
+                invite.expires_at,
+                invite.max_uses,
+                invite.uses_count,
+                invite.is_revoked,
+
+                family.family_code,
+                family.admin_user_id
+            FROM family_invites AS invite
+            JOIN families AS family
+              ON family.id = invite.family_id
+            WHERE invite.token = ?
+              AND invite.is_revoked = 0
+              AND invite.expires_at > CURRENT_TIMESTAMP
+              AND invite.uses_count < invite.max_uses
+            """,
+            (token,),
+        )
+
+    async def consume_family_invite(
+        self,
+        *,
+        token: str,
+        user_id: int,
+        name: str,
+        class_id: Optional[str] = None,
+        group_id: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Атомарно применяет invite к Telegram-пользователю.
+
+        Для child invite нужны class_id и group_id.
+        Для parent/observer invite class/group должны быть None.
+
+        Возвращает {family_id, intended_role} при успехе.
+        Возвращает None, если invite истёк, отозван, использован либо
+        пользователь уже состоит в семье.
+        """
+        async with self._connection() as db:
+            await db.execute("BEGIN")
+
+            try:
+                invite_cursor = await db.execute(
+                    """
+                    SELECT
+                        id,
+                        family_id,
+                        intended_role,
+                        max_uses,
+                        uses_count
+                    FROM family_invites
+                    WHERE token = ?
+                      AND is_revoked = 0
+                      AND expires_at > CURRENT_TIMESTAMP
+                      AND uses_count < max_uses
+                    """,
+                    (token,),
+                )
+
+                invite = await invite_cursor.fetchone()
+
+                if invite is None:
+                    await db.rollback()
+                    return None
+
+                invite_id = invite["id"]
+                family_id = invite["family_id"]
+                intended_role = invite["intended_role"]
+
+                user_cursor = await db.execute(
+                    """
+                    SELECT
+                        user_id,
+                        family_id
+                    FROM users
+                    WHERE user_id = ?
+                    """,
+                    (user_id,),
+                )
+
+                user = await user_cursor.fetchone()
+
+                if user is None:
+                    await db.rollback()
+                    return None
+
+                # Не позволяем silently переместить существующего члена семьи
+                # в другую семью через forwarded invite.
+                if user["family_id"] is not None:
+                    await db.rollback()
+                    return None
+
+                if intended_role == "child":
+                    if not class_id or not group_id:
+                        await db.rollback()
+                        raise ValueError(
+                            "Child invite requires class_id and group_id"
+                        )
+                else:
+                    class_id = None
+                    group_id = None
+
+                # Ключевой optimistic lock:
+                # один invite может быть потреблён только ограниченное число раз.
+                consume_cursor = await db.execute(
+                    """
+                    UPDATE family_invites
+                    SET
+                        uses_count = uses_count + 1,
+                        used_by_user_id = ?,
+                        used_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                      AND is_revoked = 0
+                      AND expires_at > CURRENT_TIMESTAMP
+                      AND uses_count < max_uses
+                    """,
+                    (user_id, invite_id),
+                )
+
+                if consume_cursor.rowcount != 1:
+                    await db.rollback()
+                    return None
+
+                await db.execute(
+                    """
+                    UPDATE users
+                    SET
+                        name = ?,
+                        family_id = ?,
+                        role = ?,
+                        class_id = ?,
+                        group_id = ?,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE user_id = ?
+                    """,
+                    (
+                        name,
+                        family_id,
+                        intended_role,
+                        class_id,
+                        group_id,
+                        user_id,
+                    ),
+                )
+
+                await self._ensure_parent_child_settings_for_family(
+                    db=db,
+                    family_id=family_id,
+                )
+
+                await db.commit()
+
+                return {
+                    "family_id": family_id,
+                    "intended_role": intended_role,
+                }
+
+            except Exception:
+                await db.rollback()
+                raise
+                                
     async def create_family_and_link(self, admin_user_id: int) -> str:
         """
         Создаёт новую семью и привязывает создателя как администратора-родителя.
@@ -197,7 +493,7 @@ class ProfileRepository(BaseRepository):
             await db.commit()
 
         return family_code
-
+# legacy метод, который создаёт семью и привязывает пользователя. Для обратной совместимости оставлен
     async def get_family_by_code(self, family_code: str) -> Optional[Dict[str, Any]]:
         """
         Возвращает семью по коду.
@@ -206,7 +502,7 @@ class ProfileRepository(BaseRepository):
             "SELECT id, family_code, admin_user_id FROM families WHERE family_code = ?",
             (family_code,),
         )
-
+# Рабочий core method, оставить
     async def link_user_to_family(
         self,
         user_id: int,

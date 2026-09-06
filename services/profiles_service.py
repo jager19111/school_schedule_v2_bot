@@ -7,7 +7,7 @@ from core.models.dto import (
     UserProfileDTO,
     ChildInfoDTO,
     FamilyMemberDTO,
-    ParentChildNotificationSettingsDTO, ExtraClassesAccessDTO,AdultExtraClassesPermissionDTO, ProfileResetImpactDTO,
+    ParentChildNotificationSettingsDTO, ExtraClassesAccessDTO,AdultExtraClassesPermissionDTO, ProfileResetImpactDTO, FamilyInviteDTO,
 )
 
 logger = logging.getLogger(__name__)
@@ -108,7 +108,20 @@ class ProfileService:
         )
 
     # ========== СЕМЬИ ==========
-
+    async def is_family_admin(
+        self,
+        user_id: int,
+        family_id: int,
+    ) -> bool:
+        """
+        Проверяет, является ли Telegram-пользователь администратором
+        конкретной семьи.
+        """
+        return await self.repo.is_family_admin(
+            user_id=user_id,
+            family_id=family_id,
+        )
+        
     async def create_family_and_link(self, admin_user_id: int) -> str:
         """
         Создаёт семью и привязывает создателя как parent.
@@ -117,9 +130,104 @@ class ProfileService:
         """
         return await self.repo.create_family_and_link(admin_user_id)
 
+    async def create_family_invite(
+        self,
+        *,
+        created_by_user_id: int,
+        family_id: int,
+        intended_role: str,
+        expires_in_hours: int = 24,
+    ) -> Optional[FamilyInviteDTO]:
+        """
+        Создаёт role-specific invite.
+
+        Вернёт None, если инициатор не является family admin.
+        """
+        row = await self.repo.create_family_invite(
+            family_id=family_id,
+            created_by_user_id=created_by_user_id,
+            intended_role=intended_role,
+            expires_in_hours=expires_in_hours,
+            max_uses=1,
+        )
+
+        if row is None:
+            return None
+
+        return FamilyInviteDTO(
+            id=row["id"],  # <-- Добавлено недостающее поле
+            token=row["token"],
+            family_id=row["family_id"],
+            intended_role=row["intended_role"],
+            expires_at=row["expires_at"],
+            max_uses=row["max_uses"],
+        )
+        
+    async def get_valid_family_invite(
+        self,
+        token: str,
+    ) -> Optional[FamilyInviteDTO]:
+        """
+        Возвращает активное invite для deep-link onboarding.
+        """
+        row = await self.repo.get_valid_family_invite(
+            token=token,
+        )
+
+        if row is None:
+            return None
+
+        return FamilyInviteDTO(
+            id=row["id"],
+            token=row["token"],
+            family_id=row["family_id"],
+            intended_role=row["intended_role"],
+            expires_at=row["expires_at"],
+            max_uses=row["max_uses"],
+            uses_count=row["uses_count"],
+            is_revoked=bool(row["is_revoked"]),
+        )
+
+    async def consume_family_invite(
+        self,
+        *,
+        token: str,
+        user_id: int,
+        name: str,
+        class_id: Optional[str] = None,
+        group_id: Optional[str] = None,
+    ) -> Optional[str]:
+        """
+        Завершает регистрацию через invite.
+
+        Возвращает роль пользователя при успехе:
+            child / parent / observer
+
+        Возвращает None, если invite стало невалидным к моменту consume.
+        """
+        result = await self.repo.consume_family_invite(
+            token=token,
+            user_id=user_id,
+            name=name,
+            class_id=class_id,
+            group_id=group_id,
+        )
+
+        if result is None:
+            return None
+
+        return result["intended_role"]
+    
+# Переименовать позже в join_family_by_code()        
     async def link_child_to_parent(self, user_id: int, family_code: str, role: str = "child") -> bool:
         """
-        Привязывает пользователя (child/observer) к семье по коду.
+        LEGACY_FALLBACK.
+
+        Ручное присоединение пользователя к семье по family_code.
+        Оставлено для обратной совместимости и аварийного сценария.
+        Основной путь подключения: role-specific deep-link invite.
+
+        В будущем переименовать в join_family_by_code().
         """
         family = await self.repo.get_family_by_code(family_code)
         if not family:

@@ -1,6 +1,7 @@
 import logging
 import contextlib
-from aiogram import Router, F
+from urllib.parse import urlencode
+from aiogram import Router, F, Bot
 from aiogram.types import Message, CallbackQuery
 from aiogram.exceptions import TelegramBadRequest
 
@@ -878,7 +879,190 @@ async def confirm_restart(
     )
         
 # ================= 3. УПРАВЛЕНИЕ СЕМЬЕЙ =================
+@router.callback_query(F.data == "family:invite_menu")
+async def show_family_invite_menu(
+    callback: CallbackQuery,
+    profile_service: ProfileService,
+) -> None:
+    """
+    Показывает admin-у список role-specific invites.
+    """
+    user_dto = await profile_service.get_user_profile_dto(
+        callback.from_user.id,
+    )
 
+    if not user_dto.family_id:
+        await _safe_callback_answer(
+            callback,
+            "Вы не состоите в семье.",
+            show_alert=True,
+        )
+        return
+
+    is_family_admin = await profile_service.is_family_admin(
+        user_id=callback.from_user.id,
+        family_id=user_dto.family_id,
+    )
+
+    if not is_family_admin:
+        await _safe_callback_answer(
+            callback,
+            "Только администратор семьи может создавать приглашения.",
+            show_alert=True,
+        )
+        return
+
+    text = UIRenderer.render_family_invite_role_menu()
+    keyboard = Keyboards.get_family_invite_role_kb()
+
+    await _safe_edit_text(
+        callback.message,
+        text,
+        reply_markup=keyboard,
+    )
+
+    await _safe_callback_answer(callback)
+
+@router.callback_query(
+    F.data.startswith("family:invite_role:")
+)
+async def create_family_invite(
+    callback: CallbackQuery,
+    bot: Bot,
+    profile_service: ProfileService,
+) -> None:
+    """
+    Создаёт one-time role-specific invite и отдаёт deep link.
+    """
+    try:
+        intended_role = callback.data.split(":")[2]
+    except IndexError:
+        await _safe_callback_answer(
+            callback,
+            "Некорректная роль приглашения.",
+            show_alert=True,
+        )
+        return
+
+    allowed_roles = {
+        "child",
+        "parent",
+        "observer",
+    }
+
+    if intended_role not in allowed_roles:
+        await _safe_callback_answer(
+            callback,
+            "Неизвестная роль приглашения.",
+            show_alert=True,
+        )
+        return
+
+    user_dto = await profile_service.get_user_profile_dto(
+        callback.from_user.id,
+    )
+
+    if not user_dto.family_id:
+        await _safe_callback_answer(
+            callback,
+            "Вы не состоите в семье.",
+            show_alert=True,
+        )
+        return
+
+    invite = await profile_service.create_family_invite(
+        created_by_user_id=callback.from_user.id,
+        family_id=user_dto.family_id,
+        intended_role=intended_role,
+        expires_in_hours=24,
+    )
+
+    if invite is None:
+        await _safe_callback_answer(
+            callback,
+            "Только администратор семьи может создавать приглашения.",
+            show_alert=True,
+        )
+        return
+
+    me = await bot.get_me()
+
+    if not me.username:
+        logger.error(
+            "Bot username is empty; cannot build deep link."
+        )
+
+        await _safe_callback_answer(
+            callback,
+            "Не удалось сформировать ссылку приглашения. "
+            "У bot отсутствует username.",
+            show_alert=True,
+        )
+        return
+
+    deep_link = (
+        f"https://t.me/{me.username}"
+        f"?start=join_{invite.token}"
+    )
+    role_for_recipient = {
+        "child": "ребёнка",
+        "parent": "родителя",
+        "observer": "наблюдателя",
+    }[invite.intended_role]
+
+    share_text = (
+        "👋 Вас пригласили присоединиться к семье "
+        "школьного расписания.\n\n"
+        f"Роль: {role_for_recipient}.\n"
+        "Откройте ссылку и завершите регистрацию."
+    )
+
+    share_link = (
+        "https://t.me/share/url?"
+        + urlencode(
+            {
+                "url": deep_link,
+                "text": share_text,
+            }
+        )
+    )
+    
+    role_label = {
+        "child": "Ребёнок с Telegram",
+        "parent": "Родитель",
+        "observer": "Наблюдатель",
+    }[invite.intended_role]
+
+    text = UIRenderer.render_family_invite_created(
+        role_label=role_label,
+        expires_at=invite.expires_at,
+    )
+
+    keyboard = Keyboards.get_family_invite_result_kb(
+        share_link=share_link,
+        deep_link=deep_link,
+    )
+
+    await _safe_edit_text(
+        callback.message,
+        text,
+        reply_markup=keyboard,
+    )
+
+    await callback.message.answer(
+        "📎 <b>Ссылка приглашения</b>\n\n"
+        f"{deep_link}\n\n"
+        "Вы можете скопировать или переслать это сообщение. "
+        "Ссылка одноразовая и действует ограниченное время.",
+        parse_mode="HTML",
+    )
+    
+    await _safe_callback_answer(
+        callback,
+        "Приглашение создано.",
+    )
+       
+       
 @router.callback_query(F.data == "settings:family")
 async def show_family_management(
     callback: CallbackQuery, 
@@ -892,12 +1076,22 @@ async def show_family_management(
         kb = Keyboards.get_settings_main_kb(user_dto)
         return await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
 
+    is_family_admin = await profile_service.is_family_admin(
+        user_id=callback.from_user.id,
+        family_id=user_dto.family_id,
+    )
+    
     # Получаем полный состав семьи
     family_members = await profile_service.get_family_members(user_dto.family_id)
     class_dto = await schedule_service.get_classes_list()
     
     text = UIRenderer.render_family_members_menu(family_members, user_dto, class_dto.classes)
-    kb = Keyboards.get_family_management_kb(family_members, user_dto, class_dto.classes)
+    kb = Keyboards.get_family_management_kb(
+        members=family_members,
+        current_user=user_dto,
+        classes_dict=class_dto.classes,
+        is_family_admin=is_family_admin,
+    )
     
     with contextlib.suppress(TelegramBadRequest):
         await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
@@ -1147,7 +1341,7 @@ async def show_child_settings(
 
     await _safe_callback_answer(callback)
 
-
+ 
 # Настройки самого родителя
 @router.callback_query(F.data == "settings:my_notifications")
 async def toggle_my_notifications(

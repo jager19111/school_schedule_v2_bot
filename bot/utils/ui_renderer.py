@@ -264,7 +264,32 @@ class UIRenderer:
             f"• Контролировать внеурочные занятия\n\n"
             f"Настройка завершена. Вы можете просматривать расписание через меню ⬇️"
         )
-        
+
+    @staticmethod
+    def render_family_invite_role_menu() -> str:
+        return (
+            "📨 <b>Пригласить участника в семью</b>\n\n"
+            "Выберите роль приглашённого человека.\n\n"
+            "Роль фиксируется в приглашении и не может быть "
+            "изменена получателем."
+        )
+
+    @staticmethod
+    def render_family_invite_created(
+        role_label: str,
+        expires_at: str,
+    ) -> str:
+        return (
+            "✅ <b>Приглашение создано</b>\n\n"
+            f"Роль: <b>{UIRenderer.escape_html(role_label)}</b>\n"
+            f"Действует до: <code>{expires_at}</code>\n"
+            "Использований: <b>0 / 1</b>\n\n"
+            "Нажмите <b>«📤 Отправить приглашение»</b> "
+            "и выберите чат приглашённого человека.\n\n"
+            "Приглашённый пользователь откроет ссылку и автоматически "
+            "начнёт регистрацию в назначенной роли."
+        )
+                
     @staticmethod
     def render_class_selection(dto: ClassListDTO) -> str:
         if not dto.classes:

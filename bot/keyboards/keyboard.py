@@ -680,22 +680,64 @@ class Keyboards:
     # Клавитура семьи
     @staticmethod
     def get_family_management_kb(
-        members: list['FamilyMemberDTO'], 
-        current_user: 'UserProfileDTO', 
-        classes_dict: dict
+        members: list[FamilyMemberDTO],
+        current_user: UserProfileDTO,
+        classes_dict: dict,
+        is_family_admin: bool,
     ) -> InlineKeyboardMarkup:
         buttons = []
-        
-        # Только родитель получает кнопки для входа в настройки детей
-        if current_user.role == 'parent':
-            for m in members:
-                if m.role == 'child':
-                    class_name = classes_dict.get(m.class_id, m.class_id) if m.class_id else "Нет класса"
-                    btn_text = f"⚙️ Настроить: {m.name} ({class_name})"
-                    buttons.append([InlineKeyboardButton(text=btn_text, callback_data=f"family:child_settings:{m.user_id}")])
-                    
-        buttons.append([InlineKeyboardButton(text="⬅️ Назад к настройкам", callback_data="settings:main")])
-        return InlineKeyboardMarkup(inline_keyboard=buttons)    
+
+        # Любой parent/observer видит доступные семейные профили.
+        # Конкретная проверка доступа к ученику остаётся в handler/service.
+        if current_user.role in ("parent", "observer"):
+            for member in members:
+                if member.role != "child":
+                    continue
+
+                child_name = member.name or (
+                    f"Ученик {member.user_id}"
+                )
+
+                class_name = (
+                    classes_dict.get(
+                        member.class_id,
+                        member.class_id,
+                    )
+                    if member.class_id
+                    else "Класс не выбран"
+                )
+
+                buttons.append([
+                    InlineKeyboardButton(
+                        text=(
+                            f"🧒 {child_name} "
+                            f"({class_name})"
+                        ),
+                        callback_data=(
+                            f"family:child_settings:{member.user_id}"
+                        ),
+                    )
+                ])
+
+        # Только creator/admin семьи может выдавать invites.
+        if is_family_admin:
+            buttons.append([
+                InlineKeyboardButton(
+                    text="📨 Пригласить участника",
+                    callback_data="family:invite_menu",
+                )
+            ])
+
+        buttons.append([
+            InlineKeyboardButton(
+                text="⬅️ Назад к настройкам",
+                callback_data="settings:main",
+            )
+        ])
+
+        return InlineKeyboardMarkup(
+            inline_keyboard=buttons,
+        )
 
 # Возможно нужно удалить, так как есть get_parent_children_menu, но она не используется в коде.
     @staticmethod
@@ -864,6 +906,80 @@ class Keyboards:
                     InlineKeyboardButton(
                         text="⬅️ Отмена",
                         callback_data="settings:main",
+                    )
+                ],
+            ]
+        )
+        
+    @staticmethod
+    def get_family_invite_role_kb() -> InlineKeyboardMarkup:
+        """
+        Выбор фиксированной роли нового участника семьи.
+        """
+        return InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="👶 Ребёнка с Telegram",
+                        callback_data="family:invite_role:child",
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="👨‍👩‍👧 Родителя",
+                        callback_data="family:invite_role:parent",
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="👁 Наблюдателя",
+                        callback_data="family:invite_role:observer",
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="⬅️ Назад к семье",
+                        callback_data="settings:family",
+                    )
+                ],
+            ]
+        )
+        
+    @staticmethod
+    def get_family_invite_result_kb(
+        share_link: str,
+        deep_link: str,
+    ) -> InlineKeyboardMarkup:
+        """
+        Доставка family invite.
+
+        share_link открывает Telegram share sheet с готовым текстом.
+        deep_link остаётся доступен как резервный вариант.
+        """
+        return InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="📤 Отправить приглашение",
+                        url=share_link,
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="📎 Открыть ссылку приглашения",
+                        url=deep_link,
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="📨 Создать ещё приглашение",
+                        callback_data="family:invite_menu",
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="⬅️ К семье",
+                        callback_data="settings:family",
                     )
                 ],
             ]

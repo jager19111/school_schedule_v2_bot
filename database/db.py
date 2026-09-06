@@ -105,6 +105,67 @@ class Database:
             """)
 
             await db.execute("""
+                CREATE TABLE IF NOT EXISTS family_invites (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+                    token TEXT NOT NULL UNIQUE,
+
+                    family_id INTEGER NOT NULL,
+                    created_by_user_id INTEGER NOT NULL,
+
+                    intended_role TEXT NOT NULL
+                        CHECK (
+                            intended_role IN (
+                                'child',
+                                'parent',
+                                'observer'
+                            )
+                        ),
+
+                    expires_at TEXT NOT NULL,
+
+                    max_uses INTEGER NOT NULL DEFAULT 1
+                        CHECK (max_uses BETWEEN 1 AND 10),
+
+                    uses_count INTEGER NOT NULL DEFAULT 0
+                        CHECK (uses_count >= 0),
+
+                    is_revoked INTEGER NOT NULL DEFAULT 0
+                        CHECK (is_revoked IN (0, 1)),
+
+                    used_by_user_id INTEGER,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    used_at TEXT,
+
+                    FOREIGN KEY (family_id)
+                        REFERENCES families(id)
+                        ON DELETE CASCADE,
+
+                    FOREIGN KEY (created_by_user_id)
+                        REFERENCES users(user_id)
+                        ON DELETE CASCADE,
+
+                    FOREIGN KEY (used_by_user_id)
+                        REFERENCES users(user_id)
+                        ON DELETE SET NULL
+                )
+            """)
+
+            await db.execute("""
+                CREATE INDEX IF NOT EXISTS idx_family_invites_token
+                ON family_invites(token)
+            """)
+
+            await db.execute("""
+                CREATE INDEX IF NOT EXISTS idx_family_invites_family_active
+                ON family_invites(
+                    family_id,
+                    is_revoked,
+                    expires_at
+                )
+            """)
+            
+            await db.execute("""
                 CREATE TABLE IF NOT EXISTS extra_classes (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     family_id INTEGER NOT NULL,

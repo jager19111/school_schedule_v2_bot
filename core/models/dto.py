@@ -14,6 +14,25 @@ class GroupListDTO:
 class FamilyCreatedDTO:
     family_code: str
 
+
+@dataclass
+class FamilyInviteDTO:
+    """
+    Role-specific приглашение в семью.
+
+    Invite может быть показан в UI, передан в deep link и проверен
+    перед финальным consume.
+    """
+    id: int
+    token: str
+    family_id: int
+    intended_role: str
+    expires_at: str
+
+    max_uses: int = 1
+    uses_count: int = 0
+    is_revoked: bool = False
+    
 @dataclass
 class ActionResponseDTO:
     """ DTO для ответа на действие (например, создание семьи, обновление профиля и т.п.). 

@@ -2,7 +2,7 @@ import logging
 import contextlib
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
-from aiogram.filters import Command
+from aiogram.filters import Command, CommandObject
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
 from aiogram.exceptions import TelegramBadRequest
@@ -26,22 +26,115 @@ class RegistrationStates(StatesGroup):
     waiting_for_group = State()
 
 @router.message(Command("start"))
-async def cmd_start(message: Message, state: FSMContext, profile_service: ProfileService):
-    await profile_service.register_user_initial(message.from_user.id)
-    
-    user_dto = await profile_service.get_user_profile_dto(message.from_user.id)
-    
+async def cmd_start(
+    message: Message,
+    command: CommandObject,
+    state: FSMContext,
+    profile_service: ProfileService,
+) -> None:
+    """
+    Старт bot и обработка deep-link family invite.
+
+    Обычный /start работает как раньше.
+    /start join_<token> запускает роль, зафиксированную в invite.
+    """
+    user_id = message.from_user.id
+
+    await profile_service.register_user_initial(
+        user_id,
+    )
+
+    user_dto = await profile_service.get_user_profile_dto(
+        user_id,
+    )
+
+    payload = (command.args or "").strip()
+
+    # -------------------------------
+    # Deep link invite flow
+    # -------------------------------
+    if payload.startswith("join_"):
+        token = payload.removeprefix("join_")
+
+        # Нельзя случайно переместить уже завершённый профиль
+        # в другую семью.
+        if user_dto.is_fully_registered:
+            await message.answer(
+                "⚠️ Вы уже зарегистрированы в bot.\n\n"
+                "Для использования приглашения сначала выйдите "
+                "из текущего профиля через настройки."
+            )
+            await state.clear()
+            return
+
+        invite = await profile_service.get_valid_family_invite(
+            token=token,
+        )
+
+        if invite is None:
+            await message.answer(
+                "❌ Приглашение недействительно, уже использовано "
+                "или срок его действия истёк."
+            )
+            await state.clear()
+            return
+
+        role_text = {
+            "child": "ребёнка",
+            "parent": "родителя",
+            "observer": "наблюдателя",
+        }.get(
+            invite.intended_role,
+            "участника семьи",
+        )
+
+        await state.update_data(
+            family_invite_token=token,
+            invited_family_id=invite.family_id,
+            invited_role=invite.intended_role,
+        )
+
+        await message.answer(
+            "👋 Вас пригласили присоединиться к семье "
+            f"в роли <b>{role_text}</b>.\n\n"
+            "Как к вам обращаться?",
+            parse_mode="HTML",
+        )
+
+        await state.set_state(
+            RegistrationStates.waiting_for_name,
+        )
+        return
+
+    # -------------------------------
+    # Обычный /start
+    # -------------------------------
     if user_dto.is_fully_registered:
-        text = UIRenderer.render_already_registered(user_dto.name)
+        text = UIRenderer.render_already_registered(
+            user_dto.name,
+        )
+
         kb = Keyboards.get_main_menu()
-        await message.answer(text, reply_markup=kb)
+
+        await message.answer(
+            text,
+            reply_markup=kb,
+        )
+
         await state.clear()
         return
-        
+
     text = UIRenderer.render_role_selection()
     kb = Keyboards.get_role_selection()
-    await message.answer(text, reply_markup=kb)
-    await state.set_state(RegistrationStates.waiting_for_role)
+
+    await message.answer(
+        text,
+        reply_markup=kb,
+    )
+
+    await state.set_state(
+        RegistrationStates.waiting_for_role,
+    )
 
 @router.callback_query(RegistrationStates.waiting_for_role, F.data.startswith("role:"))
 async def process_role(callback: CallbackQuery, state: FSMContext, profile_service: ProfileService):
@@ -54,29 +147,166 @@ async def process_role(callback: CallbackQuery, state: FSMContext, profile_servi
     await state.set_state(RegistrationStates.waiting_for_name)
 
 @router.message(RegistrationStates.waiting_for_name)
-async def process_name(message: Message, state: FSMContext, profile_service: ProfileService):
+async def process_name(
+    message: Message,
+    state: FSMContext,
+    profile_service: ProfileService,
+    schedule_service: ScheduleService,
+) -> None:
+    """
+    Обрабатывает имя в обычной регистрации и через family invite.
+    """
     name = message.text.strip()
-    await profile_service.update_user_name(message.from_user.id, name)
-    
+
+    if not name:
+        await message.answer(
+            "❌ Введите имя, состоящее хотя бы из одного символа."
+        )
+        return
+
+    if len(name) > 64:
+        await message.answer(
+            "❌ Имя слишком длинное. Используйте до 64 символов."
+        )
+        return
+
     data = await state.get_data()
-    role = data.get('role')
-    
-    if role == 'parent':
+
+    invite_token = data.get("family_invite_token")
+    invited_role = data.get("invited_role")
+
+    # ---------------------------------
+    # Invite child: имя сохраняем в FSM,
+    # class/group будут выбраны дальше.
+    # Consume произойдёт только в process_group.
+    # ---------------------------------
+    if invite_token and invited_role == "child":
+        await state.update_data(
+            pending_invite_name=name,
+        )
+
+        class_dto = await schedule_service.get_classes_list()
+
+        text = UIRenderer.render_class_selection(
+            class_dto,
+        )
+
+        kb = Keyboards.get_class_selection(
+            class_dto,
+        )
+
+        await message.answer(
+            text,
+            reply_markup=kb,
+        )
+
+        await state.set_state(
+            RegistrationStates.waiting_for_class,
+        )
+        return
+
+    # ---------------------------------
+    # Invite adult: class/group не нужны.
+    # Можно consume сразу после имени.
+    # ---------------------------------
+    if invite_token and invited_role in (
+        "parent",
+        "observer",
+    ):
+        consumed_role = await profile_service.consume_family_invite(
+            token=invite_token,
+            user_id=message.from_user.id,
+            name=name,
+        )
+
+        if consumed_role is None:
+            await state.clear()
+
+            await message.answer(
+                "❌ Приглашение больше недействительно, уже использовано "
+                "или срок его действия истёк."
+            )
+            return
+
+        role_label = {
+            "parent": "родителя",
+            "observer": "наблюдателя",
+        }.get(
+            consumed_role,
+            "участника семьи",
+        )
+
+        await state.clear()
+
+        menu_text = UIRenderer.render_main_menu()
+        menu_kb = Keyboards.get_main_menu()
+
+        await message.answer(
+            "✅ Вы успешно присоединились к семье "
+            f"в роли <b>{role_label}</b>.",
+            parse_mode="HTML",
+        )
+
+        await message.answer(
+            menu_text,
+            reply_markup=menu_kb,
+        )
+        return
+
+    # ---------------------------------
+    # Старый обычный registration flow.
+    # ---------------------------------
+    await profile_service.update_user_name(
+        message.from_user.id,
+        name,
+    )
+
+    role = data.get("role")
+
+    if role == "parent":
         text = UIRenderer.render_parent_family_action()
         kb = Keyboards.get_parent_family_action()
-        await message.answer(text, reply_markup=kb)
-        await state.set_state(RegistrationStates.waiting_for_family_action)
-        
-    elif role == 'child':
+
+        await message.answer(
+            text,
+            reply_markup=kb,
+        )
+
+        await state.set_state(
+            RegistrationStates.waiting_for_family_action,
+        )
+        return
+
+    if role == "child":
         text = UIRenderer.render_child_family_action()
         kb = Keyboards.get_child_family_action()
-        await message.answer(text, reply_markup=kb)
-        await state.set_state(RegistrationStates.waiting_for_family_action)
-        
-    elif role == 'observer':
+
+        await message.answer(
+            text,
+            reply_markup=kb,
+        )
+
+        await state.set_state(
+            RegistrationStates.waiting_for_family_action,
+        )
+        return
+
+    if role == "observer":
         text = UIRenderer.render_family_code_prompt()
+
         await message.answer(text)
-        await state.set_state(RegistrationStates.waiting_for_family_code)
+
+        await state.set_state(
+            RegistrationStates.waiting_for_family_code,
+        )
+        return
+
+    await state.clear()
+
+    await message.answer(
+        "❌ Не удалось определить выбранную роль. "
+        "Отправьте /start и повторите регистрацию."
+    )
 
 @router.callback_query(RegistrationStates.waiting_for_family_action, F.data == "family:create")
 async def process_family_create(callback: CallbackQuery, state: FSMContext, profile_service: ProfileService):
@@ -105,7 +335,7 @@ async def process_family_skip_btn(callback: CallbackQuery, state: FSMContext, sc
     kb = Keyboards.get_class_selection(class_dto)
     await callback.message.edit_text(text, reply_markup=kb)
     await state.set_state(RegistrationStates.waiting_for_class)
-
+# LEGACY_FALLBACK, оставить
 @router.message(RegistrationStates.waiting_for_family_code)
 async def process_family_code_input(message: Message, state: FSMContext, profile_service: ProfileService, schedule_service: ScheduleService):
     code = message.text.strip().upper()
@@ -165,6 +395,73 @@ async def process_group(
 ):
     main_group_id = callback.data.split(":")[1]
     data = await state.get_data()
+    invite_token = data.get("family_invite_token")
+    invited_role = data.get("invited_role")
+
+    if invite_token and invited_role == "child":
+        pending_name = data.get("pending_invite_name")
+        class_id = data.get("class_id")
+
+        if not pending_name or not class_id:
+            await state.clear()
+
+            await callback.answer(
+                "❌ Данные приглашения устарели. "
+                "Откройте приглашение заново.",
+                show_alert=True,
+            )
+            return
+
+        consumed_role = await profile_service.consume_family_invite(
+            token=invite_token,
+            user_id=callback.from_user.id,
+            name=pending_name,
+            class_id=class_id,
+            group_id=main_group_id,
+        )
+
+        if consumed_role is None:
+            await state.clear()
+
+            await callback.answer(
+                "❌ Приглашение уже использовано, отозвано "
+                "или срок его действия истёк.",
+                show_alert=True,
+            )
+            return
+
+        await state.clear()
+
+        user_dto = await profile_service.get_user_profile_dto(
+            callback.from_user.id,
+        )
+
+        text = UIRenderer.render_final_success(
+            user_dto.name,
+        )
+
+        try:
+            await callback.message.delete()
+        except TelegramBadRequest:
+            pass
+
+        await callback.message.answer(
+            text,
+            parse_mode="HTML",
+        )
+
+        menu_text = UIRenderer.render_main_menu()
+        menu_kb = Keyboards.get_main_menu()
+
+        await callback.message.answer(
+            menu_text,
+            reply_markup=menu_kb,
+        )
+
+        await callback.answer(
+            "✅ Регистрация через приглашение завершена.",
+        )
+        return
     
     # 1. Сохраняем ТОЛЬКО выбранную группу
     final_group_string = main_group_id
