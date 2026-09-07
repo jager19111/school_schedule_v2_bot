@@ -180,6 +180,7 @@ class UserProfileDTO:
     family_id: Optional[int] = None
     class_id: Optional[str] = None
     group_id: Optional[str] = None
+    teacher_id: Optional[str] = None
 
     morning_summary_time: Optional[str] = None
     pre_lesson_offset_minutes: int = 10

@@ -206,6 +206,8 @@ class SettingsStates(StatesGroup):
     waiting_for_student_group = State()
     
     waiting_for_student_telegram_summary_time = State()
+    
+    waiting_for_teacher_change = State()
 
 
 
@@ -3602,4 +3604,162 @@ async def toggle_adult_student_extra_classes_permission(
     await _safe_callback_answer(
         callback,
         "✅ Право взрослого обновлено.",
+    )
+    
+    #----------------------
+    #   УЧИТЕЛЬ
+    #----------------------
+    
+@router.callback_query(
+    F.data == "settings:change_teacher"
+)
+async def start_teacher_change(
+    callback: CallbackQuery,
+    state: FSMContext,
+    profile_service: ProfileService,
+    schedule_service: ScheduleService,
+) -> None:
+    """
+    Teacher меняет привязанный NIKA teacher profile.
+    """
+    user_dto = await profile_service.get_user_profile_dto(
+        callback.from_user.id,
+    )
+
+    if user_dto.role != "teacher":
+        await _safe_callback_answer(
+            callback,
+            "Этот раздел доступен только учителям.",
+            show_alert=True,
+        )
+        return
+
+    teachers_dto = await schedule_service.get_teachers_list()
+
+    if not teachers_dto.teachers:
+        await _safe_callback_answer(
+            callback,
+            "Справочник учителей пока недоступен.",
+            show_alert=True,
+        )
+        return
+
+    await state.clear()
+
+    await state.update_data(
+        teacher_change_user_id=callback.from_user.id,
+    )
+
+    await _safe_edit_text(
+        callback.message,
+        (
+            "👨‍🏫 <b>Смена профиля учителя</b>\n\n"
+            "Выберите себя из актуального справочника школы."
+        ),
+        reply_markup=Keyboards.get_teacher_change_kb(
+            teachers_dto,
+        ),
+    )
+
+    await state.set_state(
+        SettingsStates.waiting_for_teacher_change,
+    )
+
+    await _safe_callback_answer(callback)
+    
+@router.callback_query(
+    SettingsStates.waiting_for_teacher_change,
+    F.data.startswith("teacher_change:"),
+)
+async def save_teacher_change(
+    callback: CallbackQuery,
+    state: FSMContext,
+    profile_service: ProfileService,
+    schedule_service: ScheduleService,
+) -> None:
+    """
+    Сохраняет новый NIKA teacher_id для текущего Telegram teacher.
+    """
+    try:
+        teacher_id = callback.data.split(":")[1]
+    except IndexError:
+        await _safe_callback_answer(
+            callback,
+            "Некорректный учитель.",
+            show_alert=True,
+        )
+        return
+
+    data = await state.get_data()
+
+    if data.get("teacher_change_user_id") != callback.from_user.id:
+        await state.clear()
+
+        await _safe_callback_answer(
+            callback,
+            "Состояние изменения устарело.",
+            show_alert=True,
+        )
+        return
+
+    teacher_dto = await profile_service.get_user_profile_dto(
+        callback.from_user.id,
+    )
+
+    if teacher_dto.role != "teacher":
+        await state.clear()
+
+        await _safe_callback_answer(
+            callback,
+            "Этот профиль больше не является профилем учителя.",
+            show_alert=True,
+        )
+        return
+
+    teachers_dto = await schedule_service.get_teachers_list()
+
+    teacher_name = teachers_dto.teachers.get(
+        teacher_id,
+    )
+
+    if teacher_name is None:
+        await _safe_callback_answer(
+            callback,
+            "Учитель не найден в текущем справочнике.",
+            show_alert=True,
+        )
+        return
+
+    changed = await profile_service.set_teacher_profile(
+        user_id=callback.from_user.id,
+        teacher_id=teacher_id,
+    )
+
+    await state.clear()
+
+    if not changed:
+        await _safe_callback_answer(
+            callback,
+            "Не удалось изменить профиль учителя.",
+            show_alert=True,
+        )
+        return
+
+    await _show_settings_menu(
+        message_obj=callback.message,
+        user_id=callback.from_user.id,
+        profile_service=profile_service,
+        schedule_service=schedule_service,
+        is_callback=True,
+    )
+
+    teacher_name_text = getattr(
+        teacher_name,
+        "name",
+        teacher_name,
+    )
+
+    await _safe_callback_answer(
+        callback,
+        f"✅ Профиль изменён: {teacher_name_text}",
     )

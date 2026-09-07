@@ -68,7 +68,11 @@ class ProfileService:
         # Проверка завершенности регистрации
         if role == "child" and row.get("class_id"):
             is_registered = True
+
         elif role in ("parent", "observer") and row.get("family_id"):
+            is_registered = True
+
+        elif role == "teacher" and row.get("teacher_id"):
             is_registered = True
 
         return UserProfileDTO(
@@ -79,6 +83,7 @@ class ProfileService:
             family_id=row.get("family_id"),
             class_id=row.get("class_id"),
             group_id=row.get("group_id"),
+            teacher_id=row.get("teacher_id"),
             morning_summary_time=row.get("morning_summary_time"),
             pre_lesson_offset_minutes=row.get(
                 "pre_lesson_offset_minutes",
@@ -106,6 +111,23 @@ class ProfileService:
             ),
         )
 
+    async def set_teacher_profile(
+        self,
+        *,
+        user_id: int,
+        teacher_id: str,
+    ) -> bool:
+        """
+        Привязывает Telegram user к NIKA teacher ID.
+        """
+        if not teacher_id or not teacher_id.strip():
+            return False
+
+        return await self.repo.set_teacher_profile(
+            user_id=user_id,
+            teacher_id=teacher_id,
+        )
+    
     # ========== СЕМЬИ ==========
     async def is_family_admin(
         self,

@@ -17,13 +17,15 @@ class Keyboards:
         )
 
         return monday.isoformat()
-    
+
     @staticmethod
     def get_role_selection() -> InlineKeyboardMarkup:
         return InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="👶 Ребёнок", callback_data="role:child")],
             [InlineKeyboardButton(text="👨‍👩‍👧 Родитель", callback_data="role:parent")],
-            [InlineKeyboardButton(text="👁 Наблюдатель", callback_data="role:observer")]
+            [InlineKeyboardButton(text="👁 Наблюдатель", callback_data="role:observer")],
+            [InlineKeyboardButton(text="👨‍🏫 Учитель", callback_data="role:teacher")],
+            
         ])
 
     @staticmethod
@@ -126,6 +128,14 @@ class Keyboards:
                 )
             ])
 
+        if user_dto.role == "teacher":
+            buttons.append([
+                InlineKeyboardButton(
+                    text="👨‍🏫 Сменить профиль учителя",
+                    callback_data="settings:change_teacher",
+                )
+            ])
+    
         if user_dto.role in ("parent", "observer"):
             buttons.append([
                 InlineKeyboardButton(
@@ -1915,6 +1925,275 @@ class Keyboards:
             InlineKeyboardButton(
                 text="⬅️ К профилю ученика",
                 callback_data=f"student:show:{student_id}",
+            )
+        ])
+
+        return InlineKeyboardMarkup(
+            inline_keyboard=buttons,
+        )
+        
+        
+    #----------------------
+    #   УЧИТЕЛЬ
+    #----------------------
+    @staticmethod
+    def get_teacher_registration_kb(
+        dto: TeacherListDTO,
+    ) -> InlineKeyboardMarkup:
+        """
+        Выбор NIKA teacher для регистрации Telegram teacher account.
+        """
+        buttons = []
+        row = []
+
+        teachers = sorted(
+            dto.teachers.items(),
+            key=lambda item: (
+                getattr(item[1], "name", item[1]) or ""
+            ).lower(),
+        )
+
+        for teacher_id, teacher_name in teachers:
+            name = getattr(
+                teacher_name,
+                "name",
+                teacher_name,
+            )
+
+            row.append(
+                InlineKeyboardButton(
+                    text=str(name),
+                    callback_data=f"reg_teacher:{teacher_id}",
+                )
+            )
+
+            if len(row) == 2:
+                buttons.append(row)
+                row = []
+
+        if row:
+            buttons.append(row)
+
+        buttons.append([
+            InlineKeyboardButton(
+                text="❌ Отмена",
+                callback_data="reg_teacher:cancel",
+            )
+        ])
+
+        return InlineKeyboardMarkup(
+            inline_keyboard=buttons,
+        )
+            
+    @staticmethod
+    def get_teacher_schedule_day_kb(
+        *,
+        current_date_iso: str,
+    ) -> InlineKeyboardMarkup:
+        current_date = datetime.fromisoformat(
+            current_date_iso
+        ).date()
+
+        previous_date = (
+            current_date - timedelta(days=1)
+        ).isoformat()
+
+        next_date = (
+            current_date + timedelta(days=1)
+        ).isoformat()
+
+        week_start = (
+            current_date
+            - timedelta(days=current_date.isoweekday() - 1)
+        ).isoformat()
+
+        return InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="⬅️ Предыдущий",
+                        callback_data=(
+                            f"teacher_sched:day:{previous_date}"
+                        ),
+                    ),
+                    InlineKeyboardButton(
+                        text="Следующий ➡️",
+                        callback_data=(
+                            f"teacher_sched:day:{next_date}"
+                        ),
+                    ),
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="📆 Показать неделю",
+                        callback_data=(
+                            f"teacher_sched:week:{week_start}"
+                        ),
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="📅 К ближайшему дню",
+                        callback_data="teacher_sched:smart_day",
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="⚙️ Настройки",
+                        callback_data="settings:main",
+                    )
+                ],
+            ]
+        )
+        
+    @staticmethod
+    def get_teacher_schedule_week_kb(
+        *,
+        week_start_iso: str,
+        is_full: bool = False,
+    ) -> InlineKeyboardMarkup:
+        week_start = datetime.fromisoformat(
+            week_start_iso
+        ).date()
+
+        day_buttons = []
+
+        for offset in range(6):
+            target_date = week_start + timedelta(days=offset)
+
+            day_name = [
+                "Пн",
+                "Вт",
+                "Ср",
+                "Чт",
+                "Пт",
+                "Сб",
+            ][offset]
+
+            day_buttons.append(
+                InlineKeyboardButton(
+                    text=(
+                        f"{day_name} "
+                        f"{target_date.strftime('%d.%m')}"
+                    ),
+                    callback_data=(
+                        f"teacher_sched:day:"
+                        f"{target_date.isoformat()}"
+                    ),
+                )
+            )
+
+        previous_week = (
+            week_start - timedelta(days=7)
+        ).isoformat()
+
+        next_week = (
+            week_start + timedelta(days=7)
+        ).isoformat()
+
+        details_button = (
+            InlineKeyboardButton(
+                text="🗓 Краткая неделя",
+                callback_data=(
+                    f"teacher_sched:week:{week_start_iso}"
+                ),
+            )
+            if is_full
+            else InlineKeyboardButton(
+                text="📋 Подробно всю неделю",
+                callback_data=(
+                    f"teacher_sched:full_week:{week_start_iso}"
+                ),
+            )
+        )
+
+        return InlineKeyboardMarkup(
+            inline_keyboard=[
+                day_buttons[:3],
+                day_buttons[3:],
+                [details_button],
+                [
+                    InlineKeyboardButton(
+                        text="⬅️ Предыдущая неделя",
+                        callback_data=(
+                            f"teacher_sched:week:{previous_week}"
+                        ),
+                    ),
+                    InlineKeyboardButton(
+                        text="Следующая неделя ➡️",
+                        callback_data=(
+                            f"teacher_sched:week:{next_week}"
+                        ),
+                    ),
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="📅 К ближайшему дню",
+                        callback_data="teacher_sched:smart_day",
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="⚙️ Настройки",
+                        callback_data="settings:main",
+                    )
+                ],
+            ]
+        )
+        
+    @staticmethod
+    def get_teacher_change_kb(
+        dto: TeacherListDTO,
+    ) -> InlineKeyboardMarkup:
+        """
+        Teacher self-service selector.
+
+        Отдельный callback namespace, чтобы не пересекаться
+        с registration flow.
+        """
+        buttons = []
+        row = []
+
+        teachers = sorted(
+            dto.teachers.items(),
+            key=lambda item: (
+                str(
+                    getattr(
+                        item[1],
+                        "name",
+                        item[1],
+                    )
+                ).lower()
+            ),
+        )
+
+        for teacher_id, teacher_name in teachers:
+            name = getattr(
+                teacher_name,
+                "name",
+                teacher_name,
+            )
+
+            row.append(
+                InlineKeyboardButton(
+                    text=str(name),
+                    callback_data=(
+                        f"teacher_change:{teacher_id}"
+                    ),
+                )
+            )
+
+            if len(row) == 2:
+                buttons.append(row)
+                row = []
+
+        if row:
+            buttons.append(row)
+
+        buttons.append([
+            InlineKeyboardButton(
+                text="⬅️ К настройкам",
+                callback_data="settings:main",
             )
         ])
 

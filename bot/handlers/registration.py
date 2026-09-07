@@ -26,6 +26,8 @@ class RegistrationStates(StatesGroup):
     waiting_for_class = State()
     waiting_for_group = State()
     
+    waiting_for_teacher = State()
+        
     waiting_for_claim_confirmation = State()
     waiting_for_claim_name = State()
     waiting_for_claim_class = State()
@@ -633,6 +635,32 @@ async def process_name(
 
     role = data.get("role")
 
+    if role == "teacher":
+        teachers_dto = await schedule_service.get_teachers_list()
+
+        if not teachers_dto.teachers:
+            await state.clear()
+
+            await message.answer(
+                "❌ Справочник учителей пока недоступен. "
+                "Попробуйте позже, когда расписание будет загружено."
+            )
+            return
+
+        await message.answer(
+            UIRenderer.render_teacher_selection(),
+            reply_markup=Keyboards.get_teacher_registration_kb(
+                teachers_dto,
+            ),
+            parse_mode="HTML",
+        )
+
+        await state.set_state(
+            RegistrationStates.waiting_for_teacher,
+        )
+
+        return
+
     if role == "parent":
         text = UIRenderer.render_parent_family_action()
         kb = Keyboards.get_parent_family_action()
@@ -971,3 +999,109 @@ async def process_group(
     )
 
     await callback.answer()
+
+@router.callback_query(
+    RegistrationStates.waiting_for_teacher,
+    F.data.startswith("reg_teacher:"),
+)
+async def process_teacher_selection(
+    callback: CallbackQuery,
+    state: FSMContext,
+    profile_service: ProfileService,
+    schedule_service: ScheduleService,
+) -> None:
+    """
+    Завершает teacher registration после выбора NIKA teacher ID.
+    """
+    try:
+        teacher_id = callback.data.split(":")[1]
+    except IndexError:
+        await callback.answer(
+            "❌ Некорректный идентификатор учителя.",
+            show_alert=True,
+        )
+        return
+
+    if teacher_id == "cancel":
+        await state.clear()
+
+        await callback.message.edit_text(
+            "❌ Регистрация учителя отменена.\n\n"
+            "Отправьте /start, чтобы начать заново."
+        )
+
+        await callback.answer()
+        return
+
+    data = await state.get_data()
+
+    if data.get("role") != "teacher":
+        await state.clear()
+
+        await callback.answer(
+            "❌ Состояние регистрации устарело. "
+            "Отправьте /start и начните заново.",
+            show_alert=True,
+        )
+        return
+
+    teachers_dto = await schedule_service.get_teachers_list()
+
+    teacher_name = teachers_dto.teachers.get(
+        teacher_id,
+    )
+
+    if teacher_name is None:
+        await callback.answer(
+            "❌ Учитель не найден в текущем справочнике школы.",
+            show_alert=True,
+        )
+        return
+
+    updated = await profile_service.set_teacher_profile(
+        user_id=callback.from_user.id,
+        teacher_id=teacher_id,
+    )
+
+    if not updated:
+        await state.clear()
+
+        await callback.answer(
+            "❌ Не удалось сохранить профиль учителя.",
+            show_alert=True,
+        )
+        return
+
+    await state.clear()
+
+    user_dto = await profile_service.get_user_profile_dto(
+        callback.from_user.id,
+    )
+
+    teacher_name_text = getattr(
+        teacher_name,
+        "name",
+        teacher_name,
+    )
+
+    try:
+        await callback.message.delete()
+    except TelegramBadRequest:
+        pass
+
+    await callback.message.answer(
+        UIRenderer.render_teacher_registration_success(
+            name=user_dto.name,
+            teacher_name=str(teacher_name_text),
+        ),
+        parse_mode="HTML",
+    )
+
+    await callback.message.answer(
+        UIRenderer.render_main_menu(),
+        reply_markup=Keyboards.get_main_menu(),
+    )
+
+    await callback.answer(
+        "✅ Учительский профиль создан.",
+    )

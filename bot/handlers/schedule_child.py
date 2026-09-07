@@ -423,6 +423,11 @@ async def open_schedule_hub(
     actor_user_id = message.from_user.id
 # Защита
     actor = await profile_service.get_user_profile_dto(actor_user_id)
+    if actor.role == "teacher":
+        # Teacher Schedule Hub обслуживается отдельным router,
+        # подключённым раньше в main.py.
+        return
+    
     if not actor.is_fully_registered:
         await message.answer(UIRenderer.render_unregistered_error())
         return

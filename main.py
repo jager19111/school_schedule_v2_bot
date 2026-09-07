@@ -35,7 +35,8 @@ from bot.handlers import (
     settings,
     extra_classes,
     admin,
-    search
+    search,
+    schedule_teacher
 )
 
 logging.basicConfig(
@@ -135,6 +136,7 @@ async def main():
         
     # 4. Регистрация роутеров команд
     dp.include_router(registration.router)
+    dp.include_router(schedule_teacher.router)
     dp.include_router(schedule_child.router)
     dp.include_router(schedule_parent.router)
     dp.include_router(settings.router)

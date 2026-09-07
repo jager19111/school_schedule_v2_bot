@@ -302,7 +302,7 @@ class NotificationService:
                 change_date = self.time_service.date_from_iso(
                     change["date"],
                 )
-
+                # 1. Отправка уведомлений ученикам, родителям и наблюдателям
                 recipients = await self.repo.get_recipients_for_schedule_change(
                     class_id=change["class_id"],
                     group_id=change["group_id"],
@@ -385,6 +385,96 @@ class NotificationService:
                         recipient["recipient_kind"],
                     )
 
+                # 2. Отправка уведомлений преподавателям
+                # ----------------------------------------------------
+                teacher_id = change.get("teacher_id")
+                if not teacher_id:
+                    continue
+
+                teacher_recipients = (
+                    await self.repo.get_teacher_recipients_for_schedule_change(
+                        teacher_id=str(teacher_id),
+                    )
+                )
+
+                for recipient in teacher_recipients:
+                    try:
+                        recipient_id = int(recipient["recipient_id"])
+                        window_days = int(
+                            recipient["changes_window_days"]
+                        )
+
+                        if window_days <= 0:
+                            continue
+
+                        max_date = today + datetime.timedelta(
+                            days=window_days,
+                        )
+
+                        if not (today <= change_date <= max_date):
+                            continue
+
+                        already_sent = await self.repo.is_notification_delivered(
+                            notification_type="teacher_change",
+                            notification_date=change["date"],
+                            source_id=change["id"],
+                            recipient_id=recipient_id,
+                        )
+
+                        if already_sent:
+                            continue
+
+                        dto = ChangeReminderDTO(
+                            date=change["date"],
+                            lesson_num=change["lesson_num"],
+                            subject_name=change["subject_name"] or "—",
+                            is_cancelled=bool(change["is_cancelled"]),
+                            child_name=None,
+                            watch_target_title=None,
+                        )
+
+                        teacher_name = (
+                            change.get("teacher_name")
+                            or "Учитель"
+                        )
+
+                        text = (
+                            "👨‍🏫 <b>Изменение в расписании учителя</b>\n"
+                            f"👤 <b>{UIRenderer.escape_html(teacher_name)}</b>\n\n"
+                            f"{UIRenderer.render_change_reminder(dto)}"
+                        )
+
+                        sent = await self._safe_send(
+                            student_id=recipient_id,
+                            text=text,
+                        )
+
+                        if not sent:
+                            continue
+
+                        await self.repo.record_notification_delivery(
+                            notification_type="teacher_change",
+                            notification_date=change["date"],
+                            source_id=change["id"],
+                            recipient_id=recipient_id,
+                        )
+
+                        logger.info(
+                            "Teacher schedule change delivered: "
+                            "teacher_id=%s change_id=%s recipient_id=%s",
+                            teacher_id,
+                            change["id"],
+                            recipient_id,
+                        )
+
+                    except Exception:
+                        logger.exception(
+                            "Teacher schedule change notification failed: "
+                            "change=%r recipient=%r",
+                            change,
+                            recipient,
+                        )
+
             except (KeyError, TypeError, ValueError) as exc:
                 logger.exception(
                     "Invalid schedule change task: change=%r, error=%s",
@@ -396,6 +486,7 @@ class NotificationService:
                     "Unexpected schedule change notification error: change=%r",
                     change,
                 )
+                
     # ---------- 3. Предурочные уведомления ----------
     async def send_pre_lesson_reminders(self) -> None:
         """
@@ -432,7 +523,8 @@ class NotificationService:
                 # Урок уже начался или прошёл.
                 if delta_minutes <= 0:
                     continue
-
+                
+                # 1. Отправка напоминаний ученикам и родителям
                 recipients = await self.repo.get_recipients_for_pre_lesson_reminder(
                     class_id=lesson["class_id"],
                     group_id=lesson["group_id"],
@@ -503,6 +595,80 @@ class NotificationService:
                         recipient["recipient_kind"],
                     )
 
+                # 2. Отправка напоминаний преподавателям
+                teacher_id = lesson.get("teacher_id")
+                if teacher_id:
+                    teacher_recipients = (
+                        await self.repo.get_teacher_recipients_for_pre_lesson_reminder(
+                            teacher_id=str(teacher_id),
+                        )
+                    )
+
+                    for recipient in teacher_recipients:
+                        try:
+                            recipient_id = int(recipient["recipient_id"])
+                            offset_minutes = int(recipient["offset_minutes"])
+
+                            if offset_minutes <= 0:
+                                continue
+
+                            if delta_minutes > offset_minutes:
+                                continue
+
+                            already_sent = await self.repo.is_notification_delivered(
+                                notification_type="teacher_pre_lesson",
+                                notification_date=today_iso,
+                                source_id=lesson["id"],
+                                recipient_id=recipient_id,
+                            )
+
+                            if already_sent:
+                                continue
+
+                            dto = LessonReminderDTO(
+                                subject_name=lesson["subject_name"] or "—",
+                                start_time=lesson["start_time"],
+                                room_name=lesson["room_name"] or "—",
+                                is_extra=False,
+                                child_name=None,
+                            )
+
+                            text = (
+                                "👨‍🏫 <b>Напоминание об уроке</b>\n\n"
+                                f"{UIRenderer.render_lesson_reminder(dto)}"
+                            )
+
+                            sent = await self._safe_send(
+                                student_id=recipient_id,
+                                text=text,
+                            )
+
+                            if not sent:
+                                continue
+
+                            await self.repo.record_notification_delivery(
+                                notification_type="teacher_pre_lesson",
+                                notification_date=today_iso,
+                                source_id=lesson["id"],
+                                recipient_id=recipient_id,
+                            )
+
+                            logger.info(
+                                "Teacher pre-lesson reminder delivered: "
+                                "teacher_id=%s lesson_id=%s recipient_id=%s",
+                                teacher_id,
+                                lesson["id"],
+                                recipient_id,
+                            )
+
+                        except Exception:
+                            logger.exception(
+                                "Teacher pre-lesson reminder failed: "
+                                "lesson=%r recipient=%r",
+                                lesson,
+                                recipient,
+                            )
+
             except (KeyError, TypeError, ValueError) as exc:
                 logger.exception(
                     "Invalid pre-lesson reminder task: lesson=%r, error=%s",
@@ -514,7 +680,6 @@ class NotificationService:
                     "Unexpected pre-lesson reminder error: lesson=%r",
                     lesson,
                 )
-
 
     # ---------- 4. Уведомления о доп. занятиях ----------
     async def send_extra_class_reminders(self) -> None:
@@ -654,3 +819,150 @@ class NotificationService:
                     "Unexpected extra reminder processing error: task=%r",
                     extra,
                 )
+                
+    #----------------------
+    #   УЧИТЕЛЬ
+    #----------------------
+    
+    async def _send_teacher_morning_reminders(
+        self,
+        *,
+        current_time_str: str,
+        today_iso: str,
+    ) -> None:
+        """
+        Отправляет утренние сводки зарегистрированным учителям.
+
+        Teacher summary состоит только из lesson records:
+        extra classes student profiles сюда не подмешиваются.
+        """
+        tasks = await self.repo.get_teacher_morning_summary_tasks(
+            time_str=current_time_str,
+        )
+
+        if not tasks:
+            return
+
+        metadata = await self.schedule_repo.get_metadata()
+        classes = metadata.get("classes", {})
+
+        for task in tasks:
+            try:
+                recipient_id = int(task["recipient_id"])
+                teacher_id = str(task["teacher_id"])
+                teacher_name = task.get("teacher_name") or "Учитель"
+
+                source_id = f"teacher_morning:{teacher_id}"
+
+                already_sent = await self.repo.is_notification_delivered(
+                    notification_type="teacher_morning",
+                    notification_date=today_iso,
+                    source_id=source_id,
+                    recipient_id=recipient_id,
+                )
+
+                if already_sent:
+                    continue
+
+                raw_lessons = (
+                    await self.schedule_repo.get_lessons_for_teacher(
+                        teacher_id=teacher_id,
+                        date_iso=today_iso,
+                    )
+                )
+
+                lessons_dtos: list[MorningLessonDTO] = []
+
+                for lesson in raw_lessons:
+                    class_id = lesson.get("class_id")
+
+                    class_obj = classes.get(class_id)
+
+                    class_name = (
+                        getattr(class_obj, "name", class_obj)
+                        if class_obj is not None
+                        else class_id
+                    )
+
+                    room_name = lesson.get("room_name") or "—"
+
+                    if class_name:
+                        room_name = (
+                            f"{room_name} · {class_name}"
+                        )
+
+                    lessons_dtos.append(
+                        MorningLessonDTO(
+                            lesson_num=lesson.get("lesson_num"),
+                            start_time=lesson.get("start_time") or "—",
+                            end_time=lesson.get("end_time") or "—",
+                            subject_name=(
+                                lesson.get("subject_name") or "—"
+                            ),
+                            room_name=room_name,
+                            is_cancelled=bool(
+                                lesson.get("is_cancelled")
+                            ),
+                            is_exchange=bool(
+                                lesson.get("is_exchange")
+                            ),
+                            is_extra=False,
+                            group_name=None,
+                        )
+                    )
+
+                if not lessons_dtos:
+                    continue
+
+                lessons_dtos.sort(
+                    key=lambda item: (
+                        item.start_time,
+                        (
+                            item.lesson_num
+                            if item.lesson_num is not None
+                            else 99
+                        ),
+                    )
+                )
+
+                summary_dto = MorningSummaryDTO(
+                    date_iso=today_iso,
+                    lessons=lessons_dtos,
+                    child_name=None,
+                    class_id=None,
+                )
+
+                text = (
+                    "👨‍🏫 <b>Расписание учителя</b>\n"
+                    f"👤 <b>{UIRenderer.escape_html(teacher_name)}</b>\n\n"
+                    f"{UIRenderer.render_morning_summary(summary_dto)}"
+                )
+
+                sent = await self._safe_send(
+                    student_id=recipient_id,
+                    text=text,
+                )
+
+                if not sent:
+                    continue
+
+                await self.repo.record_notification_delivery(
+                    notification_type="teacher_morning",
+                    notification_date=today_iso,
+                    source_id=source_id,
+                    recipient_id=recipient_id,
+                )
+
+                logger.info(
+                    "Teacher morning summary delivered: "
+                    "teacher_id=%s recipient_id=%s",
+                    teacher_id,
+                    recipient_id,
+                )
+
+            except Exception:
+                logger.exception(
+                    "Teacher morning summary failed: task=%r",
+                    task,
+                )
+                

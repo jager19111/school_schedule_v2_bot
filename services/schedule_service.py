@@ -4,7 +4,7 @@ from datetime import timedelta
 from core.repository.schedule_repository import ScheduleRepository
 from core.repository.extra_classes_repository import ExtraClassesRepository
 from services.time_service import TimeService
-from core.models.dto import DayScheduleDTO, DaySummaryDTO, WeekSummaryDTO, WeekSummaryDTO, FullWeekScheduleDTO, ClassListDTO, GroupListDTO
+from core.models.dto import DayScheduleDTO, DaySummaryDTO, WeekSummaryDTO, WeekSummaryDTO, FullWeekScheduleDTO, ClassListDTO, GroupListDTO, TeacherListDTO
 
 class ScheduleService:
     def __init__(
@@ -392,3 +392,121 @@ class ScheduleService:
         metadata = await self.schedule_repo.get_metadata()
         groups_raw = metadata.get('groups', {})
         return GroupListDTO(groups=groups_raw)
+
+    #----------------------
+    #   УЧИТЕЛЬ
+    #----------------------
+        
+    async def get_teachers_list(self) -> TeacherListDTO:
+        """
+        Возвращает справочник учителей NIKA для registration/search UI.
+        """
+        metadata = await self.schedule_repo.get_metadata()
+
+        teachers_raw = metadata.get("teachers", {})
+
+        teachers = {
+            teacher_id: getattr(
+                teacher,
+                "name",
+                teacher,
+            )
+            for teacher_id, teacher in teachers_raw.items()
+        }
+
+        return TeacherListDTO(
+            teachers=teachers,
+        )
+        
+    async def get_smart_teacher_target_date(
+        self,
+        *,
+        teacher_id: str,
+    ) -> str:
+        """
+        Возвращает ближайшую дату, когда у учителя есть занятия.
+
+        Алгоритм:
+        - сегодня, если есть будущие/текущие уроки;
+        - иначе ближайший день с расписанием;
+        - поиск ограничен восемью календарными днями.
+        """
+        now = self.time_service.get_now_base()
+        today = now.date()
+
+        for offset in range(8):
+            candidate_date = today + timedelta(days=offset)
+            candidate_iso = candidate_date.isoformat()
+
+            day_dto = await self.get_daily_schedule_for_teacher(
+                teacher_id=teacher_id,
+                date_iso=candidate_iso,
+            )
+
+            if not day_dto.lessons:
+                continue
+
+            if candidate_date != today:
+                return candidate_iso
+
+            latest_end_time = max(
+                (
+                    lesson.get("end_time", "00:00")
+                    for lesson in day_dto.lessons
+                ),
+                default="00:00",
+            )
+
+            if now.strftime("%H:%M") <= latest_end_time:
+                return candidate_iso
+
+        return today.isoformat()
+    
+    async def get_teacher_week_schedule_summary(
+        self,
+        *,
+        teacher_id: str,
+        week_start_iso: str,
+    ) -> WeekSummaryDTO:
+        """
+        Собирает краткое расписание учителя на неделю.
+
+        Для учителя не применяются student groups и extra classes.
+        Количество уроков — количество lesson records за день.
+        """
+        start_date = self.time_service.date_from_iso(
+            week_start_iso,
+        )
+
+        days = []
+
+        for offset in range(6):
+            current_date = start_date + timedelta(days=offset)
+            current_date_iso = current_date.isoformat()
+
+            day_dto = await self.get_daily_schedule_for_teacher(
+                teacher_id=teacher_id,
+                date_iso=current_date_iso,
+            )
+
+            lesson_count = len(day_dto.lessons)
+
+            exchange_count = sum(
+                1
+                for lesson in day_dto.lessons
+                if lesson.get("is_exchange")
+            )
+
+            days.append(
+                DaySummaryDTO(
+                    date_iso=current_date_iso,
+                    lesson_count=lesson_count,
+                    extra_count=0,
+                    exchange_count=exchange_count,
+                )
+            )
+
+        return WeekSummaryDTO(
+            week_start_iso=week_start_iso,
+            days=days,
+        )

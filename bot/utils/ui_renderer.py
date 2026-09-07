@@ -676,35 +676,56 @@ class UIRenderer:
             f"🔒 Блокировка настроек ребёнка: <b>{lock_text}</b>"
         )
                     
-      
     @staticmethod
     def render_settings_main(
-        user_dto: 'UserProfileDTO', 
-        family_code: str | None,
+        user_dto: UserProfileDTO,
+        family_code: str | None = None,
         class_name: str | None = None,
-        group_names: str | None = None
+        group_names: str | None = None,
     ) -> str:
-        role_map = {"parent": "👨‍👩‍👧 Родитель", "child": "👶 Ребёнок", "observer": "👁 Наблюдатель"}
-        role_name = role_map.get(user_dto.role, "Неизвестно")
-        
+        role_map = {"parent": "👨‍👩‍👧 Родитель", "child": "👶 Ребёнок", "observer": "👁 Наблюдатель", "teacher": "Учитель",}
+        role_name = role_map.get(user_dto.role, "Незарегистрирован")
         # ЭКРАНИРОВАНИЕ
-        safe_name = UIRenderer.escape_html(user_dto.name, "Не указано")
-        safe_code = UIRenderer.escape_html(family_code)
-        code_str = f"<code>{safe_code}</code>" if family_code else "Не в семье"
-        
-        text = f"⚙️ <b>Ваши настройки профиля, {safe_name}</b>\n\n"
-        text += f"👤 Роль: {role_name}\n"
-        
+        safe_name = UIRenderer.escape_html(
+            user_dto.name,
+            fallback="Пользователь",
+        )
+
+        if user_dto.role == "teacher":
+            family_line = "👨‍🏫 Профиль учителя подключён"
+
+        elif family_code:
+            family_line = (
+                "👨‍👩‍👧 Код семьи: "
+                f"<code>{UIRenderer.escape_html(family_code)}</code>"
+            )
+
+        else:
+            family_line = "👨‍👩‍👧 Код семьи: Не в семье"
+
+        lines = [
+            f"⚙️ <b>Ваши настройки профиля, {safe_name}</b>!",
+            "",
+            f"👤 Роль: <b>{role_name}</b>",
+            family_line,
+        ]
+
         if class_name:
-            text += f"🎓 Класс: <b>{UIRenderer.escape_html(class_name)}</b>\n"
-            
+            lines.append(
+                f"🎓 Класс: <b>{UIRenderer.escape_html(class_name)}</b>"
+            )
+
         if group_names:
-            text += f"👥 Группы: <b>{UIRenderer.escape_html(group_names)}</b>\n"
-            
-        text += f"👨‍👩‍👧 Код семьи: {code_str}\n\n"
-        text += "Выберите действие:"
-        
-        return text
+            lines.append(
+                f"👥 Группа: <b>{UIRenderer.escape_html(group_names)}</b>"
+            )
+
+        lines.extend([
+            "",
+            "Выберите действие:",
+        ])
+
+        return "\n".join(lines)
     
     @staticmethod
     def render_family_members_menu(
@@ -1491,4 +1512,40 @@ class UIRenderer:
             f"👤 Ученик: <b>{student_name}</b>\n"
             f"Новый класс: <b>{student.class_id}</b>\n\n"
             "Выберите группу."
+        )
+        
+    #----------------------
+    #   УЧИТЕЛЬ
+    #----------------------
+    
+    @staticmethod
+    def render_teacher_selection() -> str:
+        return (
+            "👨‍🏫 <b>Регистрация учителя</b>\n\n"
+            "Выберите себя из списка учителей школы.\n\n"
+            "Расписание будет привязано к выбранному "
+            "профилю учителя."
+        )
+
+    @staticmethod
+    def render_teacher_registration_success(
+        *,
+        name: str | None,
+        teacher_name: str,
+    ) -> str:
+        safe_name = UIRenderer.escape_html(
+            name,
+            fallback="Учитель",
+        )
+
+        safe_teacher = UIRenderer.escape_html(
+            teacher_name,
+            fallback="Учитель",
+        )
+
+        return (
+            "✅ <b>Профиль учителя создан.</b>\n\n"
+            f"Добро пожаловать, <b>{safe_name}</b>!\n"
+            f"Профиль NIKA: <b>{safe_teacher}</b>\n\n"
+            "Теперь можно открыть «📅 Моё расписание»."
         )

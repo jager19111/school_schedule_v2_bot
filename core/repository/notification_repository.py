@@ -33,6 +33,7 @@ class NotificationRepository(BaseRepository):
                 date,
                 class_id,
                 group_id,
+                teacher_id,
                 start_time,
                 subject_name,
                 room_name
@@ -148,6 +149,7 @@ class NotificationRepository(BaseRepository):
                 date,
                 class_id,
                 group_id,
+                teacher_id,
                 lesson_num,
                 subject_name,
                 is_cancelled
@@ -520,4 +522,86 @@ class NotificationRepository(BaseRepository):
             WHERE notification_date < ?
             """,
             (before_date_iso,),
+        )
+        
+    #----------------------
+    #   УЧИТЕЛЬ
+    #----------------------
+    
+    async def get_teacher_morning_summary_tasks(
+        self,
+        *,
+        time_str: str,
+    ) -> List[Dict[str, Any]]:
+        """
+        Возвращает teacher accounts, для которых настало время
+        личной утренней сводки.
+        """
+        return await self._fetch_all(
+            """
+            SELECT
+                user_id AS recipient_id,
+                teacher_id,
+                name AS teacher_name
+            FROM users
+            WHERE role = 'teacher'
+            AND teacher_id IS NOT NULL
+            AND TRIM(teacher_id) != ''
+            AND is_notifications_enabled = 1
+            AND morning_summary_time = ?
+            ORDER BY user_id
+            """,
+            (time_str,),
+        )
+        
+    async def get_teacher_recipients_for_pre_lesson_reminder(
+        self,
+        *,
+        teacher_id: str,
+    ) -> List[Dict[str, Any]]:
+        """
+        Возвращает Telegram teachers, привязанных к NIKA teacher_id.
+
+        Teacher получает только собственные уроки.
+        """
+        return await self._fetch_all(
+            """
+            SELECT
+                user_id AS recipient_id,
+                teacher_id,
+                pre_lesson_offset_minutes AS offset_minutes
+            FROM users
+            WHERE role = 'teacher'
+            AND teacher_id = ?
+            AND is_notifications_enabled = 1
+            AND pre_lesson_offset_minutes > 0
+            ORDER BY user_id
+            """,
+            (teacher_id,),
+        )
+        
+    async def get_teacher_recipients_for_schedule_change(
+        self,
+        *,
+        teacher_id: str,
+    ) -> List[Dict[str, Any]]:
+        """
+        Возвращает teachers, которым следует отправить уведомление
+        о замене или отмене в собственном расписании.
+        """
+        return await self._fetch_all(
+            """
+            SELECT
+                user_id AS recipient_id,
+                teacher_id,
+                changes_window_days
+            FROM users
+            WHERE role = 'teacher'
+            AND teacher_id = ?
+            AND is_notifications_enabled = 1
+            AND receive_schedule_changes = 1
+            AND changes_window_days > 0
+            ORDER BY user_id
+            """,
+            (teacher_id,),
         )

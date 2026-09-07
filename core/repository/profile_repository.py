@@ -78,7 +78,9 @@ class ProfileRepository(BaseRepository):
                 name,
                 class_id,
                 group_id,
+                teacher_id,
                 family_id,
+                
                 morning_summary_time,
                 pre_lesson_offset_minutes,
                 receive_schedule_changes,
@@ -101,6 +103,38 @@ class ProfileRepository(BaseRepository):
             "UPDATE users SET class_id = ?, group_id = ? WHERE user_id = ?",
             (class_id, group_id, user_id),
         )
+
+    async def set_teacher_profile(
+        self,
+        *,
+        user_id: int,
+        teacher_id: str,
+    ) -> bool:
+        """
+        Финализирует Telegram teacher profile.
+
+        Учитель не связан с family/student model:
+        family_id, class_id и group_id очищаются.
+        """
+        changed = await self._execute(
+            """
+            UPDATE users
+            SET
+                role = 'teacher',
+                family_id = NULL,
+                class_id = NULL,
+                group_id = NULL,
+                teacher_id = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE user_id = ?
+            """,
+            (
+                teacher_id,
+                user_id,
+            ),
+        )
+
+        return changed == 1
     
     async def _ensure_parent_student_settings_for_family(
         self,
