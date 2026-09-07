@@ -158,6 +158,45 @@ async def _require_family_admin_for_student(
 
     return False
 
+async def _show_student_telegram_settings(
+    *,
+    callback: CallbackQuery,
+    profile_service: ProfileService,
+    student_id: int,
+) -> bool:
+    """
+    Загружает и рендерит Telegram settings student profile.
+
+    ProfileService возвращает None, если:
+    - student virtual;
+    - инициатор не family admin;
+    - student отсутствует;
+    - Telegram user больше не связан с profile.
+    """
+    dto = await profile_service.get_student_telegram_settings_for_admin(
+        admin_user_id=callback.from_user.id,
+        student_id=student_id,
+    )
+
+    if dto is None:
+        return False
+
+    text = UIRenderer.render_student_telegram_settings(
+        dto,
+    )
+
+    keyboard = Keyboards.get_student_telegram_settings_kb(
+        dto,
+    )
+
+    await _safe_edit_text(
+        callback.message,
+        text,
+        reply_markup=keyboard,
+    )
+
+    return True
+
 
 class SettingsStates(StatesGroup):
     waiting_for_my_time = State()
@@ -169,6 +208,8 @@ class SettingsStates(StatesGroup):
     
     waiting_for_student_class = State()
     waiting_for_student_group = State()
+    
+    waiting_for_student_telegram_summary_time = State()
 
 
 
@@ -558,164 +599,205 @@ async def toggle_child_extra_class_reminders(
         callback,
         "Настройки дополнительных занятий ребёнка обновлены.",
     )
+if False: # удалить после рефакторинга вместе с нижним редиректом     
+    @router.callback_query(F.data.startswith("child_ctl:extra_permissions:"))
+    async def show_adult_extra_classes_permissions(
+        callback: CallbackQuery,
+        profile_service: ProfileService,
+    ) -> None:
+        """
+        Показывает семейному администратору права взрослых
+        на дополнительные занятия выбранного ребёнка.
+        """
+        try:
+            child_user_id = int(callback.data.split(":")[2])
+        except (IndexError, ValueError):
+            await _safe_callback_answer(
+                callback,
+                "Некорректный идентификатор ребёнка.",
+                show_alert=True,
+            )
+            return
 
-@router.callback_query(F.data.startswith("child_ctl:extra_permissions:"))
-async def show_adult_extra_classes_permissions(
-    callback: CallbackQuery,
-    profile_service: ProfileService,
-) -> None:
-    """
-    Показывает семейному администратору права взрослых
-    на дополнительные занятия выбранного ребёнка.
-    """
-    try:
-        child_user_id = int(callback.data.split(":")[2])
-    except (IndexError, ValueError):
-        await _safe_callback_answer(
-            callback,
-            "Некорректный идентификатор ребёнка.",
-            show_alert=True,
-        )
-        return
+        admin_user_id = callback.from_user.id
 
-    admin_user_id = callback.from_user.id
-
-    permissions = await profile_service.get_adult_extra_classes_permissions(
-        admin_user_id=admin_user_id,
-        child_user_id=child_user_id,
-    )
-
-    if permissions is None:
-        await _safe_callback_answer(
-            callback,
-            "Только администратор семьи может менять права взрослых.",
-            show_alert=True,
-        )
-        return
-
-    child_dto = await profile_service.get_user_profile_dto(
-        child_user_id,
-    )
-
-    text = UIRenderer.render_adult_extra_classes_permissions(
-        child_name=child_dto.name or f"Ученик {child_user_id}",
-        permissions=permissions,
-    )
-
-    keyboard = Keyboards.get_adult_extra_classes_permissions_kb(
-        child_user_id=child_user_id,
-        permissions=permissions,
-    )
-
-    await _safe_edit_text(
-        callback.message,
-        text,
-        reply_markup=keyboard,
-    )
-
-    await _safe_callback_answer(callback)
-
-@router.callback_query(F.data.startswith("extra_perm:toggle:"))
-async def toggle_adult_extra_classes_permission(
-    callback: CallbackQuery,
-    profile_service: ProfileService,
-) -> None:
-    """
-    Администратор включает или выключает право другого взрослого
-    управлять занятиями конкретного ребёнка.
-    """
-    try:
-        _, _, child_id_raw, adult_id_raw = callback.data.split(":")
-
-        child_user_id = int(child_id_raw)
-        adult_user_id = int(adult_id_raw)
-    except (IndexError, ValueError):
-        await _safe_callback_answer(
-            callback,
-            "Некорректные параметры права.",
-            show_alert=True,
-        )
-        return
-
-    admin_user_id = callback.from_user.id
-
-    permissions = await profile_service.get_adult_extra_classes_permissions(
-        admin_user_id=admin_user_id,
-        child_user_id=child_user_id,
-    )
-
-    if permissions is None:
-        await _safe_callback_answer(
-            callback,
-            "Только администратор семьи может менять права взрослых.",
-            show_alert=True,
-        )
-        return
-
-    selected_permission = next(
-        (
-            item
-            for item in permissions
-            if item.adult_user_id == adult_user_id
-        ),
-        None,
-    )
-
-    if selected_permission is None:
-        await _safe_callback_answer(
-            callback,
-            "Взрослый не найден среди участников семьи.",
-            show_alert=True,
-        )
-        return
-
-    changed = await profile_service.set_adult_extra_classes_permission(
-        admin_user_id=admin_user_id,
-        adult_user_id=adult_user_id,
-        child_user_id=child_user_id,
-        can_manage=not selected_permission.can_manage_extra_classes,
-    )
-
-    if not changed:
-        await _safe_callback_answer(
-            callback,
-            "Не удалось изменить право управления занятиями.",
-            show_alert=True,
-        )
-        return
-
-    refreshed_permissions = (
-        await profile_service.get_adult_extra_classes_permissions(
+        permissions = await profile_service.get_adult_extra_classes_permissions(
             admin_user_id=admin_user_id,
             child_user_id=child_user_id,
         )
-    )
 
-    child_dto = await profile_service.get_user_profile_dto(
-        child_user_id,
-    )
+        if permissions is None:
+            await _safe_callback_answer(
+                callback,
+                "Только администратор семьи может менять права взрослых.",
+                show_alert=True,
+            )
+            return
 
-    text = UIRenderer.render_adult_extra_classes_permissions(
-        child_name=child_dto.name or f"Ученик {child_user_id}",
-        permissions=refreshed_permissions,
-    )
+        child_dto = await profile_service.get_user_profile_dto(
+            child_user_id,
+        )
 
-    keyboard = Keyboards.get_adult_extra_classes_permissions_kb(
-        child_user_id=child_user_id,
-        permissions=refreshed_permissions,
-    )
+        text = UIRenderer.render_adult_extra_classes_permissions(
+            child_name=child_dto.name or f"Ученик {child_user_id}",
+            permissions=permissions,
+        )
 
-    await _safe_edit_text(
-        callback.message,
-        text,
-        reply_markup=keyboard,
-    )
+        keyboard = Keyboards.get_adult_extra_classes_permissions_kb(
+            child_user_id=child_user_id,
+            permissions=permissions,
+        )
 
+        await _safe_edit_text(
+            callback.message,
+            text,
+            reply_markup=keyboard,
+        )
+
+        await _safe_callback_answer(callback)
+
+# безопасный редирект полно хендлера выше
+@router.callback_query(
+    F.data.startswith("child_ctl:extra_permissions:")
+)
+async def redirect_legacy_extra_permissions(
+    callback: CallbackQuery,
+) -> None:
+    """
+    Fallback для старого child settings UI.
+
+    Права взрослых теперь настраиваются из student profile.
+    """
     await _safe_callback_answer(
         callback,
-        "Права на дополнительные занятия обновлены.",
+        (
+            "Этот экран устарел. Откройте: "
+            "Ученики семьи → нужный ученик → "
+            "Права взрослых на кружки."
+        ),
+        show_alert=True,
     )
-                    
+if False: # удалить после рефакторинга вместе с нижним редиректом         
+    @router.callback_query(F.data.startswith("extra_perm:toggle:"))
+    async def toggle_adult_extra_classes_permission(
+        callback: CallbackQuery,
+        profile_service: ProfileService,
+    ) -> None:
+        """
+        Администратор включает или выключает право другого взрослого
+        управлять занятиями конкретного ребёнка.
+        """
+        try:
+            _, _, child_id_raw, adult_id_raw = callback.data.split(":")
+
+            child_user_id = int(child_id_raw)
+            adult_user_id = int(adult_id_raw)
+        except (IndexError, ValueError):
+            await _safe_callback_answer(
+                callback,
+                "Некорректные параметры права.",
+                show_alert=True,
+            )
+            return
+
+        admin_user_id = callback.from_user.id
+
+        permissions = await profile_service.get_adult_extra_classes_permissions(
+            admin_user_id=admin_user_id,
+            child_user_id=child_user_id,
+        )
+
+        if permissions is None:
+            await _safe_callback_answer(
+                callback,
+                "Только администратор семьи может менять права взрослых.",
+                show_alert=True,
+            )
+            return
+
+        selected_permission = next(
+            (
+                item
+                for item in permissions
+                if item.adult_user_id == adult_user_id
+            ),
+            None,
+        )
+
+        if selected_permission is None:
+            await _safe_callback_answer(
+                callback,
+                "Взрослый не найден среди участников семьи.",
+                show_alert=True,
+            )
+            return
+
+        changed = await profile_service.set_adult_extra_classes_permission(
+            admin_user_id=admin_user_id,
+            adult_user_id=adult_user_id,
+            child_user_id=child_user_id,
+            can_manage=not selected_permission.can_manage_extra_classes,
+        )
+
+        if not changed:
+            await _safe_callback_answer(
+                callback,
+                "Не удалось изменить право управления занятиями.",
+                show_alert=True,
+            )
+            return
+
+        refreshed_permissions = (
+            await profile_service.get_adult_extra_classes_permissions(
+                admin_user_id=admin_user_id,
+                child_user_id=child_user_id,
+            )
+        )
+
+        child_dto = await profile_service.get_user_profile_dto(
+            child_user_id,
+        )
+
+        text = UIRenderer.render_adult_extra_classes_permissions(
+            child_name=child_dto.name or f"Ученик {child_user_id}",
+            permissions=refreshed_permissions,
+        )
+
+        keyboard = Keyboards.get_adult_extra_classes_permissions_kb(
+            child_user_id=child_user_id,
+            permissions=refreshed_permissions,
+        )
+
+        await _safe_edit_text(
+            callback.message,
+            text,
+            reply_markup=keyboard,
+        )
+
+        await _safe_callback_answer(
+            callback,
+            "Права на дополнительные занятия обновлены.",
+        )
+# безопасный редирект полно хендлера выше
+@router.callback_query(
+    F.data.startswith("extra_perm:toggle:")
+)
+async def reject_legacy_extra_permissions_toggle(
+    callback: CallbackQuery,
+) -> None:
+    """
+    Legacy callback не должен менять parent_child_settings,
+    потому что extra classes работают через parent_student_settings.
+    """
+    await _safe_callback_answer(
+        callback,
+        (
+            "Эта кнопка устарела и больше не изменяет права. "
+            "Используйте новый раздел профиля ученика."
+        ),
+        show_alert=True,
+    )
+                        
 @router.callback_query(F.data.startswith("child_ctl:class:"))
 async def child_settings_change_class(
     callback: CallbackQuery,
@@ -1491,209 +1573,306 @@ async def show_children_notification_settings(
     )
 
     await _safe_callback_answer(callback)
+if False: # удалить после рефакторинга вместе с нижним редиректом     
+    @router.callback_query(F.data.startswith("pcn:child:"))
+    async def show_parent_child_notification_settings(
+        callback: CallbackQuery,
+        profile_service: ProfileService,
+    ) -> None:
+        """
+        Показывает настройки уведомлений текущего взрослого по ребёнку.
+        """
+        try:
+            child_id = int(callback.data.split(":")[2])
+        except (IndexError, ValueError):
+            await callback.answer(
+                "Некорректные данные выбранного ребёнка.",
+                show_alert=True,
+            )
+            return
 
-@router.callback_query(F.data.startswith("pcn:child:"))
-async def show_parent_child_notification_settings(
+        parent_id = callback.from_user.id
+
+        settings_dto = await profile_service.get_parent_child_notification_settings(
+            parent_user_id=parent_id,
+            child_user_id=child_id,
+        )
+
+        if settings_dto is None:
+            logger.warning(
+                "Parent-child notification access denied: parent_id=%s child_id=%s",
+                parent_id,
+                child_id,
+            )
+            await callback.answer(
+                "У вас нет доступа к настройкам этого ребёнка.",
+                show_alert=True,
+            )
+            return
+
+        text = UIRenderer.render_parent_child_notification_settings(
+            settings_dto,
+        )
+
+        keyboard = Keyboards.get_parent_child_notification_settings_kb(
+            settings_dto,
+        )
+
+        await callback.message.edit_text(
+            text,
+            reply_markup=keyboard,
+            parse_mode="HTML",
+        )
+        await callback.answer()
+# безопасный редирект полно хендлера выше
+@router.callback_query(
+    F.data.startswith("pcn:child:")
+)
+async def redirect_legacy_parent_child_notifications(
+    callback: CallbackQuery,
+) -> None:
+    await _safe_callback_answer(
+        callback,
+        (
+            "Этот экран обновлён. Откройте "
+            "«Уведомления по ученикам» заново."
+        ),
+        show_alert=True,
+    )
+if False: # удалить после рефакторинга вместе с нижним редиректом         
+    @router.callback_query(F.data.startswith("pcn:toggle:"))
+    async def toggle_parent_child_notification_setting(
+        callback: CallbackQuery,
+        profile_service: ProfileService,
+    ) -> None:
+        """
+        Переключает один тип уведомлений текущего взрослого
+        для выбранного ребёнка.
+        """
+        try:
+            _, _, setting_token, child_id_raw = callback.data.split(":")
+            child_id = int(child_id_raw)
+        except (ValueError, IndexError):
+            await callback.answer(
+                "Некорректные параметры настройки.",
+                show_alert=True,
+            )
+            return
+
+        setting_map = {
+            "morning": "receive_morning_summary",
+            "prelesson": "receive_pre_lesson_reminders",
+            "changes": "receive_schedule_changes",
+            "extra": "receive_extra_class_reminders",
+        }
+
+        setting_name = setting_map.get(setting_token)
+
+        if setting_name is None:
+            await callback.answer(
+                "Неизвестный тип уведомления.",
+                show_alert=True,
+            )
+            return
+
+        parent_id = callback.from_user.id
+
+        changed = await profile_service.toggle_parent_child_notification_setting(
+            parent_user_id=parent_id,
+            child_user_id=child_id,
+            setting_name=setting_name,
+        )
+
+        if not changed:
+            await callback.answer(
+                "Не удалось изменить настройку. "
+                "Возможно, у вас нет доступа к ребёнку.",
+                show_alert=True,
+            )
+            return
+
+        settings_dto = await profile_service.get_parent_child_notification_settings(
+            parent_user_id=parent_id,
+            child_user_id=child_id,
+        )
+
+        if settings_dto is None:
+            await callback.answer(
+                "Настройки ребёнка больше недоступны.",
+                show_alert=True,
+            )
+            return
+
+        text = UIRenderer.render_parent_child_notification_settings(
+            settings_dto,
+        )
+
+        keyboard = Keyboards.get_parent_child_notification_settings_kb(
+            settings_dto,
+        )
+
+        await callback.message.edit_text(
+            text,
+            reply_markup=keyboard,
+            parse_mode="HTML",
+        )
+
+        await callback.answer("Настройка обновлена")
+# безопасный редирект полно хендлера выше
+@router.callback_query(
+    F.data.startswith("pcn:toggle:")
+)
+async def reject_legacy_parent_child_notification_toggle(
+    callback: CallbackQuery,
+) -> None:
+    await _safe_callback_answer(
+        callback,
+        (
+            "Эта кнопка устарела. "
+            "Используйте новый раздел «Уведомления по ученикам»."
+        ),
+        show_alert=True,
+    )
+    
+if False: # удалить после рефакторинга вместе с нижним редиректом            
+    @router.callback_query(F.data.startswith("family:child_settings:"))
+    async def show_child_settings(
+        callback: CallbackQuery,
+        profile_service: ProfileService,
+    ) -> None:
+        """
+        Показывает профиль ребёнка из семейного меню.
+
+        Управляющие элементы доступны только администратору семьи.
+        """
+        try:
+            child_user_id = int(callback.data.split(":")[2])
+        except (IndexError, ValueError):
+            await callback.answer(
+                "Некорректный идентификатор ребёнка.",
+                show_alert=True,
+            )
+            return
+
+        actor_user_id = callback.from_user.id
+
+        child_dto = await profile_service.get_user_profile_dto(
+            child_user_id,
+        )
+
+        if child_dto.role != "child":
+            await callback.answer(
+                "Этот профиль не является профилем ребёнка.",
+                show_alert=True,
+            )
+            return
+
+        is_family_admin = await profile_service.is_family_admin_for_child(
+            admin_user_id=actor_user_id,
+            child_user_id=child_user_id,
+        )
+
+        has_access = await profile_service.parent_can_access_child(
+            parent_user_id=actor_user_id,
+            child_user_id=child_user_id,
+        )
+
+        if not has_access:
+            await callback.answer(
+                "У вас нет доступа к профилю этого ребёнка.",
+                show_alert=True,
+            )
+            return
+
+        is_locked = await profile_service.is_child_notification_settings_locked(
+            child_user_id=child_user_id,
+        )
+
+        text = UIRenderer.render_child_settings_menu(
+            child_dto.name,
+            child_dto.class_id,
+        )
+
+        keyboard = Keyboards.get_child_settings_kb(
+            child_dto=child_dto,
+            is_family_admin=is_family_admin,
+            is_notifications_locked=is_locked,
+        )
+
+        await _safe_edit_text(
+            callback.message,
+            text,
+            reply_markup=keyboard,
+        )
+
+        await _safe_callback_answer(callback)
+
+# безопасный редирект полно хендлера выше
+@router.callback_query(
+    F.data.startswith("family:child_settings:")
+)
+async def redirect_legacy_child_settings(
     callback: CallbackQuery,
     profile_service: ProfileService,
+    students_service: StudentsService,
 ) -> None:
     """
-    Показывает настройки уведомлений текущего взрослого по ребёнку.
+    Fallback для старых Telegram-сообщений.
+
+    Новый UI использует student_profiles, поэтому legacy child settings
+    больше не открываются. Вместо этого возвращаем взрослого
+    в список student profiles семьи.
     """
-    try:
-        child_id = int(callback.data.split(":")[2])
-    except (IndexError, ValueError):
-        await callback.answer(
-            "Некорректные данные выбранного ребёнка.",
+    actor = await profile_service.get_user_profile_dto(
+        callback.from_user.id,
+    )
+
+    if actor.role not in ("parent", "observer"):
+        await _safe_callback_answer(
+            callback,
+            "Раздел доступен только взрослым.",
             show_alert=True,
         )
         return
 
-    parent_id = callback.from_user.id
-
-    settings_dto = await profile_service.get_parent_child_notification_settings(
-        parent_user_id=parent_id,
-        child_user_id=child_id,
-    )
-
-    if settings_dto is None:
-        logger.warning(
-            "Parent-child notification access denied: parent_id=%s child_id=%s",
-            parent_id,
-            child_id,
-        )
-        await callback.answer(
-            "У вас нет доступа к настройкам этого ребёнка.",
+    if actor.family_id is None:
+        await _safe_callback_answer(
+            callback,
+            "Вы больше не состоите в семье.",
             show_alert=True,
         )
         return
 
-    text = UIRenderer.render_parent_child_notification_settings(
-        settings_dto,
+    is_family_admin = await profile_service.is_family_admin(
+        user_id=callback.from_user.id,
+        family_id=actor.family_id,
     )
 
-    keyboard = Keyboards.get_parent_child_notification_settings_kb(
-        settings_dto,
+    students = await students_service.get_students_for_adult(
+        adult_user_id=callback.from_user.id,
     )
 
-    await callback.message.edit_text(
-        text,
-        reply_markup=keyboard,
-        parse_mode="HTML",
-    )
-    await callback.answer()
-
-@router.callback_query(F.data.startswith("pcn:toggle:"))
-async def toggle_parent_child_notification_setting(
-    callback: CallbackQuery,
-    profile_service: ProfileService,
-) -> None:
-    """
-    Переключает один тип уведомлений текущего взрослого
-    для выбранного ребёнка.
-    """
-    try:
-        _, _, setting_token, child_id_raw = callback.data.split(":")
-        child_id = int(child_id_raw)
-    except (ValueError, IndexError):
-        await callback.answer(
-            "Некорректные параметры настройки.",
-            show_alert=True,
-        )
-        return
-
-    setting_map = {
-        "morning": "receive_morning_summary",
-        "prelesson": "receive_pre_lesson_reminders",
-        "changes": "receive_schedule_changes",
-        "extra": "receive_extra_class_reminders",
-    }
-
-    setting_name = setting_map.get(setting_token)
-
-    if setting_name is None:
-        await callback.answer(
-            "Неизвестный тип уведомления.",
-            show_alert=True,
-        )
-        return
-
-    parent_id = callback.from_user.id
-
-    changed = await profile_service.toggle_parent_child_notification_setting(
-        parent_user_id=parent_id,
-        child_user_id=child_id,
-        setting_name=setting_name,
+    text = UIRenderer.render_family_students(
+        students,
     )
 
-    if not changed:
-        await callback.answer(
-            "Не удалось изменить настройку. "
-            "Возможно, у вас нет доступа к ребёнку.",
-            show_alert=True,
-        )
-        return
-
-    settings_dto = await profile_service.get_parent_child_notification_settings(
-        parent_user_id=parent_id,
-        child_user_id=child_id,
-    )
-
-    if settings_dto is None:
-        await callback.answer(
-            "Настройки ребёнка больше недоступны.",
-            show_alert=True,
-        )
-        return
-
-    text = UIRenderer.render_parent_child_notification_settings(
-        settings_dto,
-    )
-
-    keyboard = Keyboards.get_parent_child_notification_settings_kb(
-        settings_dto,
-    )
-
-    await callback.message.edit_text(
-        text,
-        reply_markup=keyboard,
-        parse_mode="HTML",
-    )
-
-    await callback.answer("Настройка обновлена")
-            
-@router.callback_query(F.data.startswith("family:child_settings:"))
-async def show_child_settings(
-    callback: CallbackQuery,
-    profile_service: ProfileService,
-) -> None:
-    """
-    Показывает профиль ребёнка из семейного меню.
-
-    Управляющие элементы доступны только администратору семьи.
-    """
-    try:
-        child_user_id = int(callback.data.split(":")[2])
-    except (IndexError, ValueError):
-        await callback.answer(
-            "Некорректный идентификатор ребёнка.",
-            show_alert=True,
-        )
-        return
-
-    actor_user_id = callback.from_user.id
-
-    child_dto = await profile_service.get_user_profile_dto(
-        child_user_id,
-    )
-
-    if child_dto.role != "child":
-        await callback.answer(
-            "Этот профиль не является профилем ребёнка.",
-            show_alert=True,
-        )
-        return
-
-    is_family_admin = await profile_service.is_family_admin_for_child(
-        admin_user_id=actor_user_id,
-        child_user_id=child_user_id,
-    )
-
-    has_access = await profile_service.parent_can_access_child(
-        parent_user_id=actor_user_id,
-        child_user_id=child_user_id,
-    )
-
-    if not has_access:
-        await callback.answer(
-            "У вас нет доступа к профилю этого ребёнка.",
-            show_alert=True,
-        )
-        return
-
-    is_locked = await profile_service.is_child_notification_settings_locked(
-        child_user_id=child_user_id,
-    )
-
-    text = UIRenderer.render_child_settings_menu(
-        child_dto.name,
-        child_dto.class_id,
-    )
-
-    keyboard = Keyboards.get_child_settings_kb(
-        child_dto=child_dto,
+    keyboard = Keyboards.get_family_students_kb(
+        students,
         is_family_admin=is_family_admin,
-        is_notifications_locked=is_locked,
     )
 
     await _safe_edit_text(
         callback.message,
-        text,
+        (
+            "ℹ️ <b>Этот экран был обновлён.</b>\n\n"
+            "Настройки теперь открываются через единый список "
+            "профилей учеников.\n\n"
+            f"{text}"
+        ),
         reply_markup=keyboard,
     )
 
     await _safe_callback_answer(callback)
-
  
 # Настройки самого родителя
 @router.callback_query(F.data == "settings:my_notifications")
@@ -2877,6 +3056,496 @@ async def delete_watch_target(
     
 # Виртуальный ученик
 
+@router.callback_query(
+    F.data.startswith("student_tg:show:")
+)
+async def show_student_telegram_settings(
+    callback: CallbackQuery,
+    state: FSMContext,
+    profile_service: ProfileService,
+) -> None:
+    """
+    Family admin открывает personal Telegram settings ученика.
+    """
+    try:
+        student_id = int(
+            callback.data.split(":")[2]
+        )
+    except (IndexError, ValueError):
+        await _safe_callback_answer(
+            callback,
+            "Некорректный идентификатор ученика.",
+            show_alert=True,
+        )
+        return
+
+    await state.clear()
+
+    shown = await _show_student_telegram_settings(
+        callback=callback,
+        profile_service=profile_service,
+        student_id=student_id,
+    )
+
+    if not shown:
+        await _safe_callback_answer(
+            callback,
+            (
+                "Настройки недоступны. Убедитесь, что ученик "
+                "подключён к Telegram и вы администратор семьи."
+            ),
+            show_alert=True,
+        )
+        return
+
+    await _safe_callback_answer(callback)
+
+@router.callback_query(
+    F.data.startswith("student_tg:toggle:")
+)
+async def toggle_student_telegram_setting(
+    callback: CallbackQuery,
+    profile_service: ProfileService,
+) -> None:
+    """
+    Family admin переключает personal boolean setting
+    Telegram-linked student profile.
+    """
+    try:
+        _prefix, _action, setting_token, raw_student_id = (
+            callback.data.split(":")
+        )
+
+        student_id = int(raw_student_id)
+
+    except (IndexError, ValueError):
+        await _safe_callback_answer(
+            callback,
+            "Некорректные данные настройки.",
+            show_alert=True,
+        )
+        return
+
+    setting_map = {
+        "notif": "is_notifications_enabled",
+        "changes": "receive_schedule_changes",
+        "extra": "receive_extra_class_reminders",
+        "own_extra": "can_manage_own_extra_classes",
+    }
+
+    field_name = setting_map.get(setting_token)
+
+    if field_name is None:
+        await _safe_callback_answer(
+            callback,
+            "Неизвестная настройка.",
+            show_alert=True,
+        )
+        return
+
+    changed = (
+        await profile_service.toggle_student_telegram_boolean_setting(
+            admin_user_id=callback.from_user.id,
+            student_id=student_id,
+            field_name=field_name,
+        )
+    )
+
+    if not changed:
+        await _safe_callback_answer(
+            callback,
+            (
+                "Не удалось изменить настройку. "
+                "Проверьте права администратора и связь Telegram."
+            ),
+            show_alert=True,
+        )
+        return
+
+    shown = await _show_student_telegram_settings(
+        callback=callback,
+        profile_service=profile_service,
+        student_id=student_id,
+    )
+
+    if not shown:
+        await _safe_callback_answer(
+            callback,
+            "Настройки больше недоступны.",
+            show_alert=True,
+        )
+        return
+
+    await _safe_callback_answer(
+        callback,
+        "✅ Настройка обновлена.",
+    )
+
+@router.callback_query(
+    F.data.startswith("student_tg:prelesson:")
+)
+async def toggle_student_telegram_prelesson(
+    callback: CallbackQuery,
+    profile_service: ProfileService,
+) -> None:
+    """
+    Включает или выключает pre-lesson reminders Telegram child.
+
+    0 минут = выключено.
+    10 минут = стандартное включённое значение.
+    """
+    try:
+        student_id = int(
+            callback.data.split(":")[2]
+        )
+    except (IndexError, ValueError):
+        await _safe_callback_answer(
+            callback,
+            "Некорректный идентификатор ученика.",
+            show_alert=True,
+        )
+        return
+
+    dto = await profile_service.get_student_telegram_settings_for_admin(
+        admin_user_id=callback.from_user.id,
+        student_id=student_id,
+    )
+
+    if dto is None:
+        await _safe_callback_answer(
+            callback,
+            "Настройки недоступны.",
+            show_alert=True,
+        )
+        return
+
+    new_value = (
+        0
+        if dto.pre_lesson_offset_minutes > 0
+        else 10
+    )
+
+    changed = (
+        await profile_service.update_student_telegram_integer_setting(
+            admin_user_id=callback.from_user.id,
+            student_id=student_id,
+            field_name="pre_lesson_offset_minutes",
+            value=new_value,
+        )
+    )
+
+    if not changed:
+        await _safe_callback_answer(
+            callback,
+            "Не удалось изменить предурочные напоминания.",
+            show_alert=True,
+        )
+        return
+
+    await _show_student_telegram_settings(
+        callback=callback,
+        profile_service=profile_service,
+        student_id=student_id,
+    )
+
+    state_text = (
+        "включены за 10 минут"
+        if new_value > 0
+        else "выключены"
+    )
+
+    await _safe_callback_answer(
+        callback,
+        f"✅ Напоминания {state_text}.",
+    )
+
+@router.callback_query(
+    F.data.startswith("student_tg:lock:")
+)
+async def toggle_student_telegram_settings_lock(
+    callback: CallbackQuery,
+    profile_service: ProfileService,
+) -> None:
+    """
+    Family admin включает/выключает lock personal settings child.
+    """
+    try:
+        student_id = int(
+            callback.data.split(":")[2]
+        )
+    except (IndexError, ValueError):
+        await _safe_callback_answer(
+            callback,
+            "Некорректный идентификатор ученика.",
+            show_alert=True,
+        )
+        return
+
+    dto = await profile_service.get_student_telegram_settings_for_admin(
+        admin_user_id=callback.from_user.id,
+        student_id=student_id,
+    )
+
+    if dto is None:
+        await _safe_callback_answer(
+            callback,
+            "Настройки недоступны.",
+            show_alert=True,
+        )
+        return
+
+    new_locked_value = not dto.child_notification_settings_locked
+
+    changed = await profile_service.set_student_notification_settings_locked(
+        admin_user_id=callback.from_user.id,
+        student_id=student_id,
+        locked=new_locked_value,
+    )
+
+    if not changed:
+        await _safe_callback_answer(
+            callback,
+            "Не удалось изменить блокировку настроек.",
+            show_alert=True,
+        )
+        return
+
+    await _show_student_telegram_settings(
+        callback=callback,
+        profile_service=profile_service,
+        student_id=student_id,
+    )
+
+    await _safe_callback_answer(
+        callback,
+        (
+            "🔒 Настройки ребёнка заблокированы."
+            if new_locked_value
+            else "🔓 Блокировка настроек ребёнка снята."
+        ),
+    )
+
+@router.callback_query(
+    F.data.startswith("student_tg:summary:")
+)
+async def prompt_student_telegram_summary_time(
+    callback: CallbackQuery,
+    state: FSMContext,
+    profile_service: ProfileService,
+) -> None:
+    """
+    Family admin начинает изменение времени утренней сводки
+    Telegram-linked student profile.
+    """
+    try:
+        student_id = int(
+            callback.data.split(":")[2]
+        )
+    except (IndexError, ValueError):
+        await _safe_callback_answer(
+            callback,
+            "Некорректный идентификатор ученика.",
+            show_alert=True,
+        )
+        return
+
+    dto = await profile_service.get_student_telegram_settings_for_admin(
+        admin_user_id=callback.from_user.id,
+        student_id=student_id,
+    )
+
+    if dto is None:
+        await _safe_callback_answer(
+            callback,
+            "Настройки недоступны.",
+            show_alert=True,
+        )
+        return
+
+    await state.clear()
+
+    await state.update_data(
+        student_tg_settings_admin_id=callback.from_user.id,
+        student_tg_settings_student_id=student_id,
+    )
+
+    await _safe_edit_text(
+        callback.message,
+        UIRenderer.render_student_telegram_summary_time_prompt(
+            dto,
+        ),
+        reply_markup=(
+            Keyboards.get_student_telegram_summary_time_kb(
+                student_id=student_id,
+            )
+        ),
+    )
+
+    await state.set_state(
+        SettingsStates.waiting_for_student_telegram_summary_time,
+    )
+
+    await _safe_callback_answer(callback)
+
+@router.callback_query(
+    SettingsStates.waiting_for_student_telegram_summary_time,
+    F.data.startswith("student_tg:summary_off:"),
+)
+async def disable_student_telegram_summary_time(
+    callback: CallbackQuery,
+    state: FSMContext,
+    profile_service: ProfileService,
+) -> None:
+    """
+    Отключает personal morning summary Telegram child.
+    """
+    try:
+        student_id = int(
+            callback.data.split(":")[2]
+        )
+    except (IndexError, ValueError):
+        await state.clear()
+
+        await _safe_callback_answer(
+            callback,
+            "Некорректный идентификатор ученика.",
+            show_alert=True,
+        )
+        return
+
+    data = await state.get_data()
+
+    if (
+        data.get("student_tg_settings_admin_id")
+        != callback.from_user.id
+        or data.get("student_tg_settings_student_id")
+        != student_id
+    ):
+        await state.clear()
+
+        await _safe_callback_answer(
+            callback,
+            "Состояние настройки устарело.",
+            show_alert=True,
+        )
+        return
+
+    changed = (
+        await profile_service.update_student_telegram_morning_summary_time(
+            admin_user_id=callback.from_user.id,
+            student_id=student_id,
+            time_str=None,
+        )
+    )
+
+    await state.clear()
+
+    if not changed:
+        await _safe_callback_answer(
+            callback,
+            "Не удалось отключить утреннюю сводку.",
+            show_alert=True,
+        )
+        return
+
+    await _show_student_telegram_settings(
+        callback=callback,
+        profile_service=profile_service,
+        student_id=student_id,
+    )
+
+    await _safe_callback_answer(
+        callback,
+        "🔕 Утренняя сводка отключена.",
+    )
+
+@router.message(
+    SettingsStates.waiting_for_student_telegram_summary_time
+)
+async def save_student_telegram_summary_time(
+    message: Message,
+    state: FSMContext,
+    time_service: TimeService,
+    profile_service: ProfileService,
+) -> None:
+    """
+    Сохраняет время personal morning summary Telegram child.
+    """
+    data = await state.get_data()
+
+    admin_user_id = data.get(
+        "student_tg_settings_admin_id"
+    )
+
+    student_id = data.get(
+        "student_tg_settings_student_id"
+    )
+
+    if (
+        admin_user_id != message.from_user.id
+        or student_id is None
+    ):
+        await state.clear()
+
+        await message.answer(
+            "❌ Состояние настройки устарело. "
+            "Откройте профиль ученика заново."
+        )
+        return
+
+    normalized_time = time_service.normalize_time(
+        message.text,
+    )
+
+    if normalized_time is None:
+        await message.answer(
+            "❌ Неверный формат времени. "
+            "Например: <code>07:00</code>.",
+            reply_markup=(
+                Keyboards.get_student_telegram_summary_time_kb(
+                    student_id=student_id,
+                )
+            ),
+            parse_mode="HTML",
+        )
+        return
+
+    changed = (
+        await profile_service.update_student_telegram_morning_summary_time(
+            admin_user_id=admin_user_id,
+            student_id=student_id,
+            time_str=normalized_time,
+        )
+    )
+
+    await state.clear()
+
+    if not changed:
+        await message.answer(
+            "❌ Не удалось сохранить время утренней сводки."
+        )
+        return
+
+    dto = await profile_service.get_student_telegram_settings_for_admin(
+        admin_user_id=admin_user_id,
+        student_id=student_id,
+    )
+
+    if dto is None:
+        await message.answer(
+            "✅ Время сохранено, но профиль ученика больше недоступен."
+        )
+        return
+
+    await message.answer(
+        "✅ <b>Время утренней сводки обновлено.</b>\n\n"
+        + UIRenderer.render_student_telegram_settings(dto),
+        reply_markup=Keyboards.get_student_telegram_settings_kb(
+            dto,
+        ),
+        parse_mode="HTML",
+    )
+                            
 @router.callback_query(F.data == "family:students")
 async def show_family_students(
     callback: CallbackQuery,

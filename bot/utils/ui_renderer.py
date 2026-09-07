@@ -4,7 +4,7 @@ from core.models.dto import (ClassListDTO, FamilyCreatedDTO, AdminStatsDTO, DayS
                              WeekSummaryDTO, FullWeekScheduleDTO, UserProfileDTO, FamilyMemberDTO,
                              MorningSummaryDTO, ChangeReminderDTO, LessonReminderDTO, ParentChildNotificationSettingsDTO, AdultExtraClassesPermissionDTO,
                              ProfileResetImpactDTO, FamilyInviteDTO, ScheduleWatchTargetDTO, StudentProfileDTO, ParentStudentNotificationSettingsDTO,
-                            AdultStudentExtraClassesPermissionDTO,
+                            AdultStudentExtraClassesPermissionDTO, StudentTelegramSettingsDTO,
 )
 
 class UIRenderer:
@@ -636,7 +636,98 @@ class UIRenderer:
             f"{status(dto.receive_extra_class_reminders)}\n\n"
             f"Права на кружки: {manage_status}"
         )
-            
+
+    @staticmethod
+    def render_student_telegram_summary_time_prompt(
+        dto: StudentTelegramSettingsDTO,
+    ) -> str:
+        """
+        Prompt family admin для изменения времени
+        личной утренней сводки Telegram child.
+        """
+        student_name = UIRenderer.escape_html(
+            dto.student_name,
+            fallback=f"Ученик {dto.student_id}",
+        )
+
+        current_time = (
+            dto.morning_summary_time
+            if dto.morning_summary_time
+            else "ВЫКЛ"
+        )
+
+        return (
+            "🌅 <b>Утренняя сводка ребёнка</b>\n\n"
+            f"👤 Ученик: <b>{student_name}</b>\n"
+            f"Текущее время: <b>{current_time}</b>\n\n"
+            "Введите новое время в формате:\n"
+            "<code>07:00</code>\n\n"
+            "Или отключите сводку кнопкой ниже."
+        )
+    
+    @staticmethod
+    def render_student_telegram_settings(
+        dto: StudentTelegramSettingsDTO,
+    ) -> str:
+        """
+        Экран personal Telegram settings ребёнка,
+        открытый family admin.
+        """
+        student_name = UIRenderer.escape_html(
+            dto.student_name,
+            fallback=f"Ученик {dto.student_id}",
+        )
+
+        class_name = UIRenderer.escape_html(
+            dto.class_id,
+            fallback="—",
+        )
+
+        group_text = (
+            "Весь класс"
+            if dto.group_id == "ALL"
+            else f"Группа {UIRenderer.escape_html(dto.group_id)}"
+        )
+
+        def status(value: bool) -> str:
+            return "ВКЛ 🟢" if value else "ВЫКЛ 🔴"
+
+        summary_time = (
+            dto.morning_summary_time
+            if dto.morning_summary_time
+            else "ВЫКЛ"
+        )
+
+        prelesson_text = (
+            f"{dto.pre_lesson_offset_minutes} мин 🟢"
+            if dto.pre_lesson_offset_minutes > 0
+            else "ВЫКЛ 🔴"
+        )
+
+        lock_text = (
+            "ВКЛ 🔒"
+            if dto.child_notification_settings_locked
+            else "ВЫКЛ 🔓"
+        )
+
+        return (
+            "📱 <b>Настройки Telegram-ребёнка</b>\n\n"
+            f"👤 Ученик: <b>{student_name}</b>\n"
+            f"🎓 Класс: <b>{class_name}</b>\n"
+            f"👥 {group_text}\n\n"
+            "<b>Личные настройки ребёнка</b>\n"
+            f"🔔 Уведомления: {status(dto.is_notifications_enabled)}\n"
+            f"🌅 Утренняя сводка: {summary_time}\n"
+            f"⏰ Напоминания об уроках: {prelesson_text}\n"
+            f"🔄 Изменения расписания: "
+            f"{status(dto.receive_schedule_changes)}\n"
+            f"🎨 Напоминания о кружках: "
+            f"{status(dto.receive_extra_class_reminders)}\n"
+            f"✏️ Самостоятельное управление кружками: "
+            f"{status(dto.can_manage_own_extra_classes)}\n\n"
+            f"🔒 Блокировка настроек ребёнка: <b>{lock_text}</b>"
+        )
+                    
     @staticmethod
     def render_parent_child_notification_settings(
         dto: ParentChildNotificationSettingsDTO,

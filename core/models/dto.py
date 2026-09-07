@@ -297,7 +297,37 @@ class ParentStudentNotificationSettingsDTO:
     receive_extra_class_reminders: bool = True
 
     can_manage_extra_classes: bool = False
-        
+
+@dataclass
+class StudentTelegramSettingsDTO:
+    """
+    Личные Telegram-настройки ученика.
+
+    Используется только если student profile привязан к Telegram user:
+    student_profiles.telegram_user_id IS NOT NULL.
+
+    Настройки находятся в users, но управляются family admin
+    через student_profiles.id.
+    """
+    student_id: int
+    telegram_user_id: int
+
+    student_name: str
+    class_id: str
+    group_id: str
+
+    is_notifications_enabled: bool = True
+
+    morning_summary_time: str | None = None
+    pre_lesson_offset_minutes: int = 10
+
+    receive_schedule_changes: bool = True
+    receive_extra_class_reminders: bool = True
+
+    can_manage_own_extra_classes: bool = True
+
+    child_notification_settings_locked: bool = False
+            
 @dataclass
 class ChildrenListDTO:
     """ DTO для списка детей родителя. 

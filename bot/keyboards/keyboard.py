@@ -3,7 +3,7 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeybo
 from core.models.dto import ( ClassListDTO, GroupListDTO, ChildrenListDTO, UserProfileDTO, TeacherListDTO, 
                              FamilyMemberDTO, ParentChildNotificationSettingsDTO, ChildInfoDTO, AdultExtraClassesPermissionDTO,
                              FamilyInviteDTO, ScheduleWatchTargetDTO, ScheduleViewTargetDTO, StudentProfileDTO, ParentStudentNotificationSettingsDTO,
-                            AdultStudentExtraClassesPermissionDTO,
+                            AdultStudentExtraClassesPermissionDTO, StudentTelegramSettingsDTO,
 )
 
 class Keyboards:
@@ -316,7 +316,8 @@ class Keyboards:
         ])
 
         return InlineKeyboardMarkup(inline_keyboard=buttons)
-
+    
+# Удалить после рефакторинга
     @staticmethod
     def get_notifications_kb(user_dto: 'UserProfileDTO') -> InlineKeyboardMarkup:
         """Отдельное меню управления всеми уведомлениями."""
@@ -333,7 +334,132 @@ class Keyboards:
             [InlineKeyboardButton(text=f"🎨 Доп. занятия: {extra_state}", callback_data="set_notif:extra")],
             [InlineKeyboardButton(text="⬅️ Назад", callback_data="settings:main")]
         ])
-        
+
+    @staticmethod
+    def get_student_telegram_settings_kb(
+        dto: StudentTelegramSettingsDTO,
+    ) -> InlineKeyboardMarkup:
+        """
+        Личные настройки Telegram-linked student profile.
+
+        Все callbacks содержат student_profiles.id,
+        а не users.user_id.
+        """
+        def bool_status(value: bool) -> str:
+            return "ВКЛ 🟢" if value else "ВЫКЛ 🔴"
+
+        notifications_text = (
+            "🔔 Уведомления ребёнка: "
+            f"{bool_status(dto.is_notifications_enabled)}"
+        )
+
+        summary_time = (
+            dto.morning_summary_time
+            if dto.morning_summary_time
+            else "ВЫКЛ"
+        )
+
+        prelesson_text = (
+            f"{dto.pre_lesson_offset_minutes} мин 🟢"
+            if dto.pre_lesson_offset_minutes > 0
+            else "ВЫКЛ 🔴"
+        )
+
+        changes_text = (
+            "🔄 Изменения расписания: "
+            f"{bool_status(dto.receive_schedule_changes)}"
+        )
+
+        extra_text = (
+            "🎨 Напоминания о кружках: "
+            f"{bool_status(dto.receive_extra_class_reminders)}"
+        )
+
+        own_extra_text = (
+            "✏️ Ребёнок редактирует кружки: "
+            f"{bool_status(dto.can_manage_own_extra_classes)}"
+        )
+
+        lock_text = (
+            "🔒 Блокировка настроек: ВКЛ 🔒"
+            if dto.child_notification_settings_locked
+            else "🔒 Блокировка настроек: ВЫКЛ 🔓"
+        )
+
+        student_id = dto.student_id
+
+        return InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text=notifications_text,
+                        callback_data=(
+                            f"student_tg:toggle:notif:{student_id}"
+                        ),
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text=(
+                            f"🌅 Утренняя сводка: {summary_time}"
+                        ),
+                        callback_data=(
+                            f"student_tg:summary:{student_id}"
+                        ),
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text=(
+                            "⏰ Напоминания об уроках: "
+                            f"{prelesson_text}"
+                        ),
+                        callback_data=(
+                            f"student_tg:prelesson:{student_id}"
+                        ),
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text=changes_text,
+                        callback_data=(
+                            f"student_tg:toggle:changes:{student_id}"
+                        ),
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text=extra_text,
+                        callback_data=(
+                            f"student_tg:toggle:extra:{student_id}"
+                        ),
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text=own_extra_text,
+                        callback_data=(
+                            f"student_tg:toggle:own_extra:{student_id}"
+                        ),
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text=lock_text,
+                        callback_data=(
+                            f"student_tg:lock:{student_id}"
+                        ),
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="⬅️ К профилю ученика",
+                        callback_data=f"student:show:{student_id}",
+                    )
+                ],
+            ]
+        )
+                
 #-----------------------
 
     @staticmethod
@@ -460,7 +586,7 @@ class Keyboards:
             [InlineKeyboardButton(text="❌ Отмена", callback_data="extra:cancel")]
         ])
         
-    # Сводка
+    # Сводка. удалить после рефакторинга
     @staticmethod
     def get_summary_time_prompt_kb() -> InlineKeyboardMarkup:
         """Клавиатура при запросе времени для сводки."""
@@ -469,7 +595,32 @@ class Keyboards:
             [InlineKeyboardButton(text="❌ Отмена", callback_data="settings:cancel_input")]
         ])
         
-        
+    @staticmethod
+    def get_student_telegram_summary_time_kb(
+        *,
+        student_id: int,
+    ) -> InlineKeyboardMarkup:
+        """
+        Keyboard для ручного ввода времени личной сводки ребёнка.
+        """
+        return InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="🔕 Выключить сводку",
+                        callback_data=(
+                            f"student_tg:summary_off:{student_id}"
+                        ),
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="⬅️ Отмена",
+                        callback_data=f"student_tg:show:{student_id}",
+                    )
+                ],
+            ]
+        )        
         
 # Просмотр расписания
 
@@ -773,36 +924,6 @@ class Keyboards:
         # Любой parent/observer видит доступные семейные профили.
         # Конкретная проверка доступа к ученику остаётся в handler/service.
         if current_user.role in ("parent", "observer"):
-            for member in members:
-                if member.role != "child":
-                    continue
-
-                child_name = member.name or (
-                    f"Ученик {member.user_id}"
-                )
-
-                class_name = (
-                    classes_dict.get(
-                        member.class_id,
-                        member.class_id,
-                    )
-                    if member.class_id
-                    else "Класс не выбран"
-                )
-
-                buttons.append([
-                    InlineKeyboardButton(
-                        text=(
-                            f"🧒 {child_name} "
-                            f"({class_name})"
-                        ),
-                        callback_data=(
-                            f"family:child_settings:{member.user_id}"
-                        ),
-                    )
-                ])
-
-        if current_user.role in ("parent", "observer"):
             buttons.append([
                 InlineKeyboardButton(
                     text="🧒 Ученики семьи",
@@ -837,15 +958,7 @@ class Keyboards:
             inline_keyboard=buttons,
         )
 
-# Возможно нужно удалить, так как есть get_parent_children_menu, но она не используется в коде.
-        @staticmethod
-        def get_extra_children_select_kb(children: list) -> InlineKeyboardMarkup:
-            """Клавиатура выбора ребенка для родителя."""
-            buttons = []
-            for child in children:
-                buttons.append([InlineKeyboardButton(text=f"👦/👧 {child.name}", callback_data=f"extra:menu:{child.user_id}")])
-            return InlineKeyboardMarkup(inline_keyboard=buttons)
-        
+      
     @staticmethod
     def get_extra_students_select_kb(
         students: list[StudentProfileDTO],
@@ -1709,6 +1822,16 @@ class Keyboards:
                 )
             ])
 
+            if telegram_user_id is not None:
+                buttons.append([
+                    InlineKeyboardButton(
+                        text="📱 Настройки Telegram-ребёнка",
+                        callback_data=(
+                            f"student_tg:show:{student_id}"
+                        ),
+                    )
+                ])
+    
             buttons.append([
                 InlineKeyboardButton(
                     text="👥 Права взрослых на кружки",

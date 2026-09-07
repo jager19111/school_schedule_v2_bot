@@ -1105,39 +1105,24 @@ class ProfileRepository(BaseRepository):
         )
 
         return row is not None
-
-    async def is_child_notification_settings_locked(
-        self,
-        child_user_id: int,
-    ) -> bool:
-        """
-        Возвращает фактическое состояние блокировки настроек ребёнка.
-
-        Источником блокировки является строка:
-            admin_user_id -> child_id
-        в parent_child_settings.
-
-        Если ребёнок не состоит в семье или строка ещё не найдена,
-        настройки считаются незаблокированными.
-        """
-        row = await self._fetch_one(
+    
+    # безопасный редирект старого метода
+        async def is_child_notification_settings_locked(
+            self,
+            child_user_id: int,
+        ) -> bool:
             """
-            SELECT
-                pcs.child_notification_settings_locked AS locked
-            FROM families AS family
-            JOIN parent_child_settings AS pcs
-              ON pcs.parent_id = family.admin_user_id
-            JOIN users AS child
-              ON child.user_id = pcs.child_id
-            WHERE child.user_id = ?
-              AND child.role = 'child'
-              AND child.family_id = family.id
-            """,
-            (child_user_id,),
-        )
+            Legacy-compatible name.
 
-        return bool(row and row["locked"])
-
+            Реальная проверка теперь использует:
+            student_profiles
+            → families.admin_user_id
+            → parent_student_settings.
+            """
+            return await self.is_telegram_child_notification_settings_locked(
+                telegram_user_id=child_user_id,
+            )
+        
     async def set_child_notification_settings_locked(
         self,
         admin_user_id: int,
@@ -1906,3 +1891,294 @@ class ProfileRepository(BaseRepository):
         )
 
         return changed == 1
+    
+    #---------------------------------------------
+    # Управление настройками уведомлений у ребенка
+    #----------------------------------------------    
+    async def get_student_telegram_settings_for_admin(
+        self,
+        *,
+        admin_user_id: int,
+        student_id: int,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Возвращает Telegram-настройки student profile.
+
+        Вернёт None, если:
+        - initiator не family admin;
+        - student не существует;
+        - student virtual, то есть Telegram ещё не подключён.
+        """
+        return await self._fetch_one(
+            """
+            SELECT
+                student.id AS student_id,
+                student.telegram_user_id,
+
+                student.name AS student_name,
+                student.class_id,
+                student.group_id,
+
+                child.is_notifications_enabled,
+                child.morning_summary_time,
+                child.pre_lesson_offset_minutes,
+                child.receive_schedule_changes,
+                child.receive_extra_class_reminders,
+                child.can_manage_own_extra_classes,
+
+                settings.child_notification_settings_locked
+
+            FROM student_profiles AS student
+            JOIN families AS family
+                ON family.id = student.family_id
+            JOIN users AS child
+                ON child.user_id = student.telegram_user_id
+            LEFT JOIN parent_student_settings AS settings
+                ON settings.student_id = student.id
+            AND settings.parent_user_id = family.admin_user_id
+
+            WHERE student.id = ?
+            AND student.is_active = 1
+            AND student.telegram_user_id IS NOT NULL
+            AND child.role = 'child'
+            AND family.admin_user_id = ?
+            """,
+            (
+                student_id,
+                admin_user_id,
+            ),
+        )
+        
+    async def toggle_student_telegram_boolean_setting(
+        self,
+        *,
+        admin_user_id: int,
+        student_id: int,
+        field_name: str,
+    ) -> bool:
+        """
+        Family admin переключает personal boolean setting
+        Telegram-linked student profile.
+        """
+        allowed_fields = {
+            "is_notifications_enabled",
+            "receive_schedule_changes",
+            "receive_extra_class_reminders",
+            "can_manage_own_extra_classes",
+        }
+
+        if field_name not in allowed_fields:
+            raise ValueError(
+                f"Unsupported student Telegram setting: {field_name}"
+            )
+
+        changed = await self._execute(
+            f"""
+            UPDATE users
+            SET
+                {field_name} = CASE
+                    WHEN {field_name} = 1 THEN 0
+                    ELSE 1
+                END,
+                updated_at = CURRENT_TIMESTAMP
+
+            WHERE user_id = (
+                SELECT student.telegram_user_id
+                FROM student_profiles AS student
+                JOIN families AS family
+                    ON family.id = student.family_id
+
+                WHERE student.id = ?
+                AND student.is_active = 1
+                AND student.telegram_user_id IS NOT NULL
+                AND family.admin_user_id = ?
+            )
+            AND role = 'child'
+            """,
+            (
+                student_id,
+                admin_user_id,
+            ),
+        )
+
+        return changed == 1
+
+    async def update_student_telegram_integer_setting(
+        self,
+        *,
+        admin_user_id: int,
+        student_id: int,
+        field_name: str,
+        value: int,
+    ) -> bool:
+        """
+        Family admin меняет personal integer setting
+        Telegram-linked student.
+        """
+        allowed_fields = {
+            "pre_lesson_offset_minutes",
+        }
+
+        if field_name not in allowed_fields:
+            raise ValueError(
+                f"Unsupported student Telegram integer setting: "
+                f"{field_name}"
+            )
+
+        if not 0 <= value <= 180:
+            raise ValueError(
+                "pre_lesson_offset_minutes must be in range 0..180"
+            )
+
+        changed = await self._execute(
+            f"""
+            UPDATE users
+            SET
+                {field_name} = ?,
+                updated_at = CURRENT_TIMESTAMP
+
+            WHERE user_id = (
+                SELECT student.telegram_user_id
+                FROM student_profiles AS student
+                JOIN families AS family
+                    ON family.id = student.family_id
+
+                WHERE student.id = ?
+                AND student.is_active = 1
+                AND student.telegram_user_id IS NOT NULL
+                AND family.admin_user_id = ?
+            )
+            AND role = 'child'
+            """,
+            (
+                value,
+                student_id,
+                admin_user_id,
+            ),
+        )
+
+        return changed == 1
+
+    async def update_student_telegram_morning_summary_time(
+        self,
+        *,
+        admin_user_id: int,
+        student_id: int,
+        time_str: str | None,
+    ) -> bool:
+        """
+        Family admin включает, выключает или задаёт время
+        личной утренней сводки Telegram-ребёнка.
+        """
+        changed = await self._execute(
+            """
+            UPDATE users
+            SET
+                morning_summary_time = ?,
+                updated_at = CURRENT_TIMESTAMP
+
+            WHERE user_id = (
+                SELECT student.telegram_user_id
+                FROM student_profiles AS student
+                JOIN families AS family
+                    ON family.id = student.family_id
+
+                WHERE student.id = ?
+                AND student.is_active = 1
+                AND student.telegram_user_id IS NOT NULL
+                AND family.admin_user_id = ?
+            )
+            AND role = 'child'
+            """,
+            (
+                time_str,
+                student_id,
+                admin_user_id,
+            ),
+        )
+
+        return changed == 1
+
+    async def set_student_notification_settings_locked(
+        self,
+        *,
+        admin_user_id: int,
+        student_id: int,
+        locked: bool,
+    ) -> bool:
+        """
+        Family admin блокирует или разблокирует personal Telegram settings
+        выбранного student profile.
+
+        Lock хранится в parent_student_settings admin → student.
+        """
+        changed = await self._execute(
+            """
+            UPDATE parent_student_settings
+            SET
+                child_notification_settings_locked = ?,
+                updated_at = CURRENT_TIMESTAMP
+
+            WHERE parent_user_id = ?
+            AND student_id = ?
+
+            AND EXISTS (
+                SELECT 1
+                FROM student_profiles AS student
+                JOIN families AS family
+                    ON family.id = student.family_id
+
+                WHERE student.id = ?
+                    AND student.telegram_user_id IS NOT NULL
+                    AND student.is_active = 1
+                    AND family.admin_user_id = ?
+            )
+            """,
+            (
+                int(locked),
+                admin_user_id,
+                student_id,
+
+                student_id,
+                admin_user_id,
+            ),
+        )
+
+        return changed == 1
+
+    async def is_telegram_child_notification_settings_locked(
+        self,
+        *,
+        telegram_user_id: int,
+    ) -> bool:
+        """
+        Проверяет lock personal settings Telegram-child.
+
+        Standalone child:
+        - student.family_id IS NULL;
+        - lock отсутствует;
+        - возвращает False.
+
+        Family child:
+        - lock хранится в parent_student_settings
+        family admin → student.
+        """
+        row = await self._fetch_one(
+            """
+            SELECT
+                settings.child_notification_settings_locked AS locked
+
+            FROM student_profiles AS student
+            JOIN families AS family
+                ON family.id = student.family_id
+            LEFT JOIN parent_student_settings AS settings
+                ON settings.student_id = student.id
+            AND settings.parent_user_id = family.admin_user_id
+
+            WHERE student.telegram_user_id = ?
+            AND student.is_active = 1
+            """,
+            (telegram_user_id,),
+        )
+
+        return bool(row and row["locked"])

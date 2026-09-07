@@ -7,7 +7,7 @@ from core.models.dto import (
     UserProfileDTO,
     ChildInfoDTO,
     FamilyMemberDTO,ParentStudentNotificationSettingsDTO, AdultStudentExtraClassesPermissionDTO,
-    ParentChildNotificationSettingsDTO, ExtraClassesAccessDTO,AdultExtraClassesPermissionDTO, ProfileResetImpactDTO, FamilyInviteDTO,
+    ParentChildNotificationSettingsDTO, ExtraClassesAccessDTO,AdultExtraClassesPermissionDTO, ProfileResetImpactDTO, FamilyInviteDTO,StudentTelegramSettingsDTO,
 )
 
 logger = logging.getLogger(__name__)
@@ -455,7 +455,7 @@ class ProfileService:
         child_user_id: int,
     ) -> bool:
         """Возвращает действующее состояние блокировки ребёнка."""
-        return await self.repo.is_child_notification_settings_locked(
+        return await self.repo.is_telegram_child_notification_settings_locked(
             child_user_id=child_user_id,
         )
 
@@ -495,10 +495,10 @@ class ProfileService:
         user_id: int,
     ) -> bool:
         """
-        Определяет, может ли пользователь менять собственные настройки.
+        Parent/observer всегда меняет собственные настройки.
 
-        Parent и observer всегда управляют своими настройками сами.
-        Child не может менять настройки, если их заблокировал администратор.
+        Telegram child не может менять personal settings только если
+        family admin поставил lock в parent_student_settings.
         """
         profile = await self.repo.get_user_row(user_id)
 
@@ -508,8 +508,10 @@ class ProfileService:
         if profile["role"] != "child":
             return True
 
-        return not await self.repo.is_child_notification_settings_locked(
-            child_user_id=user_id,
+        return not await (
+            self.repo.is_telegram_child_notification_settings_locked(
+                telegram_user_id=user_id,
+            )
         )
 
     async def toggle_own_notifications_enabled(
@@ -1091,4 +1093,138 @@ class ProfileService:
             adult_user_id=adult_user_id,
             student_id=student_id,
             can_manage=can_manage,
+        )
+        
+    #---------------------------------------------
+    # Управление настройками уведомлений у ребенка
+    #----------------------------------------------         
+            
+    async def get_student_telegram_settings_for_admin(
+        self,
+        *,
+        admin_user_id: int,
+        student_id: int,
+    ) -> Optional[StudentTelegramSettingsDTO]:
+        """
+        Возвращает Telegram-настройки student profile
+        только family admin.
+        """
+        row = await self.repo.get_student_telegram_settings_for_admin(
+            admin_user_id=admin_user_id,
+            student_id=student_id,
+        )
+
+        if row is None:
+            return None
+
+        return StudentTelegramSettingsDTO(
+            student_id=row["student_id"],
+            telegram_user_id=row["telegram_user_id"],
+
+            student_name=row["student_name"] or (
+                f"Ученик {student_id}"
+            ),
+            class_id=row["class_id"] or "—",
+            group_id=row["group_id"] or "ALL",
+
+            is_notifications_enabled=bool(
+                row["is_notifications_enabled"]
+            ),
+
+            morning_summary_time=row.get(
+                "morning_summary_time"
+            ),
+
+            pre_lesson_offset_minutes=int(
+                row["pre_lesson_offset_minutes"]
+            ),
+
+            receive_schedule_changes=bool(
+                row["receive_schedule_changes"]
+            ),
+
+            receive_extra_class_reminders=bool(
+                row["receive_extra_class_reminders"]
+            ),
+
+            can_manage_own_extra_classes=bool(
+                row["can_manage_own_extra_classes"]
+            ),
+
+            child_notification_settings_locked=bool(
+                row.get(
+                    "child_notification_settings_locked",
+                    False,
+                )
+            ),
+        )
+        
+    async def toggle_student_telegram_boolean_setting(
+        self,
+        *,
+        admin_user_id: int,
+        student_id: int,
+        field_name: str,
+    ) -> bool:
+        """
+        Family admin переключает personal boolean setting
+        Telegram-linked student.
+        """
+        return await self.repo.toggle_student_telegram_boolean_setting(
+            admin_user_id=admin_user_id,
+            student_id=student_id,
+            field_name=field_name,
+        )
+        
+    async def update_student_telegram_integer_setting(
+        self,
+        *,
+        admin_user_id: int,
+        student_id: int,
+        field_name: str,
+        value: int,
+    ) -> bool:
+        """
+        Family admin меняет personal integer setting
+        Telegram-linked student.
+        """
+        return await self.repo.update_student_telegram_integer_setting(
+            admin_user_id=admin_user_id,
+            student_id=student_id,
+            field_name=field_name,
+            value=value,
+        )
+        
+    async def update_student_telegram_morning_summary_time(
+        self,
+        *,
+        admin_user_id: int,
+        student_id: int,
+        time_str: str | None,
+    ) -> bool:
+        """
+        Family admin задаёт personal morning summary time
+        Telegram-linked student.
+        """
+        return await self.repo.update_student_telegram_morning_summary_time(
+            admin_user_id=admin_user_id,
+            student_id=student_id,
+            time_str=time_str,
+        )
+        
+    async def set_student_notification_settings_locked(
+        self,
+        *,
+        admin_user_id: int,
+        student_id: int,
+        locked: bool,
+    ) -> bool:
+        """
+        Family admin включает или выключает lock
+        personal Telegram settings student profile.
+        """
+        return await self.repo.set_student_notification_settings_locked(
+            admin_user_id=admin_user_id,
+            student_id=student_id,
+            locked=locked,
         )
