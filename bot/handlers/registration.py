@@ -18,6 +18,20 @@ from core.models.dto import ClassListDTO, GroupListDTO, FamilyCreatedDTO
 logger = logging.getLogger(__name__)
 router = Router()
 
+async def _show_main_menu(
+    message: Message,
+    *,
+    text: str | None = None,
+) -> None:
+    await message.answer(
+        text or (
+            "✅ <b>Настройка завершена.</b>\n\n"
+            "⬇️ Выберите действие в меню внизу экрана."
+        ),
+        reply_markup=Keyboards.get_main_menu(),
+        parse_mode="HTML",
+    )
+    
 class RegistrationStates(StatesGroup):
     waiting_for_role = State()
     waiting_for_name = State()
@@ -40,6 +54,7 @@ async def cmd_start(
     state: FSMContext,
     profile_service: ProfileService,
     students_service: StudentsService,
+    schedule_service: ScheduleService,
 ) -> None:
     """
     Старт bot и обработка deep-link family invite.
@@ -77,30 +92,16 @@ async def cmd_start(
             await state.clear()
             return
 
-        # Пока не объединяем автоматом standalone profile
-        # с существующим family virtual student profile.
-        current_student = (
-            await students_service.get_student_by_telegram_user_id(
-                telegram_user_id=user_id,
-            )
-        )
-
-        if current_student is not None:
-            await message.answer(
-                "⚠️ У вас уже есть самостоятельный профиль ученика.\n\n"
-                "Чтобы привязаться к семейному профилю, сначала "
-                "выполните перерегистрацию через настройки."
-            )
-
-            await state.clear()
-            return
-
         invite = (
             await students_service.get_valid_student_claim_invite(
                 token=token,
             )
         )
-
+        current_student = (
+            await students_service.get_student_by_telegram_user_id(
+                telegram_user_id=user_id,
+            )
+        )
         if invite is None:
             await message.answer(
                 "❌ Ссылка для привязки недействительна, "
@@ -110,18 +111,48 @@ async def cmd_start(
             await state.clear()
             return
 
-        await state.clear()
+        # --- 1. Запрашиваем справочники из ScheduleService ---
+        classes_dto = await schedule_service.get_classes_list()
+        groups_dto = await schedule_service.get_groups_list()
+        
+        # --- 2. Получаем красивые имена по ID ---
+        # Обращаемся напрямую к полям DTO: invite.student_class_id
+        class_name = classes_dto.classes.get(
+            invite.student_class_id,
+            invite.student_class_id or "—",
+        )
 
+        # Обращаемся напрямую к invite.student_group_id
+        if not invite.student_group_id or invite.student_group_id == "ALL":
+            group_name = "ALL"
+        else:
+            group_name = groups_dto.groups.get(
+                invite.student_group_id, 
+                invite.student_group_id
+            )
+            
+        await state.clear()
+  
         await state.update_data(
             claim_token=token,
             claim_student_id=invite.student_id,
             claim_actor_user_id=user_id,
+
+            # Нужен только для UX/preview.
+            # Repository всё равно повторно проверит данные
+            # непосредственно внутри transaction.
+            claim_source_student_id=(
+                current_student.id
+                if current_student is not None
+                else None
+            ),
         )
 
         text = UIRenderer.render_student_claim_confirmation(
             student_name=invite.student_name or "Ученик",
-            class_id=invite.student_class_id or "—",
-            group_id=invite.student_group_id or "ALL",
+            class_name=class_name,
+            group_name=group_name,
+            has_standalone_profile=current_student is not None,
         )
 
         await message.answer(
@@ -141,10 +172,23 @@ async def cmd_start(
     # -------------------------------
     if payload.startswith("join_"):
         token = payload.removeprefix("join_")
+        
+        current_student = (
+            await students_service.get_student_by_telegram_user_id(
+                telegram_user_id=user_id,
+            )
+        )
 
+        is_standalone_child = (
+            user_dto.role == "child"
+            and user_dto.family_id is None
+            and current_student is not None
+            and current_student.family_id is None
+            and current_student.is_active
+        )
         # Нельзя случайно переместить уже завершённый профиль
         # в другую семью.
-        if user_dto.is_fully_registered:
+        if user_dto.is_fully_registered and not is_standalone_child:
             await message.answer(
                 "⚠️ Вы уже зарегистрированы в bot.\n\n"
                 "Для использования приглашения сначала выйдите "
@@ -180,11 +224,22 @@ async def cmd_start(
             invited_role=invite.intended_role,
         )
 
+        intro_text = UIRenderer.render_family_join_intro(
+            intended_role=invite.intended_role,
+            has_standalone_child_profile=(
+                invite.intended_role == "child"
+                and is_standalone_child
+            ),
+            via_code=False,
+        )
+
         await message.answer(
-            "👋 Вас пригласили присоединиться к семье "
-            f"в роли <b>{role_text}</b>.\n\n"
-            "Как к вам обращаться?",
+            intro_text,
             parse_mode="HTML",
+        )
+
+        await message.answer(
+            "✍️ Как к вам обращаться?",
         )
 
         await state.set_state(
@@ -200,11 +255,9 @@ async def cmd_start(
             user_dto.name,
         )
 
-        kb = Keyboards.get_main_menu()
-
-        await message.answer(
-            text,
-            reply_markup=kb,
+        await _show_main_menu(
+            message,
+            text=text,
         )
 
         await state.clear()
@@ -278,19 +331,27 @@ async def cancel_student_claim(
     await callback.answer()
 
 @router.message(
-    RegistrationStates.waiting_for_claim_name
+    RegistrationStates.waiting_for_claim_name,
 )
 async def process_student_claim_name(
     message: Message,
     state: FSMContext,
-    schedule_service: ScheduleService,
+    students_service: StudentsService,
+    profile_service: ProfileService,
 ) -> None:
     """
-    Собирает новое имя перед привязкой Telegram profile.
+    Получает имя ребёнка и атомарно объединяет standalone profile
+    с family virtual student profile из claim invite.
     """
     data = await state.get_data()
 
-    if data.get("claim_actor_user_id") != message.from_user.id:
+    actor_user_id = message.from_user.id
+    token = data.get("claim_token")
+
+    if (
+        data.get("claim_actor_user_id") != actor_user_id
+        or not token
+    ):
         await state.clear()
 
         await message.answer(
@@ -310,175 +371,26 @@ async def process_student_claim_name(
 
     if len(name) > 64:
         await message.answer(
-            "❌ Имя слишком длинное. Используйте до 64 символов.",
+            "❌ Имя слишком длинное. "
+            "Используйте до 64 символов.",
             reply_markup=Keyboards.get_claim_cancel_keyboard(),
         )
         return
 
-    class_dto = await schedule_service.get_classes_list()
-
-    await state.update_data(
-        claim_name=name,
-    )
-
-    await message.answer(
-        UIRenderer.render_class_selection(class_dto),
-        reply_markup=Keyboards.get_claim_class_selection_kb(
-            class_dto,
-        ),
-        parse_mode="HTML",
-    )
-
-    await state.set_state(
-        RegistrationStates.waiting_for_claim_class,
-    )
-
-@router.callback_query(
-    RegistrationStates.waiting_for_claim_class,
-    F.data.startswith("claim:class:"),
-)
-async def process_student_claim_class(
-    callback: CallbackQuery,
-    state: FSMContext,
-    schedule_service: ScheduleService,
-) -> None:
-    try:
-        class_id = callback.data.split(":")[2]
-    except IndexError:
-        await callback.answer(
-            "Некорректный класс.",
-            show_alert=True,
-        )
-        return
-
-    data = await state.get_data()
-
-    if data.get("claim_actor_user_id") != callback.from_user.id:
-        await state.clear()
-
-        await callback.answer(
-            "❌ Состояние привязки устарело.",
-            show_alert=True,
-        )
-        return
-
-    groups_dto = await schedule_service.get_groups_list()
-
-    await state.update_data(
-        claim_class_id=class_id,
-    )
-
-    text, _ = UIRenderer.render_main_group_selection()
-
-    await callback.message.edit_text(
-        text,
-        reply_markup=Keyboards.get_claim_group_selection_kb(
-            groups_dto,
-        ),
-        parse_mode="HTML",
-    )
-
-    await state.set_state(
-        RegistrationStates.waiting_for_claim_group,
-    )
-
-    await callback.answer()
-
-@router.callback_query(
-    RegistrationStates.waiting_for_claim_group,
-    F.data == "claim:back_to_class",
-)
-async def back_to_student_claim_class(
-    callback: CallbackQuery,
-    state: FSMContext,
-    schedule_service: ScheduleService,
-) -> None:
-    data = await state.get_data()
-
-    if data.get("claim_actor_user_id") != callback.from_user.id:
-        await state.clear()
-
-        await callback.answer(
-            "❌ Состояние привязки устарело.",
-            show_alert=True,
-        )
-        return
-
-    class_dto = await schedule_service.get_classes_list()
-
-    await callback.message.edit_text(
-        UIRenderer.render_class_selection(class_dto),
-        reply_markup=Keyboards.get_claim_class_selection_kb(
-            class_dto,
-        ),
-        parse_mode="HTML",
-    )
-
-    await state.set_state(
-        RegistrationStates.waiting_for_claim_class,
-    )
-
-    await callback.answer()
-
-@router.callback_query(
-    RegistrationStates.waiting_for_claim_group,
-    F.data.startswith("claim:group:"),
-)
-async def process_student_claim_group(
-    callback: CallbackQuery,
-    state: FSMContext,
-    students_service: StudentsService,
-    profile_service: ProfileService,
-) -> None:
-    try:
-        group_id = callback.data.split(":")[2]
-    except IndexError:
-        await callback.answer(
-            "Некорректная группа.",
-            show_alert=True,
-        )
-        return
-
-    data = await state.get_data()
-
-    actor_user_id = callback.from_user.id
-
-    claim_actor_user_id = data.get("claim_actor_user_id")
-    token = data.get("claim_token")
-    name = data.get("claim_name")
-    class_id = data.get("claim_class_id")
-
-    if (
-        claim_actor_user_id != actor_user_id
-        or not token
-        or not name
-        or not class_id
-    ):
-        await state.clear()
-
-        await callback.answer(
-            "❌ Состояние привязки устарело. "
-            "Откройте ссылку заново.",
-            show_alert=True,
-        )
-        return
-
-    response = await students_service.consume_student_claim_invite(
+    response = await students_service.consume_student_claim_invite_with_merge(
         token=token,
         telegram_user_id=actor_user_id,
         name=name,
-        class_id=class_id,
-        group_id=group_id,
     )
 
     await state.clear()
 
     if not response.success:
-        await callback.answer(
-            "❌ Не удалось привязать профиль. "
-            "Возможно, ссылка уже использована, истекла "
-            "или ученик уже привязан к Telegram.",
-            show_alert=True,
+        await message.answer(
+            "❌ Не удалось привязать профиль.\n\n"
+            "Возможно, ссылка уже использована, истекла, "
+            "отозвана или Telegram уже связан с профилем "
+            "ребёнка в другой семье."
         )
         return
 
@@ -486,27 +398,196 @@ async def process_student_claim_group(
         actor_user_id,
     )
 
-    text = UIRenderer.render_final_success(
-        user_dto.name,
-    )
-
     try:
-        await callback.message.delete()
+        await message.answer(
+            "✅ <b>Telegram успешно привязан!</b>\n\n"
+            f"{UIRenderer.render_final_success(user_dto.name)}",
+            parse_mode="HTML",
+        )
     except TelegramBadRequest:
-        pass
+        logger.debug(
+            "Unable to send claim-success message "
+            "for user_id=%s",
+            actor_user_id,
+        )
 
-    await callback.message.answer(
-        "✅ <b>Telegram успешно привязан!</b>\n\n"
-        f"{text}",
-        parse_mode="HTML",
-    )
+    await _show_main_menu(message)
+    
+    if False:
+        @router.callback_query(
+            RegistrationStates.waiting_for_claim_class,
+            F.data.startswith("claim:class:"),
+        )
+        async def process_student_claim_class(
+            callback: CallbackQuery,
+            state: FSMContext,
+            schedule_service: ScheduleService,
+        ) -> None:
+            try:
+                class_id = callback.data.split(":")[2]
+            except IndexError:
+                await callback.answer(
+                    "Некорректный класс.",
+                    show_alert=True,
+                )
+                return
 
-    await callback.message.answer(
-        UIRenderer.render_main_menu(),
-        reply_markup=Keyboards.get_main_menu(),
-    )
+            data = await state.get_data()
 
-    await callback.answer()
+            if data.get("claim_actor_user_id") != callback.from_user.id:
+                await state.clear()
+
+                await callback.answer(
+                    "❌ Состояние привязки устарело.",
+                    show_alert=True,
+                )
+                return
+
+            groups_dto = await schedule_service.get_groups_list()
+
+            await state.update_data(
+                claim_class_id=class_id,
+            )
+
+            text, _ = UIRenderer.render_main_group_selection()
+
+            await callback.message.edit_text(
+                text,
+                reply_markup=Keyboards.get_claim_group_selection_kb(
+                    groups_dto,
+                ),
+                parse_mode="HTML",
+            )
+
+            await state.set_state(
+                RegistrationStates.waiting_for_claim_group,
+            )
+
+            await callback.answer()
+
+        @router.callback_query(
+            RegistrationStates.waiting_for_claim_group,
+            F.data == "claim:back_to_class",
+        )
+        async def back_to_student_claim_class(
+            callback: CallbackQuery,
+            state: FSMContext,
+            schedule_service: ScheduleService,
+        ) -> None:
+            data = await state.get_data()
+
+            if data.get("claim_actor_user_id") != callback.from_user.id:
+                await state.clear()
+
+                await callback.answer(
+                    "❌ Состояние привязки устарело.",
+                    show_alert=True,
+                )
+                return
+
+            class_dto = await schedule_service.get_classes_list()
+
+            await callback.message.edit_text(
+                UIRenderer.render_class_selection(class_dto),
+                reply_markup=Keyboards.get_claim_class_selection_kb(
+                    class_dto,
+                ),
+                parse_mode="HTML",
+            )
+
+            await state.set_state(
+                RegistrationStates.waiting_for_claim_class,
+            )
+
+            await callback.answer()
+
+        @router.callback_query(
+            RegistrationStates.waiting_for_claim_group,
+            F.data.startswith("claim:group:"),
+        )
+        async def process_student_claim_group(
+            callback: CallbackQuery,
+            state: FSMContext,
+            students_service: StudentsService,
+            profile_service: ProfileService,
+        ) -> None:
+            try:
+                group_id = callback.data.split(":")[2]
+            except IndexError:
+                await callback.answer(
+                    "Некорректная группа.",
+                    show_alert=True,
+                )
+                return
+
+            data = await state.get_data()
+
+            actor_user_id = callback.from_user.id
+
+            claim_actor_user_id = data.get("claim_actor_user_id")
+            token = data.get("claim_token")
+            name = data.get("claim_name")
+            class_id = data.get("claim_class_id")
+
+            if (
+                claim_actor_user_id != actor_user_id
+                or not token
+                or not name
+                or not class_id
+            ):
+                await state.clear()
+
+                await callback.answer(
+                    "❌ Состояние привязки устарело. "
+                    "Откройте ссылку заново.",
+                    show_alert=True,
+                )
+                return
+
+            response = await students_service.consume_student_claim_invite(
+                token=token,
+                telegram_user_id=actor_user_id,
+                name=name,
+                class_id=class_id,
+                group_id=group_id,
+            )
+
+            await state.clear()
+
+            if not response.success:
+                await callback.answer(
+                    "❌ Не удалось привязать профиль. "
+                    "Возможно, ссылка уже использована, истекла "
+                    "или ученик уже привязан к Telegram.",
+                    show_alert=True,
+                )
+                return
+
+            user_dto = await profile_service.get_user_profile_dto(
+                actor_user_id,
+            )
+
+            text = UIRenderer.render_final_success(
+                user_dto.name,
+            )
+
+            try:
+                await callback.message.delete()
+            except TelegramBadRequest:
+                pass
+
+            await callback.message.answer(
+                "✅ <b>Telegram успешно привязан!</b>\n\n"
+                f"{text}",
+                parse_mode="HTML",
+            )
+
+            await callback.message.answer(
+                UIRenderer.render_main_menu(),
+                reply_markup=Keyboards.get_main_menu(),
+            )
+
+            await callback.answer()
                         
 @router.callback_query(RegistrationStates.waiting_for_role, F.data.startswith("role:"))
 async def process_role(callback: CallbackQuery, state: FSMContext, profile_service: ProfileService):
@@ -610,19 +691,13 @@ async def process_name(
 
         await state.clear()
 
-        menu_text = UIRenderer.render_main_menu()
-        menu_kb = Keyboards.get_main_menu()
-
         await message.answer(
             "✅ Вы успешно присоединились к семье "
             f"в роли <b>{role_label}</b>.",
             parse_mode="HTML",
         )
 
-        await message.answer(
-            menu_text,
-            reply_markup=menu_kb,
-        )
+        await _show_main_menu(message)
         return
 
     # ---------------------------------
@@ -690,14 +765,28 @@ async def process_name(
         return
 
     if role == "observer":
-        text = UIRenderer.render_family_code_prompt()
+            text = UIRenderer.render_family_code_join_intro(
+                intended_role="observer",
+                has_standalone_child_profile=False,
+                via_code=True,
+            )
+            # Обратите внимание: если у родителя вместе с этим текстом 
+            # отправляется клавиатура (например, кнопка "Ввести код"), 
+            # её нужно добавить и сюда в reply_markup.
+            # kb = Keyboards.get_family_join_action_kb() # (Пример)
 
-        await message.answer(text)
-
-        await state.set_state(
-            RegistrationStates.waiting_for_family_code,
-        )
-        return
+            await message.answer(
+                text,
+                parse_mode="HTML",
+                # reply_markup=kb,  <-- раскомментируйте и передайте клавиатуру, если она нужна
+            )
+            # Если после этого текста пользователь должен нажать кнопку, 
+            # то стейт должен быть waiting_for_family_action.
+            # Если он должен сразу печатать код в чат, то оставляем waiting_for_family_code:
+            await state.set_state(
+                RegistrationStates.waiting_for_family_code,
+            )
+            return
 
     await state.clear()
 
@@ -706,24 +795,86 @@ async def process_name(
         "Отправьте /start и повторите регистрацию."
     )
 
-@router.callback_query(RegistrationStates.waiting_for_family_action, F.data == "family:create")
-async def process_family_create(callback: CallbackQuery, state: FSMContext, profile_service: ProfileService):
+@router.callback_query(
+    RegistrationStates.waiting_for_family_action,
+    F.data == "family:create",
+)
+async def process_family_create(
+    callback: CallbackQuery,
+    state: FSMContext,
+    profile_service: ProfileService,
+) -> None:
     user_id = callback.from_user.id
-    family_code = await profile_service.create_family_and_link(admin_user_id=user_id)
-    dto = FamilyCreatedDTO(family_code=family_code)
-    
-    # Получаем DTO, чтобы вытащить имя
-    user_dto = await profile_service.get_user_profile_dto(user_id)
-    
-    text = UIRenderer.render_family_created(dto, user_dto.name)
-    await callback.message.edit_text(text, parse_mode="HTML")
+
+    family_code = await profile_service.create_family_and_link(
+        admin_user_id=user_id,
+    )
+
+    dto = FamilyCreatedDTO(
+        family_code=family_code,
+    )
+
+    user_dto = await profile_service.get_user_profile_dto(
+        user_id,
+    )
+
+    text = UIRenderer.render_family_created(
+        dto,
+        user_dto.name,
+    )
+
+    await callback.message.edit_text(
+        text,
+        parse_mode="HTML",
+    )
+
+    # edit_text не показывает нижнее ReplyKeyboardMarkup.
+    # Поэтому отправляем меню отдельным сообщением.
+    await _show_main_menu(
+        callback.message,
+        text=(
+            "✅ <b>Семья создана.</b>\n\n"
+            "⬇️ Теперь выберите действие в меню внизу."
+        ),
+    )
+
     await state.clear()
 
-@router.callback_query(RegistrationStates.waiting_for_family_action, F.data == "family:join")
-async def process_family_join_btn(callback: CallbackQuery, state: FSMContext):
-    text = UIRenderer.render_family_code_prompt()
-    await callback.message.edit_text(text)
-    await state.set_state(RegistrationStates.waiting_for_family_code)
+    await callback.answer()
+
+@router.callback_query(
+    RegistrationStates.waiting_for_family_action,
+    F.data == "family:join",
+)
+async def process_family_join_btn(
+    callback: CallbackQuery,
+    state: FSMContext,
+) -> None:
+    data = await state.get_data()
+
+    text = UIRenderer.render_family_join_intro(
+        intended_role=data.get("role", "parent"),
+        has_standalone_child_profile=False,
+        via_code=True,
+    )
+
+    await callback.message.edit_text(
+        text,
+        parse_mode="HTML",
+    )
+
+    await callback.message.edit_text(
+        UIRenderer.render_family_code_join_intro(
+            intended_role=data.get("role", "parent"),
+        ),
+        parse_mode="HTML",
+    )
+
+    await state.set_state(
+        RegistrationStates.waiting_for_family_code,
+    )
+
+    await callback.answer()
 
 @router.callback_query(RegistrationStates.waiting_for_family_action, F.data == "family:skip")
 async def process_family_skip_btn(callback: CallbackQuery, state: FSMContext, schedule_service: ScheduleService):
@@ -762,11 +913,9 @@ async def process_family_code_input(message: Message, state: FSMContext, profile
         await state.set_state(RegistrationStates.waiting_for_class)
     else:
         text = UIRenderer.render_success_join(user_dto.name)
-        menu_text = UIRenderer.render_main_menu()
-        menu_kb = Keyboards.get_main_menu()
         
         await message.answer(text, parse_mode="HTML")
-        await message.answer(menu_text, reply_markup=menu_kb)
+        await _show_main_menu(message)
         await state.clear()
 
 @router.callback_query(RegistrationStates.waiting_for_class, F.data.startswith("class:"))
@@ -861,13 +1010,7 @@ async def process_group(
             parse_mode="HTML",
         )
 
-        menu_text = UIRenderer.render_main_menu()
-        menu_kb = Keyboards.get_main_menu()
-
-        await callback.message.answer(
-            menu_text,
-            reply_markup=menu_kb,
-        )
+        await _show_main_menu(callback.message)
 
         await callback.answer(
             "✅ Регистрация через приглашение завершена.",
@@ -1097,10 +1240,7 @@ async def process_teacher_selection(
         parse_mode="HTML",
     )
 
-    await callback.message.answer(
-        UIRenderer.render_main_menu(),
-        reply_markup=Keyboards.get_main_menu(),
-    )
+    await _show_main_menu(callback.message)
 
     await callback.answer(
         "✅ Учительский профиль создан.",

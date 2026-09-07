@@ -476,6 +476,78 @@ class ProfileRepository(BaseRepository):
                     ),
                 )
 
+                # ---------------------------------------------------------
+                # S11.2a:
+                # Existing standalone child profile becomes a family profile.
+                #
+                # Важно:
+                # - ID student_profile сохраняется;
+                # - Telegram binding сохраняется;
+                # - extra_classes остаются у того же student_id;
+                # - только family context обновляется.
+                # ---------------------------------------------------------
+                if intended_role == "child":
+                    standalone_cursor = await db.execute(
+                        """
+                        SELECT
+                            id
+                        FROM student_profiles
+                        WHERE telegram_user_id = ?
+                        AND family_id IS NULL
+                        AND is_active = 1
+                        """,
+                        (user_id,),
+                    )
+
+                    standalone_student = await standalone_cursor.fetchone()
+
+                    if standalone_student is not None:
+                        standalone_student_id = standalone_student["id"]
+
+                        profile_cursor = await db.execute(
+                            """
+                            UPDATE student_profiles
+                            SET
+                                family_id = ?,
+                                name = ?,
+                                class_id = ?,
+                                group_id = ?,
+                                updated_at = CURRENT_TIMESTAMP
+                            WHERE id = ?
+                            AND telegram_user_id = ?
+                            AND family_id IS NULL
+                            AND is_active = 1
+                            """,
+                            (
+                                family_id,
+                                name,
+                                class_id,
+                                group_id,
+                                standalone_student_id,
+                                user_id,
+                            ),
+                        )
+
+                        if profile_cursor.rowcount != 1:
+                            await db.rollback()
+                            return None
+
+                        # student_id не меняется. Занятия принадлежат profile,
+                        # поэтому они сохраняются. Обновляем только family context.
+                        await db.execute(
+                            """
+                            UPDATE extra_classes
+                            SET
+                                family_id = ?,
+                                updated_at = CURRENT_TIMESTAMP
+                            WHERE student_id = ?
+                            """,
+                            (
+                                family_id,
+                                standalone_student_id,
+                            ),
+                        )
+
                 await self._ensure_parent_student_settings_for_family(
                     db=db,
                     family_id=family_id,

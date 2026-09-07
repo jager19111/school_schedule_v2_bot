@@ -1756,84 +1756,84 @@ class Keyboards:
                 ]
             ]
         )
-        
-    @staticmethod
-    def get_claim_class_selection_kb(
-        dto: ClassListDTO,
-    ) -> InlineKeyboardMarkup:
-        buttons = []
-        row = []
+    if False:       
+        @staticmethod
+        def get_claim_class_selection_kb(
+            dto: ClassListDTO,
+        ) -> InlineKeyboardMarkup:
+            buttons = []
+            row = []
 
-        for class_id, class_name in dto.classes.items():
-            row.append(
-                InlineKeyboardButton(
-                    text=class_name,
-                    callback_data=f"claim:class:{class_id}",
+            for class_id, class_name in dto.classes.items():
+                row.append(
+                    InlineKeyboardButton(
+                        text=class_name,
+                        callback_data=f"claim:class:{class_id}",
+                    )
                 )
-            )
 
-            if len(row) == 3:
+                if len(row) == 3:
+                    buttons.append(row)
+                    row = []
+
+            if row:
                 buttons.append(row)
-                row = []
-
-        if row:
-            buttons.append(row)
-
-        buttons.append([
-            InlineKeyboardButton(
-                text="❌ Отмена",
-                callback_data="claim:cancel",
-            )
-        ])
-
-        return InlineKeyboardMarkup(
-            inline_keyboard=buttons,
-        )
-        
-    @staticmethod
-    def get_claim_group_selection_kb(
-        dto: GroupListDTO,
-    ) -> InlineKeyboardMarkup:
-        buttons = [
-            [
-                InlineKeyboardButton(
-                    text="Весь класс",
-                    callback_data="claim:group:ALL",
-                )
-            ]
-        ]
-
-        for group_id in ("0", "1"):
-            group_name = dto.groups.get(group_id)
-
-            if group_name is None:
-                continue
 
             buttons.append([
                 InlineKeyboardButton(
-                    text=group_name,
-                    callback_data=f"claim:group:{group_id}",
+                    text="❌ Отмена",
+                    callback_data="claim:cancel",
                 )
             ])
 
-        buttons.append([
-            InlineKeyboardButton(
-                text="⬅️ К выбору класса",
-                callback_data="claim:back_to_class",
+            return InlineKeyboardMarkup(
+                inline_keyboard=buttons,
             )
-        ])
+            
+        @staticmethod
+        def get_claim_group_selection_kb(
+            dto: GroupListDTO,
+        ) -> InlineKeyboardMarkup:
+            buttons = [
+                [
+                    InlineKeyboardButton(
+                        text="Весь класс",
+                        callback_data="claim:group:ALL",
+                    )
+                ]
+            ]
 
-        buttons.append([
-            InlineKeyboardButton(
-                text="❌ Отмена",
-                callback_data="claim:cancel",
-            )
-        ])
+            for group_id in ("0", "1"):
+                group_name = dto.groups.get(group_id)
 
-        return InlineKeyboardMarkup(
-            inline_keyboard=buttons,
-        )    
-        
+                if group_name is None:
+                    continue
+
+                buttons.append([
+                    InlineKeyboardButton(
+                        text=group_name,
+                        callback_data=f"claim:group:{group_id}",
+                    )
+                ])
+
+            buttons.append([
+                InlineKeyboardButton(
+                    text="⬅️ К выбору класса",
+                    callback_data="claim:back_to_class",
+                )
+            ])
+
+            buttons.append([
+                InlineKeyboardButton(
+                    text="❌ Отмена",
+                    callback_data="claim:cancel",
+                )
+            ])
+
+            return InlineKeyboardMarkup(
+                inline_keyboard=buttons,
+            )    
+            
     @staticmethod
     def get_student_edit_class_selection_kb(
         dto: ClassListDTO,

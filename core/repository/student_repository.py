@@ -816,53 +816,245 @@ class StudentRepository(BaseRepository):
             """,
             (token,),
         )
+# удалить после рефакторинга        
+        async def consume_student_claim_invite(
+            self,
+            *,
+            token: str,
+            telegram_user_id: int,
+            name: str,
+            class_id: str,
+            group_id: str,
+        ) -> Optional[Dict[str, Any]]:
+            """
+            Атомарно привязывает Telegram child к existing virtual student.
+
+            Важно:
+            - не создаёт новую запись student_profiles;
+            - не переносит extra_classes, потому что student_id сохраняется;
+            - не допускает привязку к уже занятому student profile;
+            - не допускает claim для child, уже состоящего в семье;
+            - не допускает claim, если Telegram user уже привязан
+            к другому student profile.
+            """
+            async with self._connection() as db:
+                await db.execute("BEGIN")
+
+                try:
+                    invite_cursor = await db.execute(
+                        """
+                        SELECT
+                            invite.id,
+                            invite.student_id,
+
+                            student.family_id,
+                            student.telegram_user_id,
+
+                            student.is_active
+
+                        FROM student_claim_invites AS invite
+                        JOIN student_profiles AS student
+                            ON student.id = invite.student_id
+
+                        WHERE invite.token = ?
+                        AND invite.is_revoked = 0
+                        AND invite.used_at IS NULL
+                        AND invite.used_by_user_id IS NULL
+                        AND invite.expires_at > CURRENT_TIMESTAMP
+                        AND student.is_active = 1
+                        AND student.telegram_user_id IS NULL
+                        """,
+                        (token,),
+                    )
+
+                    invite = await invite_cursor.fetchone()
+
+                    if invite is None:
+                        await db.rollback()
+                        return None
+
+                    invite_id = invite["id"]
+                    student_id = invite["student_id"]
+                    family_id = invite["family_id"]
+
+                    user_cursor = await db.execute(
+                        """
+                        SELECT
+                            user_id,
+                            role,
+                            family_id
+                        FROM users
+                        WHERE user_id = ?
+                        """,
+                        (telegram_user_id,),
+                    )
+
+                    telegram_user = await user_cursor.fetchone()
+
+                    if telegram_user is None:
+                        await db.rollback()
+                        return None
+
+                    # Нельзя silently переместить ребёнка между семьями.
+                    if telegram_user["family_id"] is not None:
+                        await db.rollback()
+                        return None
+
+                    # На первом этапе не объединяем автоматически standalone
+                    # student profile с family virtual profile.
+                    existing_student_cursor = await db.execute(
+                        """
+                        SELECT
+                            id,
+                            family_id
+                        FROM student_profiles
+                        WHERE telegram_user_id = ?
+                        """,
+                        (telegram_user_id,),
+                    )
+
+                    existing_student = (
+                        await existing_student_cursor.fetchone()
+                    )
+
+                    if existing_student is not None:
+                        await db.rollback()
+                        return None
+
+                    # Optimistic lock защищает от одновременного использования
+                    # одной ссылки двумя Telegram-пользователями.
+                    consume_cursor = await db.execute(
+                        """
+                        UPDATE student_claim_invites
+                        SET
+                            used_by_user_id = ?,
+                            used_at = CURRENT_TIMESTAMP
+                        WHERE id = ?
+                        AND is_revoked = 0
+                        AND used_at IS NULL
+                        AND used_by_user_id IS NULL
+                        AND expires_at > CURRENT_TIMESTAMP
+                        """,
+                        (
+                            telegram_user_id,
+                            invite_id,
+                        ),
+                    )
+
+                    if consume_cursor.rowcount != 1:
+                        await db.rollback()
+                        return None
+
+                    await db.execute(
+                        """
+                        UPDATE users
+                        SET
+                            name = ?,
+                            role = 'child',
+                            family_id = ?,
+                            class_id = ?,
+                            group_id = ?,
+                            updated_at = CURRENT_TIMESTAMP
+                        WHERE user_id = ?
+                        """,
+                        (
+                            name,
+                            family_id,
+                            class_id,
+                            group_id,
+                            telegram_user_id,
+                        ),
+                    )
+
+                    update_student_cursor = await db.execute(
+                        """
+                        UPDATE student_profiles
+                        SET
+                            telegram_user_id = ?,
+                            name = ?,
+                            class_id = ?,
+                            group_id = ?,
+                            is_active = 1,
+                            updated_at = CURRENT_TIMESTAMP
+                        WHERE id = ?
+                        AND telegram_user_id IS NULL
+                        AND family_id = ?
+                        """,
+                        (
+                            telegram_user_id,
+                            name,
+                            class_id,
+                            group_id,
+                            student_id,
+                            family_id,
+                        ),
+                    )
+
+                    if update_student_cursor.rowcount != 1:
+                        await db.rollback()
+                        return None
+
+                    # Обычно они уже существуют, поскольку это был virtual student.
+                    # Но метод делает состояние идемпотентным.
+                    await self._ensure_parent_student_settings_for_family(
+                        db=db,
+                        family_id=family_id,
+                    )
+
+                    await db.commit()
+
+                except Exception:
+                    await db.rollback()
+                    raise
+
+            return await self.get_student_by_telegram_user_id(
+                telegram_user_id=telegram_user_id,
+            )
         
-    async def consume_student_claim_invite(
+    async def consume_student_claim_invite_with_merge(
         self,
         *,
         token: str,
         telegram_user_id: int,
         name: str,
-        class_id: str,
-        group_id: str,
     ) -> Optional[Dict[str, Any]]:
         """
-        Атомарно привязывает Telegram child к existing virtual student.
+        Атомарно привязывает Telegram к virtual family student profile.
 
-        Важно:
-        - не создаёт новую запись student_profiles;
-        - не переносит extra_classes, потому что student_id сохраняется;
-        - не допускает привязку к уже занятому student profile;
-        - не допускает claim для child, уже состоящего в семье;
-        - не допускает claim, если Telegram user уже привязан
-        к другому student profile.
+        Если Telegram уже связан с самостоятельным active profile:
+        - переносит его extra_classes на canonical family profile;
+        - отключает standalone profile;
+        - привязывает Telegram к family profile.
+
+        Источник истины для class_id/group_id — target profile claim invite.
+        Источник имени — явный ввод ребёнка.
         """
         async with self._connection() as db:
-            await db.execute("BEGIN")
+            await db.execute("BEGIN IMMEDIATE")
 
             try:
                 invite_cursor = await db.execute(
                     """
                     SELECT
-                        invite.id,
-                        invite.student_id,
+                        invite.id AS invite_id,
+                        invite.student_id AS target_student_id,
 
-                        student.family_id,
-                        student.telegram_user_id,
-
-                        student.is_active
+                        target.family_id,
+                        target.class_id,
+                        target.group_id
 
                     FROM student_claim_invites AS invite
-                    JOIN student_profiles AS student
-                        ON student.id = invite.student_id
+
+                    JOIN student_profiles AS target
+                        ON target.id = invite.student_id
 
                     WHERE invite.token = ?
                     AND invite.is_revoked = 0
                     AND invite.used_at IS NULL
                     AND invite.used_by_user_id IS NULL
                     AND invite.expires_at > CURRENT_TIMESTAMP
-                    AND student.is_active = 1
-                    AND student.telegram_user_id IS NULL
+                    AND target.is_active = 1
+                    AND target.telegram_user_id IS NULL
                     """,
                     (token,),
                 )
@@ -873,15 +1065,16 @@ class StudentRepository(BaseRepository):
                     await db.rollback()
                     return None
 
-                invite_id = invite["id"]
-                student_id = invite["student_id"]
+                invite_id = invite["invite_id"]
+                target_student_id = invite["target_student_id"]
                 family_id = invite["family_id"]
+                class_id = invite["class_id"]
+                group_id = invite["group_id"]
 
                 user_cursor = await db.execute(
                     """
                     SELECT
                         user_id,
-                        role,
                         family_id
                     FROM users
                     WHERE user_id = ?
@@ -895,34 +1088,85 @@ class StudentRepository(BaseRepository):
                     await db.rollback()
                     return None
 
-                # Нельзя silently переместить ребёнка между семьями.
+                # Пользователь уже в семье: запрещаем перенос
+                # по claim link в другую или даже ту же семью.
                 if telegram_user["family_id"] is not None:
                     await db.rollback()
                     return None
 
-                # На первом этапе не объединяем автоматически standalone
-                # student profile с family virtual profile.
-                existing_student_cursor = await db.execute(
+                source_cursor = await db.execute(
                     """
                     SELECT
                         id,
                         family_id
                     FROM student_profiles
                     WHERE telegram_user_id = ?
+                    AND is_active = 1
                     """,
                     (telegram_user_id,),
                 )
 
-                existing_student = (
-                    await existing_student_cursor.fetchone()
-                )
+                source_student = await source_cursor.fetchone()
 
-                if existing_student is not None:
+                # Если Telegram связан с profile другой семьи,
+                # это не standalone merge, а запрещённый family transfer.
+                if (
+                    source_student is not None
+                    and source_student["family_id"] is not None
+                ):
                     await db.rollback()
                     return None
 
-                # Optimistic lock защищает от одновременного использования
-                # одной ссылки двумя Telegram-пользователями.
+                source_student_id = (
+                    source_student["id"]
+                    if source_student is not None
+                    else None
+                )
+
+                # 1. Сначала переносим занятия standalone child
+                # в canonical family student profile.
+                if source_student_id is not None:
+                    await db.execute(
+                        """
+                        UPDATE extra_classes
+                        SET
+                            student_id = ?,
+                            family_id = ?,
+                            updated_at = CURRENT_TIMESTAMP
+                        WHERE student_id = ?
+                        """,
+                        (
+                            target_student_id,
+                            family_id,
+                            source_student_id,
+                        ),
+                    )
+
+                    # 2. Telegram ID должен стать свободным до
+                    # привязки к canonical profile.
+                    detached_cursor = await db.execute(
+                        """
+                        UPDATE student_profiles
+                        SET
+                            telegram_user_id = NULL,
+                            is_active = 0,
+                            updated_at = CURRENT_TIMESTAMP
+                        WHERE id = ?
+                        AND telegram_user_id = ?
+                        AND family_id IS NULL
+                        AND is_active = 1
+                        """,
+                        (
+                            source_student_id,
+                            telegram_user_id,
+                        ),
+                    )
+
+                    if detached_cursor.rowcount != 1:
+                        await db.rollback()
+                        return None
+
+                # 3. Одноразово consume claim token.
                 consume_cursor = await db.execute(
                     """
                     UPDATE student_claim_invites
@@ -945,6 +1189,34 @@ class StudentRepository(BaseRepository):
                     await db.rollback()
                     return None
 
+                # 4. Virtual student становится canonical Telegram profile.
+                target_cursor = await db.execute(
+                    """
+                    UPDATE student_profiles
+                    SET
+                        telegram_user_id = ?,
+                        name = ?,
+                        is_active = 1,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                    AND family_id = ?
+                    AND telegram_user_id IS NULL
+                    AND is_active = 1
+                    """,
+                    (
+                        telegram_user_id,
+                        name,
+                        target_student_id,
+                        family_id,
+                    ),
+                )
+
+                if target_cursor.rowcount != 1:
+                    await db.rollback()
+                    return None
+
+                # 5. Имя ребёнка берётся из claim flow.
+                # Class/group берём у family virtual student profile.
                 await db.execute(
                     """
                     UPDATE users
@@ -966,36 +1238,7 @@ class StudentRepository(BaseRepository):
                     ),
                 )
 
-                update_student_cursor = await db.execute(
-                    """
-                    UPDATE student_profiles
-                    SET
-                        telegram_user_id = ?,
-                        name = ?,
-                        class_id = ?,
-                        group_id = ?,
-                        is_active = 1,
-                        updated_at = CURRENT_TIMESTAMP
-                    WHERE id = ?
-                    AND telegram_user_id IS NULL
-                    AND family_id = ?
-                    """,
-                    (
-                        telegram_user_id,
-                        name,
-                        class_id,
-                        group_id,
-                        student_id,
-                        family_id,
-                    ),
-                )
-
-                if update_student_cursor.rowcount != 1:
-                    await db.rollback()
-                    return None
-
-                # Обычно они уже существуют, поскольку это был virtual student.
-                # Но метод делает состояние идемпотентным.
+                # Единственная актуальная модель доступа взрослых к student profile.
                 await self._ensure_parent_student_settings_for_family(
                     db=db,
                     family_id=family_id,

@@ -328,17 +328,14 @@ class StudentsService:
         token: str,
         telegram_user_id: int,
         name: str,
-        class_id: str,
-        group_id: str,
     ) -> ActionResponseDTO:
         """
-        Привязывает Telegram account к virtual student profile.
+        Привязывает Telegram к family virtual profile.
 
-        Имя, класс и группа берутся из claim registration flow.
+        При наличии самостоятельного profile:
+        переносит его extra_classes в canonical family profile.
         """
         normalized_name = name.strip()
-        normalized_class_id = class_id.strip()
-        normalized_group_id = group_id.strip() or "ALL"
 
         if not normalized_name:
             return ActionResponseDTO(
@@ -352,18 +349,10 @@ class StudentsService:
                 error_code="name_too_long",
             )
 
-        if not normalized_class_id:
-            return ActionResponseDTO(
-                success=False,
-                error_code="invalid_class",
-            )
-
-        row = await self.repo.consume_student_claim_invite(
+        row = await self.repo.consume_student_claim_invite_with_merge(
             token=token,
             telegram_user_id=telegram_user_id,
             name=normalized_name,
-            class_id=normalized_class_id,
-            group_id=normalized_group_id,
         )
 
         if row is None:
