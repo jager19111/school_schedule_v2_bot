@@ -240,35 +240,7 @@ class FullWeekScheduleDTO:
     week_start_iso: str
     days: List['DayScheduleDTO']
     
-@dataclass
-class ChildInfoDTO:
-    """
-    DTO для информации о ребёнке в списке детей родителя. 
-    """
-    user_id: int
-    name: str
-    class_id: str
-    group_id: str  # <-- Обязательно добавляем поле
 
-@dataclass
-class ParentChildNotificationSettingsDTO:
-    """
-    Настройки уведомлений одного взрослого относительно одного ребёнка.
-
-    Это не личные настройки пользователя. Они принадлежат связи:
-        parent/observer -> конкретный child.
-    """
-    parent_id: int
-    child_id: int
-
-    child_name: str
-    child_class_id: Optional[str] = None
-    child_group_id: Optional[str] = None
-
-    receive_morning_summary: bool = True
-    receive_pre_lesson_reminders: bool = True
-    receive_schedule_changes: bool = True
-    receive_extra_class_reminders: bool = True
 
 @dataclass
 class ParentStudentNotificationSettingsDTO:
@@ -328,13 +300,7 @@ class StudentTelegramSettingsDTO:
 
     child_notification_settings_locked: bool = False
             
-@dataclass
-class ChildrenListDTO:
-    """ DTO для списка детей родителя. 
-    """
-    children: List[ChildInfoDTO]
-    action: str
-    
+
 # Доп задания
 
 @dataclass
@@ -407,19 +373,6 @@ class ExtraClassesAccessDTO:
     can_view: bool
     can_manage: bool
 
-# не использовать в новых методах. удалить после рефакторинга
-@dataclass
-class AdultExtraClassesPermissionDTO:
-    """
-    Право конкретного взрослого на управление допзанятиями ребёнка.
-
-    Используется только в UI семейного администратора.
-    """
-    adult_user_id: int
-    adult_name: str
-    adult_role: str
-    child_user_id: int
-    can_manage_extra_classes: bool
 
 @dataclass
 class AdultStudentExtraClassesPermissionDTO:

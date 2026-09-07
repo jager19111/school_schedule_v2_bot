@@ -994,32 +994,6 @@ class StudentRepository(BaseRepository):
                     await db.rollback()
                     return None
 
-                # Нужны только пока в проекте остаётся legacy settings UI:
-                # child_ctl:* и parent_child_settings.
-                await db.execute(
-                    """
-                    INSERT OR IGNORE INTO parent_child_settings (
-                        parent_id,
-                        child_id,
-                        can_manage_extra_classes
-                    )
-                    SELECT
-                        adult.user_id,
-                        ?,
-                        CASE
-                            WHEN adult.role = 'parent' THEN 1
-                            ELSE 0
-                        END
-                    FROM users AS adult
-                    WHERE adult.family_id = ?
-                    AND adult.role IN ('parent', 'observer')
-                    """,
-                    (
-                        telegram_user_id,
-                        family_id,
-                    ),
-                )
-
                 # Обычно они уже существуют, поскольку это был virtual student.
                 # Но метод делает состояние идемпотентным.
                 await self._ensure_parent_student_settings_for_family(

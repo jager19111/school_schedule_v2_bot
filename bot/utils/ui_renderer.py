@@ -1,9 +1,9 @@
 from html import escape
 from datetime import datetime, timedelta, timezone, date
-from core.models.dto import (ClassListDTO, FamilyCreatedDTO, AdminStatsDTO, DayScheduleDTO, ChildrenListDTO, ExtraClassListDTO,
+from core.models.dto import (ClassListDTO, FamilyCreatedDTO, AdminStatsDTO, DayScheduleDTO, ExtraClassListDTO,
                              WeekSummaryDTO, FullWeekScheduleDTO, UserProfileDTO, FamilyMemberDTO,
-                             MorningSummaryDTO, ChangeReminderDTO, LessonReminderDTO, ParentChildNotificationSettingsDTO, AdultExtraClassesPermissionDTO,
-                             ProfileResetImpactDTO, FamilyInviteDTO, ScheduleWatchTargetDTO, StudentProfileDTO, ParentStudentNotificationSettingsDTO,
+                             MorningSummaryDTO, ChangeReminderDTO, LessonReminderDTO, ProfileResetImpactDTO, FamilyInviteDTO, 
+                            ScheduleWatchTargetDTO, StudentProfileDTO, ParentStudentNotificationSettingsDTO,
                             AdultStudentExtraClassesPermissionDTO, StudentTelegramSettingsDTO,
 )
 
@@ -192,34 +192,6 @@ class UIRenderer:
     @staticmethod
     def render_extra_student_select() -> tuple[str, None]:
         return "👥 <b>Выберите ребенка</b>\n\nДля кого вы хотите настроить дополнительные занятия?", None
-
-    @staticmethod
-    def render_extra_no_children() -> tuple[str, None]:
-        return "❌ У вас нет привязанных детей. Сначала добавьте ребенка в семью через меню настроек.", None
-
-    @staticmethod
-    def render_adult_extra_classes_permissions(
-        child_name: str,
-        permissions: list[AdultExtraClassesPermissionDTO],
-    ) -> str:
-        """
-        Заголовок экрана прав взрослых на занятия конкретного ребёнка.
-        """
-        safe_child_name = UIRenderer.escape_html(child_name, "Ребёнок")
-
-        if not permissions:
-            return (
-                "🎨 <b>Права на дополнительные занятия</b>\n\n"
-                f"👤 Ребёнок: <b>{safe_child_name}</b>\n\n"
-                "Других взрослых в семье пока нет."
-            )
-
-        return (
-            "🎨 <b>Права взрослых на дополнительные занятия</b>\n\n"
-            f"👤 Ребёнок: <b>{safe_child_name}</b>\n\n"
-            "Включённое право позволяет взрослому добавлять, изменять "
-            "и удалять занятия этого ребёнка."
-        )
 
     @staticmethod
     def render_adult_student_extra_classes_permissions(
@@ -533,13 +505,6 @@ class UIRenderer:
             text += f"- {role}: {count}\n"
         return text
  
-# под вопросом
-    @staticmethod
-    def render_parent_children_menu(dto: ChildrenListDTO) -> str:
-        if not dto.children:
-            return "К вашему профилю пока не привязан ни один ребенок. Используйте настройки семьи."
-        return "Выберите ребенка для просмотра расписания:"
-    
 # Меню
 
     @staticmethod
@@ -550,23 +515,6 @@ class UIRenderer:
     def render_family_management_menu() -> str:
         return "👨‍👩‍👧 <b>Управление семьей</b>\n\nВыберите ребенка для настройки:"
 
-    @staticmethod
-    def render_child_settings_menu(name: str, class_id: str) -> str:
-        # ЭКРАНИРОВАНИЕ
-        safe_name = UIRenderer.escape_html(name, "Неизвестно")
-        safe_class = UIRenderer.escape_html(class_id, "Не выбран")
-        return f"⚙️ <b>Настройки профиля:</b> {safe_name} ({safe_class})"
-# Старый метод
-    @staticmethod
-    def render_parent_notification_children_menu() -> str:
-        """
-        Заголовок списка детей для управления подписками взрослого.
-        """
-        return (
-            "🔔 <b>Уведомления по детям</b>\n\n"
-            "Выберите ребёнка. Настройки применяются только к вашему "
-            "аккаунту и не изменяют настройки других взрослых."
-        )
 
     @staticmethod
     def render_parent_student_notification_menu() -> str:
@@ -728,26 +676,7 @@ class UIRenderer:
             f"🔒 Блокировка настроек ребёнка: <b>{lock_text}</b>"
         )
                     
-    @staticmethod
-    def render_parent_child_notification_settings(
-        dto: ParentChildNotificationSettingsDTO,
-    ) -> str:
-        """
-        Экран индивидуальных настроек уведомлений взрослого по ребёнку.
-        """
-# ЭКРАНИРОВАНИЕ
-        safe_child = UIRenderer.escape_html(dto.child_name)
-        safe_class = UIRenderer.escape_html(dto.child_class_id, "Класс не выбран")
-
-        return (
-            "🔔 <b>Уведомления по ребёнку</b>\n\n"
-            f"👤 Ребёнок: <b>{safe_child}</b>\n"
-            f"🎓 Класс: {safe_class}\n\n"
-            "Настройки ниже относятся только к вам. "
-            "Другие взрослые и сам ребёнок управляют своими уведомлениями "
-            "независимо."
-        )
-        
+      
     @staticmethod
     def render_settings_main(
         user_dto: 'UserProfileDTO', 

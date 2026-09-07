@@ -170,36 +170,6 @@ class Database:
             """)
             
             await db.execute("""
-                CREATE TABLE IF NOT EXISTS parent_child_settings (
-                    parent_id INTEGER NOT NULL,
-                    child_id INTEGER NOT NULL,
-
-                    receive_morning_summary INTEGER NOT NULL DEFAULT 1
-                        CHECK (receive_morning_summary IN (0, 1)),
-                    receive_pre_lesson_reminders INTEGER NOT NULL DEFAULT 1
-                        CHECK (receive_pre_lesson_reminders IN (0, 1)),
-                    receive_schedule_changes INTEGER NOT NULL DEFAULT 1
-                        CHECK (receive_schedule_changes IN (0, 1)),
-                    receive_extra_class_reminders INTEGER NOT NULL DEFAULT 1
-                        CHECK (receive_extra_class_reminders IN (0, 1)),
-
-                    child_notification_settings_locked INTEGER NOT NULL DEFAULT 0
-                        CHECK (child_notification_settings_locked IN (0, 1)),
-                    can_manage_extra_classes INTEGER NOT NULL DEFAULT 0
-                        CHECK (can_manage_extra_classes IN (0, 1)),
-
-                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-
-                    PRIMARY KEY (parent_id, child_id),
-                    CHECK (parent_id <> child_id),
-
-                    FOREIGN KEY (parent_id) REFERENCES users(user_id) ON DELETE CASCADE,
-                    FOREIGN KEY (child_id) REFERENCES users(user_id) ON DELETE CASCADE
-                )
-            """)
-
-            await db.execute("""
                 CREATE TABLE IF NOT EXISTS student_claim_invites (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
 
@@ -449,16 +419,6 @@ class Database:
             await db.execute("""
                 CREATE INDEX IF NOT EXISTS idx_users_family_role
                 ON users(family_id, role)
-            """)
-
-            await db.execute("""
-                CREATE INDEX IF NOT EXISTS idx_parent_child_settings_parent
-                ON parent_child_settings(parent_id)
-            """)
-
-            await db.execute("""
-                CREATE INDEX IF NOT EXISTS idx_parent_child_settings_child
-                ON parent_child_settings(child_id)
             """)
 
             await db.execute("""

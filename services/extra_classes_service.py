@@ -6,8 +6,7 @@ from typing import Any, Optional
 from core.models.dto import (
     ActionResponseDTO,
     ExtraClassItemDTO,
-    ExtraClassListDTO,
-    ExtraClassesAccessDTO,
+    ExtraClassListDTO, ExtraClassesAccessDTO
 )
 from core.repository.extra_classes_repository import (
     ExtraClassesRepository,

@@ -1,8 +1,7 @@
 from datetime import datetime, timedelta, timezone, date
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
-from core.models.dto import ( ClassListDTO, GroupListDTO, ChildrenListDTO, UserProfileDTO, TeacherListDTO, 
-                             FamilyMemberDTO, ParentChildNotificationSettingsDTO, ChildInfoDTO, AdultExtraClassesPermissionDTO,
-                             FamilyInviteDTO, ScheduleWatchTargetDTO, ScheduleViewTargetDTO, StudentProfileDTO, ParentStudentNotificationSettingsDTO,
+from core.models.dto import ( ClassListDTO, GroupListDTO, UserProfileDTO, TeacherListDTO, 
+                             FamilyMemberDTO, FamilyInviteDTO, ScheduleWatchTargetDTO, ScheduleViewTargetDTO, StudentProfileDTO, ParentStudentNotificationSettingsDTO,
                             AdultStudentExtraClassesPermissionDTO, StudentTelegramSettingsDTO,
 )
 
@@ -111,161 +110,7 @@ class Keyboards:
             [InlineKeyboardButton(text="🔄 Перерегистрироваться / Выйти", callback_data="auth:restart")]
         ])
 
-    @staticmethod
-    def get_child_settings_kb(
-        child_dto: UserProfileDTO,
-        is_family_admin: bool,
-        is_notifications_locked: bool,
-    ) -> InlineKeyboardMarkup:
-        """
-        Экран профиля ребёнка со стороны взрослого.
 
-        Любой взрослый с access relationship может увидеть ограниченный
-        профиль ребёнка. Менять класс и личные настройки ребёнка способен
-        только families.admin_user_id.
-        """
-        buttons = []
-
-        if is_family_admin:
-            notification_state = (
-                "ВКЛ 🟢"
-                if child_dto.is_notifications_enabled
-                else "ВЫКЛ 🔴"
-            )
-
-            summary_time = (
-                child_dto.morning_summary_time
-                if child_dto.morning_summary_time
-                else "ВЫКЛ"
-            )
-
-            pre_lesson_text = (
-                f"{child_dto.pre_lesson_offset_minutes} мин 🟢"
-                if child_dto.pre_lesson_offset_minutes > 0
-                else "ВЫКЛ 🔴"
-            )
-
-            changes_text = (
-                "ВКЛ 🟢"
-                if child_dto.receive_schedule_changes
-                else "ВЫКЛ 🔴"
-            )
-
-            extras_text = (
-                "ВКЛ 🟢"
-                if child_dto.receive_extra_class_reminders
-                else "ВЫКЛ 🔴"
-            )
-            
-            lock_state = (
-                "ВКЛ 🔒"
-                if is_notifications_locked
-                else "ВЫКЛ 🔓"
-            )
-
-            buttons.extend([
-                [
-                    InlineKeyboardButton(
-                        text="🎓 Изменить класс/группу",
-                        callback_data=f"child_ctl:class:{child_dto.user_id}",
-                    )
-                ],
-                [
-                    InlineKeyboardButton(
-                        text=(
-                            "🔔 Уведомления ребёнка: "
-                            f"{notification_state}"
-                        ),
-                        callback_data=f"child_ctl:notif:{child_dto.user_id}",
-                    )
-                ],
-                [
-                    InlineKeyboardButton(
-                        text=f"🌅 Время сводки: {summary_time}",
-                        callback_data=(
-                            f"child_ctl:summary_time:{child_dto.user_id}"
-                        ),
-                    )
-                ],
-                                [
-                    InlineKeyboardButton(
-                        text=(
-                            "⏰ Напоминания об уроках: "
-                            f"{pre_lesson_text}"
-                        ),
-                        callback_data=(
-                            f"child_ctl:prelesson:{child_dto.user_id}"
-                        ),
-                    )
-                ],
-                [
-                    InlineKeyboardButton(
-                        text=(
-                            "🔄 Изменения расписания: "
-                            f"{changes_text}"
-                        ),
-                        callback_data=(
-                            f"child_ctl:changes:{child_dto.user_id}"
-                        ),
-                    )
-                ],
-                [
-                    InlineKeyboardButton(
-                        text=(
-                            "🎨 Дополнительные занятия: "
-                            f"{extras_text}"
-                        ),
-                        callback_data=(
-                            f"child_ctl:extra:{child_dto.user_id}"
-                        ),
-                    )
-                ],
-                [
-                    InlineKeyboardButton(
-                        text=(
-                            "✏️ Ребёнок редактирует свои занятия: "
-                            f"{'ВКЛ 🟢' if child_dto.can_manage_own_extra_classes else 'ВЫКЛ 🔴'}"
-                        ),
-                        callback_data=(
-                            f"child_ctl:own_extra_edit:{child_dto.user_id}"
-                        ),
-                    )
-                ],
-                [
-                    InlineKeyboardButton(
-                        text="👥 Права взрослых на доп. занятия",
-                        callback_data=(
-                            f"child_ctl:extra_permissions:{child_dto.user_id}"
-                        ),
-                    )
-                ],
-                [
-                    InlineKeyboardButton(
-                        text=(
-                            "🔒 Блокировка настроек ребёнка: "
-                            f"{lock_state}"
-                        ),
-                        callback_data=f"child_ctl:lock:{child_dto.user_id}",
-                    )
-                ],
-            ])
-        else:
-            buttons.append([
-                InlineKeyboardButton(
-                    text="ℹ️ Настройки ребёнка доступны администратору семьи",
-                    callback_data="settings:family",
-                )
-            ])
-
-        buttons.append([
-            InlineKeyboardButton(
-                text="⬅️ Назад к составу семьи",
-                callback_data="settings:family",
-            )
-        ])
-
-        return InlineKeyboardMarkup(inline_keyboard=buttons)
-    
     @staticmethod
     def get_settings_main_kb(
         user_dto: UserProfileDTO,
@@ -462,18 +307,6 @@ class Keyboards:
                 
 #-----------------------
 
-    @staticmethod
-    def get_parent_children_menu(dto: ChildrenListDTO) -> InlineKeyboardMarkup | None:
-        """Клавиатура со списком детей[cite: 4]."""
-        if not dto.children:
-            return None
-            
-        buttons = []
-        for child in dto.children:
-            btn_text = f"👦/👧 {child.name} ({child.class_id})"
-            buttons.append([InlineKeyboardButton(text=btn_text, callback_data=f"p_{dto.action}:{child.user_id}")])
-            
-        return InlineKeyboardMarkup(inline_keyboard=buttons)
     
     # Доп занятия  ExtraClassesService
     @staticmethod
@@ -1006,34 +839,6 @@ class Keyboards:
             inline_keyboard=buttons,
         )
                 
-    @staticmethod
-    def get_parent_notification_children_kb(
-        children: list[ChildInfoDTO],
-    ) -> InlineKeyboardMarkup:
-        """
-        Выбор ребёнка для настройки персональных подписок взрослого.
-        """
-        buttons = []
-
-        for child in children:
-            name = child.name or f"Ученик {child.user_id}"
-            class_name = child.class_id or "—"
-
-            buttons.append([
-                InlineKeyboardButton(
-                    text=f"👤 {name} ({class_name})",
-                    callback_data=f"pcn:child:{child.user_id}",
-                )
-            ])
-
-        buttons.append([
-            InlineKeyboardButton(
-                text="⬅️ Назад к настройкам",
-                callback_data="settings:main",
-            )
-        ])
-
-        return InlineKeyboardMarkup(inline_keyboard=buttons)
 
     @staticmethod
     def get_student_notification_select_kb(
@@ -1156,116 +961,6 @@ class Keyboards:
             ]
         )
             
-    @staticmethod
-    def get_parent_child_notification_settings_kb(
-        dto: ParentChildNotificationSettingsDTO,
-    ) -> InlineKeyboardMarkup:
-        """
-        Клавиатура настройки четырёх типов уведомлений взрослого
-        по конкретному ребёнку.
-        """
-        def status(value: bool) -> str:
-            return "ВКЛ 🟢" if value else "ВЫКЛ 🔴"
-
-        child_id = dto.child_id
-
-        return InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    InlineKeyboardButton(
-                        text=(
-                            "🌅 Утренняя сводка: "
-                            f"{status(dto.receive_morning_summary)}"
-                        ),
-                        callback_data=f"pcn:toggle:morning:{child_id}",
-                    )
-                ],
-                [
-                    InlineKeyboardButton(
-                        text=(
-                            "⏰ Напоминания об уроках: "
-                            f"{status(dto.receive_pre_lesson_reminders)}"
-                        ),
-                        callback_data=f"pcn:toggle:prelesson:{child_id}",
-                    )
-                ],
-                [
-                    InlineKeyboardButton(
-                        text=(
-                            "🔄 Изменения расписания: "
-                            f"{status(dto.receive_schedule_changes)}"
-                        ),
-                        callback_data=f"pcn:toggle:changes:{child_id}",
-                    )
-                ],
-                [
-                    InlineKeyboardButton(
-                        text=(
-                            "🎨 Доп. занятия: "
-                            f"{status(dto.receive_extra_class_reminders)}"
-                        ),
-                        callback_data=f"pcn:toggle:extra:{child_id}",
-                    )
-                ],
-                [
-                    InlineKeyboardButton(
-                        text="⬅️ К списку детей",
-                        callback_data="settings:children_notifications",
-                    )
-                ],
-                [
-                    InlineKeyboardButton(
-                        text="⚙️ Главные настройки",
-                        callback_data="settings:main",
-                    )
-                ],
-            ]
-        )
-        
-    @staticmethod
-    def get_adult_extra_classes_permissions_kb(
-        child_user_id: int,
-        permissions: list[AdultExtraClassesPermissionDTO],
-    ) -> InlineKeyboardMarkup:
-        """
-        Клавиатура переключения прав взрослых для одного ребёнка.
-        """
-        buttons = []
-
-        for permission in permissions:
-            role_label = (
-                "👨‍👩‍👧 Родитель"
-                if permission.adult_role == "parent"
-                else "👁 Наблюдатель"
-            )
-
-            status = (
-                "ВКЛ 🟢"
-                if permission.can_manage_extra_classes
-                else "ВЫКЛ 🔴"
-            )
-
-            buttons.append([
-                InlineKeyboardButton(
-                    text=(
-                        f"{role_label}: {permission.adult_name} — {status}"
-                    ),
-                    callback_data=(
-                        "extra_perm:toggle:"
-                        f"{child_user_id}:{permission.adult_user_id}"
-                    ),
-                )
-            ])
-
-        buttons.append([
-            InlineKeyboardButton(
-                text="⬅️ Назад к ребёнку",
-                callback_data=f"family:child_settings:{child_user_id}",
-            )
-        ])
-
-        return InlineKeyboardMarkup(inline_keyboard=buttons)
-    
     @staticmethod
     def get_adult_student_extra_classes_permissions_kb(
         *,

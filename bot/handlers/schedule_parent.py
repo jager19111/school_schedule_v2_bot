@@ -7,7 +7,6 @@ from services.schedule_service import ScheduleService
 from services.time_service import TimeService
 from bot.utils.ui_renderer import UIRenderer
 from bot.keyboards.keyboard import Keyboards
-from core.models.dto import ChildrenListDTO
 
 logger = logging.getLogger(__name__)
 router = Router()
