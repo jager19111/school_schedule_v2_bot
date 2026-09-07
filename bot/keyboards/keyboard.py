@@ -3,6 +3,7 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeybo
 from core.models.dto import ( ClassListDTO, GroupListDTO, ChildrenListDTO, UserProfileDTO, TeacherListDTO, 
                              FamilyMemberDTO, ParentChildNotificationSettingsDTO, ChildInfoDTO, AdultExtraClassesPermissionDTO,
                              FamilyInviteDTO, ScheduleWatchTargetDTO, ScheduleViewTargetDTO, StudentProfileDTO, ParentStudentNotificationSettingsDTO,
+                            AdultStudentExtraClassesPermissionDTO,
 )
 
 class Keyboards:
@@ -1152,6 +1153,61 @@ class Keyboards:
 
         return InlineKeyboardMarkup(inline_keyboard=buttons)
     
+    @staticmethod
+    def get_adult_student_extra_classes_permissions_kb(
+        *,
+        student_id: int,
+        permissions: list[
+            AdultStudentExtraClassesPermissionDTO
+        ],
+    ) -> InlineKeyboardMarkup:
+        """
+        Кнопки управления правами взрослых на кружки student profile.
+
+        Family admin не показывается в списке:
+        его право управления считается системным и всегда доступно.
+        """
+        buttons = []
+
+        for permission in permissions:
+            role_label = (
+                "👨‍👩‍👧 Родитель"
+                if permission.adult_role == "parent"
+                else "👁 Наблюдатель"
+            )
+
+            state_label = (
+                "ВКЛ 🟢"
+                if permission.can_manage_extra_classes
+                else "ВЫКЛ 🔴"
+            )
+
+            buttons.append([
+                InlineKeyboardButton(
+                    text=(
+                        f"{role_label}: "
+                        f"{permission.adult_name} — "
+                        f"{state_label}"
+                    ),
+                    callback_data=(
+                        "student_perm:toggle:"
+                        f"{student_id}:"
+                        f"{permission.adult_user_id}"
+                    ),
+                )
+            ])
+
+        buttons.append([
+            InlineKeyboardButton(
+                text="⬅️ К профилю ученика",
+                callback_data=f"student:show:{student_id}",
+            )
+        ])
+
+        return InlineKeyboardMarkup(
+            inline_keyboard=buttons,
+        )
+        
 #перерегистрация
     @staticmethod
     def get_profile_reset_confirmation_kb() -> InlineKeyboardMarkup:
@@ -1632,17 +1688,33 @@ class Keyboards:
         is_family_admin: bool,
     ) -> InlineKeyboardMarkup:
         """
-        Карточка student profile.
+        Действия над student profile.
 
-        Virtual student:
-        - family admin может создать claim link;
-        - family admin может удалить profile.
+        Family admin:
+        - меняет class/group;
+        - управляет правами других взрослых на кружки;
+        - создаёт claim link для virtual student;
+        - удаляет только virtual student.
 
-        Telegram-linked student:
-        - claim невозможен;
-        - удаление отдельным flow не поддерживается.
+        Имя Telegram-linked ученика не меняется отсюда:
+        ребёнок меняет его через осознанную перерегистрацию/claim.
         """
         buttons = []
+
+        if is_family_admin:
+            buttons.append([
+                InlineKeyboardButton(
+                    text="🎓 Изменить класс / группу",
+                    callback_data=f"student:edit_class:{student_id}",
+                )
+            ])
+
+            buttons.append([
+                InlineKeyboardButton(
+                    text="👥 Права взрослых на кружки",
+                    callback_data=f"student:extra_permissions:{student_id}",
+                )
+            ])
 
         if telegram_user_id is None and is_family_admin:
             buttons.append([
@@ -1663,7 +1735,7 @@ class Keyboards:
             buttons.append([
                 InlineKeyboardButton(
                     text="📱 Telegram-профиль подключён",
-                    callback_data="family:students",
+                    callback_data=f"student:show:{student_id}",
                 )
             ])
 
@@ -1677,7 +1749,7 @@ class Keyboards:
         return InlineKeyboardMarkup(
             inline_keyboard=buttons,
         )
-
+    
     @staticmethod
     def get_student_claim_invite_result_kb(
         *,
@@ -1933,3 +2005,101 @@ class Keyboards:
         return InlineKeyboardMarkup(
             inline_keyboard=buttons,
         )    
+        
+    @staticmethod
+    def get_student_edit_class_selection_kb(
+        dto: ClassListDTO,
+        *,
+        student_id: int,
+    ) -> InlineKeyboardMarkup:
+        """
+        Выбор нового класса family admin для student profile.
+        """
+        buttons = []
+        row = []
+
+        for class_id, class_name in dto.classes.items():
+            row.append(
+                InlineKeyboardButton(
+                    text=class_name,
+                    callback_data=(
+                        f"student:edit_class_select:"
+                        f"{student_id}:{class_id}"
+                    ),
+                )
+            )
+
+            if len(row) == 3:
+                buttons.append(row)
+                row = []
+
+        if row:
+            buttons.append(row)
+
+        buttons.append([
+            InlineKeyboardButton(
+                text="⬅️ К профилю ученика",
+                callback_data=f"student:show:{student_id}",
+            )
+        ])
+
+        return InlineKeyboardMarkup(
+            inline_keyboard=buttons,
+        )
+        
+    @staticmethod
+    def get_student_edit_group_selection_kb(
+        dto: GroupListDTO,
+        *,
+        student_id: int,
+    ) -> InlineKeyboardMarkup:
+        """
+        Выбор новой основной группы student profile.
+
+        Используем «Весь класс» и группы 0/1.
+        """
+        buttons = [
+            [
+                InlineKeyboardButton(
+                    text="Весь класс",
+                    callback_data=(
+                        f"student:edit_group_select:"
+                        f"{student_id}:ALL"
+                    ),
+                )
+            ]
+        ]
+
+        for group_id in ("0", "1"):
+            group_name = dto.groups.get(group_id)
+
+            if group_name is None:
+                continue
+
+            buttons.append([
+                InlineKeyboardButton(
+                    text=group_name,
+                    callback_data=(
+                        f"student:edit_group_select:"
+                        f"{student_id}:{group_id}"
+                    ),
+                )
+            ])
+
+        buttons.append([
+            InlineKeyboardButton(
+                text="⬅️ К выбору класса",
+                callback_data=f"student:edit_class:{student_id}",
+            )
+        ])
+
+        buttons.append([
+            InlineKeyboardButton(
+                text="⬅️ К профилю ученика",
+                callback_data=f"student:show:{student_id}",
+            )
+        ])
+
+        return InlineKeyboardMarkup(
+            inline_keyboard=buttons,
+        )

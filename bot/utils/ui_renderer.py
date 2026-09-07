@@ -3,7 +3,8 @@ from datetime import datetime, timedelta, timezone, date
 from core.models.dto import (ClassListDTO, FamilyCreatedDTO, AdminStatsDTO, DayScheduleDTO, ChildrenListDTO, ExtraClassListDTO,
                              WeekSummaryDTO, FullWeekScheduleDTO, UserProfileDTO, FamilyMemberDTO,
                              MorningSummaryDTO, ChangeReminderDTO, LessonReminderDTO, ParentChildNotificationSettingsDTO, AdultExtraClassesPermissionDTO,
-                             ProfileResetImpactDTO, FamilyInviteDTO, ScheduleWatchTargetDTO, StudentProfileDTO, ParentStudentNotificationSettingsDTO
+                             ProfileResetImpactDTO, FamilyInviteDTO, ScheduleWatchTargetDTO, StudentProfileDTO, ParentStudentNotificationSettingsDTO,
+                            AdultStudentExtraClassesPermissionDTO,
 )
 
 class UIRenderer:
@@ -219,6 +220,97 @@ class UIRenderer:
             "Включённое право позволяет взрослому добавлять, изменять "
             "и удалять занятия этого ребёнка."
         )
+
+    @staticmethod
+    def render_adult_student_extra_classes_permissions(
+        *,
+        student: StudentProfileDTO,
+        permissions: list[
+            AdultStudentExtraClassesPermissionDTO
+        ],
+    ) -> str:
+        """
+        Рендерит права взрослых на управление кружками
+        выбранного student profile.
+        """
+        student_name = UIRenderer.escape_html(
+            student.name,
+            fallback=f"Ученик {student.id}",
+        )
+
+        class_id = UIRenderer.escape_html(
+            student.class_id,
+            fallback="—",
+        )
+
+        group_text = (
+            "Весь класс"
+            if student.group_id == "ALL"
+            else f"Группа {UIRenderer.escape_html(student.group_id)}"
+        )
+
+        telegram_status = (
+            "📱 Telegram подключён"
+            if student.telegram_user_id is not None
+            else "🧒 Без Telegram"
+        )
+
+        lines = [
+            "👥 <b>Права взрослых на кружки</b>",
+            "",
+            f"👤 Ученик: <b>{student_name}</b>",
+            f"🎓 Класс: <b>{class_id}</b>",
+            f"👥 {group_text}",
+            telegram_status,
+            "",
+        ]
+
+        if not permissions:
+            lines.extend([
+                "В семье нет других взрослых, которым можно "
+                "выдать право управления дополнительными занятиями.",
+                "",
+                "Администратор семьи всегда может управлять "
+                "занятиями ученика.",
+            ])
+
+            return "\n".join(lines)
+
+        lines.extend([
+            "Нажмите на взрослого, чтобы включить или выключить "
+            "его право редактировать кружки.",
+            "",
+        ])
+
+        for permission in permissions:
+            role_label = (
+                "Родитель"
+                if permission.adult_role == "parent"
+                else "Наблюдатель"
+            )
+
+            status = (
+                "ВКЛ 🟢"
+                if permission.can_manage_extra_classes
+                else "ВЫКЛ 🔴"
+            )
+
+            adult_name = UIRenderer.escape_html(
+                permission.adult_name,
+                fallback="Участник семьи",
+            )
+
+            lines.append(
+                f"• {role_label}: <b>{adult_name}</b> — {status}"
+            )
+
+        lines.extend([
+            "",
+            "Администратор семьи всегда может управлять "
+            "дополнительными занятиями.",
+        ])
+
+        return "\n".join(lines)
 
     @staticmethod
     def render_student_extra_classes_menu(
@@ -1340,4 +1432,43 @@ class UIRenderer:
             "❌ Привязка Telegram отменена.\n\n"
             "Ссылка не использована. Ребёнок может открыть её "
             "повторно, пока не истечёт срок действия."
+        )
+        
+    @staticmethod
+    def render_student_edit_class_prompt(
+        student: StudentProfileDTO,
+    ) -> str:
+        """
+        Запрос выбора класса family admin.
+        """
+        student_name = UIRenderer.escape_html(
+            student.name,
+            fallback=f"Ученик {student.id}",
+        )
+
+        return (
+            "🎓 <b>Изменение класса и группы</b>\n\n"
+            f"👤 Ученик: <b>{student_name}</b>\n"
+            f"Текущий класс: <b>{student.class_id}</b>\n"
+            f"Текущая группа: <b>{student.group_id}</b>\n\n"
+            "Выберите новый класс."
+        )
+        
+    @staticmethod
+    def render_student_edit_group_prompt(
+        student: StudentProfileDTO,
+    ) -> str:
+        """
+        Запрос выбора группы family admin.
+        """
+        student_name = UIRenderer.escape_html(
+            student.name,
+            fallback=f"Ученик {student.id}",
+        )
+
+        return (
+            "👥 <b>Изменение группы</b>\n\n"
+            f"👤 Ученик: <b>{student_name}</b>\n"
+            f"Новый класс: <b>{student.class_id}</b>\n\n"
+            "Выберите группу."
         )

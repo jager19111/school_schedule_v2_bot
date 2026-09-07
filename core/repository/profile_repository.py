@@ -137,7 +137,66 @@ class ProfileRepository(BaseRepository):
             """,
             (family_id,),
         )
-        
+
+    async def _ensure_parent_student_settings_for_family(
+        self,
+        *,
+        db: aiosqlite.Connection,
+        family_id: int,
+    ) -> None:
+        """
+        Создаёт недостающие связи adult → student profile.
+
+        Вызывается при вступлении нового parent/observer в семью.
+
+        Parent:
+        - может управлять допзанятиями по умолчанию.
+
+        Observer:
+        - видит student profiles и получает subscriptions;
+        - не может редактировать кружки по умолчанию.
+        """
+        await db.execute(
+            """
+            INSERT OR IGNORE INTO parent_student_settings (
+                parent_user_id,
+                student_id,
+
+                receive_morning_summary,
+                receive_pre_lesson_reminders,
+                receive_schedule_changes,
+                receive_extra_class_reminders,
+
+                child_notification_settings_locked,
+                can_manage_extra_classes
+            )
+            SELECT
+                adult.user_id,
+                student.id,
+
+                1,
+                1,
+                1,
+                1,
+
+                0,
+
+                CASE
+                    WHEN adult.role = 'parent' THEN 1
+                    ELSE 0
+                END
+
+            FROM users AS adult
+            JOIN student_profiles AS student
+                ON student.family_id = adult.family_id
+
+            WHERE adult.family_id = ?
+            AND adult.role IN ('parent', 'observer')
+            AND student.is_active = 1
+            """,
+            (family_id,),
+        )
+            
     # ========== FAMILIES ==========
 
     async def is_family_admin(
@@ -424,6 +483,10 @@ class ProfileRepository(BaseRepository):
                     family_id=family_id,
                 )
 
+                await self._ensure_parent_student_settings_for_family(
+                    db=db,
+                    family_id=family_id,
+                )
                 await db.commit()
 
                 return {
@@ -703,7 +766,10 @@ class ProfileRepository(BaseRepository):
                 db=db,
                 family_id=family_id,
             )
-
+            await self._ensure_parent_student_settings_for_family(
+                db=db,
+                family_id=family_id,
+            )
             await db.commit()
 
     async def set_child_notifications_lock(

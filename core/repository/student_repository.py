@@ -316,9 +316,16 @@ class StudentRepository(BaseRepository):
         group_id: Optional[str] = None,
     ) -> bool:
         """
-        Изменяет профиль ученика только family admin.
+        Обновляет student profile только от имени family admin.
+
+        Если profile уже связан с Telegram-child, class/group
+        синхронизируются также в users.
+
+        Это сохраняет согласованность:
+        student_profiles.class_id/group_id
+        ↔ users.class_id/group_id.
         """
-        fields = []
+        fields: list[str] = []
         params: list[Any] = []
 
         if name is not None:
@@ -339,28 +346,96 @@ class StudentRepository(BaseRepository):
         fields.append("updated_at = CURRENT_TIMESTAMP")
 
         async with self._connection() as db:
-            cursor = await db.execute(
-                f"""
-                UPDATE student_profiles
-                SET {", ".join(fields)}
-                WHERE id = ?
-                  AND EXISTS (
-                      SELECT 1
-                      FROM families AS family
-                      WHERE family.id = student_profiles.family_id
-                        AND family.admin_user_id = ?
-                  )
-                """,
-                (
-                    *params,
-                    student_id,
-                    admin_user_id,
-                ),
-            )
+            await db.execute("BEGIN")
 
-            await db.commit()
+            try:
+                student_cursor = await db.execute(
+                    """
+                    SELECT
+                        student.id,
+                        student.telegram_user_id,
+                        student.family_id
+                    FROM student_profiles AS student
+                    JOIN families AS family
+                        ON family.id = student.family_id
+                    WHERE student.id = ?
+                    AND student.is_active = 1
+                    AND family.admin_user_id = ?
+                    """,
+                    (
+                        student_id,
+                        admin_user_id,
+                    ),
+                )
 
-        return cursor.rowcount == 1
+                student = await student_cursor.fetchone()
+
+                if student is None:
+                    await db.rollback()
+                    return False
+
+                cursor = await db.execute(
+                    f"""
+                    UPDATE student_profiles
+                    SET {", ".join(fields)}
+                    WHERE id = ?
+                    """,
+                    (
+                        *params,
+                        student_id,
+                    ),
+                )
+
+                if cursor.rowcount != 1:
+                    await db.rollback()
+                    return False
+
+                # Для virtual student telegram_user_id=NULL:
+                # обновлять users не требуется.
+                #
+                # Для Telegram-linked student:
+                # обновляем только переданные class/group.
+                if student["telegram_user_id"] is not None:
+                    user_fields: list[str] = []
+                    user_params: list[Any] = []
+
+                    if class_id is not None:
+                        user_fields.append("class_id = ?")
+                        user_params.append(class_id)
+
+                    if group_id is not None:
+                        user_fields.append("group_id = ?")
+                        user_params.append(group_id)
+
+                    if name is not None:
+                        user_fields.append("name = ?")
+                        user_params.append(name)
+
+                    if user_fields:
+                        user_fields.append(
+                            "updated_at = CURRENT_TIMESTAMP"
+                        )
+
+                        await db.execute(
+                            f"""
+                            UPDATE users
+                            SET {", ".join(user_fields)}
+                            WHERE user_id = ?
+                            AND role = 'child'
+                            """,
+                            (
+                                *user_params,
+                                student["telegram_user_id"],
+                            ),
+                        )
+
+                await db.commit()
+
+            except Exception:
+                await db.rollback()
+                raise
+
+        return True
 
     async def delete_virtual_student(
         self,

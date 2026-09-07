@@ -78,6 +78,7 @@ async def _safe_callback_answer(
             "Telegram callback answer skipped: %s",
             exc,
         )
+        
 async def _require_family_admin_for_child(
     callback: CallbackQuery,
     profile_service: ProfileService,
@@ -132,6 +133,32 @@ async def _require_own_notification_settings_access(
 
     return False
 
+async def _require_family_admin_for_student(
+    *,
+    callback: CallbackQuery,
+    profile_service: ProfileService,
+    student_id: int,
+) -> bool:
+    """
+    Проверяет права family admin на конкретный student profile.
+    """
+    is_admin = await profile_service.is_family_admin_for_student(
+        admin_user_id=callback.from_user.id,
+        student_id=student_id,
+    )
+
+    if is_admin:
+        return True
+
+    await _safe_callback_answer(
+        callback,
+        "Только администратор семьи может менять профиль ученика.",
+        show_alert=True,
+    )
+
+    return False
+
+
 class SettingsStates(StatesGroup):
     waiting_for_my_time = State()
     waiting_for_child_time = State()
@@ -139,6 +166,9 @@ class SettingsStates(StatesGroup):
     
     waiting_for_virtual_student_name = State()
     waiting_for_virtual_student_group = State()
+    
+    waiting_for_student_class = State()
+    waiting_for_student_group = State()
 
 
 
@@ -3516,4 +3546,542 @@ async def create_student_claim_invite(
     await _safe_callback_answer(
         callback,
         "✅ Ссылка для привязки создана.",
+    )
+    
+@router.callback_query(
+    F.data.startswith("student:edit_class:")
+)
+async def start_student_class_edit(
+    callback: CallbackQuery,
+    state: FSMContext,
+    profile_service: ProfileService,
+    students_service: StudentsService,
+    schedule_service: ScheduleService,
+) -> None:
+    """
+    Family admin начинает изменение class/group student profile.
+    """
+    try:
+        student_id = int(
+            callback.data.split(":")[2]
+        )
+    except (IndexError, ValueError):
+        await _safe_callback_answer(
+            callback,
+            "Некорректный идентификатор ученика.",
+            show_alert=True,
+        )
+        return
+
+    if not await _require_family_admin_for_student(
+        callback=callback,
+        profile_service=profile_service,
+        student_id=student_id,
+    ):
+        return
+
+    student = await students_service.get_student_for_adult(
+        adult_user_id=callback.from_user.id,
+        student_id=student_id,
+    )
+
+    if student is None:
+        await _safe_callback_answer(
+            callback,
+            "Ученик не найден.",
+            show_alert=True,
+        )
+        return
+
+    student_dto, _access = student
+
+    classes_dto = await schedule_service.get_classes_list()
+
+    await state.clear()
+
+    await state.update_data(
+        student_edit_id=student_id,
+        student_edit_admin_id=callback.from_user.id,
+    )
+
+    await _safe_edit_text(
+        callback.message,
+        UIRenderer.render_student_edit_class_prompt(
+            student_dto,
+        ),
+        reply_markup=Keyboards.get_student_edit_class_selection_kb(
+            classes_dto,
+            student_id=student_id,
+        ),
+    )
+
+    await state.set_state(
+        SettingsStates.waiting_for_student_class,
+    )
+
+    await _safe_callback_answer(callback)
+    
+@router.callback_query(
+    SettingsStates.waiting_for_student_class,
+    F.data.startswith("student:edit_class_select:"),
+)
+async def select_student_new_class(
+    callback: CallbackQuery,
+    state: FSMContext,
+    profile_service: ProfileService,
+    students_service: StudentsService,
+    schedule_service: ScheduleService,
+) -> None:
+    """
+    Сохраняет выбранный class_id в FSM и открывает selector группы.
+    """
+    try:
+        _prefix, _action, raw_student_id, class_id = (
+            callback.data.split(":")
+        )
+
+        student_id = int(raw_student_id)
+
+    except (IndexError, ValueError):
+        await _safe_callback_answer(
+            callback,
+            "Некорректный класс.",
+            show_alert=True,
+        )
+        return
+
+    data = await state.get_data()
+
+    if (
+        data.get("student_edit_admin_id") != callback.from_user.id
+        or data.get("student_edit_id") != student_id
+    ):
+        await state.clear()
+
+        await _safe_callback_answer(
+            callback,
+            "Состояние изменения устарело. "
+            "Откройте профиль ученика заново.",
+            show_alert=True,
+        )
+        return
+
+    if not await _require_family_admin_for_student(
+        callback=callback,
+        profile_service=profile_service,
+        student_id=student_id,
+    ):
+        await state.clear()
+        return
+
+    student_result = await students_service.get_student_for_adult(
+        adult_user_id=callback.from_user.id,
+        student_id=student_id,
+    )
+
+    if student_result is None:
+        await state.clear()
+
+        await _safe_callback_answer(
+            callback,
+            "Ученик больше недоступен.",
+            show_alert=True,
+        )
+        return
+
+    student, _access = student_result
+
+    # Используем выбранный class_id в renderer,
+    # не меняя profile до окончательного выбора группы.
+    student.class_id = class_id
+
+    groups_dto = await schedule_service.get_groups_list()
+
+    await state.update_data(
+        student_edit_class_id=class_id,
+    )
+
+    await _safe_edit_text(
+        callback.message,
+        UIRenderer.render_student_edit_group_prompt(
+            student,
+        ),
+        reply_markup=Keyboards.get_student_edit_group_selection_kb(
+            groups_dto,
+            student_id=student_id,
+        ),
+    )
+
+    await state.set_state(
+        SettingsStates.waiting_for_student_group,
+    )
+
+    await _safe_callback_answer(callback)
+    
+@router.callback_query(
+    SettingsStates.waiting_for_student_group,
+    F.data.startswith("student:edit_group_select:"),
+)
+async def save_student_new_class_and_group(
+    callback: CallbackQuery,
+    state: FSMContext,
+    profile_service: ProfileService,
+    students_service: StudentsService,
+    schedule_service: ScheduleService,
+) -> None:
+    """
+    Финально сохраняет class_id/group_id student profile.
+
+    StudentRepository синхронизирует users.class_id/group_id,
+    если profile связан с Telegram-child.
+    """
+    try:
+        _prefix, _action, raw_student_id, group_id = (
+            callback.data.split(":")
+        )
+
+        student_id = int(raw_student_id)
+
+    except (IndexError, ValueError):
+        await _safe_callback_answer(
+            callback,
+            "Некорректная группа.",
+            show_alert=True,
+        )
+        return
+
+    data = await state.get_data()
+
+    admin_user_id = data.get("student_edit_admin_id")
+    state_student_id = data.get("student_edit_id")
+    class_id = data.get("student_edit_class_id")
+
+    if (
+        admin_user_id != callback.from_user.id
+        or state_student_id != student_id
+        or not class_id
+    ):
+        await state.clear()
+
+        await _safe_callback_answer(
+            callback,
+            "Состояние изменения устарело. "
+            "Откройте профиль ученика заново.",
+            show_alert=True,
+        )
+        return
+
+    if not await _require_family_admin_for_student(
+        callback=callback,
+        profile_service=profile_service,
+        student_id=student_id,
+    ):
+        await state.clear()
+        return
+
+    response = await students_service.update_student_profile(
+        admin_user_id=admin_user_id,
+        student_id=student_id,
+        class_id=class_id,
+        group_id=group_id,
+    )
+
+    await state.clear()
+
+    if not response.success:
+        await _safe_callback_answer(
+            callback,
+            "Не удалось сохранить класс и группу ученика.",
+            show_alert=True,
+        )
+        return
+
+    student_result = await students_service.get_student_for_adult(
+        adult_user_id=callback.from_user.id,
+        student_id=student_id,
+    )
+
+    if student_result is None:
+        await _safe_callback_answer(
+            callback,
+            "Профиль ученика недоступен.",
+            show_alert=True,
+        )
+        return
+
+    student, access = student_result
+
+    classes_dto = await schedule_service.get_classes_list()
+    groups_dto = await schedule_service.get_groups_list()
+
+    class_name = classes_dto.classes.get(
+        student.class_id,
+        student.class_id,
+    )
+
+    group_name = (
+        "Весь класс"
+        if student.group_id == "ALL"
+        else groups_dto.groups.get(
+            student.group_id,
+            f"Группа {student.group_id}",
+        )
+    )
+
+    text = (
+        "✅ <b>Класс и группа обновлены.</b>\n\n"
+        + UIRenderer.render_student_details(
+            student=student,
+            class_name=class_name,
+            group_name=group_name,
+        )
+    )
+
+    keyboard = Keyboards.get_student_details_kb(
+        student_id=student.id,
+        telegram_user_id=student.telegram_user_id,
+        is_family_admin=access.is_family_admin,
+    )
+
+    await _safe_edit_text(
+        callback.message,
+        text,
+        reply_markup=keyboard,
+    )
+
+    await _safe_callback_answer(callback)
+    
+@router.callback_query(
+    F.data.startswith("student:extra_permissions:")
+)
+async def show_adult_student_extra_classes_permissions(
+    callback: CallbackQuery,
+    profile_service: ProfileService,
+    students_service: StudentsService,
+) -> None:
+    """
+    Family admin просматривает права других взрослых
+    на управление кружками student profile.
+    """
+    try:
+        student_id = int(
+            callback.data.split(":")[2]
+        )
+    except (IndexError, ValueError):
+        await _safe_callback_answer(
+            callback,
+            "Некорректный идентификатор ученика.",
+            show_alert=True,
+        )
+        return
+
+    admin_user_id = callback.from_user.id
+
+    # Проверяем student profile и admin-rights.
+    student_result = await students_service.get_student_for_adult(
+        adult_user_id=admin_user_id,
+        student_id=student_id,
+    )
+
+    if student_result is None:
+        await _safe_callback_answer(
+            callback,
+            "Ученик не найден или недоступен.",
+            show_alert=True,
+        )
+        return
+
+    student, access = student_result
+
+    if not access.is_family_admin:
+        await _safe_callback_answer(
+            callback,
+            "Только администратор семьи может управлять "
+            "правами взрослых.",
+            show_alert=True,
+        )
+        return
+
+    permissions = (
+        await profile_service.get_adult_student_extra_classes_permissions(
+            admin_user_id=admin_user_id,
+            student_id=student_id,
+        )
+    )
+
+    # None означает, что repository/service не подтвердили admin-rights.
+    if permissions is None:
+        await _safe_callback_answer(
+            callback,
+            "Не удалось проверить права администратора семьи.",
+            show_alert=True,
+        )
+        return
+
+    text = UIRenderer.render_adult_student_extra_classes_permissions(
+        student=student,
+        permissions=permissions,
+    )
+
+    keyboard = (
+        Keyboards.get_adult_student_extra_classes_permissions_kb(
+            student_id=student.id,
+            permissions=permissions,
+        )
+    )
+
+    await _safe_edit_text(
+        callback.message,
+        text,
+        reply_markup=keyboard,
+    )
+
+    await _safe_callback_answer(callback)
+    
+@router.callback_query(
+    F.data.startswith("student_perm:toggle:")
+)
+async def toggle_adult_student_extra_classes_permission(
+    callback: CallbackQuery,
+    profile_service: ProfileService,
+    students_service: StudentsService,
+) -> None:
+    """
+    Family admin переключает право другого adult
+    управлять кружками student profile.
+    """
+    try:
+        _prefix, _action, raw_student_id, raw_adult_id = (
+            callback.data.split(":")
+        )
+
+        student_id = int(raw_student_id)
+        adult_user_id = int(raw_adult_id)
+
+    except (IndexError, ValueError):
+        await _safe_callback_answer(
+            callback,
+            "Некорректные данные права доступа.",
+            show_alert=True,
+        )
+        return
+
+    admin_user_id = callback.from_user.id
+
+    student_result = await students_service.get_student_for_adult(
+        adult_user_id=admin_user_id,
+        student_id=student_id,
+    )
+
+    if student_result is None:
+        await _safe_callback_answer(
+            callback,
+            "Ученик не найден или больше недоступен.",
+            show_alert=True,
+        )
+        return
+
+    student, access = student_result
+
+    if not access.is_family_admin:
+        await _safe_callback_answer(
+            callback,
+            "Только администратор семьи может менять права "
+            "других взрослых.",
+            show_alert=True,
+        )
+        return
+
+    permissions = (
+        await profile_service.get_adult_student_extra_classes_permissions(
+            admin_user_id=admin_user_id,
+            student_id=student_id,
+        )
+    )
+
+    if permissions is None:
+        await _safe_callback_answer(
+            callback,
+            "Не удалось проверить список прав.",
+            show_alert=True,
+        )
+        return
+
+    selected_permission = next(
+        (
+            item
+            for item in permissions
+            if item.adult_user_id == adult_user_id
+        ),
+        None,
+    )
+
+    # Не позволяем подменой callback изменить право:
+    # - admin;
+    # - пользователя из другой семьи;
+    # - взрослого, не связанного со student profile.
+    if selected_permission is None:
+        await _safe_callback_answer(
+            callback,
+            "Этот взрослый не найден среди участников семьи.",
+            show_alert=True,
+        )
+        return
+
+    changed = (
+        await profile_service.set_adult_student_extra_classes_permission(
+            admin_user_id=admin_user_id,
+            adult_user_id=adult_user_id,
+            student_id=student_id,
+            can_manage=not (
+                selected_permission.can_manage_extra_classes
+            ),
+        )
+    )
+
+    if not changed:
+        await _safe_callback_answer(
+            callback,
+            "Не удалось изменить право. "
+            "Возможно, состав семьи изменился.",
+            show_alert=True,
+        )
+        return
+
+    refreshed_permissions = (
+        await profile_service.get_adult_student_extra_classes_permissions(
+            admin_user_id=admin_user_id,
+            student_id=student_id,
+        )
+    )
+
+    if refreshed_permissions is None:
+        await _safe_callback_answer(
+            callback,
+            "Не удалось обновить список прав.",
+            show_alert=True,
+        )
+        return
+
+    text = UIRenderer.render_adult_student_extra_classes_permissions(
+        student=student,
+        permissions=refreshed_permissions,
+    )
+
+    keyboard = (
+        Keyboards.get_adult_student_extra_classes_permissions_kb(
+            student_id=student.id,
+            permissions=refreshed_permissions,
+        )
+    )
+
+    await _safe_edit_text(
+        callback.message,
+        text,
+        reply_markup=keyboard,
+    )
+
+    await _safe_callback_answer(
+        callback,
+        "✅ Право взрослого обновлено.",
     )
