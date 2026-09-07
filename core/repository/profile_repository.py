@@ -626,7 +626,7 @@ class ProfileRepository(BaseRepository):
         Создаёт новую семью и привязывает создателя как администратора-родителя.
 
         На момент создания семьи детей ещё нет, поэтому строки
-        parent_child_settings не создаются. Они появятся автоматически,
+        parent_student_settings не создаются. Они появятся автоматически,
         когда к семье присоединится ребёнок.
         """
         family_code = str(uuid.uuid4())[:8].upper()
@@ -706,7 +706,7 @@ class ProfileRepository(BaseRepository):
 
         После операции каждая пара:
             parent/observer × child
-        в рамках семьи существует в parent_child_settings.
+        в рамках семьи существует в parent_student_settings.
         """
         allowed_roles = {"child", "parent", "observer"}
 
@@ -764,40 +764,6 @@ class ProfileRepository(BaseRepository):
 
     # ========== CHILDREN LIST ==========
 
-    async def get_children_for_parent_rows(
-        self,
-        parent_user_id: int,
-    ) -> List[Dict[str, Any]]:
-        """
-        Возвращает только детей, на которых у взрослого есть запись
-        parent_child_settings.
-
-        parent_child_settings — источник истины для взрослого доступа
-        к конкретному ребёнку.
-        """
-        return await self._fetch_all(
-            """
-            SELECT
-                child.user_id,
-                child.name,
-                child.class_id,
-                child.group_id
-            FROM parent_child_settings AS pcs
-            JOIN users AS adult
-              ON adult.user_id = pcs.parent_id
-            JOIN users AS child
-              ON child.user_id = pcs.child_id
-            WHERE pcs.parent_id = ?
-              AND adult.role IN ('parent', 'observer')
-              AND child.role = 'child'
-              AND adult.family_id = child.family_id
-            ORDER BY
-                COALESCE(child.name, ''),
-                child.user_id
-            """,
-            (parent_user_id,),
-        )
-        
     async def update_user_name(self, user_id: int, name: str) -> None:
         """Сохраняет имя пользователя."""
         await self._execute(
@@ -1045,7 +1011,7 @@ class ProfileRepository(BaseRepository):
         Расформировывает семью по инициативе её администратора.
 
         Последствия:
-        - удаляются parent_child_settings всей семьи;
+        - удаляются parent_student_settings всей семьи;
         - удаляются extra_classes всей семьи;
         - очищаются логи отправки уведомлений всей семьи;
         - все участники отвязываются от family_id;

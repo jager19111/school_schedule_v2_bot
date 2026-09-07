@@ -42,23 +42,26 @@ class ScheduleRepository(BaseRepository):
     - schedule_cache хранит ограниченный горизонт дат.
     """
 
-    HISTORY_DAYS = 7
 
     def __init__(
         self,
+        *,
         db_path: str,
         time_service: TimeService,
         proxy: str | None = None,
-    ):
+        nika_base_url: str = "https://lyceum.nstu.ru/rasp",
+        history_days: int = 7,
+    ) -> None:
         super().__init__(
             db_path=db_path,
             time_service=time_service,
         )
 
         self.fetcher = ScheduleFetcher(
+            base_url=nika_base_url,
             proxy=proxy,
         )
-
+        self.history_days = history_days
     # ==========================================================
     # State / raw cache
     # ==========================================================
@@ -125,6 +128,179 @@ class ScheduleRepository(BaseRepository):
             """
         )
 
+    async def record_nika_refresh_error(
+        self,
+        *,
+        error_message: str,
+    ) -> None:
+        """
+        Сохраняет последнюю ошибку обновления NIKA.
+
+        Не создаёт nika_source_state при первом bootstrap failure,
+        потому что в этом случае ещё неизвестны обязательные metadata:
+        js_filename, raw_sha256 и semantic_sha256.
+
+        Когда успешный snapshot уже существует, ошибка записывается
+        в текущую единственную строку id=1.
+        """
+        normalized_error = (
+            error_message.strip()[:1500]
+            if error_message
+            else "Unknown NIKA refresh error"
+        )
+
+        changed = await self._execute(
+            """
+            UPDATE nika_source_state
+            SET
+                last_error = ?,
+                last_error_at = CURRENT_TIMESTAMP
+            WHERE id = 1
+            """,
+            (normalized_error,),
+        )
+
+        if changed == 0:
+            logger.warning(
+                "NIKA refresh failed before initial source state exists: %s",
+                normalized_error,
+            )
+
+    async def clear_nika_refresh_error(
+        self,
+    ) -> None:
+        """
+        Очищает last_error после успешного refresh/probe.
+        """
+        await self._execute(
+            """
+            UPDATE nika_source_state
+            SET
+                last_error = NULL,
+                last_error_at = NULL
+            WHERE id = 1
+            """
+        )
+
+    async def get_nika_health_status(
+        self,
+    ) -> Dict[str, Any]:
+        """
+        Возвращает сохранённый статус NIKA source и schedule cache.
+
+        Не делает HTTP-запросов.
+        Не запускает refresh.
+        Безопасен для admin diagnostics.
+        """
+        #получение текущей даты относительно часового пояса бота ---
+        today_iso = self.time_service.get_now_base().date().isoformat()
+        state = await self.get_nika_source_state()
+
+        cache_info = await self._fetch_one(
+            """
+            SELECT
+                COUNT(*) AS lesson_count,
+                MIN(date) AS first_date,
+                MAX(date) AS last_date
+            FROM schedule_cache
+            """
+        )
+
+        lesson_count = int(
+            cache_info["lesson_count"]
+            if cache_info
+            else 0
+        )
+
+        first_date = (
+            cache_info.get("first_date")
+            if cache_info
+            else None
+        )
+
+        last_date = (
+            cache_info.get("last_date")
+            if cache_info
+            else None
+        )
+
+        if state is None:
+            return {
+                "status": (
+                    "cache_empty"
+                    if lesson_count == 0
+                    else "cache_without_source_state"
+                ),
+                "lesson_count": lesson_count,
+                "coverage_start_date": first_date,
+                "coverage_end_date": last_date,
+                "today_date": today_iso,
+                "coverage_is_current": False,
+                "coverage_has_future": False,
+                "js_filename": None,
+                "export_date": None,
+                "export_time": None,
+                "last_checked_at": None,
+                "last_changed_at": None,
+                "last_error": None,
+                "last_error_at": None,
+            }
+
+        if state.get("last_error"):
+            status = (
+                "source_error_cache_available"
+                if lesson_count > 0
+                else "source_error_cache_empty"
+            )
+        elif lesson_count == 0:
+            status = "source_healthy_cache_empty"
+        else:
+            status = "healthy"
+
+# определяем coverage_end_date перед return для вычислений ---
+        coverage_end_date = (
+            state.get("coverage_end_date")
+            or last_date
+        )
+
+        # вычисление покрытия ---
+        coverage_is_current = bool(
+            coverage_end_date
+            and coverage_end_date >= today_iso
+        )
+        
+        coverage_has_future = bool(
+            coverage_end_date
+            and coverage_end_date > today_iso
+        )
+        
+        return {
+            "status": status,
+            "lesson_count": lesson_count,
+
+            "coverage_start_date": (
+                state.get("coverage_start_date")
+                or first_date
+            ),
+            "coverage_end_date": (
+                state.get("coverage_end_date")
+                or last_date
+            ),
+
+            "today_date": today_iso,
+            "coverage_is_current": coverage_is_current,
+            "coverage_has_future": coverage_has_future,
+            "js_filename": state.get("js_filename"),
+            "export_date": state.get("export_date"),
+            "export_time": state.get("export_time"),
+
+            "last_checked_at": state.get("last_checked_at"),
+            "last_changed_at": state.get("last_changed_at"),
+
+            "last_error": state.get("last_error"),
+            "last_error_at": state.get("last_error_at"),
+        }
+                
     @staticmethod
     def _coverage_needs_refresh(
         state: Optional[Dict[str, Any]],
@@ -589,12 +765,12 @@ class ScheduleRepository(BaseRepository):
 
         coverage_start_date = target_date_values[0]
         coverage_end_date = target_date_values[-1]
-
+        
         history_cutoff = (
             datetime.date.fromisoformat(
                 coverage_start_date
             )
-            - datetime.timedelta(days=self.HISTORY_DAYS)
+            - datetime.timedelta(days=self.history_days)
         ).isoformat()
 
         placeholders = ",".join(

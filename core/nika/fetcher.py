@@ -35,9 +35,10 @@ class ScheduleFetcher:
 
     def __init__(
         self,
-        base_url: str = "https://lyceum.nstu.ru/rasp/",
-        proxy: Optional[str] = None,
-    ):
+        *,
+        base_url: str = "https://lyceum.nstu.ru/rasp",
+        proxy: str | None = None,
+    ) -> None:
         self.base_url = base_url.rstrip("/")
         self.proxy = proxy
 

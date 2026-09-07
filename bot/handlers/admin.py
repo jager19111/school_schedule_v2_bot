@@ -1,16 +1,94 @@
+# bot/handlers/admin.py
 import logging
+
 from aiogram import Router
-from aiogram.types import Message
 from aiogram.filters import Command
-from services.admin_service import AdminService
+from aiogram.types import Message
+
 from bot.utils.ui_renderer import UIRenderer
+from services.admin_service import AdminService
+
 
 logger = logging.getLogger(__name__)
 router = Router()
 
+
+async def _require_admin(
+    *,
+    message: Message,
+    admin_service: AdminService,
+) -> bool:
+    """
+    Проверяет доступ к admin commands через service.
+    """
+    if admin_service.is_admin(
+        user_id=message.from_user.id,
+    ):
+        return True
+
+    logger.warning(
+        "Admin command denied: user_id=%s command=%r",
+        message.from_user.id,
+        message.text,
+    )
+
+    await message.answer(
+        "⛔ Команда доступна только администратору."
+    )
+
+    return False
+
+
 @router.message(Command("stats"))
-async def cmd_stats(message: Message, admin_service: AdminService):
-    # Rule 2 & 8: Никаких SQL и проверок. Только вызов сервиса -> DTO -> Renderer[cite: 1].
+async def cmd_stats(
+    message: Message,
+    admin_service: AdminService,
+) -> None:
+    """
+    Общая статистика пользователей.
+    """
+    if not await _require_admin(
+        message=message,
+        admin_service=admin_service,
+    ):
+        return
+
     dto = await admin_service.get_statistics()
-    text, kb = UIRenderer.render_admin_stats(dto)
-    await message.answer(text, reply_markup=kb, parse_mode="HTML")
+
+    text = UIRenderer.render_admin_stats(
+        dto,
+    )
+
+    await message.answer(
+        text,
+        # Убираем reply_markup=keyboard, так как клавиатуры здесь нет
+        parse_mode="HTML",
+    )
+
+
+@router.message(Command("source_status"))
+async def cmd_source_status(
+    message: Message,
+    admin_service: AdminService,
+) -> None:
+    """
+    Показывает сохранённое состояние NIKA source и schedule cache.
+
+    Не запускает refresh и не делает HTTP request.
+    """
+    if not await _require_admin(
+        message=message,
+        admin_service=admin_service,
+    ):
+        return
+
+    dto = await admin_service.get_nika_source_health()
+
+    text = UIRenderer.render_nika_source_health(
+        dto,
+    )
+
+    await message.answer(
+        text,
+        parse_mode="HTML",
+    )

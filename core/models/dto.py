@@ -14,7 +14,25 @@ class GroupListDTO:
 class FamilyCreatedDTO:
     family_code: str
 
+if False:
+    #--------Восстановил после рефакторинга. удалить-------
+    @dataclass
+    class ChildrenListDTO:
+        """ DTO для списка детей родителя. 
+        """
+        children: List[ChildInfoDTO]
+        action: str
 
+    @dataclass
+    class ChildInfoDTO:
+        """
+        DTO для информации о ребёнке в списке детей родителя. 
+        """
+        user_id: int
+        name: str
+        class_id: str
+        group_id: str  # <-- Обязательно добавляем поле
+    #----------------   
 @dataclass
 class FamilyInviteDTO:
     """
@@ -197,7 +215,37 @@ class AdminStatsDTO:
     """ DTO для статистики по пользователям. """
     total_users: int
     role_distribution: Dict[str, int]
-    
+
+@dataclass
+class NikaSourceHealthDTO:
+    """
+    Диагностическое состояние NIKA source и локального schedule cache.
+
+    Команда не делает network request:
+    она показывает только уже сохранённый state.
+    """
+    status: str
+
+    lesson_count: int = 0
+
+    today_date: str | None = None
+
+    coverage_start_date: str | None = None
+    coverage_end_date: str | None = None
+
+    coverage_is_current: bool = False
+    coverage_has_future: bool = False
+
+    js_filename: str | None = None
+    export_date: str | None = None
+    export_time: str | None = None
+
+    last_checked_at: str | None = None
+    last_changed_at: str | None = None
+
+    last_error: str | None = None
+    last_error_at: str | None = None
+        
 @dataclass
 class LessonDTO:
     """ DTO для одного урока. 

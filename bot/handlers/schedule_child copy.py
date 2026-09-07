@@ -14,10 +14,6 @@ from services.schedule_service import ScheduleService
 from services.watch_targets_service import WatchTargetsService
 from services.students_service import StudentsService
 
-from bot.handlers.schedule_teacher import (
-    open_teacher_schedule_for_message,
-)
-
 logger = logging.getLogger(__name__)
 router = Router()
 
@@ -436,20 +432,9 @@ async def open_schedule_hub(
     actor_user_id = message.from_user.id
 # Защита
     actor = await profile_service.get_user_profile_dto(actor_user_id)
-
     if actor.role == "teacher":
-        opened = await open_teacher_schedule_for_message(
-            message=message,
-            profile_service=profile_service,
-            schedule_service=schedule_service,
-        )
-
-        if not opened:
-            await message.answer(
-                "❌ Не удалось открыть расписание учителя. "
-                "Проверьте выбранный профиль учителя в настройках."
-            )
-
+        # Teacher Schedule Hub обслуживается отдельным router,
+        # подключённым раньше в main.py.
         return
     
     if not actor.is_fully_registered:

@@ -15,6 +15,34 @@ class Config:
     DB_PATH: str = os.getenv("DB_PATH", "schedule_bot.db")
     # Если закомментировано или пусто — будет строго None
     PROXY_URL: Optional[str] = os.getenv("PROXY_URL", "").strip() or None
+    NIKA_BASE_URL: str = (
+        os.getenv(
+            "NIKA_BASE_URL",
+            "https://lyceum.nstu.ru/rasp",
+        )
+        .strip()
+        .rstrip("/")
+    )
+    NIKA_REFRESH_INTERVAL_MINUTES: int = int(
+        os.getenv(
+            "NIKA_REFRESH_INTERVAL_MINUTES",
+            "5",
+        )
+    )
+
+    NIKA_COVERAGE_DAYS: int = int(
+        os.getenv(
+            "NIKA_COVERAGE_DAYS",
+            "21",
+        )
+    )
+
+    NIKA_HISTORY_DAYS: int = int(
+        os.getenv(
+            "NIKA_HISTORY_DAYS",
+            "7",
+        )
+    )
     TIMEZONE: str = os.getenv("TIMEZONE", "Asia/Novosibirsk")
     ADMIN_IDS: List[int] = field(
         default_factory=lambda: [
@@ -23,3 +51,21 @@ class Config:
     )
 
 config = Config()
+
+def validate_config(config: Config) -> None:
+    if config.NIKA_REFRESH_INTERVAL_MINUTES < 1:
+        raise ValueError(
+            "NIKA_REFRESH_INTERVAL_MINUTES must be >= 1"
+        )
+
+    if not 1 <= config.NIKA_COVERAGE_DAYS <= 90:
+        raise ValueError(
+            "NIKA_COVERAGE_DAYS must be in range 1..90"
+        )
+
+    if not 0 <= config.NIKA_HISTORY_DAYS <= 90:
+        raise ValueError(
+            "NIKA_HISTORY_DAYS must be in range 0..90"
+        )
+        
+validate_config(config)

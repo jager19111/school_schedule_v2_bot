@@ -161,17 +161,18 @@ async def _render_teacher_week(
     return text, keyboard
 
 
-@router.message(F.text == "📅 Моё расписание")
-async def open_teacher_schedule_hub(
+async def open_teacher_schedule_for_message(
+    *,
     message: Message,
     profile_service: ProfileService,
     schedule_service: ScheduleService,
-) -> None:
+) -> bool:
     """
-    Teacher personal Schedule Hub.
+    Открывает personal Schedule Hub учителя.
 
-    Этот handler обязан быть подключён в main.py
-    раньше student Schedule Hub router.
+    Это helper, а не aiogram message handler.
+    Единственная точка входа «📅 Моё расписание»
+    находится в schedule_child.py и dispatch-ит по role.
     """
     teacher = await _get_teacher_profile(
         user_id=message.from_user.id,
@@ -179,7 +180,7 @@ async def open_teacher_schedule_hub(
     )
 
     if teacher is None:
-        return
+        return False
 
     teacher_name = await _teacher_name(
         teacher_id=teacher.teacher_id,
@@ -206,6 +207,7 @@ async def open_teacher_schedule_hub(
         parse_mode="HTML",
     )
 
+    return True
 
 @router.callback_query(
     F.data == "teacher_sched:smart_day"

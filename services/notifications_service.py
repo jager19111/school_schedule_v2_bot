@@ -54,7 +54,7 @@ class NotificationService:
 
         Ребёнок получает сводку только по себе.
         Взрослый получает одно сообщение, объединяющее сводки всех детей,
-        на которых он подписан через parent_child_settings.
+        на которых он подписан через parent_student_settings.
 
         Успешные доставки логируются отдельно по каждой паре:
             recipient_id + target_student_id + date.

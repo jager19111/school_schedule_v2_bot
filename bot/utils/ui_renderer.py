@@ -4,7 +4,7 @@ from core.models.dto import (ClassListDTO, FamilyCreatedDTO, AdminStatsDTO, DayS
                              WeekSummaryDTO, FullWeekScheduleDTO, UserProfileDTO, FamilyMemberDTO,
                              MorningSummaryDTO, ChangeReminderDTO, LessonReminderDTO, ProfileResetImpactDTO, FamilyInviteDTO, 
                             ScheduleWatchTargetDTO, StudentProfileDTO, ParentStudentNotificationSettingsDTO,
-                            AdultStudentExtraClassesPermissionDTO, StudentTelegramSettingsDTO,
+                            AdultStudentExtraClassesPermissionDTO, StudentTelegramSettingsDTO, NikaSourceHealthDTO,
 )
 
 class UIRenderer:
@@ -24,6 +24,118 @@ class UIRenderer:
             return fallback
 
         return escape(value_str)
+
+    @staticmethod
+    def render_nika_source_health(
+        dto: NikaSourceHealthDTO,
+    ) -> str:
+        """
+        Рендерит admin-only диагностику NIKA source/cache.
+        """
+        status_headers = {
+            "healthy": (
+                "🟢 <b>NIKA source: работает</b>",
+                "Последняя проверка прошла успешно.",
+            ),
+            "source_error_cache_available": (
+                "🟡 <b>NIKA source: недоступен</b>",
+                "Bot использует последнее сохранённое расписание.",
+            ),
+            "source_error_cache_empty": (
+                "🔴 <b>NIKA source: недоступен</b>",
+                "Локальное расписание ещё не загружено.",
+            ),
+            "source_healthy_cache_empty": (
+                "🟠 <b>NIKA source: cache пуст</b>",
+                "Источник доступен, но расписание пока не сохранено.",
+            ),
+            "cache_empty": (
+                "🔴 <b>NIKA source: нет данных</b>",
+                "Источник ещё не был успешно загружен.",
+            ),
+            "cache_without_source_state": (
+                "🟠 <b>NIKA source: неполный state</b>",
+                "Cache существует, но metadata источника отсутствует.",
+            ),
+        }
+
+        header, description = status_headers.get(
+            dto.status,
+            (
+                "⚪ <b>NIKA source: неизвестный статус</b>",
+                "Не удалось определить состояние источника.",
+            ),
+        )
+
+        lines = [
+            header,
+            "",
+            description,
+            "",
+            "<b>Источник</b>",
+            f"JS: <code>{UIRenderer.escape_html(dto.js_filename)}</code>"
+            if dto.js_filename
+            else "JS: —",
+            (
+                f"Экспорт: <code>{UIRenderer.escape_html(dto.export_date)}</code> "
+                f"<code>{UIRenderer.escape_html(dto.export_time)}</code>"
+                if dto.export_date or dto.export_time
+                else "Экспорт: —"
+            ),
+            (
+                "Последняя проверка: "
+                f"<code>{UIRenderer.escape_html(dto.last_checked_at)}</code>"
+                if dto.last_checked_at
+                else "Последняя проверка: —"
+            ),
+            (
+                "Последнее изменение: "
+                f"<code>{UIRenderer.escape_html(dto.last_changed_at)}</code>"
+                if dto.last_changed_at
+                else "Последнее изменение: —"
+            ),
+            "",
+            "<b>Локальный cache</b>",
+            f"Уроков: <b>{dto.lesson_count}</b>",
+            (
+                "Coverage: "
+                f"<code>{UIRenderer.escape_html(dto.coverage_start_date)}</code> "
+                "— "
+                f"<code>{UIRenderer.escape_html(dto.coverage_end_date)}</code>"
+                if dto.coverage_start_date
+                and dto.coverage_end_date
+                else "Coverage: —"
+            ),
+        ]
+        
+        if dto.coverage_end_date:
+            if dto.coverage_has_future:
+                coverage_status = "🟢 Coverage включает будущие дни"
+            elif dto.coverage_is_current:
+                coverage_status = (
+                    "🟡 Coverage заканчивается сегодня"
+                )
+            else:
+                coverage_status = (
+                    "🔴 Coverage cache уже устарел"
+                )
+
+            lines.append(coverage_status)
+                    
+        if dto.last_error:
+            lines.extend([
+                "",
+                "<b>Последняя ошибка</b>",
+                f"<code>{UIRenderer.escape_html(dto.last_error)}</code>",
+                (
+                    "Время ошибки: "
+                    f"<code>{UIRenderer.escape_html(dto.last_error_at)}</code>"
+                    if dto.last_error_at
+                    else "Время ошибки: —"
+                ),
+            ])
+
+        return "\n".join(lines)
         
     @staticmethod
     def render_role_selection() -> str:
