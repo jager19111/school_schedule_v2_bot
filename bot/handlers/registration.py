@@ -466,7 +466,7 @@ async def process_student_claim_name(
         )
         return
 
-    response = await students_service.consume_student_claim_invite_with_merge(
+    response = await students_service.consume_student_claim_invite(
         token=token,
         telegram_user_id=actor_user_id,
         name=name,
@@ -501,183 +501,7 @@ async def process_student_claim_name(
         )
 
     await _show_main_menu(message)
-    
-    if False:
-        @router.callback_query(
-            RegistrationStates.waiting_for_claim_class,
-            F.data.startswith("claim:class:"),
-        )
-        async def process_student_claim_class(
-            callback: CallbackQuery,
-            state: FSMContext,
-            schedule_service: ScheduleService,
-        ) -> None:
-            try:
-                class_id = callback.data.split(":")[2]
-            except IndexError:
-                await callback.answer(
-                    "Некорректный класс.",
-                    show_alert=True,
-                )
-                return
-
-            data = await state.get_data()
-
-            if data.get("claim_actor_user_id") != callback.from_user.id:
-                await state.clear()
-
-                await callback.answer(
-                    "❌ Состояние привязки устарело.",
-                    show_alert=True,
-                )
-                return
-
-            groups_dto = await schedule_service.get_groups_list()
-
-            await state.update_data(
-                claim_class_id=class_id,
-            )
-
-            text, _ = UIRenderer.render_main_group_selection()
-
-            await callback.message.edit_text(
-                text,
-                reply_markup=Keyboards.get_claim_group_selection_kb(
-                    groups_dto,
-                ),
-                parse_mode="HTML",
-            )
-
-            await state.set_state(
-                RegistrationStates.waiting_for_claim_group,
-            )
-
-            await callback.answer()
-
-        @router.callback_query(
-            RegistrationStates.waiting_for_claim_group,
-            F.data == "claim:back_to_class",
-        )
-        async def back_to_student_claim_class(
-            callback: CallbackQuery,
-            state: FSMContext,
-            schedule_service: ScheduleService,
-        ) -> None:
-            data = await state.get_data()
-
-            if data.get("claim_actor_user_id") != callback.from_user.id:
-                await state.clear()
-
-                await callback.answer(
-                    "❌ Состояние привязки устарело.",
-                    show_alert=True,
-                )
-                return
-
-            class_dto = await schedule_service.get_classes_list()
-
-            await callback.message.edit_text(
-                UIRenderer.render_class_selection(class_dto),
-                reply_markup=Keyboards.get_claim_class_selection_kb(
-                    class_dto,
-                ),
-                parse_mode="HTML",
-            )
-
-            await state.set_state(
-                RegistrationStates.waiting_for_claim_class,
-            )
-
-            await callback.answer()
-
-        @router.callback_query(
-            RegistrationStates.waiting_for_claim_group,
-            F.data.startswith("claim:group:"),
-        )
-        async def process_student_claim_group(
-            callback: CallbackQuery,
-            state: FSMContext,
-            students_service: StudentsService,
-            profile_service: ProfileService,
-        ) -> None:
-            try:
-                group_id = callback.data.split(":")[2]
-            except IndexError:
-                await callback.answer(
-                    "Некорректная группа.",
-                    show_alert=True,
-                )
-                return
-
-            data = await state.get_data()
-
-            actor_user_id = callback.from_user.id
-
-            claim_actor_user_id = data.get("claim_actor_user_id")
-            token = data.get("claim_token")
-            name = data.get("claim_name")
-            class_id = data.get("claim_class_id")
-
-            if (
-                claim_actor_user_id != actor_user_id
-                or not token
-                or not name
-                or not class_id
-            ):
-                await state.clear()
-
-                await callback.answer(
-                    "❌ Состояние привязки устарело. "
-                    "Откройте ссылку заново.",
-                    show_alert=True,
-                )
-                return
-
-            response = await students_service.consume_student_claim_invite(
-                token=token,
-                telegram_user_id=actor_user_id,
-                name=name,
-                class_id=class_id,
-                group_id=group_id,
-            )
-
-            await state.clear()
-
-            if not response.success:
-                await callback.answer(
-                    "❌ Не удалось привязать профиль. "
-                    "Возможно, ссылка уже использована, истекла "
-                    "или ученик уже привязан к Telegram.",
-                    show_alert=True,
-                )
-                return
-
-            user_dto = await profile_service.get_user_profile_dto(
-                actor_user_id,
-            )
-
-            text = UIRenderer.render_final_success(
-                user_dto.name,
-            )
-
-            try:
-                await callback.message.delete()
-            except TelegramBadRequest:
-                pass
-
-            await callback.message.answer(
-                "✅ <b>Telegram успешно привязан!</b>\n\n"
-                f"{text}",
-                parse_mode="HTML",
-            )
-
-            await callback.message.answer(
-                UIRenderer.render_main_menu(),
-                reply_markup=Keyboards.get_main_menu(),
-            )
-
-            await callback.answer()
-                        
+                           
 @router.callback_query(RegistrationStates.waiting_for_role, F.data.startswith("role:"))
 async def process_role(callback: CallbackQuery, state: FSMContext, profile_service: ProfileService):
     role = callback.data.split(":")[1]
@@ -1069,7 +893,7 @@ async def process_group(
 
         await state.clear()
 
-#  Проверка успешности создания профиля при инвайте
+        # Проверка успешности создания профиля при инвайте
         student = await students_service.ensure_telegram_student_profile(
             telegram_user_id=callback.from_user.id,
         )
@@ -1089,10 +913,8 @@ async def process_group(
             user_dto.name,
         )
 
-        try:
+        with contextlib.suppress(TelegramBadRequest):
             await callback.message.delete()
-        except TelegramBadRequest:
-            pass
 
         await callback.message.answer(
             text,
@@ -1111,14 +933,21 @@ async def process_group(
     
     # 2. Сохраняем в профиль
     target_user_id = data.get('editing_child_id', callback.from_user.id)
-    # дополнительная проверка: пользователь мог открыть старое FSM-состояние или попытаться подделать переход.
     editing_child_id = data.get("editing_child_id")
 
     if editing_child_id is not None:
-        is_admin = await profile_service.is_family_admin_for_child(
-            admin_user_id=callback.from_user.id,
-            child_user_id=editing_child_id,
+        # Узнаем, в какой семье состоит ребенок
+        child_dto = await profile_service.get_user_profile_dto(
+            editing_child_id
         )
+        
+        is_admin = False
+        if child_dto.family_id:
+            # Проверяем, является ли родитель администратором этой семьи
+            is_admin = await profile_service.is_family_admin(
+                user_id=callback.from_user.id,
+                family_id=child_dto.family_id,
+            )
 
         if not is_admin:
             await state.clear()
@@ -1148,12 +977,17 @@ async def process_group(
                 )
                 return
 
-    await profile_service.set_child_class_and_group(target_user_id, data['class_id'], final_group_string)
+    await profile_service.set_child_class_and_group(
+        target_user_id, 
+        data['class_id'], 
+        final_group_string
+    )
     
-#  Проверка синхронизации профиля при обычной регистрации/настройке
+    # Проверка синхронизации профиля при обычной регистрации/настройке
     student = await students_service.ensure_telegram_student_profile(
         telegram_user_id=target_user_id,
     )
+    
     if student is None:
         await state.clear()
         await callback.answer(
@@ -1161,30 +995,46 @@ async def process_group(
             show_alert=True,
         )
         return
+
     # 3. ВЕТКА 1: Возврат в Настройки (если редактировали профиль ребенка через родителя)
-    if 'editing_child_id' in data:
+    if editing_child_id is not None:
+        # --- 1. Запрашиваем справочники из ScheduleService ---
+        classes_dto = await schedule_service.get_classes_list()
+        groups_dto = await schedule_service.get_groups_list()
+        
+        # Расшифровываем ID из student.class_id и student.group_id
+        class_name = classes_dto.classes.get(student.class_id, student.class_id)
+        group_name = "Весь класс" if student.group_id == "ALL" else groups_dto.groups.get(student.group_id, student.group_id)
+
         await state.clear()
+        # Получаем данные профиля для отображения имени
         child_dto = await profile_service.get_user_profile_dto(
             target_user_id,
         )
 
-        is_locked = await profile_service.is_child_notification_settings_locked(
-            child_user_id=target_user_id,
+        # Если ребенок НЕ может менять настройки сам, значит включена блокировка
+        is_locked = not await profile_service.can_user_change_own_notification_settings(
+            user_id=target_user_id,
         )
 
-        text = UIRenderer.render_child_settings_menu(
+        text = UIRenderer.render_settings_main(
             child_dto.name,
-            child_dto.class_id,
+            class_name=class_name,
+            group_name=group_name,
         )
 
-        kb = Keyboards.get_child_settings_kb(
-            child_dto=child_dto,
+        kb = Keyboards.get_student_details_kb(
+            student_id=student.id,
+            telegram_user_id=target_user_id,
             is_family_admin=True,
-            is_notifications_locked=is_locked,
         )
         
         with contextlib.suppress(TelegramBadRequest):
-            await callback.message.edit_text(f"✅ Подгруппа успешно обновлена.\n\n{text}", reply_markup=kb, parse_mode="HTML")
+            await callback.message.edit_text(
+                f"✅ Подгруппа успешно обновлена.\n\n{text}", 
+                reply_markup=kb, 
+                parse_mode="HTML"
+            )
         return await callback.answer()
 
     # 4. ВЕТКА 2: Возврат в свои Настройки (если просто меняли свой класс)
@@ -1215,20 +1065,15 @@ async def process_group(
         getattr(user_dto, "name", "Пользователь"),
     )
 
-    await callback.message.delete()
+    with contextlib.suppress(TelegramBadRequest):
+        await callback.message.delete()
 
     await callback.message.answer(
         text,
         parse_mode="HTML",
     )
 
-    menu_text = UIRenderer.render_main_menu()
-    menu_kb = Keyboards.get_main_menu()
-
-    await callback.message.answer(
-        menu_text,
-        reply_markup=menu_kb,
-    )
+    await _show_main_menu(callback.message)
 
     await callback.answer()
 

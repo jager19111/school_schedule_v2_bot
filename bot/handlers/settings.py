@@ -3114,7 +3114,11 @@ async def start_student_class_edit(
         return
 
     student_dto, _access = student
-
+# 1. Получаем красивые названия через наш хелпер
+    class_name, group_name = await schedule_service.get_readable_class_and_group(
+        student_dto.class_id, 
+        student_dto.group_id
+    )
     classes_dto = await schedule_service.get_classes_list()
 
     await state.clear()
@@ -3127,7 +3131,9 @@ async def start_student_class_edit(
     await _safe_edit_text(
         callback.message,
         UIRenderer.render_student_edit_class_prompt(
-            student_dto,
+            student=student_dto,
+            class_name=class_name,
+            group_name=group_name,
         ),
         reply_markup=Keyboards.get_student_edit_class_selection_kb(
             classes_dto,
@@ -3220,12 +3226,17 @@ async def select_student_new_class(
     await state.update_data(
         student_edit_class_id=class_id,
     )
-
+# Получаем красивое имя для нового класса (группа пока не важна, передаем None)
+    class_name, _ = await schedule_service.get_readable_class_and_group(
+        class_id, 
+        None
+    )
     await _safe_edit_text(
         callback.message,
         UIRenderer.render_student_edit_group_prompt(
-            student,
-        ),
+            student=student,
+            new_class_name=class_name,
+            ),
         reply_markup=Keyboards.get_student_edit_group_selection_kb(
             groups_dto,
             student_id=student_id,

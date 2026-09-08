@@ -1744,6 +1744,8 @@ class UIRenderer:
     @staticmethod
     def render_student_edit_class_prompt(
         student: StudentProfileDTO,
+        class_name: str,
+        group_name: str,
     ) -> str:
         """
         Запрос выбора класса family admin.
@@ -1756,14 +1758,15 @@ class UIRenderer:
         return (
             "🎓 <b>Изменение класса и группы</b>\n\n"
             f"👤 Ученик: <b>{student_name}</b>\n"
-            f"Текущий класс: <b>{student.class_id}</b>\n"
-            f"Текущая группа: <b>{student.group_id}</b>\n\n"
+            f"Текущий класс: <b>{class_name}</b>\n"
+            f"Текущая группа: <b>{group_name}</b>\n\n"
             "Выберите новый класс."
         )
-        
+
     @staticmethod
     def render_student_edit_group_prompt(
         student: StudentProfileDTO,
+        class_name: str,
     ) -> str:
         """
         Запрос выбора группы family admin.
@@ -1776,10 +1779,9 @@ class UIRenderer:
         return (
             "👥 <b>Изменение группы</b>\n\n"
             f"👤 Ученик: <b>{student_name}</b>\n"
-            f"Новый класс: <b>{student.class_id}</b>\n\n"
+            f"Новый класс: <b>{class_name}</b>\n\n"
             "Выберите группу."
         )
-        
     #----------------------
     #   УЧИТЕЛЬ
     #----------------------
