@@ -64,10 +64,70 @@ async def cmd_start(
     """
     user_id = message.from_user.id
 
+    # 1. Нормализация payload (защита от точек и пробелов в конце)
+    payload = (
+        (command.args or "")
+        .strip()
+        .rstrip(".,;:!?")
+    )
+
+    # 2. Получаем текущее состояние ДО любых изменений
+    current_state = await state.get_state()
+    current_data = await state.get_data()
+
+    payload_kind = (
+        "join" if payload.startswith("join_")
+        else "claim" if payload.startswith("claim_")
+        else "plain" if not payload
+        else "unknown"
+    )
+
+    # 3. Логируем старт для диагностики
+    logger.info(
+        "Start received: user_id=%s payload_kind=%s "
+        "payload_len=%s state=%r",
+        user_id,
+        payload_kind,
+        len(payload),
+        current_state,
+    )
+    
     await profile_service.register_user_initial(
         user_id,
     )
 
+    # ---------------------------------------------------------
+    # 4. Защита от сброса FSM
+    # Plain /start не должен уничтожать незавершённый invite / claim flow.
+    # ---------------------------------------------------------
+    if not payload:
+        pending_family_invite = current_data.get("family_invite_token")
+        pending_claim = current_data.get("claim_token")
+
+        pending_actor_id = (
+            current_data.get("claim_actor_user_id")
+            or current_data.get("family_invite_actor_user_id")
+        )
+
+        belongs_to_current_user = (
+            pending_actor_id is None
+            or pending_actor_id == user_id
+        )
+
+        if pending_family_invite and belongs_to_current_user:
+            await message.answer(
+                "ℹ️ У вас уже открыто приглашение в семью.\n\n"
+                "Продолжите текущий шаг регистрации."
+            )
+            return
+
+        if pending_claim and belongs_to_current_user:
+            await message.answer(
+                "ℹ️ У вас уже открыта привязка Telegram.\n\n"
+                "Продолжите текущий шаг регистрации."
+            )
+            return
+        
     user_dto = await profile_service.get_user_profile_dto(
         user_id,
     )
@@ -222,6 +282,7 @@ async def cmd_start(
             family_invite_token=token,
             invited_family_id=invite.family_id,
             invited_role=invite.intended_role,
+            family_invite_actor_user_id=user_id,
         )
 
         intro_text = UIRenderer.render_family_join_intro(
