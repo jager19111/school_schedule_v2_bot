@@ -1996,7 +1996,114 @@ class Keyboards:
             inline_keyboard=buttons,
         )
         
-        
+    @staticmethod
+    def get_self_edit_class_selection_kb(
+        dto: ClassListDTO,
+    ) -> InlineKeyboardMarkup:
+        """
+        Выбор класса для зарегистрированного child.
+
+        Используется только в child self-edit settings flow.
+        Не используется при регистрации и family invite.
+        """
+        buttons = []
+        row = []
+
+        for class_id, class_name in dto.classes.items():
+            row.append(
+                InlineKeyboardButton(
+                    text=class_name,
+                    callback_data=f"self_edit:class:{class_id}",
+                )
+            )
+
+            if len(row) == 3:
+                buttons.append(row)
+                row = []
+
+        if row:
+            buttons.append(row)
+
+        buttons.append([
+            InlineKeyboardButton(
+                text="⬅️ Назад к настройкам",
+                callback_data="self_edit:cancel",
+            )
+        ])
+
+        return InlineKeyboardMarkup(
+            inline_keyboard=buttons,
+        )
+
+    @staticmethod
+    def get_self_edit_group_selection_kb(
+        dto: GroupListDTO,
+    ) -> InlineKeyboardMarkup:
+        """
+        Выбор основной группы для child self-edit flow.
+
+        Используются «Весь класс» и основные NIKA-группы 0/1.
+        """
+        buttons = [
+            [
+                InlineKeyboardButton(
+                    text="Весь класс",
+                    callback_data="self_edit:group:ALL",
+                )
+            ]
+        ]
+
+        primary_group_ids = {"0", "1"}
+        added_count = 0
+
+        for group_id, group_name in dto.groups.items():
+            if group_id not in primary_group_ids:
+                continue
+
+            buttons.append([
+                InlineKeyboardButton(
+                    text=group_name,
+                    callback_data=f"self_edit:group:{group_id}",
+                )
+            ])
+
+            added_count += 1
+
+        # Такой же fallback, как в get_main_group_selection(...).
+        # Нужен для классов, где IDs групп не 0/1.
+        if added_count == 0:
+            for group_id, group_name in dto.groups.items():
+                normalized_name = str(group_name).lower()
+
+                if (
+                    "1" in normalized_name
+                    or "2" in normalized_name
+                ) and "3" not in normalized_name:
+                    buttons.append([
+                        InlineKeyboardButton(
+                            text=group_name,
+                            callback_data=f"self_edit:group:{group_id}",
+                        )
+                    ])
+
+        buttons.append([
+            InlineKeyboardButton(
+                text="⬅️ К выбору класса",
+                callback_data="self_edit:back_to_class",
+            )
+        ])
+
+        buttons.append([
+            InlineKeyboardButton(
+                text="⬅️ Назад к настройкам",
+                callback_data="self_edit:cancel",
+            )
+        ])
+
+        return InlineKeyboardMarkup(
+            inline_keyboard=buttons,
+        )
+                    
     #----------------------
     #   УЧИТЕЛЬ
     #----------------------

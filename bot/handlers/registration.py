@@ -313,13 +313,13 @@ async def cmd_start(
             family_invite_actor_user_id=user_id,
         )
 
-        intro_text = UIRenderer.render_family_join_intro(
+        intro_text = UIRenderer.render_family_invite_join_intro(
             intended_role=invite.intended_role,
             has_standalone_child_profile=(
                 invite.intended_role == "child"
                 and is_standalone_child
             ),
-            via_code=False,
+            #via_code=False,
         )
 
         await message.answer(
@@ -518,6 +518,7 @@ async def process_name(
     """
     Обрабатывает имя в обычной регистрации и через family invite.
     """
+    actor_user_id = message.from_user.id
     name = message.text.strip()
 
     if not name:
@@ -531,9 +532,9 @@ async def process_name(
             "❌ Имя слишком длинное. Используйте до 64 символов."
         )
         return
+    
 
     data = await state.get_data()
-
     invite_token = data.get("family_invite_token")
     invited_role = data.get("invited_role")
 
@@ -543,9 +544,22 @@ async def process_name(
     # Consume произойдёт только в process_group.
     # ---------------------------------
     if invite_token and invited_role == "child":
-        await state.update_data(
-            pending_invite_name=name,
+        invite_actor_user_id = data.get(
+            "family_invite_actor_user_id",
         )
+
+        if invite_actor_user_id != actor_user_id:
+            await state.clear()
+
+            await message.answer(
+                "❌ Состояние приглашения устарело. "
+                "Откройте ссылку заново.",
+                show_alert=True,
+            )
+            return
+
+        pending_name = data.get("pending_invite_name")
+        class_id = data.get("class_id")
 
         dicts_dto = await schedule_service.get_school_dictionaries()
 
@@ -817,8 +831,10 @@ async def process_family_code_input(
     )
     
     if not success:
-        text, kb = UIRenderer.render_error_join()
-        await message.answer(text, reply_markup=kb, parse_mode="HTML")
+        await message.answer(
+            UIRenderer.render_error_join(),
+            parse_mode="HTML",
+        )
         return
 
     # Получаем DTO для имени
@@ -970,203 +986,24 @@ async def process_group(
             "✅ Регистрация через приглашение завершена.",
         )
         return
-
-    # =========================================================
-    # 2. Family admin edits class/group of student profile.
-    #
-    # student_edit_id = student_profiles.id.
-    # =========================================================
-    edited_student_id = data.get("student_edit_id")
-    editor_admin_id = data.get("student_edit_admin_id")
-
-    if edited_student_id is not None:
-        if editor_admin_id != actor_user_id:
-            await state.clear()
-
-            await callback.answer(
-                "❌ Состояние редактирования устарело.",
-                show_alert=True,
-            )
-            return
-
-        class_id = data.get("student_edit_class_id")
-
-        if not class_id:
-            await state.clear()
-
-            await callback.answer(
-                "❌ Не выбран класс ученика.",
-                show_alert=True,
-            )
-            return
-
-        result = await students_service.get_student_for_adult(
-            adult_user_id=actor_user_id,
-            student_id=edited_student_id,
-        )
-
-        if result is None:
-            await state.clear()
-
-            await callback.answer(
-                "❌ Профиль ученика недоступен.",
-                show_alert=True,
-            )
-            return
-
-        _student, access = result
-
-        if not access.is_family_admin:
-            await state.clear()
-
-            await callback.answer(
-                "❌ Только администратор семьи может "
-                "менять класс ученика.",
-                show_alert=True,
-            )
-            return
-
-        response = await students_service.update_student_profile(
-            admin_user_id=actor_user_id,
-            student_id=edited_student_id,
-            class_id=class_id,
-            group_id=group_id,
-        )
-
-        if not response.success:
-            await state.clear()
-
-            await callback.answer(
-                "❌ Не удалось обновить профиль ученика.",
-                show_alert=True,
-            )
-            return
-
-        refreshed_result = await students_service.get_student_for_adult(
-            adult_user_id=actor_user_id,
-            student_id=edited_student_id,
-        )
-
-        if refreshed_result is None:
-            await state.clear()
-
-            await callback.answer(
-                "❌ Профиль ученика больше недоступен.",
-                show_alert=True,
-            )
-            return
-
-        student, access = refreshed_result
-
-        classes_dto = await schedule_service.get_classes_list()
-        groups_dto = await schedule_service.get_groups_list()
-
-        class_name = classes_dto.classes.get(
-            student.class_id,
-            student.class_id,
-        )
-
-        group_name = (
-            "Весь класс"
-            if student.group_id == "ALL"
-            else groups_dto.groups.get(
-                student.group_id,
-                student.group_id,
-            )
-        )
-
-        await state.clear()
-
-        text = (
-            "✅ <b>Класс и группа обновлены.</b>\n\n"
-            + UIRenderer.render_student_details(
-                student=student,
-                class_name=class_name,
-                group_name=group_name,
-            )
-        )
-
-        keyboard = Keyboards.get_student_details_kb(
-            student_id=student.id,
-            telegram_user_id=student.telegram_user_id,
-            is_family_admin=access.is_family_admin,
-        )
-
-        with contextlib.suppress(TelegramBadRequest):
-            await callback.message.edit_text(
-                text,
-                reply_markup=keyboard,
-                parse_mode="HTML",
-            )
-
-        await callback.answer()
-        return
-
-    # =========================================================
-    # 3. Child edits own class/group from Settings.
-    # =========================================================
-    self_edit_user_id = data.get("self_edit_user_id")
-
-    if self_edit_user_id is not None:
-        if self_edit_user_id != actor_user_id:
-            await state.clear()
-
-            await callback.answer(
-                "❌ Состояние редактирования устарело.",
-                show_alert=True,
-            )
-            return
-
-        class_id = data.get("class_id")
-
-        if not class_id:
-            await state.clear()
-
-            await callback.answer(
-                "❌ Не выбран класс.",
-                show_alert=True,
-            )
-            return
-
-        await profile_service.set_child_class_and_group(
-            actor_user_id,
-            class_id,
-            group_id,
-        )
-
-        student = await students_service.ensure_telegram_student_profile(
-            telegram_user_id=actor_user_id,
-        )
-
-        if student is None:
-            await state.clear()
-
-            await callback.answer(
-                "❌ Не удалось синхронизировать профиль ученика.",
-                show_alert=True,
-            )
-            return
-
-        await state.clear()
-
-        from bot.handlers.settings import _show_settings_menu
-
-        await _show_settings_menu(
-            message_obj=callback.message,
-            user_id=actor_user_id,
-            profile_service=profile_service,
-            schedule_service=schedule_service,
-            is_callback=True,
-        )
-
-        await callback.answer(
-            "✅ Класс и группа обновлены.",
-        )
-        return
+    
 
     # =========================================================
     # 4. Standard standalone child registration.
     # =========================================================
+    actor_dto = await profile_service.get_user_profile_dto(
+        actor_user_id,
+    )
+
+    if actor_dto.role != "child":
+        await state.clear()
+
+        await callback.answer(
+            "❌ Регистрация ученика недоступна для текущей роли.",
+            show_alert=True,
+        )
+        return
+        
     class_id = data.get("class_id")
 
     if not class_id:

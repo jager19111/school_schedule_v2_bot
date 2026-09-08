@@ -196,13 +196,40 @@ class UIRenderer:
         *,
         intended_role: str,
     ) -> str:
+        """
+        Вступление в семью через вручную введённый family code.
+        """
         return (
             UIRenderer.render_family_join_intro(
                 intended_role=intended_role,
                 via_code=True,
             )
             + "\n\n"
-            + "🔑 <b>Введите код семьи:</b>"
+            + "🔑 <b>Введите код семьи.</b>\n"
+            + "Код можно запросить у администратора семьи."
+        )
+    
+    @staticmethod
+    def render_family_invite_join_intro(
+        *,
+        intended_role: str,
+        has_standalone_child_profile: bool = False,
+    ) -> str:
+        """
+        Текст для role-specific join_<token> invite.
+
+        В отличие от family_code flow, следующий шаг здесь —
+        ввод имени пользователя.
+        """
+        return (
+            UIRenderer.render_family_join_intro(
+                intended_role=intended_role,
+                has_standalone_child_profile=has_standalone_child_profile,
+                via_code=False,
+            )
+            + "\n\n"
+            + "✍️ <b>Как к вам обращаться?</b>\n"
+            + "Введите ваше имя, например: Иван или Лиза."
         )
            
     @staticmethod

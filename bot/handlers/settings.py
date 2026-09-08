@@ -202,8 +202,13 @@ class SettingsStates(StatesGroup):
     waiting_for_virtual_student_name = State()
     waiting_for_virtual_student_group = State()
     
+    # Family admin → редактирование family student profile.
     waiting_for_student_class = State()
     waiting_for_student_group = State()
+
+    # Child → собственный class/group self-edit.
+    waiting_for_self_edit_class = State()
+    waiting_for_self_edit_group = State()
     
     waiting_for_student_telegram_summary_time = State()
     
@@ -1272,72 +1277,71 @@ async def toggle_extra_notif(
    
     
 @router.callback_query(F.data == "settings:change_class")
-async def settings_change_class(
+async def start_self_edit_class(
     callback: CallbackQuery,
     state: FSMContext,
     profile_service: ProfileService,
     schedule_service: ScheduleService,
 ) -> None:
     """
-    Смена класса/группы для собственного профиля.
+    Child начинает изменение собственного класса и группы.
 
-    Ребёнок не может менять класс, если профиль заблокирован
-    администратором семьи.
+    Это самостоятельный settings flow. Он не использует
+    RegistrationStates и generic class:/group: callbacks.
     """
-    
-    
-    user_dto = await profile_service.get_user_profile_dto(
-        callback.from_user.id,
+    actor_user_id = callback.from_user.id
+
+    actor = await profile_service.get_user_profile_dto(
+        actor_user_id,
     )
 
-    if not user_dto.is_fully_registered:
+    if not actor.is_fully_registered:
         await state.clear()
 
-        await callback.answer(
+        await _safe_callback_answer(
+            callback,
             "Сначала завершите регистрацию через /start.",
             show_alert=True,
         )
         return
 
-    if user_dto.role != "child":
-        await callback.answer(
+    if actor.role != "child":
+        await _safe_callback_answer(
+            callback,
             "Изменение класса доступно только ученику.",
             show_alert=True,
         )
         return
-    
-    if user_dto.role == "child":
-        allowed = await profile_service.can_user_change_own_notification_settings(
-            user_id=callback.from_user.id,
+
+    classes_dto = await schedule_service.get_classes_list()
+
+    if not classes_dto.classes:
+        await _safe_callback_answer(
+            callback,
+            "Список классов временно недоступен.",
+            show_alert=True,
         )
+        return
 
-        if not allowed:
-            await _safe_callback_answer(
-                callback,
-                "🔒 Изменение профиля заблокировано "
-                "администратором семьи.",
-                show_alert=True,
-            )
-            return
-
-    # 1. Получаем справочники школы через единый метод
-    dicts_dto = await schedule_service.get_school_dictionaries()
-
-    # 2. Передаем ClassListDTO через вспомогательное свойство as_class_list
-    text = UIRenderer.render_class_selection(dicts_dto.as_class_list)
-    keyboard = Keyboards.get_class_selection(dicts_dto.as_class_list)
+    await state.clear()
 
     await state.update_data(
-        self_edit_user_id=callback.from_user.id,
+        self_edit_user_id=actor_user_id,
     )
 
     await _safe_edit_text(
         callback.message,
-        text,
-        reply_markup=keyboard,
+        UIRenderer.render_class_selection(
+            classes_dto,
+        ),
+        reply_markup=Keyboards.get_self_edit_class_selection_kb(
+            classes_dto,
+        ),
     )
 
-    await state.set_state(RegistrationStates.waiting_for_class)
+    await state.set_state(
+        SettingsStates.waiting_for_self_edit_class,
+    )
 
     await _safe_callback_answer(callback)
     
@@ -1379,6 +1383,252 @@ async def show_watch_targets_menu(
 
     await _safe_callback_answer(callback)
 
+@router.callback_query(
+    SettingsStates.waiting_for_self_edit_class,
+    F.data.startswith("self_edit:class:"),
+)
+async def select_self_edit_class(
+    callback: CallbackQuery,
+    state: FSMContext,
+    schedule_service: ScheduleService,
+) -> None:
+    """
+    Child выбрал новый class_id и переходит к выбору группы.
+    """
+    try:
+        class_id = callback.data.split(":", 2)[2]
+    except IndexError:
+        await _safe_callback_answer(
+            callback,
+            "Некорректный класс.",
+            show_alert=True,
+        )
+        return
+
+    data = await state.get_data()
+
+    if data.get("self_edit_user_id") != callback.from_user.id:
+        await state.clear()
+
+        await _safe_callback_answer(
+            callback,
+            "Состояние редактирования устарело.",
+            show_alert=True,
+        )
+        return
+
+    groups_dto = await schedule_service.get_groups_list()
+
+    await state.update_data(
+        self_edit_class_id=class_id,
+    )
+
+    text, _ = UIRenderer.render_main_group_selection()
+
+    await _safe_edit_text(
+        callback.message,
+        text,
+        reply_markup=Keyboards.get_self_edit_group_selection_kb(
+            groups_dto,
+        ),
+    )
+
+    await state.set_state(
+        SettingsStates.waiting_for_self_edit_group,
+    )
+
+    await _safe_callback_answer(callback)
+
+@router.callback_query(
+    SettingsStates.waiting_for_self_edit_group,
+    F.data == "self_edit:back_to_class",
+)
+async def back_to_self_edit_class(
+    callback: CallbackQuery,
+    state: FSMContext,
+    schedule_service: ScheduleService,
+) -> None:
+    """
+    Возвращает child из group screen обратно к class screen.
+    """
+    data = await state.get_data()
+
+    if data.get("self_edit_user_id") != callback.from_user.id:
+        await state.clear()
+
+        await _safe_callback_answer(
+            callback,
+            "Состояние редактирования устарело.",
+            show_alert=True,
+        )
+        return
+
+    classes_dto = await schedule_service.get_classes_list()
+
+    # Класс пока не сохранён, поэтому очищаем промежуточный выбор.
+    await state.update_data(
+        self_edit_class_id=None,
+    )
+
+    await _safe_edit_text(
+        callback.message,
+        UIRenderer.render_class_selection(
+            classes_dto,
+        ),
+        reply_markup=Keyboards.get_self_edit_class_selection_kb(
+            classes_dto,
+        ),
+    )
+
+    await state.set_state(
+        SettingsStates.waiting_for_self_edit_class,
+    )
+
+    await _safe_callback_answer(callback)
+
+@router.callback_query(
+    F.data == "self_edit:cancel",
+)
+async def cancel_self_edit_class_group(
+    callback: CallbackQuery,
+    state: FSMContext,
+    profile_service: ProfileService,
+    schedule_service: ScheduleService,
+) -> None:
+    """
+    Отменяет изменение класса/группы ребёнка.
+
+    На этом этапе в БД ещё ничего не сохранено.
+    """
+    data = await state.get_data()
+
+    if data.get("self_edit_user_id") != callback.from_user.id:
+        await state.clear()
+
+        await _safe_callback_answer(
+            callback,
+            "Состояние редактирования устарело.",
+            show_alert=True,
+        )
+        return
+
+    await state.clear()
+
+    await _show_settings_menu(
+        message_obj=callback.message,
+        user_id=callback.from_user.id,
+        profile_service=profile_service,
+        schedule_service=schedule_service,
+        is_callback=True,
+    )
+
+    await _safe_callback_answer(callback)
+
+@router.callback_query(
+    SettingsStates.waiting_for_self_edit_group,
+    F.data.startswith("self_edit:group:"),
+)
+async def save_self_edit_group(
+    callback: CallbackQuery,
+    state: FSMContext,
+    profile_service: ProfileService,
+    students_service: StudentsService,
+    schedule_service: ScheduleService,
+) -> None:
+    """
+    Сохраняет новый class_id/group_id child и синхронизирует
+    Telegram-linked student_profile.
+    """
+    try:
+        group_id = callback.data.split(":", 2)[2]
+    except IndexError:
+        await _safe_callback_answer(
+            callback,
+            "Некорректная группа.",
+            show_alert=True,
+        )
+        return
+
+    actor_user_id = callback.from_user.id
+    data = await state.get_data()
+
+    if data.get("self_edit_user_id") != actor_user_id:
+        await state.clear()
+
+        await _safe_callback_answer(
+            callback,
+            "Состояние редактирования устарело.",
+            show_alert=True,
+        )
+        return
+
+    class_id = data.get("self_edit_class_id")
+
+    if not class_id:
+        await state.clear()
+
+        await _safe_callback_answer(
+            callback,
+            "Не выбран класс. Начните изменение заново.",
+            show_alert=True,
+        )
+        return
+
+    # Повторная security-проверка:
+    # пользователь мог стать unregistered, выйти из семьи
+    # или изменить state между двумя callback-ами.
+    actor = await profile_service.get_user_profile_dto(
+        actor_user_id,
+    )
+
+    if (
+        not actor.is_fully_registered
+        or actor.role != "child"
+    ):
+        await state.clear()
+
+        await _safe_callback_answer(
+            callback,
+            "Сначала завершите регистрацию через /start.",
+            show_alert=True,
+        )
+        return
+
+    await profile_service.set_child_class_and_group(
+        actor_user_id,
+        class_id,
+        group_id,
+    )
+
+    student = await students_service.ensure_telegram_student_profile(
+        telegram_user_id=actor_user_id,
+    )
+
+    if student is None:
+        await state.clear()
+
+        await _safe_callback_answer(
+            callback,
+            "Не удалось синхронизировать профиль ученика.",
+            show_alert=True,
+        )
+        return
+
+    await state.clear()
+
+    await _show_settings_menu(
+        message_obj=callback.message,
+        user_id=actor_user_id,
+        profile_service=profile_service,
+        schedule_service=schedule_service,
+        is_callback=True,
+    )
+
+    await _safe_callback_answer(
+        callback,
+        "✅ Класс и группа обновлены.",
+    )
+                
 @router.callback_query(F.data == "watch:add")
 async def start_add_watch_target(
     callback: CallbackQuery,
@@ -3102,8 +3352,8 @@ async def create_student_claim_invite(
     
     text = UIRenderer.render_student_claim_invite_created(
         student=student,
-        classes=dicts_dto.classes,
-        groups=dicts_dto.groups,
+        #classes=dicts_dto.classes,
+        #groups=dicts_dto.groups,
         expires_at=invite.expires_at,
         deep_link=deep_link,
     )
