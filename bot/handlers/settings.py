@@ -924,6 +924,7 @@ async def show_children_notification_settings(
     callback: CallbackQuery,
     profile_service: ProfileService,
     students_service: StudentsService,
+    schedule_service: ScheduleService,
 ) -> None:
     """
     Открывает selector student profiles для personal adult subscriptions.
@@ -965,11 +966,16 @@ async def show_children_notification_settings(
 
         await _safe_callback_answer(callback)
         return
-
+    
+    classes_dto = await schedule_service.get_classes_list()
+    groups_dto = await schedule_service.get_groups_list()
+    
     text = UIRenderer.render_parent_student_notification_menu()
 
     keyboard = Keyboards.get_student_notification_select_kb(
-        students,
+        students=students,
+        classes_dict=classes_dto.classes,
+        groups_dict=groups_dto.groups,
     )
 
     await _safe_edit_text(
@@ -1021,6 +1027,7 @@ async def _show_family_students_menu(
     callback: CallbackQuery,
     profile_service: ProfileService,
     students_service: StudentsService,
+    schedule_service: ScheduleService,
 ) -> None:
     """
     Рендерит список student_profiles, доступных текущему взрослому.
@@ -1054,12 +1061,20 @@ async def _show_family_students_menu(
         adult_user_id=callback.from_user.id,
     )
 
+# Получаем справочники один раз для всего списка (чтобы не делать лишних запросов в цикле)
+    classes_dto = await schedule_service.get_classes_list()
+    groups_dto = await schedule_service.get_groups_list()
+    
     text = UIRenderer.render_family_students(
-        students,
+        students=students,
+        classes_dict=classes_dto.classes,
+        groups_dict=groups_dto.groups,
     )
 
     keyboard = Keyboards.get_family_students_kb(
         students,
+        classes_dict=classes_dto.classes,
+        groups_dict=groups_dto.groups,
         is_family_admin=is_family_admin,
     )
 
@@ -1318,6 +1333,7 @@ async def settings_change_class(
 async def show_watch_targets_menu(
     callback: CallbackQuery,
     watch_targets_service: WatchTargetsService,
+    schedule_service: ScheduleService,
 ) -> None:
     """
     Показывает самостоятельные отслеживаемые классы пользователя.
@@ -1325,13 +1341,20 @@ async def show_watch_targets_menu(
     targets = await watch_targets_service.get_targets(
         owner_user_id=callback.from_user.id,
     )
-
+    classes_dto = await schedule_service.get_classes_list()
+    groups_dto = await schedule_service.get_groups_list()
+    
     text = UIRenderer.render_watch_targets_menu(
-        targets,
+        targets=targets,
+        classes_dict=classes_dto.classes,
+        groups_dict=groups_dto.groups,
+        
     )
 
     keyboard = Keyboards.get_watch_targets_menu_kb(
-        targets,
+        targets=targets,
+        classes_dict=classes_dto.classes,
+        groups_dict=groups_dto.groups,
     )
 
     await _safe_edit_text(
@@ -1524,14 +1547,22 @@ async def select_watch_target_group(
     targets = await watch_targets_service.get_targets(
         owner_user_id=owner_user_id,
     )
-
+    classes_dto = await schedule_service.get_classes_list()
+    groups_dto = await schedule_service.get_groups_list()
+    
     text = (
         "✅ <b>Класс добавлен в отслеживание.</b>\n\n"
-        + UIRenderer.render_watch_targets_menu(targets)
+        + UIRenderer.render_watch_targets_menu(
+            targets=targets,
+            classes_dict=classes_dto.classes,
+            groups_dict=groups_dto.groups,
+        )
     )
 
     keyboard = Keyboards.get_watch_targets_menu_kb(
-        targets,
+        targets=targets,
+        classes_dict=classes_dto.classes,
+        groups_dict=groups_dto.groups,
     )
 
     await _safe_edit_text(
@@ -1857,6 +1888,7 @@ async def confirm_delete_watch_target(
 async def delete_watch_target(
     callback: CallbackQuery,
     watch_targets_service: WatchTargetsService,
+    schedule_service: ScheduleService,
 ) -> None:
     try:
         target_id = int(callback.data.split(":")[2])
@@ -1884,14 +1916,21 @@ async def delete_watch_target(
     targets = await watch_targets_service.get_targets(
         owner_user_id=callback.from_user.id,
     )
-
+    classes_dto = await schedule_service.get_classes_list()
+    groups_dto = await schedule_service.get_groups_list()
     text = (
         "✅ <b>Отслеживаемый класс удалён.</b>\n\n"
-        + UIRenderer.render_watch_targets_menu(targets)
+        + UIRenderer.render_watch_targets_menu(
+            targets=targets,
+            classes_dict=classes_dto.classes,
+            groups_dict=groups_dto.groups,                                
+            )
     )
 
     keyboard = Keyboards.get_watch_targets_menu_kb(
-        targets,
+        targets=targets,
+        classes_dict=classes_dto.classes,
+        groups_dict=groups_dto.groups,
     )
 
     await _safe_edit_text(
@@ -2402,11 +2441,13 @@ async def show_family_students(
     callback: CallbackQuery,
     profile_service: ProfileService,
     students_service: StudentsService,
+    schedule_service: ScheduleService,
 ) -> None:
     await _show_family_students_menu(
         callback=callback,
         profile_service=profile_service,
         students_service=students_service,
+        schedule_service=schedule_service
     )
 
     await _safe_callback_answer(callback)
@@ -2819,6 +2860,7 @@ async def delete_virtual_student(
 async def show_parent_student_notification_settings(
     callback: CallbackQuery,
     profile_service: ProfileService,
+    schedule_service: ScheduleService,
 ) -> None:
     """
     Показывает настройки текущего взрослого
@@ -2848,9 +2890,15 @@ async def show_parent_student_notification_settings(
             show_alert=True,
         )
         return
-
+    
+    class_name, group_name = await schedule_service.get_readable_class_and_group(
+        class_id=dto.student_class_id, 
+        group_id=dto.student_group_id
+    )
     text = UIRenderer.render_parent_student_notification_settings(
-        dto,
+        dto=dto,
+        class_name=class_name,
+        group_name=group_name,
     )
 
     keyboard = (
@@ -3235,7 +3283,7 @@ async def select_student_new_class(
         callback.message,
         UIRenderer.render_student_edit_group_prompt(
             student=student,
-            new_class_name=class_name,
+            class_name=class_name,
             ),
         reply_markup=Keyboards.get_student_edit_group_selection_kb(
             groups_dto,

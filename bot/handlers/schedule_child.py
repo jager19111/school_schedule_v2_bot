@@ -479,11 +479,17 @@ async def open_schedule_hub(
             schedule_target_kind=None,
             schedule_target_id=None,
         )
-
+        
+        classes_dto = await schedule_service.get_classes_list()
+        groups_dto = await schedule_service.get_groups_list()
+        
         await message.answer(
             "🎯 <b>Выберите расписание</b>",
             reply_markup=Keyboards.get_schedule_targets_kb(
-                targets,
+                targets=targets,
+                classes_dict=classes_dto.classes,
+                groups_dict=groups_dto.groups,
+                
             ),
             parse_mode="HTML",
         )
@@ -547,6 +553,7 @@ async def show_schedule_targets(
     profile_service: ProfileService,
     students_service: StudentsService,
     watch_targets_service: WatchTargetsService,
+    schedule_service: ScheduleService,
 ) -> None:
     """
     Показывает selector цели из day/week schedule screen.
@@ -570,11 +577,17 @@ async def show_schedule_targets(
         schedule_target_kind=None,
         schedule_target_id=None,
     )
-
+    classes_dto = await schedule_service.get_classes_list()
+    groups_dto = await schedule_service.get_groups_list()
+    
     await _safe_edit_schedule_message(
         callback,
         "🎯 <b>Выберите расписание</b>",
-        Keyboards.get_schedule_targets_kb(targets),
+        Keyboards.get_schedule_targets_kb(
+            targets=targets,
+            classes_dict=classes_dto.classes,
+            groups_dict=groups_dto.groups,
+                ),
     )
 
     await callback.answer()

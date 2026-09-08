@@ -18,6 +18,18 @@ class Keyboards:
 
         return monday.isoformat()
 
+# Внутренний хелпер для клавиатур (не ходит в базу, просто мапит словари)
+    @staticmethod
+    def _format_class_and_group(class_id: str | None, group_id: str | None, classes_dict: dict, groups_dict: dict) -> tuple[str, str]:
+        class_name = classes_dict.get(class_id, class_id or "—")
+        
+        if not group_id or group_id == "ALL":
+            group_name = "Весь класс"
+        else:
+            group_name = groups_dict.get(group_id, f"Группа {group_id}")
+            
+        return class_name, group_name
+    
     @staticmethod
     def get_role_selection() -> InlineKeyboardMarkup:
         return InlineKeyboardMarkup(inline_keyboard=[
@@ -620,6 +632,8 @@ class Keyboards:
     @staticmethod
     def get_schedule_targets_kb(
         targets: list[ScheduleViewTargetDTO],
+        classes_dict: dict,
+        groups_dict: dict,
     ) -> InlineKeyboardMarkup:
         """
         Выбор цели Schedule Hub.
@@ -630,36 +644,42 @@ class Keyboards:
         buttons = []
 
         for target in targets:
+            # Получаем человекочитаемое название группы для всех типов целей
+            if not target.group_id or target.group_id == "ALL":
+                group_text = "Весь класс"
+            else:
+                names = [
+                    groups_dict.get(g.strip(), f"Группа {g.strip()}") 
+                    for g in str(target.group_id).split(",")
+                ]
+                group_text = ", ".join(names)
+
             if target.kind == "student":
                 icon = (
                     "📱"
                     if target.telegram_user_id is not None
                     else "🧒"
                 )
-
                 callback_data = (
                     f"sched:target:student:{target.target_id}"
                 )
 
+                # Для ученика выводим: Иконка · Имя · Класс · Группа
+                class_name = classes_dict.get(target.class_id, target.class_id or "—")
+                button_text = f"{icon} {target.title} · {class_name} · {group_text}"
+
             else:
                 icon = "🎓"
-
                 callback_data = (
                     f"sched:target:watch:{target.target_id}"
                 )
 
-            group_text = (
-                "Весь класс"
-                if target.group_id == "ALL"
-                else f"Группа {target.group_id}"
-            )
+                # Для отслеживаемого класса в title уже заложено имя класса, класс не дублируем
+                button_text = f"{icon} {target.title} · {group_text}"
 
             buttons.append([
                 InlineKeyboardButton(
-                    text=(
-                        f"{icon} {target.title} "
-                        f"· {group_text}"
-                    ),
+                    text=button_text,
                     callback_data=callback_data,
                 )
             ])
@@ -805,6 +825,8 @@ class Keyboards:
     @staticmethod
     def get_extra_students_select_kb(
         students: list[StudentProfileDTO],
+        classes_dict: dict,
+        groups_dict: dict,
     ) -> InlineKeyboardMarkup:
         """
         Выбор student profile для работы с допзанятиями.
@@ -822,17 +844,25 @@ class Keyboards:
                 else "🧒"
             )
 
-            group_text = (
-                "Весь класс"
-                if student.group_id == "ALL"
-                else f"Группа {student.group_id}"
-            )
+            # Получаем человекочитаемое имя класса
+            class_name = classes_dict.get(student.class_id, student.class_id or "—")
+
+            # Получаем человекочитаемое имя группы (с поддержкой мультигрупп)
+            if not student.group_id or student.group_id == "ALL":
+                group_text = "Весь класс"
+            else:
+                names = [
+                    groups_dict.get(g.strip(), f"Группа {g.strip()}") 
+                    for g in str(student.group_id).split(",")
+                ]
+                group_text = ", ".join(names)
 
             buttons.append([
                 InlineKeyboardButton(
                     text=(
-                        f"{icon} {student.name} · "
-                        f"{student.class_id} · {group_text}"
+                        f"{icon} {student.name} "
+                        f"· {class_name} "
+                        f"· {group_text}"
                     ),
                     callback_data=f"extra:menu:{student.id}",
                 )
@@ -853,6 +883,8 @@ class Keyboards:
     @staticmethod
     def get_student_notification_select_kb(
         students: list[StudentProfileDTO],
+        classes_dict: dict,
+        groups_dict: dict,
     ) -> InlineKeyboardMarkup:
         """
         Выбор student profile для персональных подписок взрослого.
@@ -869,17 +901,25 @@ class Keyboards:
                 else "🧒"
             )
 
-            group_label = (
-                "весь класс"
-                if student.group_id == "ALL"
-                else f"группа {student.group_id}"
-            )
+            # Получаем человекочитаемое имя класса
+            class_name = classes_dict.get(student.class_id, student.class_id or "—")
+
+            # Получаем человекочитаемое имя группы (с поддержкой мультигрупп)
+            if not student.group_id or student.group_id == "ALL":
+                group_label = "весь класс"
+            else:
+                names = [
+                    groups_dict.get(g.strip(), f"группа {g.strip()}") 
+                    for g in str(student.group_id).split(",")
+                ]
+                group_label = ", ".join(names)
 
             buttons.append([
                 InlineKeyboardButton(
                     text=(
-                        f"{icon} {student.name} · "
-                        f"{student.class_id} · {group_label}"
+                        f"{icon} {student.name} "
+                        f"· {class_name} "
+                        f"· {group_label}"
                     ),
                     callback_data=f"psn:student:{student.id}",
                 )
@@ -1247,6 +1287,8 @@ class Keyboards:
     @staticmethod
     def get_watch_targets_menu_kb(
         targets: list[ScheduleWatchTargetDTO],
+        classes_dict: dict,
+        groups_dict: dict,
     ) -> InlineKeyboardMarkup:
         """
         Список самостоятельных классов пользователя.
@@ -1256,20 +1298,14 @@ class Keyboards:
         for target in targets:
             status = "🟢" if target.is_enabled else "⚫"
 
-            label = target.title or (
-                f"Класс {target.class_id}"
+            # Вызываем внутренний хелпер
+            class_name, group_name = Keyboards._format_class_and_group(
+                target.class_id, target.group_id, classes_dict, groups_dict
             )
-
-            group_label = (
-                "Весь класс"
-                if target.group_id == "ALL"
-                else f"Группа {target.group_id}"
-            )
-
             buttons.append([
                 InlineKeyboardButton(
                     text=(
-                        f"{status} {label} · {group_label}"
+                        f"{status} {target.title or class_name} · {group_name}"
                     ),
                     callback_data=f"watch:target:{target.id}",
                 )
@@ -1449,6 +1485,8 @@ class Keyboards:
     @staticmethod
     def get_family_students_kb(
         students: list[StudentProfileDTO],
+        classes_dict: dict,
+        groups_dict: dict,
         *,
         is_family_admin: bool,
     ) -> InlineKeyboardMarkup:
@@ -1467,13 +1505,25 @@ class Keyboards:
                 else "🧒"
             )
 
-            class_text = student.class_id or "—"
+            # Получаем человекочитаемое имя класса
+            class_name = classes_dict.get(student.class_id, student.class_id or "—")
+
+            # Получаем человекочитаемое имя группы
+            if not student.group_id or student.group_id == "ALL":
+                group_text = "Весь класс"
+            else:
+                names = [
+                    groups_dict.get(g.strip(), f"Группа {g.strip()}") 
+                    for g in str(student.group_id).split(",")
+                ]
+                group_text = ", ".join(names)
 
             buttons.append([
                 InlineKeyboardButton(
                     text=(
                         f"{telegram_status} {student.name} "
-                        f"({class_text})"
+                        f"· {class_name} "
+                        f"· {group_text}"
                     ),
                     callback_data=f"student:show:{student.id}",
                 )

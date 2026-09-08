@@ -353,7 +353,11 @@ class UIRenderer:
     @staticmethod
     def render_extra_class_locked() -> str:
         return "🔒 Редактирование и удаление занятий запрещено родителем."
-   
+
+    @staticmethod
+    def render_extra_no_children() -> tuple[str, None]:
+        return "❌ У вас нет привязанных детей. Сначала добавьте ребенка в семью через меню настроек.", None
+       
     @staticmethod
     def render_extra_classes_list(dto: 'ExtraClassListDTO', show_id: bool = False) -> tuple[str, None]:
         if not dto.items:
@@ -518,6 +522,8 @@ class UIRenderer:
     @staticmethod
     def render_student_extra_classes_menu(
         student: StudentProfileDTO,
+        class_name: str, 
+        group_name: str,
     ) -> tuple[str, None]:
         """
         Заголовок меню допзанятий конкретного student profile.
@@ -533,13 +539,13 @@ class UIRenderer:
         group_text = (
             "Весь класс"
             if student.group_id == "ALL"
-            else f"Группа {student.group_id}"
+            else f"Группа {group_name}"
         )
 
         return (
             "🎨 <b>Дополнительные занятия</b>\n\n"
             f"👤 Ученик: <b>{student_name}</b>\n"
-            f"🎓 Класс: <b>{student.class_id}</b>\n"
+            f"🎓 Класс: <b>{class_name}</b>\n"
             f"👥 {group_text}\n"
             f"{telegram_status}\n\n"
             "Выберите действие:",
@@ -763,26 +769,17 @@ class UIRenderer:
     @staticmethod
     def render_parent_student_notification_settings(
         dto: ParentStudentNotificationSettingsDTO,
+        class_name: str,
+        group_name: str
     ) -> str:
         """
         Показывает personal subscriptions взрослого
         по выбранному student profile.
         """
-        student_name = UIRenderer.escape_html(
-            dto.student_name,
-            fallback=f"Ученик {dto.student_id}",
-        )
-
-        class_id = UIRenderer.escape_html(
-            dto.student_class_id,
-            fallback="—",
-        )
-
-        group_text = (
-            "Весь класс"
-            if dto.student_group_id == "ALL"
-            else f"Группа {UIRenderer.escape_html(dto.student_group_id)}"
-        )
+        # ЭКРАНИРОВАНИЕ
+        safe_student = UIRenderer.escape_html(dto.student_name, fallback=f"Ученик {dto.student_id}")
+        safe_class = UIRenderer.escape_html(class_name, fallback="—")
+        safe_group = UIRenderer.escape_html(group_name, fallback="Весь класс")
 
         telegram_status = (
             "📱 <b>Telegram подключён</b>"
@@ -801,18 +798,15 @@ class UIRenderer:
 
         return (
             "🔔 <b>Уведомления по ученику</b>\n\n"
-            f"👤 Ученик: <b>{student_name}</b>\n"
-            f"🎓 Класс: <b>{class_id}</b>\n"
-            f"👥 {group_text}\n"
+            f"👤 Ученик: <b>{safe_student}</b>\n"
+            f"🎓 Класс: <b>{safe_class}</b>\n"
+            f"👥 {safe_group}\n"
             f"{telegram_status}\n\n"
             "<b>Ваши подписки</b>\n"
             f"🌅 Утренняя сводка: {status(dto.receive_morning_summary)}\n"
-            f"⏰ Напоминания об уроках: "
-            f"{status(dto.receive_pre_lesson_reminders)}\n"
-            f"🔄 Изменения расписания: "
-            f"{status(dto.receive_schedule_changes)}\n"
-            f"🎨 Доп. занятия: "
-            f"{status(dto.receive_extra_class_reminders)}\n\n"
+            f"⏰ Напоминания об уроках: {status(dto.receive_pre_lesson_reminders)}\n"
+            f"🔄 Изменения расписания: {status(dto.receive_schedule_changes)}\n"
+            f"🎨 Доп. занятия: {status(dto.receive_extra_class_reminders)}\n\n"
             f"Права на кружки: {manage_status}"
         )
 
@@ -1474,6 +1468,8 @@ class UIRenderer:
     @staticmethod
     def render_watch_targets_menu(
         targets: list[ScheduleWatchTargetDTO],
+        classes_dict: dict,
+        groups_dict: dict,
     ) -> str:
         if not targets:
             return (
@@ -1491,15 +1487,22 @@ class UIRenderer:
         ]
 
         for target in targets:
+            # Получаем человекочитаемое имя класса через словарь
+            class_name = classes_dict.get(target.class_id, target.class_id)
+            
             title = UIRenderer.escape_html(
-                target.title or f"Класс {target.class_id}"
+                target.title or f"Класс {class_name}"
             )
 
-            group = (
-                "Весь класс"
-                if target.group_id == "ALL"
-                else f"Группа {target.group_id}"
-            )
+            # Получаем человекочитаемое имя группы/групп через словарь
+            if not target.group_id or target.group_id == "ALL":
+                group = "Весь класс"
+            else:
+                names = [
+                    groups_dict.get(g.strip(), f"Группа {g.strip()}") 
+                    for g in str(target.group_id).split(",")
+                ]
+                group = ", ".join(names)
 
             status = (
                 "🟢 включено"
@@ -1551,6 +1554,8 @@ class UIRenderer:
     @staticmethod
     def render_family_students(
         students: list[StudentProfileDTO],
+        classes_dict: dict,
+        groups_dict: dict,
     ) -> str:
         if not students:
             return (
@@ -1578,15 +1583,22 @@ class UIRenderer:
                 else "🧒 Telegram пока не подключён"
             )
 
-            group_text = (
-                "Весь класс"
-                if student.group_id == "ALL"
-                else f"Группа {student.group_id}"
-            )
+            # Получаем человекочитаемое имя класса для каждого студента
+            class_name = classes_dict.get(student.class_id, student.class_id or "—")
+
+            # Получаем человекочитаемое имя группы для каждого студента
+            if not student.group_id or student.group_id == "ALL":
+                group_text = "Весь класс"
+            else:
+                names = [
+                    groups_dict.get(g.strip(), f"Группа {g.strip()}") 
+                    for g in str(student.group_id).split(",")
+                ]
+                group_text = ", ".join(names)
 
             lines.append(
                 f"• <b>{name}</b>\n"
-                f"  🎓 Класс: {student.class_id}\n"
+                f"  🎓 Класс: {class_name}\n"
                 f"  👥 {group_text}\n"
                 f"  {telegram_status}\n"
             )

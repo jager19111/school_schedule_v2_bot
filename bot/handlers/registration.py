@@ -752,7 +752,6 @@ async def process_family_create(
     )
 
     await state.clear()
-
     await callback.answer()
 
 @router.callback_query(

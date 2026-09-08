@@ -10,6 +10,7 @@ from services.time_service import TimeService
 from services.extra_classes_service import ExtraClassesService
 from services.profiles_service import ProfileService
 from services.students_service import StudentsService
+from services.schedule_service import ScheduleService
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -22,6 +23,7 @@ async def _show_extra_menu_for_student(
     target_student_id: int,
     extra_classes_service: ExtraClassesService,
     students_service: StudentsService,
+    schedule_service: ScheduleService,
     edit_message: bool,
     prefix: str = "",
 ) -> bool:
@@ -61,8 +63,16 @@ async def _show_extra_menu_for_student(
     ):
         return False
 
+    # Получаем человекочитаемые названия
+    class_name, group_name = await schedule_service.get_readable_class_and_group(
+        student.class_id, 
+        student.group_id
+    )
+
     text, _ = UIRenderer.render_student_extra_classes_menu(
-        student,
+        student=student,
+        class_name=class_name,  # Передаем в рендер
+        group_name=group_name,  # Передаем в рендер
     )
 
     if prefix:
@@ -136,6 +146,7 @@ async def show_extra_menu(
     profile_service: ProfileService,
     students_service: StudentsService,
     extra_classes_service: ExtraClassesService,
+    schedule_service: ScheduleService,
 ) -> None:
     """
     Открывает допзанятия.
@@ -178,6 +189,7 @@ async def show_extra_menu(
             target_student_id=student.id,
             extra_classes_service=extra_classes_service,
             students_service=students_service,
+            schedule_service=schedule_service,
             edit_message=False,
         )
 
@@ -216,6 +228,7 @@ async def show_extra_menu(
             target_student_id=students[0].id,
             extra_classes_service=extra_classes_service,
             students_service=students_service,
+            schedule_service=schedule_service,
             edit_message=False,
         )
 
@@ -225,13 +238,18 @@ async def show_extra_menu(
             )
 
         return
-
+    
+    classes_dto = await schedule_service.get_classes_list()
+    groups_dto = await schedule_service.get_groups_list()
+    
     text, _ = UIRenderer.render_extra_student_select()
 
     await message.answer(
         text,
         reply_markup=Keyboards.get_extra_students_select_kb(
-            students,
+            students=students,
+            classes_dict=classes_dto.classes,
+            groups_dict=groups_dto.groups,
         ),
         parse_mode="HTML",
     )
@@ -242,6 +260,7 @@ async def show_extra_students(
     state: FSMContext,
     profile_service: ProfileService,
     students_service: StudentsService,
+    schedule_service: ScheduleService,
 ) -> None:
     """
     Показывает selector student profiles взрослого.
@@ -277,13 +296,18 @@ async def show_extra_students(
 
         await callback.answer()
         return
-
+    
+    classes_dto = await schedule_service.get_classes_list()
+    groups_dto = await schedule_service.get_groups_list()
+    
     text, _ = UIRenderer.render_extra_student_select()
 
     await callback.message.edit_text(
         text,
         reply_markup=Keyboards.get_extra_students_select_kb(
-            students,
+            students=students,
+            classes_dict=classes_dto.classes,
+            groups_dict=groups_dto.groups,
         ),
         parse_mode="HTML",
     )
@@ -296,6 +320,7 @@ async def show_extra_menu_cb(
     state: FSMContext,
     extra_classes_service: ExtraClassesService,
     students_service: StudentsService,
+    schedule_service: ScheduleService,
 ) -> None:
     """
     Открывает меню занятий выбранного student profile.
@@ -319,6 +344,7 @@ async def show_extra_menu_cb(
         target_student_id=target_student_id,
         extra_classes_service=extra_classes_service,
         students_service=students_service,
+        schedule_service=schedule_service,
         edit_message=True,
     )
 
@@ -336,6 +362,7 @@ async def cancel_action(
     state: FSMContext,
     students_service: StudentsService,
     extra_classes_service: ExtraClassesService,
+    schedule_service: ScheduleService,
 ) -> None:
     """Отменяет FSM-действие и возвращает к доступному меню занятий."""
     data = await state.get_data()
@@ -359,6 +386,7 @@ async def cancel_action(
         target_student_id=target_student_id,
         extra_classes_service=extra_classes_service,
         students_service=students_service,
+        schedule_service=schedule_service,
         edit_message=True,
         prefix="❌ Действие отменено.",
     )
@@ -505,6 +533,7 @@ async def process_delete_id(
     state: FSMContext,
     extra_classes_service: ExtraClassesService,
     students_service: StudentsService,
+    schedule_service: ScheduleService,
 ) -> None:
     """Финально удаляет занятие с повторной service-проверкой прав."""
     data = await state.get_data()
@@ -567,6 +596,7 @@ async def process_delete_id(
         target_student_id=target_student_id,
         extra_classes_service=extra_classes_service,
         students_service=students_service,
+        schedule_service=schedule_service,
         edit_message=False,
         prefix=text_deleted,
     )
@@ -736,7 +766,7 @@ async def skip_reminder(
     await callback.answer()
 
 @router.message(ExtraClassStates.waiting_for_reminder)
-async def process_reminder(message: Message, state: FSMContext, extra_classes_service: ExtraClassesService, profile_service: ProfileService, students_service: StudentsService,):
+async def process_reminder(message: Message, state: FSMContext, extra_classes_service: ExtraClassesService, schedule_service: ScheduleService, students_service: StudentsService,):
     reminder_text = message.text.strip()
     if not reminder_text.isdigit():
         text, _ = UIRenderer.render_extra_class_invalid_reminder()
@@ -747,6 +777,7 @@ async def process_reminder(message: Message, state: FSMContext, extra_classes_se
     state,
     extra_classes_service,
     students_service=students_service,
+    schedule_service=schedule_service,
     reminder_minutes=int(reminder_text),
 )
 
@@ -755,6 +786,7 @@ async def finalize_extra_class(
     state: FSMContext,
     extra_classes_service: ExtraClassesService,
     students_service: StudentsService,
+    schedule_service: ScheduleService,
     reminder_minutes: int,
 ) -> None:
     """
@@ -842,6 +874,7 @@ async def finalize_extra_class(
             target_student_id=target_student_id,
             extra_classes_service=extra_classes_service,
             students_service=students_service,
+            schedule_service=schedule_service,
             edit_message=False,
             prefix=text_success,
         )
@@ -863,6 +896,7 @@ async def finalize_extra_class(
         target_student_id=target_student_id,
         extra_classes_service=extra_classes_service,
         students_service=students_service,
+        schedule_service=schedule_service,
         edit_message=isinstance(event, CallbackQuery),
         prefix=text_success,
     )
@@ -1091,7 +1125,7 @@ async def choose_edit_field(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 @router.callback_query(ExtraClassStates.waiting_for_edit_value, F.data.startswith("extraday:"))
-async def process_edit_day(callback: CallbackQuery, state: FSMContext, extra_classes_service: ExtraClassesService, profile_service: ProfileService, students_service: StudentsService):
+async def process_edit_day(callback: CallbackQuery, state: FSMContext, extra_classes_service: ExtraClassesService, schedule_service: ScheduleService, students_service: StudentsService):
     day_num = int(callback.data.split(":")[1])
     data = await state.get_data()
     
@@ -1133,6 +1167,7 @@ async def process_edit_day(callback: CallbackQuery, state: FSMContext, extra_cla
         target_student_id=target_student_id,
         extra_classes_service=extra_classes_service,
         students_service=students_service,
+        schedule_service=schedule_service,
         edit_message=True,
         prefix=text_updated,
     )
@@ -1144,7 +1179,7 @@ async def process_edit_day(callback: CallbackQuery, state: FSMContext, extra_cla
 
 
 @router.message(ExtraClassStates.waiting_for_edit_value)
-async def process_edit_value(message: Message, state: FSMContext, time_service: TimeService, extra_classes_service: ExtraClassesService, profile_service: ProfileService, students_service: StudentsService):
+async def process_edit_value(message: Message, state: FSMContext, time_service: TimeService, extra_classes_service: ExtraClassesService, schedule_service: ScheduleService, students_service: StudentsService):
     data = await state.get_data()
     
     actor_user_id = message.from_user.id
@@ -1210,6 +1245,7 @@ async def process_edit_value(message: Message, state: FSMContext, time_service: 
         target_student_id=target_student_id,
         extra_classes_service=extra_classes_service,
         students_service=students_service,
+        schedule_service=schedule_service,
         edit_message=False,
         prefix=text_updated
     )
@@ -1219,7 +1255,7 @@ async def process_edit_value(message: Message, state: FSMContext, time_service: 
 
 
 @router.message(ExtraClassStates.waiting_for_edit_time_end)
-async def process_edit_time_end(message: Message, state: FSMContext, time_service: TimeService, extra_classes_service: ExtraClassesService, profile_service: ProfileService, students_service: StudentsService):
+async def process_edit_time_end(message: Message, state: FSMContext, time_service: TimeService, extra_classes_service: ExtraClassesService, schedule_service: ScheduleService, students_service: StudentsService):
     data = await state.get_data()
     
     actor_user_id = message.from_user.id
@@ -1271,6 +1307,7 @@ async def process_edit_time_end(message: Message, state: FSMContext, time_servic
         target_student_id=target_student_id,
         extra_classes_service=extra_classes_service,
         students_service=students_service,
+        schedule_service=schedule_service,
         edit_message=False,
         prefix=text_updated,
     )
