@@ -101,8 +101,13 @@ async def cmd_start(
     # Plain /start не должен уничтожать незавершённый invite / claim flow.
     # ---------------------------------------------------------
     if not payload:
-        pending_family_invite = current_data.get("family_invite_token")
-        pending_claim = current_data.get("claim_token")
+        pending_family_invite = current_data.get(
+            "family_invite_token",
+        )
+
+        pending_claim = current_data.get(
+            "claim_token",
+        )
 
         pending_actor_id = (
             current_data.get("claim_actor_user_id")
@@ -114,17 +119,45 @@ async def cmd_start(
             or pending_actor_id == user_id
         )
 
-        if pending_family_invite and belongs_to_current_user:
-            await message.answer(
-                "ℹ️ У вас уже открыто приглашение в семью.\n\n"
-                "Продолжите текущий шаг регистрации."
+        family_invite_states = {
+            RegistrationStates.waiting_for_name.state,
+            RegistrationStates.waiting_for_class.state,
+            RegistrationStates.waiting_for_group.state,
+        }
+
+        claim_states = {
+            RegistrationStates.waiting_for_claim_confirmation.state,
+            RegistrationStates.waiting_for_claim_name.state,
+        }
+
+        # Telegram-клиент может прислать plain /start повторно
+        # после deep link /start join_<token> или /start claim_<token>.
+        #
+        # Не показываем лишнее служебное сообщение и, главное,
+        # не очищаем FSM: пользователь продолжает начатый flow.
+        if (
+            pending_family_invite
+            and belongs_to_current_user
+            and current_state in family_invite_states
+        ):
+            logger.info(
+                "Duplicate plain /start ignored during family invite: "
+                "user_id=%s state=%s",
+                user_id,
+                current_state,
             )
             return
 
-        if pending_claim and belongs_to_current_user:
-            await message.answer(
-                "ℹ️ У вас уже открыта привязка Telegram.\n\n"
-                "Продолжите текущий шаг регистрации."
+        if (
+            pending_claim
+            and belongs_to_current_user
+            and current_state in claim_states
+        ):
+            logger.info(
+                "Duplicate plain /start ignored during claim flow: "
+                "user_id=%s state=%s",
+                user_id,
+                current_state,
             )
             return
         
@@ -132,7 +165,6 @@ async def cmd_start(
         user_id,
     )
 
-    payload = (command.args or "").strip()
 
     # -------------------------------
     # Deep link student claim flow
@@ -297,10 +329,6 @@ async def cmd_start(
         await message.answer(
             intro_text,
             parse_mode="HTML",
-        )
-
-        await message.answer(
-            "✍️ Как к вам обращаться?",
         )
 
         await state.set_state(
