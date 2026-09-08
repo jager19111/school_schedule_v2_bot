@@ -1040,6 +1040,7 @@ async def process_group(
             )
             return
 
+
     # Блок двойной защиты от подделки FSM-состояния
     editing_own_profile_id = data.get("editing_own_profile_id")
     if editing_own_profile_id is not None:
