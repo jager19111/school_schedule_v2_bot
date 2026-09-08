@@ -868,16 +868,32 @@ async def process_class(
     await state.set_state(RegistrationStates.waiting_for_group)
     await callback.answer()
     
-@router.callback_query(RegistrationStates.waiting_for_group, F.data.startswith("group:"))
+@router.callback_query(
+    RegistrationStates.waiting_for_group,
+    F.data.startswith("group:"),
+)
 async def process_group(
-    callback: CallbackQuery, 
-    state: FSMContext, 
-    profile_service: ProfileService, 
+    callback: CallbackQuery,
+    state: FSMContext,
+    profile_service: ProfileService,
     schedule_service: ScheduleService,
-    students_service: StudentsService
+    students_service: StudentsService,
 ) -> None:
-    main_group_id = callback.data.split(":")[1]
+    try:
+        group_id = callback.data.split(":", 1)[1]
+    except IndexError:
+        await callback.answer(
+            "❌ Некорректная группа.",
+            show_alert=True,
+        )
+        return
+
+    actor_user_id = callback.from_user.id
     data = await state.get_data()
+
+    # =========================================================
+    # 1. Child joins family through join_<token>.
+    # =========================================================
     invite_token = data.get("family_invite_token")
     invited_role = data.get("invited_role")
 
@@ -887,202 +903,319 @@ async def process_group(
 
         if not pending_name or not class_id:
             await state.clear()
+
             await callback.answer(
-                "❌ Данные приглашения устарели. Откройте приглашение заново.",
+                "❌ Данные приглашения устарели. "
+                "Откройте приглашение заново.",
                 show_alert=True,
             )
             return
 
         consumed_role = await profile_service.consume_family_invite(
             token=invite_token,
-            user_id=callback.from_user.id,
+            user_id=actor_user_id,
             name=pending_name,
             class_id=class_id,
-            group_id=main_group_id,
+            group_id=group_id,
         )
 
         if consumed_role is None:
             await state.clear()
+
             await callback.answer(
-                "❌ Приглашение уже использовано, отозвано или срок его действия истёк.",
+                "❌ Приглашение уже использовано, отозвано "
+                "или срок его действия истёк.",
                 show_alert=True,
             )
             return
 
-        await state.clear()
-
-        # Проверка успешности создания профиля при инвайте
+        # Для нового child создаёт profile.
+        # Для standalone child, вступившего в семью,
+        # повторно синхронизирует тот же student_profile.id.
         student = await students_service.ensure_telegram_student_profile(
-            telegram_user_id=callback.from_user.id,
+            telegram_user_id=actor_user_id,
         )
+
         if student is None:
+            await state.clear()
+
             await callback.answer(
-                "❌ Регистрация завершена не полностью. Не удалось создать профиль ученика.",
+                "❌ Семья подключена, но не удалось "
+                "синхронизировать профиль ученика.",
                 show_alert=True,
             )
             return
 
         user_dto = await profile_service.get_user_profile_dto(
-            callback.from_user.id,
+            actor_user_id,
         )
 
-        text = UIRenderer.render_final_success(user_dto.name)
+        await state.clear()
 
         with contextlib.suppress(TelegramBadRequest):
             await callback.message.delete()
 
         await callback.message.answer(
-            text,
+            UIRenderer.render_final_success(
+                user_dto.name,
+            ),
             parse_mode="HTML",
         )
 
-        await _show_main_menu(callback.message)
+        await _show_main_menu(
+            callback.message,
+        )
 
         await callback.answer(
             "✅ Регистрация через приглашение завершена.",
         )
         return
-    
-    # 1. Сохраняем ТОЛЬКО выбранную группу
-    final_group_string = main_group_id
-    
-    # 2. Сохраняем в профиль
-    target_user_id = data.get('editing_child_id', callback.from_user.id)
-    editing_child_id = data.get("editing_child_id")
 
-    if editing_child_id is not None:
-        # Узнаем, в какой семье состоит ребенок
-        child_dto = await profile_service.get_user_profile_dto(
-            editing_child_id
-        )
-        
-        is_admin = False
-        if child_dto.family_id:
-            # Проверяем, является ли родитель администратором этой семьи
-            is_admin = await profile_service.is_family_admin(
-                user_id=callback.from_user.id,
-                family_id=child_dto.family_id,
-            )
+    # =========================================================
+    # 2. Family admin edits class/group of student profile.
+    #
+    # student_edit_id = student_profiles.id.
+    # =========================================================
+    edited_student_id = data.get("student_edit_id")
+    editor_admin_id = data.get("student_edit_admin_id")
 
-        if not is_admin:
+    if edited_student_id is not None:
+        if editor_admin_id != actor_user_id:
             await state.clear()
+
             await callback.answer(
-                "Только администратор семьи может менять класс ребёнка.",
+                "❌ Состояние редактирования устарело.",
                 show_alert=True,
             )
             return
 
-    # Блок двойной защиты от подделки FSM-состояния
-    editing_own_profile_id = data.get("editing_own_profile_id")
-    if editing_own_profile_id is not None:
-        target_dto = await profile_service.get_user_profile_dto(
-            editing_own_profile_id,
-        )
-        if target_dto.role == "child":
-            allowed = await profile_service.can_user_change_own_notification_settings(
-                user_id=editing_own_profile_id,
-            )
-            if not allowed:
-                await state.clear()
-                await callback.answer(
-                    "🔒 Изменение профиля заблокировано администратором семьи.",
-                    show_alert=True,
-                )
-                return
+        class_id = data.get("student_edit_class_id")
 
-    await profile_service.set_child_class_and_group(
-        target_user_id, 
-        data['class_id'], 
-        final_group_string
-    )
-    
-    # Проверка синхронизации профиля при обычной регистрации/настройке
-    student = await students_service.ensure_telegram_student_profile(
-        telegram_user_id=target_user_id,
-    )
-    
-    if student is None:
+        if not class_id:
+            await state.clear()
+
+            await callback.answer(
+                "❌ Не выбран класс ученика.",
+                show_alert=True,
+            )
+            return
+
+        result = await students_service.get_student_for_adult(
+            adult_user_id=actor_user_id,
+            student_id=edited_student_id,
+        )
+
+        if result is None:
+            await state.clear()
+
+            await callback.answer(
+                "❌ Профиль ученика недоступен.",
+                show_alert=True,
+            )
+            return
+
+        _student, access = result
+
+        if not access.is_family_admin:
+            await state.clear()
+
+            await callback.answer(
+                "❌ Только администратор семьи может "
+                "менять класс ученика.",
+                show_alert=True,
+            )
+            return
+
+        response = await students_service.update_student_profile(
+            admin_user_id=actor_user_id,
+            student_id=edited_student_id,
+            class_id=class_id,
+            group_id=group_id,
+        )
+
+        if not response.success:
+            await state.clear()
+
+            await callback.answer(
+                "❌ Не удалось обновить профиль ученика.",
+                show_alert=True,
+            )
+            return
+
+        refreshed_result = await students_service.get_student_for_adult(
+            adult_user_id=actor_user_id,
+            student_id=edited_student_id,
+        )
+
+        if refreshed_result is None:
+            await state.clear()
+
+            await callback.answer(
+                "❌ Профиль ученика больше недоступен.",
+                show_alert=True,
+            )
+            return
+
+        student, access = refreshed_result
+
+        classes_dto = await schedule_service.get_classes_list()
+        groups_dto = await schedule_service.get_groups_list()
+
+        class_name = classes_dto.classes.get(
+            student.class_id,
+            student.class_id,
+        )
+
+        group_name = (
+            "Весь класс"
+            if student.group_id == "ALL"
+            else groups_dto.groups.get(
+                student.group_id,
+                student.group_id,
+            )
+        )
+
         await state.clear()
+
+        text = (
+            "✅ <b>Класс и группа обновлены.</b>\n\n"
+            + UIRenderer.render_student_details(
+                student=student,
+                class_name=class_name,
+                group_name=group_name,
+            )
+        )
+
+        keyboard = Keyboards.get_student_details_kb(
+            student_id=student.id,
+            telegram_user_id=student.telegram_user_id,
+            is_family_admin=access.is_family_admin,
+        )
+
+        with contextlib.suppress(TelegramBadRequest):
+            await callback.message.edit_text(
+                text,
+                reply_markup=keyboard,
+                parse_mode="HTML",
+            )
+
+        await callback.answer()
+        return
+
+    # =========================================================
+    # 3. Child edits own class/group from Settings.
+    # =========================================================
+    self_edit_user_id = data.get("self_edit_user_id")
+
+    if self_edit_user_id is not None:
+        if self_edit_user_id != actor_user_id:
+            await state.clear()
+
+            await callback.answer(
+                "❌ Состояние редактирования устарело.",
+                show_alert=True,
+            )
+            return
+
+        class_id = data.get("class_id")
+
+        if not class_id:
+            await state.clear()
+
+            await callback.answer(
+                "❌ Не выбран класс.",
+                show_alert=True,
+            )
+            return
+
+        await profile_service.set_child_class_and_group(
+            actor_user_id,
+            class_id,
+            group_id,
+        )
+
+        student = await students_service.ensure_telegram_student_profile(
+            telegram_user_id=actor_user_id,
+        )
+
+        if student is None:
+            await state.clear()
+
+            await callback.answer(
+                "❌ Не удалось синхронизировать профиль ученика.",
+                show_alert=True,
+            )
+            return
+
+        await state.clear()
+
+        from bot.handlers.settings import _show_settings_menu
+
+        await _show_settings_menu(
+            message_obj=callback.message,
+            user_id=actor_user_id,
+            profile_service=profile_service,
+            schedule_service=schedule_service,
+            is_callback=True,
+        )
+
         await callback.answer(
-            "❌ Не удалось синхронизировать профиль ученика.",
+            "✅ Класс и группа обновлены.",
+        )
+        return
+
+    # =========================================================
+    # 4. Standard standalone child registration.
+    # =========================================================
+    class_id = data.get("class_id")
+
+    if not class_id:
+        await state.clear()
+
+        await callback.answer(
+            "❌ Не выбран класс. Начните регистрацию заново.",
             show_alert=True,
         )
         return
 
-    # 3. ВЕТКА 1: Возврат в Настройки (если редактировали профиль ребенка через родителя)
-    if editing_child_id is not None:
-        # ЗАПРАШИВАЕМ СПРАВОЧНИКИ ЕДИНЫМ ЗАПРОСОМ ЧЕРЕЗ ScheduleService
-        dicts_dto = await schedule_service.get_school_dictionaries()
-        
-        # Расшифровываем ID из student.class_id и student.group_id через словари dicts_dto
-        class_name = dicts_dto.classes.get(student.class_id, student.class_id)
-        group_name = "Весь класс" if student.group_id == "ALL" else dicts_dto.groups.get(student.group_id, student.group_id)
+    await profile_service.set_child_class_and_group(
+        actor_user_id,
+        class_id,
+        group_id,
+    )
 
+    student = await students_service.ensure_telegram_student_profile(
+        telegram_user_id=actor_user_id,
+    )
+
+    if student is None:
         await state.clear()
-        child_dto = await profile_service.get_user_profile_dto(
-            target_user_id,
-        )
 
-        is_locked = not await profile_service.can_user_change_own_notification_settings(
-            user_id=target_user_id,
+        await callback.answer(
+            "❌ Не удалось создать профиль ученика.",
+            show_alert=True,
         )
+        return
 
-        text = UIRenderer.render_settings_main(
-            child_dto,
-            family_code=None
-        )
-
-        kb = Keyboards.get_child_settings_kb(
-            child_dto=child_dto,
-            is_family_admin=True,
-            is_notifications_locked=is_locked,
-        )
-        
-        with contextlib.suppress(TelegramBadRequest):
-            await callback.message.edit_text(
-                f"✅ Подгруппа успешно обновлена.\n\n{text}", 
-                reply_markup=kb, 
-                parse_mode="HTML"
-            )
-        return await callback.answer()
-
-    # 4. ВЕТКА 2: Возврат в свои Настройки (если просто меняли свой класс)
-    elif data.get('is_settings_edit'):
-        await state.clear()
-        
-        # Локальный импорт, чтобы избежать конфликта модулей
-        from bot.handlers.settings import _show_settings_menu
-        
-        # Отрисовываем обновленное меню настроек в текущем сообщении
-        await _show_settings_menu(
-            message_obj=callback.message,
-            user_id=callback.from_user.id,
-            profile_service=profile_service,
-            schedule_service=schedule_service,
-            is_callback=True
-        )
-        return await callback.answer("✅ Класс и подгруппа успешно обновлены!")
-
-    # 5. ВЕТКА 3: Стандартное завершение первой регистрации
     user_dto = await profile_service.get_user_profile_dto(
-        callback.from_user.id,
+        actor_user_id,
     )
 
     await state.clear()
-
-    text = UIRenderer.render_final_success(
-        getattr(user_dto, "name", "Пользователь"),
-    )
 
     with contextlib.suppress(TelegramBadRequest):
         await callback.message.delete()
 
     await callback.message.answer(
-        text,
+        UIRenderer.render_final_success(
+            user_dto.name,
+        ),
         parse_mode="HTML",
     )
 
-    await _show_main_menu(callback.message)
+    await _show_main_menu(
+        callback.message,
+    )
 
     await callback.answer()
 

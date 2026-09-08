@@ -1319,8 +1319,7 @@ async def settings_change_class(
     keyboard = Keyboards.get_class_selection(dicts_dto.as_class_list)
 
     await state.update_data(
-        is_settings_edit=True,
-        editing_own_profile_id=callback.from_user.id,
+        self_edit_user_id=callback.from_user.id,
     )
 
     await _safe_edit_text(
@@ -2799,6 +2798,7 @@ async def delete_virtual_student(
     callback: CallbackQuery,
     students_service: StudentsService,
     profile_service: ProfileService,
+    schedule_service: ScheduleService,
 ) -> None:
     try:
         student_id = int(callback.data.split(":")[2])
@@ -2828,6 +2828,7 @@ async def delete_virtual_student(
         callback=callback,
         profile_service=profile_service,
         students_service=students_service,
+        schedule_service=schedule_service,
     )
 
     await _safe_callback_answer(
@@ -3155,8 +3156,8 @@ async def start_student_class_edit(
     student_dto, _access = student
 # 1. Получаем красивые названия через наш хелпер
     dicts_dto = await schedule_service.get_school_dictionaries()
-    class_name=dicts_dto.get_readable_class(student_dto.class_id),
-    group_name=dicts_dto.get_readable_group(student_dto.group_id),
+    class_name=dicts_dto.get_readable_class(student_dto.class_id)
+    group_name=dicts_dto.get_readable_group(student_dto.group_id)
 
     await state.clear()
 
@@ -3478,8 +3479,8 @@ async def show_adult_student_extra_classes_permissions(
     
     text = UIRenderer.render_adult_student_extra_classes_permissions(
         student=student,
-        classes=dicts_dto.classes,
-        groups=dicts_dto.groups,
+        #classes=dicts_dto.classes,
+        #groups=dicts_dto.groups,
         permissions=permissions,
     )
 

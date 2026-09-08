@@ -435,6 +435,8 @@ class UIRenderer:
         permissions: list[
             AdultStudentExtraClassesPermissionDTO
         ],
+        classes: str,
+        groups: str,
     ) -> str:
         """
         Рендерит права взрослых на управление кружками
@@ -1653,6 +1655,8 @@ class UIRenderer:
     def render_student_claim_invite_created(
         *,
         student: StudentProfileDTO,
+        classes: str,
+        groups: str,
         expires_at: str,
         deep_link: str,
     ) -> str:
