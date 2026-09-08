@@ -2612,6 +2612,7 @@ async def create_virtual_student(
     state: FSMContext,
     students_service: StudentsService,
     profile_service: ProfileService,
+    schedule_service: ScheduleService,
 ) -> None:
     try:
         group_id = callback.data.split(":")[2]
@@ -2667,6 +2668,7 @@ async def create_virtual_student(
     await _show_family_students_menu(
         callback=callback,
         profile_service=profile_service,
+        schedule_service=schedule_service,
         students_service=students_service,
     )
 
@@ -2918,6 +2920,7 @@ async def show_parent_student_notification_settings(
 async def toggle_parent_student_notification_setting(
     callback: CallbackQuery,
     profile_service: ProfileService,
+    schedule_service: ScheduleService,
 ) -> None:
     """
     Переключает одну personal adult subscription
@@ -2984,9 +2987,14 @@ async def toggle_parent_student_notification_setting(
             show_alert=True,
         )
         return
-
+    # 1. Получаем настройки и словари
+    dicts_dto = await schedule_service.get_school_dictionaries()
+    class_name = dicts_dto.get_readable_class(dto.student_class_id)
+    group_name = dicts_dto.get_readable_group(dto.student_group_id)
     text = UIRenderer.render_parent_student_notification_settings(
-        dto,
+        dto=dto,
+        class_name=class_name,
+        group_name=group_name,
     )
 
     keyboard = (

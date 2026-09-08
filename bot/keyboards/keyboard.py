@@ -397,9 +397,9 @@ class Keyboards:
                 )
             ])
 
-            return InlineKeyboardMarkup(
-                inline_keyboard=buttons,
-            )
+        return InlineKeyboardMarkup(
+            inline_keyboard=buttons,
+        )
         
     @staticmethod
     def get_extra_edit_fields_kb(class_id: int) -> InlineKeyboardMarkup:
