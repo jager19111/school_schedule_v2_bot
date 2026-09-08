@@ -21,11 +21,20 @@ class ScheduleService:
 
     async def get_school_dictionaries(self) -> SchoolDictionariesDTO:
         """Получает справочники классов и групп за один запрос к репозиторию."""
-        metadata = await self.schedule_repo.get_metadata()
+        metadata: dict = await self.schedule_repo.get_metadata()
         
         classes_raw = metadata.get('classes', {})
-        classes_dict = {k: getattr(v, 'name', v) for k, v in classes_raw.items()}
-        groups_dict = metadata.get('groups', {})
+        # Извлекаем name, приводим ключи и значения к строкам для надежности
+        classes_dict = {
+            str(k): str(getattr(v, 'name', v)) 
+            for k, v in classes_raw.items()
+        }
+        
+        groups_raw = metadata.get('groups', {})
+        groups_dict = {
+            str(k): str(v) 
+            for k, v in groups_raw.items()
+        }
         
         return SchoolDictionariesDTO(classes=classes_dict, groups=groups_dict)
     

@@ -3003,6 +3003,7 @@ async def create_student_claim_invite(
     callback: CallbackQuery,
     bot: Bot,
     students_service: StudentsService,
+    schedule_service: ScheduleService,
 ) -> None:
     """
     Family admin выпускает одноразовый claim link
@@ -3079,9 +3080,12 @@ async def create_student_claim_invite(
         class_id=invite.student_class_id or "—",
         group_id=invite.student_group_id or "ALL",
     )
-
+    dicts_dto = await schedule_service.get_school_dictionaries()
+    
     text = UIRenderer.render_student_claim_invite_created(
         student=student,
+        classes=dicts_dto.classes,
+        groups=dicts_dto.groups,
         expires_at=invite.expires_at,
         deep_link=deep_link,
     )
@@ -3410,6 +3414,7 @@ async def show_adult_student_extra_classes_permissions(
     callback: CallbackQuery,
     profile_service: ProfileService,
     students_service: StudentsService,
+    schedule_service: ScheduleService,
 ) -> None:
     """
     Family admin просматривает права других взрослых
@@ -3469,9 +3474,12 @@ async def show_adult_student_extra_classes_permissions(
             show_alert=True,
         )
         return
-
+    dicts_dto = await schedule_service.get_school_dictionaries()
+    
     text = UIRenderer.render_adult_student_extra_classes_permissions(
         student=student,
+        classes=dicts_dto.classes,
+        groups=dicts_dto.groups,
         permissions=permissions,
     )
 

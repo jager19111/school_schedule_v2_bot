@@ -14,26 +14,30 @@ class GroupListDTO:
 class FamilyCreatedDTO:
     family_code: str
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class SchoolDictionariesDTO:
     """Объединенный DTO для передачи справочников школы с хелперами чтения."""
     classes: dict[str, str]
     groups: dict[str, str]
 
-    def get_readable_class(self, class_id: str | None) -> str:
-        """Возвращает название класса или прочерк."""
-        return self.classes.get(class_id, class_id) if class_id else "—"
+    def get_readable_class(self, class_id: str | int | None) -> str:
+        """Возвращает название класса или прочерк. Защищен от int-ключей."""
+        if not class_id:
+            return "—"
+        
+        safe_id = str(class_id)
+        return self.classes.get(safe_id, safe_id)
 
     def get_readable_group(self, group_id: str | None) -> str:
         """Расшифровывает ID группы, обрабатывая ALL и множественные группы."""
-        if not group_id or group_id == "ALL":
+        if not group_id or str(group_id).strip() == "ALL":
             return "Весь класс"
         
         names = [
             self.groups.get(g.strip(), f"Группа {g.strip()}") 
-            for g in str(group_id).split(",")
+            for g in str(group_id).split(",") if g.strip()
         ]
-        return ", ".join(names)
+        return ", ".join(names) or "Весь класс"
 
     @property
     def as_class_list(self) -> ClassListDTO:
@@ -43,7 +47,43 @@ class SchoolDictionariesDTO:
     def as_group_list(self) -> GroupListDTO:
         """Helper-свойство: отдает готовый GroupListDTO для клавиатур."""
         return GroupListDTO(groups=self.groups)
+
+
+@dataclass(frozen=True, slots=True)
+class WatchTargetViewModel:
+    """Модель готовых данных для отображения отслеживаемого класса."""
+    target_id: str               # ID записи из БД для callback_data (id)
     
+    # --- Основные текстовые поля ---
+    title: str                   # Пользовательское название (title) или дефолтное "Класс {class_name}"
+    class_name: str              # Расшифрованный class_id (например, "10 А")
+    group_name: str              # Расшифрованный group_id (например, "Весь класс" или "Английский")
+    
+    # --- Статусы (уже отформатированные для UI) ---
+    is_enabled_text: str         # "🟢 Активно" или "⚫ Пауза" (на основе is_enabled)
+    changes_notify_text: str     # "🔔 Уведомления об изменениях включены" (на основе receive_schedule_changes)
+
+@dataclass(frozen=True, slots=True)
+class ExtraClassViewModel:
+    """Модель готовых данных для экрана кружков (дополнительных занятий)."""
+    class_id: int
+    title: str
+    time_start: str
+    time_end: str
+    day_of_week_text: str # "Понедельник"
+    student_name: str
+    class_name: str
+    group_name: str
+
+@dataclass(frozen=True, slots=True)
+class StudentProfileViewModel:
+    """Модель готовых данных для экрана профиля ученика"""
+    student_id: int
+    name: str
+    class_name: str
+    group_name: str
+    telegram_status: str # "📱 Подключен" или "🧒 Без Telegram"
+        
 @dataclass
 class FamilyInviteDTO:
     """
