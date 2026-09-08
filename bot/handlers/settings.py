@@ -226,31 +226,7 @@ async def settings_main_menu(message: Message, profile_service: ProfileService, 
     """Главное меню настроек. Вызывается из главного меню и после изменения настроек."""
     await _show_settings_menu(message, message.from_user.id, profile_service, schedule_service, is_callback=False)
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-                
+              
 @router.callback_query(F.data == "settings:main")
 async def settings_main_menu_cb(callback: CallbackQuery, profile_service: ProfileService, schedule_service: ScheduleService):
     """Главное меню настроек. Вызывается из коллбэка после изменения настроек."""
@@ -266,7 +242,22 @@ async def _show_settings_menu(
 ):
     user_dto = await profile_service.get_user_profile_dto(user_id)
     family_code = await profile_service.get_family_code(user_dto.family_id) if user_dto.family_id else None
-    
+    if not user_dto.is_fully_registered:
+        if is_callback:
+            try:
+                await message_obj.edit_text(
+                    UIRenderer.render_unregistered_error(),
+                    parse_mode="HTML",
+                )
+            except TelegramBadRequest:
+                pass
+        else:
+            await message_obj.answer(
+                UIRenderer.render_unregistered_error(),
+                parse_mode="HTML",
+            )
+
+        return
     # 1. Получаем все школьные справочники за один вызов
     dicts_dto = await schedule_service.get_school_dictionaries()
     
@@ -1293,10 +1284,28 @@ async def settings_change_class(
     Ребёнок не может менять класс, если профиль заблокирован
     администратором семьи.
     """
+    
+    
     user_dto = await profile_service.get_user_profile_dto(
         callback.from_user.id,
     )
 
+    if not user_dto.is_fully_registered:
+        await state.clear()
+
+        await callback.answer(
+            "Сначала завершите регистрацию через /start.",
+            show_alert=True,
+        )
+        return
+
+    if user_dto.role != "child":
+        await callback.answer(
+            "Изменение класса доступно только ученику.",
+            show_alert=True,
+        )
+        return
+    
     if user_dto.role == "child":
         allowed = await profile_service.can_user_change_own_notification_settings(
             user_id=callback.from_user.id,

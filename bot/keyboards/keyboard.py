@@ -336,12 +336,19 @@ class Keyboards:
         target_student_id: int,
         can_add: bool,
         can_edit: bool,
+        can_switch_student: bool,
     ) -> InlineKeyboardMarkup:
         """
         Меню допзанятий конкретного student profile.
 
         Все callback payload содержат student_profiles.id,
         а не Telegram users.user_id.
+
+        can_switch_student=True:
+        parent/observer может выбрать другого доступного ученика.
+
+        can_switch_student=False:
+        child работает только со своим profile и получает кнопку «Назад».
         """
         buttons = []
 
@@ -375,17 +382,25 @@ class Keyboards:
                 )
             ])
 
-        buttons.append([
-            InlineKeyboardButton(
-                text="⬅️ К выбору ученика",
-                callback_data="extra:students",
-            )
-        ])
+        if can_switch_student:
+            buttons.append([
+                InlineKeyboardButton(
+                    text="⬅️ К выбору ученика",
+                    callback_data="extra:students",
+                )
+            ])
+        else:
+            buttons.append([
+                InlineKeyboardButton(
+                    text="⬅️ Назад",
+                    callback_data="extra:back",
+                )
+            ])
 
-        return InlineKeyboardMarkup(
-            inline_keyboard=buttons,
-        )
-    
+            return InlineKeyboardMarkup(
+                inline_keyboard=buttons,
+            )
+        
     @staticmethod
     def get_extra_edit_fields_kb(class_id: int) -> InlineKeyboardMarkup:
         """Клавиатура выбора поля для правки занятия."""

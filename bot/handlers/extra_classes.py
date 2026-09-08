@@ -3,6 +3,7 @@ from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
+from aiogram.exceptions import TelegramBadRequest
 
 from bot.utils.ui_renderer import UIRenderer
 from bot.keyboards.keyboard import Keyboards
@@ -50,18 +51,24 @@ async def _show_extra_menu_for_student(
     )
 
     if actor_access is not None:
-        student, _ = actor_access
+        student, _student_access = actor_access
+
+        # Parent / observer: может перейти к selector своих учеников.
+        can_switch_student = True
     else:
         student = await students_service.get_student_by_telegram_user_id(
             telegram_user_id=actor_user_id,
         )
 
-    if (
-        student is None
-        or student.id != target_student_id
-        or not student.is_active
-    ):
-        return False
+        if (
+            student is None
+            or student.id != target_student_id
+            or not student.is_active
+        ):
+            return False
+
+        # Child: только собственный student_profile.
+        can_switch_student = False
 
     # Запрашиваем справочники школы единым запросом через ScheduleServiceV2
     dicts_dto = await schedule_service.get_school_dictionaries()
@@ -90,6 +97,7 @@ async def _show_extra_menu_for_student(
         target_student_id=target_student_id,
         can_add=access.can_manage,
         can_edit=access.can_manage,
+        can_switch_student=can_switch_student,
     )
 
     try:
@@ -535,7 +543,28 @@ async def start_delete_extra(
     await state.set_state(ExtraClassStates.waiting_for_delete_id)
 
     await callback.answer()
-    
+
+@router.callback_query(F.data == "extra:back")
+async def close_extra_menu(
+    callback: CallbackQuery,
+    state: FSMContext,
+) -> None:
+    """
+    Закрывает личное меню допзанятий ребёнка.
+
+    Нижнее ReplyKeyboardMarkup уже постоянно показано в чате,
+    поэтому после закрытия ребёнок возвращается к главному меню.
+    """
+    await state.clear()
+
+    try:
+        await callback.message.delete()
+    except TelegramBadRequest:
+        # Например, если сообщение уже удалено или недоступно.
+        pass
+
+    await callback.answer()
+        
 @router.message(ExtraClassStates.waiting_for_delete_id)
 async def process_delete_id(
     message: Message,

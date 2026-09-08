@@ -147,7 +147,8 @@ class UIRenderer:
     
     @staticmethod
     def render_unregistered_error() -> str:
-        return "Пожалуйста, сначала пройдите регистрацию (/start) или выберите класс в настройках."
+        return ("⚠️ Регистрация ещё не завершена.\n"
+                 "Пожалуйста, сначала пройдите регистрацию (/start) и выберите роль, чтобы продолжить.")
 
     @staticmethod
     def render_access_denied() -> str:
@@ -963,7 +964,16 @@ class UIRenderer:
         text = "👨‍👩‍👧 <b>Ваша семья</b>\n\n"
         roles_ru = {"parent": "👨‍👩‍👧 Родитель", "child": "👶 Ребёнок", "observer": "👁 Наблюдатель"}
         
-        sorted_members = sorted(members, key=lambda m: 1 if m.role == 'child' else 0)
+        # Сортировка: 
+        # 1. Текущий пользователь (0 - первый, 1 - остальные)
+        # 2. Приоритет роли: parent=1, child=2, observer=3
+        sorted_members = sorted(
+            members, 
+            key=lambda m: (
+                0 if m.user_id == current_user.user_id else 1,
+                {"parent": 1, "child": 2, "observer": 3}.get(m.role, 4)
+            )
+        )
         
         for m in sorted_members:
             role_str = roles_ru.get(m.role, m.role)

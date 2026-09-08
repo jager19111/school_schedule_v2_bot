@@ -7,6 +7,7 @@ from aiogram.types import Message
 
 from bot.utils.ui_renderer import UIRenderer
 from services.admin_service import AdminService
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 
 logger = logging.getLogger(__name__)
@@ -92,3 +93,16 @@ async def cmd_source_status(
         text,
         parse_mode="HTML",
     )
+
+@router.message(Command("test_btn"))
+async def send_test_button(message: Message):
+    """Временная команда для быстрого вызова любого коллбэка."""
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[[
+            InlineKeyboardButton(
+                text="Тест смены класса", 
+                callback_data="settings:main" # Меняйте это значение на нужное
+            )
+        ]]
+    )
+    await message.answer("Жми:", reply_markup=kb)
