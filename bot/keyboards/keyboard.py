@@ -184,7 +184,6 @@ class Keyboards:
 
         return InlineKeyboardMarkup(inline_keyboard=buttons)
     
-# Удалить после рефакторинга
     @staticmethod
     def get_notifications_kb(user_dto: 'UserProfileDTO') -> InlineKeyboardMarkup:
         """Отдельное меню управления всеми уведомлениями."""

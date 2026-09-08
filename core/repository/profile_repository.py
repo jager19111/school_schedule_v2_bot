@@ -1077,123 +1077,275 @@ class ProfileRepository(BaseRepository):
 
     async def disband_family_by_admin(
         self,
+        *,
         admin_user_id: int,
     ) -> bool:
         """
-        Расформировывает семью по инициативе её администратора.
+        Полностью расформировывает семью.
 
-        Последствия:
-        - удаляются parent_student_settings всей семьи;
-        - удаляются extra_classes всей семьи;
-        - очищаются логи отправки уведомлений всей семьи;
-        - все участники отвязываются от family_id;
-        - сам администратор полностью сбрасывается;
-        - остальные участники сохраняются как отдельные Telegram-профили,
-          но больше не состоят в семье.
-
-        Автоматическая передача admin_user_id другому взрослому намеренно
-        не выполняется.
+        Политика при расформировании:
+        - Telegram-linked child profiles становятся standalone;
+        - их class/group и extra_classes сохраняются;
+        - virtual profiles без Telegram удаляются вместе с занятиями;
+        - parent_student_settings удаляются, так как семьи больше нет;
+        - взрослые отвязываются от семьи;
+        - family invites удаляются каскадно вместе с family.
         """
         async with self._connection() as db:
-            await db.execute("BEGIN")
+            await db.execute("BEGIN IMMEDIATE")
 
-            family_cursor = await db.execute(
-                """
-                SELECT id
-                FROM families
-                WHERE admin_user_id = ?
-                """,
-                (admin_user_id,),
-            )
-
-            family = await family_cursor.fetchone()
-
-            if family is None:
-                await db.rollback()
-                return False
-
-            family_id = family["id"]
-
-            # Получаем ID всех участников семьи до очистки связи (users.family_id)
-            members_cursor = await db.execute(
-                """
-                SELECT user_id
-                FROM users
-                WHERE family_id = ?
-                """,
-                (family_id,),
-            )
-            member_rows = await members_cursor.fetchall()
-            member_ids = [row["user_id"] for row in member_rows]
-
-            await db.execute(
-                """
-                DELETE FROM extra_classes
-                WHERE family_id = ?
-                """,
-                (family_id,),
-            )
-
-            # Удаляем старые логи доставки уведомлений для всех участников семьи
-            if member_ids:
-                placeholders = ",".join("?" for _ in member_ids)
-                await db.execute(
-                    f"""
-                    DELETE FROM notification_delivery_log
-                    WHERE recipient_id IN ({placeholders})
+            try:
+                family_cursor = await db.execute(
+                    """
+                    SELECT id
+                    FROM families
+                    WHERE admin_user_id = ?
                     """,
-                    tuple(member_ids),
+                    (admin_user_id,),
                 )
 
-            # Все участники становятся независимыми.
-            # Дети сохраняют class_id/group_id и могут продолжать смотреть
-            # личное расписание; взрослые без family_id при /start пройдут
-            # новый flow семьи.
-            await db.execute(
-                """
-                UPDATE users
-                SET
-                    family_id = NULL,
-                    updated_at = CURRENT_TIMESTAMP
-                WHERE family_id = ?
-                """,
-                (family_id,),
-            )
+                family = await family_cursor.fetchone()
 
-            # Администратора сбрасываем полностью.
-            await db.execute(
-                """
-                UPDATE users
-                SET
-                    role = 'child',
-                    class_id = NULL,
-                    group_id = NULL,
-                    teacher_id = NULL,
-                    morning_summary_time = NULL,
-                    pre_lesson_offset_minutes = 10,
-                    receive_schedule_changes = 1,
-                    receive_extra_class_reminders = 1,
-                    changes_window_days = 3,
-                    global_extra_reminder = 30,
-                    can_manage_own_extra_classes = 1,
-                    is_notifications_enabled = 1,
-                    updated_at = CURRENT_TIMESTAMP
-                WHERE user_id = ?
-                """,
-                (admin_user_id,),
-            )
+                if family is None:
+                    await db.rollback()
+                    return False
 
-            await db.execute(
-                """
-                DELETE FROM families
-                WHERE id = ?
-                """,
-                (family_id,),
-            )
+                family_id = family["id"]
 
-            await db.commit()
+                # -------------------------------------------------
+                # 1. Сохраняем Telegram-linked child profiles.
+                #
+                # Это реальные дети, которые должны продолжить
+                # пользоваться расписанием после распуска семьи.
+                # -------------------------------------------------
+                linked_children_cursor = await db.execute(
+                    """
+                    SELECT
+                        student.id,
+                        student.telegram_user_id
+                    FROM student_profiles AS student
+                    JOIN users AS child
+                        ON child.user_id = student.telegram_user_id
+                    WHERE student.family_id = ?
+                    AND student.telegram_user_id IS NOT NULL
+                    AND student.is_active = 1
+                    AND child.role = 'child'
+                    """,
+                    (family_id,),
+                )
 
-        return True
+                linked_children = await linked_children_cursor.fetchall()
+
+                linked_student_ids = [
+                    row["id"]
+                    for row in linked_children
+                ]
+
+                # -------------------------------------------------
+                # 2. Сохраняем Telegram user IDs для cleanup
+                # notification_delivery_log.
+                # -------------------------------------------------
+                members_cursor = await db.execute(
+                    """
+                    SELECT user_id
+                    FROM users
+                    WHERE family_id = ?
+                    """,
+                    (family_id,),
+                )
+
+                members = await members_cursor.fetchall()
+
+                member_user_ids = [
+                    row["user_id"]
+                    for row in members
+                ]
+
+                # -------------------------------------------------
+                # 3. Удаляем family access rows.
+                #
+                # Нельзя оставлять parent_student_settings:
+                # после удаления family adult и student profile
+                # больше не принадлежат одной семье.
+                # -------------------------------------------------
+                await db.execute(
+                    """
+                    DELETE FROM parent_student_settings
+                    WHERE student_id IN (
+                        SELECT id
+                        FROM student_profiles
+                        WHERE family_id = ?
+                    )
+                    OR parent_user_id IN (
+                        SELECT user_id
+                        FROM users
+                        WHERE family_id = ?
+                    )
+                    """,
+                    (
+                        family_id,
+                        family_id,
+                    ),
+                )
+
+                # -------------------------------------------------
+                # 4. Отвязываем extra_classes реальных детей
+                # от family context.
+                #
+                # student_id не меняется: занятия принадлежат
+                # конкретному student_profile.
+                # -------------------------------------------------
+                if linked_student_ids:
+                    placeholders = ", ".join(
+                        "?"
+                        for _ in linked_student_ids
+                    )
+
+                    await db.execute(
+                        f"""
+                        UPDATE extra_classes
+                        SET
+                            family_id = NULL,
+                            updated_at = CURRENT_TIMESTAMP
+                        WHERE student_id IN ({placeholders})
+                        """,
+                        tuple(linked_student_ids),
+                    )
+
+                # -------------------------------------------------
+                # 5. Telegram-linked child profiles становятся
+                # standalone до DELETE FROM families.
+                #
+                # Без этого ON DELETE CASCADE удалит их.
+                # -------------------------------------------------
+                if linked_student_ids:
+                    placeholders = ", ".join(
+                        "?"
+                        for _ in linked_student_ids
+                    )
+
+                    await db.execute(
+                        f"""
+                        UPDATE student_profiles
+                        SET
+                            family_id = NULL,
+                            updated_at = CURRENT_TIMESTAMP
+                        WHERE id IN ({placeholders})
+                        AND telegram_user_id IS NOT NULL
+                        AND is_active = 1
+                        """,
+                        tuple(linked_student_ids),
+                    )
+
+                # -------------------------------------------------
+                # 6. Удаляем virtual profiles, оставшиеся в семье.
+                #
+                # Это profiles без Telegram. Они не могут стать
+                # самостоятельными без реального child account.
+                #
+                # Их extra_classes удаляются каскадно.
+                # -------------------------------------------------
+                await db.execute(
+                    """
+                    DELETE FROM student_profiles
+                    WHERE family_id = ?
+                    """,
+                    (family_id,),
+                )
+
+                # -------------------------------------------------
+                # 7. Отвязываем всех участников от family.
+                #
+                # Child users сохраняют class_id/group_id, поэтому
+                # сразу остаются зарегистрированными standalone child.
+                # -------------------------------------------------
+                await db.execute(
+                    """
+                    UPDATE users
+                    SET
+                        family_id = NULL,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE family_id = ?
+                    """,
+                    (family_id,),
+                )
+
+                # -------------------------------------------------
+                # 8. Очищаем delivery logs всех бывших участников.
+                # -------------------------------------------------
+                if member_user_ids:
+                    placeholders = ", ".join(
+                        "?"
+                        for _ in member_user_ids
+                    )
+
+                    await db.execute(
+                        f"""
+                        DELETE FROM notification_delivery_log
+                        WHERE recipient_id IN ({placeholders})
+                        """,
+                        tuple(member_user_ids),
+                    )
+
+                # -------------------------------------------------
+                # 9. Теперь можно удалить семью.
+                #
+                # Family invites удалятся каскадно.
+                # Virtual profiles уже удалены.
+                # Linked child profiles уже family_id=NULL.
+                # -------------------------------------------------
+                delete_family_cursor = await db.execute(
+                    """
+                    DELETE FROM families
+                    WHERE id = ?
+                    AND admin_user_id = ?
+                    """,
+                    (
+                        family_id,
+                        admin_user_id,
+                    ),
+                )
+
+                if delete_family_cursor.rowcount != 1:
+                    await db.rollback()
+                    return False
+
+                # -------------------------------------------------
+                # 10. Бывший family admin становится незавершённым
+                # standalone user. Он может начать новую регистрацию.
+                #
+                # Не меняем остальных adults принудительно:
+                # их role остаётся parent/observer, но family_id=NULL,
+                # поэтому /start предложит им регистрацию заново.
+                # -------------------------------------------------
+                await db.execute(
+                    """
+                    UPDATE users
+                    SET
+                        role = 'child',
+                        class_id = NULL,
+                        group_id = NULL,
+                        teacher_id = NULL,
+                        morning_summary_time = NULL,
+                        pre_lesson_offset_minutes = 10,
+                        receive_schedule_changes = 1,
+                        receive_extra_class_reminders = 1,
+                        changes_window_days = 3,
+                        global_extra_reminder = 30,
+                        can_manage_own_extra_classes = 1,
+                        is_notifications_enabled = 1,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE user_id = ?
+                    """,
+                    (admin_user_id,),
+                )
+
+                await db.commit()
+                return True
+
+            except Exception:
+                await db.rollback()
+                raise
 
     async def update_integer_setting(self, user_id: int, field_name: str, value: int) -> None:
         """Безопасное обновление числовых настроек."""

@@ -435,8 +435,8 @@ class UIRenderer:
         permissions: list[
             AdultStudentExtraClassesPermissionDTO
         ],
-        classes: str,
-        groups: str,
+        #classes: str,
+        #groups: str,
     ) -> str:
         """
         Рендерит права взрослых на управление кружками
@@ -1395,8 +1395,13 @@ class UIRenderer:
                 f"• дополнительных занятий будет удалено: "
                 f"<b>{dto.extra_classes_count}</b>;\n"
                 "• связи родителей, наблюдателей и детей будут удалены;\n"
+                "• virtual-профили детей без Telegram будут удалены;\n"
                 "• остальные пользователи останутся в боте, "
                 "но будут отвязаны от семьи.\n\n"
+                "Telegram-профили реальных детей сохранятся:\n"
+                "• дети смогут пользоваться расписанием самостоятельно;\n"
+                "• их класс и группа сохранятся;\n"
+                "• их дополнительные занятия сохранятся в профиле;\n\n"
                 "Это действие нельзя отменить."
             )
 
@@ -1655,8 +1660,8 @@ class UIRenderer:
     def render_student_claim_invite_created(
         *,
         student: StudentProfileDTO,
-        classes: str,
-        groups: str,
+        #classes: str,
+        #groups: str,
         expires_at: str,
         deep_link: str,
     ) -> str:
