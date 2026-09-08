@@ -165,7 +165,6 @@ async def cmd_start(
         user_id,
     )
 
-
     # -------------------------------
     # Deep link student claim flow
     # -------------------------------
@@ -203,22 +202,19 @@ async def cmd_start(
             await state.clear()
             return
 
-        # --- 1. Запрашиваем справочники из ScheduleService ---
-        classes_dto = await schedule_service.get_classes_list()
-        groups_dto = await schedule_service.get_groups_list()
+        # --- 1. Запрашиваем справочники школы единым запросом через ScheduleServiceV2 ---
+        dicts_dto = await schedule_service.get_school_dictionaries()
         
-        # --- 2. Получаем красивые имена по ID ---
-        # Обращаемся напрямую к полям DTO: invite.student_class_id
-        class_name = classes_dto.classes.get(
+        # --- 2. Получаем красивые имена по ID из свойств dicts_dto ---
+        class_name = dicts_dto.classes.get(
             invite.student_class_id,
             invite.student_class_id or "—",
         )
 
-        # Обращаемся напрямую к invite.student_group_id
         if not invite.student_group_id or invite.student_group_id == "ALL":
             group_name = "ALL"
         else:
-            group_name = groups_dto.groups.get(
+            group_name = dicts_dto.groups.get(
                 invite.student_group_id, 
                 invite.student_group_id
             )
@@ -551,19 +547,20 @@ async def process_name(
             pending_invite_name=name,
         )
 
-        class_dto = await schedule_service.get_classes_list()
+        dicts_dto = await schedule_service.get_school_dictionaries()
 
         text = UIRenderer.render_class_selection(
-            class_dto,
+            dicts_dto.as_class_list,
         )
 
         kb = Keyboards.get_class_selection(
-            class_dto,
+            dicts_dto.as_class_list,
         )
 
         await message.answer(
             text,
             reply_markup=kb,
+            parse_mode="HTML",
         )
 
         await state.set_state(
@@ -656,6 +653,7 @@ async def process_name(
         await message.answer(
             text,
             reply_markup=kb,
+            parse_mode="HTML",
         )
 
         await state.set_state(
@@ -670,6 +668,7 @@ async def process_name(
         await message.answer(
             text,
             reply_markup=kb,
+            parse_mode="HTML",
         )
 
         await state.set_state(
@@ -680,22 +679,12 @@ async def process_name(
     if role == "observer":
             text = UIRenderer.render_family_code_join_intro(
                 intended_role="observer",
-                has_standalone_child_profile=False,
-                via_code=True,
             )
-            # Обратите внимание: если у родителя вместе с этим текстом 
-            # отправляется клавиатура (например, кнопка "Ввести код"), 
-            # её нужно добавить и сюда в reply_markup.
-            # kb = Keyboards.get_family_join_action_kb() # (Пример)
 
             await message.answer(
                 text,
                 parse_mode="HTML",
-                # reply_markup=kb,  <-- раскомментируйте и передайте клавиатуру, если она нужна
             )
-            # Если после этого текста пользователь должен нажать кнопку, 
-            # то стейт должен быть waiting_for_family_action.
-            # Если он должен сразу печатать код в чат, то оставляем waiting_for_family_code:
             await state.set_state(
                 RegistrationStates.waiting_for_family_code,
             )
@@ -707,7 +696,7 @@ async def process_name(
         "❌ Не удалось определить выбранную роль. "
         "Отправьте /start и повторите регистрацию."
     )
-
+    
 @router.callback_query(
     RegistrationStates.waiting_for_family_action,
     F.data == "family:create",
@@ -788,63 +777,97 @@ async def process_family_join_btn(
 
     await callback.answer()
 
-@router.callback_query(RegistrationStates.waiting_for_family_action, F.data == "family:skip")
-async def process_family_skip_btn(callback: CallbackQuery, state: FSMContext, schedule_service: ScheduleService):
-    class_dto = await schedule_service.get_classes_list()
+@router.callback_query(
+    RegistrationStates.waiting_for_family_action,
+    F.data == "family:skip",
+)
+async def process_family_skip_btn(
+    callback: CallbackQuery,
+    state: FSMContext,
+    schedule_service: ScheduleService,
+) -> None:
+    # 1. Запрашиваем справочники школы единым запросом
+    dicts_dto = await schedule_service.get_school_dictionaries()
     
-    text = UIRenderer.render_class_selection(class_dto)
-    kb = Keyboards.get_class_selection(class_dto)
-    await callback.message.edit_text(text, reply_markup=kb)
+    # 2. Передаем ClassListDTO через вспомогательное свойство as_class_list
+    text = UIRenderer.render_class_selection(dicts_dto.as_class_list)
+    kb = Keyboards.get_class_selection(dicts_dto.as_class_list)
+    
+    await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
     await state.set_state(RegistrationStates.waiting_for_class)
+    await callback.answer()
+    
 # LEGACY_FALLBACK, оставить
 @router.message(RegistrationStates.waiting_for_family_code)
-async def process_family_code_input(message: Message, state: FSMContext, profile_service: ProfileService, schedule_service: ScheduleService):
+async def process_family_code_input(
+    message: Message,
+    state: FSMContext,
+    profile_service: ProfileService,
+    schedule_service: ScheduleService,
+) -> None:
     code = message.text.strip().upper()
     data = await state.get_data()
-    role = data.get('role', 'parent')
+    role = data.get("role", "parent")
     user_id = message.from_user.id
     
-    success = await profile_service.link_child_to_parent(user_id=user_id, family_code=code, role=role)
+    success = await profile_service.link_child_to_parent(
+        user_id=user_id,
+        family_code=code,
+        role=role,
+    )
     
     if not success:
-        text = UIRenderer.render_error_join()
-        return await message.answer(text)
+        text, kb = UIRenderer.render_error_join()
+        await message.answer(text, reply_markup=kb, parse_mode="HTML")
+        return
 
     # Получаем DTO для имени
     user_dto = await profile_service.get_user_profile_dto(user_id)
+    user_name = getattr(user_dto, "name", "Пользователь")
 
-    if role == 'child':
+    if role == "child":
         text_success = UIRenderer.render_success_join(user_dto.name)
         await message.answer(text_success, parse_mode="HTML")
         
-        class_dto = await schedule_service.get_classes_list()
+        # 1. Запрашиваем справочники школы единым запросом через ScheduleServiceV2
+        dicts_dto = await schedule_service.get_school_dictionaries()
         
-        text = UIRenderer.render_class_selection(class_dto)
-        kb = Keyboards.get_class_selection(class_dto)
-        await message.answer(text, reply_markup=kb)
+        # 2. Рендерим выбор класса с использованием as_class_list
+        text = UIRenderer.render_class_selection(dicts_dto.as_class_list)
+        kb = Keyboards.get_class_selection(dicts_dto.as_class_list)
+        
+        await message.answer(text, reply_markup=kb, parse_mode="HTML")
         await state.set_state(RegistrationStates.waiting_for_class)
     else:
         text = UIRenderer.render_success_join(user_dto.name)
-        
         await message.answer(text, parse_mode="HTML")
         await _show_main_menu(message)
         await state.clear()
 
-@router.callback_query(RegistrationStates.waiting_for_class, F.data.startswith("class:"))
-async def process_class(callback: CallbackQuery, state: FSMContext, schedule_service: ScheduleService):
+@router.callback_query(
+    RegistrationStates.waiting_for_class,
+    F.data.startswith("class:")
+)
+async def process_class(
+    callback: CallbackQuery,
+    state: FSMContext,
+    schedule_service: ScheduleService,
+) -> None:
     class_id = callback.data.split(":")[1]
     await state.update_data(class_id=class_id)
     
-    group_dto = await schedule_service.get_groups_list()
+    # Запрашиваем справочники школы единым запросом
+    dicts_dto = await schedule_service.get_school_dictionaries()
+    
     text, _ = UIRenderer.render_main_group_selection()
-    kb = Keyboards.get_main_group_selection(group_dto)
+    kb = Keyboards.get_main_group_selection(dicts_dto.as_group_list)
     
     with contextlib.suppress(TelegramBadRequest):
         await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
         
     await state.set_state(RegistrationStates.waiting_for_group)
     await callback.answer()
-
+    
 @router.callback_query(RegistrationStates.waiting_for_group, F.data.startswith("group:"))
 async def process_group(
     callback: CallbackQuery, 
@@ -852,7 +875,7 @@ async def process_group(
     profile_service: ProfileService, 
     schedule_service: ScheduleService,
     students_service: StudentsService
-):
+) -> None:
     main_group_id = callback.data.split(":")[1]
     data = await state.get_data()
     invite_token = data.get("family_invite_token")
@@ -864,10 +887,8 @@ async def process_group(
 
         if not pending_name or not class_id:
             await state.clear()
-
             await callback.answer(
-                "❌ Данные приглашения устарели. "
-                "Откройте приглашение заново.",
+                "❌ Данные приглашения устарели. Откройте приглашение заново.",
                 show_alert=True,
             )
             return
@@ -882,10 +903,8 @@ async def process_group(
 
         if consumed_role is None:
             await state.clear()
-
             await callback.answer(
-                "❌ Приглашение уже использовано, отозвано "
-                "или срок его действия истёк.",
+                "❌ Приглашение уже использовано, отозвано или срок его действия истёк.",
                 show_alert=True,
             )
             return
@@ -898,8 +917,7 @@ async def process_group(
         )
         if student is None:
             await callback.answer(
-                "❌ Регистрация завершена не полностью. "
-                "Не удалось создать профиль ученика.",
+                "❌ Регистрация завершена не полностью. Не удалось создать профиль ученика.",
                 show_alert=True,
             )
             return
@@ -908,9 +926,7 @@ async def process_group(
             callback.from_user.id,
         )
 
-        text = UIRenderer.render_final_success(
-            user_dto.name,
-        )
+        text = UIRenderer.render_final_success(user_dto.name)
 
         with contextlib.suppress(TelegramBadRequest):
             await callback.message.delete()
@@ -950,7 +966,6 @@ async def process_group(
 
         if not is_admin:
             await state.clear()
-
             await callback.answer(
                 "Только администратор семьи может менять класс ребёнка.",
                 show_alert=True,
@@ -970,8 +985,7 @@ async def process_group(
             if not allowed:
                 await state.clear()
                 await callback.answer(
-                    "🔒 Изменение профиля заблокировано "
-                    "администратором семьи.",
+                    "🔒 Изменение профиля заблокировано администратором семьи.",
                     show_alert=True,
                 )
                 return
@@ -997,35 +1011,31 @@ async def process_group(
 
     # 3. ВЕТКА 1: Возврат в Настройки (если редактировали профиль ребенка через родителя)
     if editing_child_id is not None:
-        # --- 1. Запрашиваем справочники из ScheduleService ---
-        classes_dto = await schedule_service.get_classes_list()
-        groups_dto = await schedule_service.get_groups_list()
+        # ЗАПРАШИВАЕМ СПРАВОЧНИКИ ЕДИНЫМ ЗАПРОСОМ ЧЕРЕЗ ScheduleService
+        dicts_dto = await schedule_service.get_school_dictionaries()
         
-        # Расшифровываем ID из student.class_id и student.group_id
-        class_name = classes_dto.classes.get(student.class_id, student.class_id)
-        group_name = "Весь класс" if student.group_id == "ALL" else groups_dto.groups.get(student.group_id, student.group_id)
+        # Расшифровываем ID из student.class_id и student.group_id через словари dicts_dto
+        class_name = dicts_dto.classes.get(student.class_id, student.class_id)
+        group_name = "Весь класс" if student.group_id == "ALL" else dicts_dto.groups.get(student.group_id, student.group_id)
 
         await state.clear()
-        # Получаем данные профиля для отображения имени
         child_dto = await profile_service.get_user_profile_dto(
             target_user_id,
         )
 
-        # Если ребенок НЕ может менять настройки сам, значит включена блокировка
         is_locked = not await profile_service.can_user_change_own_notification_settings(
             user_id=target_user_id,
         )
 
         text = UIRenderer.render_settings_main(
-            child_dto.name,
-            class_name=class_name,
-            group_name=group_name,
+            child_dto,
+            family_code=None
         )
 
-        kb = Keyboards.get_student_details_kb(
-            student_id=student.id,
-            telegram_user_id=target_user_id,
+        kb = Keyboards.get_child_settings_kb(
+            child_dto=child_dto,
             is_family_admin=True,
+            is_notifications_locked=is_locked,
         )
         
         with contextlib.suppress(TelegramBadRequest):

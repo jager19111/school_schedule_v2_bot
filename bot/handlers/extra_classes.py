@@ -63,16 +63,24 @@ async def _show_extra_menu_for_student(
     ):
         return False
 
-    # Получаем человекочитаемые названия
-    class_name, group_name = await schedule_service.get_readable_class_and_group(
+    # Запрашиваем справочники школы единым запросом через ScheduleServiceV2
+    dicts_dto = await schedule_service.get_school_dictionaries()
+
+    # Получаем человекочитаемые названия из словарей dicts_dto
+    class_name = dicts_dto.classes.get(
         student.class_id, 
-        student.group_id
+        student.class_id if student.class_id else "—"
+    )
+    group_name = (
+        "Весь класс"
+        if not student.group_id or student.group_id == "ALL"
+        else dicts_dto.groups.get(student.group_id, student.group_id)
     )
 
     text, _ = UIRenderer.render_student_extra_classes_menu(
         student=student,
-        class_name=class_name,  # Передаем в рендер
-        group_name=group_name,  # Передаем в рендер
+        class_name=class_name,
+        group_name=group_name,
     )
 
     if prefix:
@@ -164,10 +172,10 @@ async def show_extra_menu(
         actor_user_id,
     )
 
-# Защита
+    # Защита
     if not actor.is_fully_registered:
         await message.answer(UIRenderer.render_unregistered_error())
-
+        return
     
     if actor.role == "child":
         student = (
@@ -239,8 +247,8 @@ async def show_extra_menu(
 
         return
     
-    classes_dto = await schedule_service.get_classes_list()
-    groups_dto = await schedule_service.get_groups_list()
+    # 1. Запрашиваем справочники школы единым запросом
+    dicts_dto = await schedule_service.get_school_dictionaries()
     
     text, _ = UIRenderer.render_extra_student_select()
 
@@ -248,12 +256,12 @@ async def show_extra_menu(
         text,
         reply_markup=Keyboards.get_extra_students_select_kb(
             students=students,
-            classes_dict=classes_dto.classes,
-            groups_dict=groups_dto.groups,
+            classes_dict=dicts_dto.classes,
+            groups_dict=dicts_dto.groups,
         ),
         parse_mode="HTML",
     )
-
+    
 @router.callback_query(F.data == "extra:students")
 async def show_extra_students(
     callback: CallbackQuery,
@@ -297,17 +305,18 @@ async def show_extra_students(
         await callback.answer()
         return
     
-    classes_dto = await schedule_service.get_classes_list()
-    groups_dto = await schedule_service.get_groups_list()
+    # 1. Запрашиваем справочники школы единым запросом
+    dicts_dto = await schedule_service.get_school_dictionaries()
     
     text, _ = UIRenderer.render_extra_student_select()
 
+    # 2. Передаем словари напрямую из свойств dicts_dto в клавиатуру
     await callback.message.edit_text(
         text,
         reply_markup=Keyboards.get_extra_students_select_kb(
             students=students,
-            classes_dict=classes_dto.classes,
-            groups_dict=groups_dto.groups,
+            classes_dict=dicts_dto.classes,
+            groups_dict=dicts_dto.groups,
         ),
         parse_mode="HTML",
     )
@@ -742,6 +751,7 @@ async def skip_reminder(
     extra_classes_service: ExtraClassesService,
     profile_service: ProfileService,
     students_service: StudentsService,
+    schedule_service: ScheduleService,
 ) -> None:
     """
     Берёт default reminder у инициатора действия.
@@ -760,6 +770,7 @@ async def skip_reminder(
         state=state,
         extra_classes_service=extra_classes_service,
         students_service=students_service,
+        schedule_service=schedule_service,
         reminder_minutes=reminder_minutes,
     )
 

@@ -434,8 +434,12 @@ async def open_schedule_hub(
     """
     
     actor_user_id = message.from_user.id
-# Защита
+    
     actor = await profile_service.get_user_profile_dto(actor_user_id)
+
+    if not actor.is_fully_registered:
+        await message.answer(UIRenderer.render_unregistered_error())
+        return
 
     if actor.role == "teacher":
         opened = await open_teacher_schedule_for_message(
@@ -451,11 +455,6 @@ async def open_schedule_hub(
             )
 
         return
-    
-    if not actor.is_fully_registered:
-        await message.answer(UIRenderer.render_unregistered_error())
-        return
-
 
     targets = await _get_schedule_targets(
         actor_user_id=actor_user_id,
@@ -480,16 +479,15 @@ async def open_schedule_hub(
             schedule_target_id=None,
         )
         
-        classes_dto = await schedule_service.get_classes_list()
-        groups_dto = await schedule_service.get_groups_list()
+        # 1. Запрашиваем справочники школы единым запросом
+        dicts_dto = await schedule_service.get_school_dictionaries()
         
         await message.answer(
             "🎯 <b>Выберите расписание</b>",
             reply_markup=Keyboards.get_schedule_targets_kb(
                 targets=targets,
-                classes_dict=classes_dto.classes,
-                groups_dict=groups_dto.groups,
-                
+                classes_dict=dicts_dto.classes,
+                groups_dict=dicts_dto.groups,
             ),
             parse_mode="HTML",
         )
@@ -577,17 +575,19 @@ async def show_schedule_targets(
         schedule_target_kind=None,
         schedule_target_id=None,
     )
-    classes_dto = await schedule_service.get_classes_list()
-    groups_dto = await schedule_service.get_groups_list()
     
+    # 1. Запрашиваем справочники школы единым запросом
+    dicts_dto = await schedule_service.get_school_dictionaries()
+    
+    # 2. Передаем сырые словари напрямую из свойств dicts_dto в клавиатуру
     await _safe_edit_schedule_message(
         callback,
         "🎯 <b>Выберите расписание</b>",
         Keyboards.get_schedule_targets_kb(
             targets=targets,
-            classes_dict=classes_dto.classes,
-            groups_dict=groups_dto.groups,
-                ),
+            classes_dict=dicts_dto.classes,
+            groups_dict=dicts_dto.groups,
+        ),
     )
 
     await callback.answer()

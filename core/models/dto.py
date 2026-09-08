@@ -14,25 +14,36 @@ class GroupListDTO:
 class FamilyCreatedDTO:
     family_code: str
 
-if False:
-    #--------Восстановил после рефакторинга. удалить-------
-    @dataclass
-    class ChildrenListDTO:
-        """ DTO для списка детей родителя. 
-        """
-        children: List[ChildInfoDTO]
-        action: str
+@dataclass
+class SchoolDictionariesDTO:
+    """Объединенный DTO для передачи справочников школы с хелперами чтения."""
+    classes: dict[str, str]
+    groups: dict[str, str]
 
-    @dataclass
-    class ChildInfoDTO:
-        """
-        DTO для информации о ребёнке в списке детей родителя. 
-        """
-        user_id: int
-        name: str
-        class_id: str
-        group_id: str  # <-- Обязательно добавляем поле
-    #----------------   
+    def get_readable_class(self, class_id: str | None) -> str:
+        """Возвращает название класса или прочерк."""
+        return self.classes.get(class_id, class_id) if class_id else "—"
+
+    def get_readable_group(self, group_id: str | None) -> str:
+        """Расшифровывает ID группы, обрабатывая ALL и множественные группы."""
+        if not group_id or group_id == "ALL":
+            return "Весь класс"
+        
+        names = [
+            self.groups.get(g.strip(), f"Группа {g.strip()}") 
+            for g in str(group_id).split(",")
+        ]
+        return ", ".join(names)
+
+    @property
+    def as_class_list(self) -> ClassListDTO:
+        """Helper-свойство: отдает готовый ClassListDTO для клавиатур."""
+        return ClassListDTO(classes=self.classes)
+    @property
+    def as_group_list(self) -> GroupListDTO:
+        """Helper-свойство: отдает готовый GroupListDTO для клавиатур."""
+        return GroupListDTO(groups=self.groups)
+    
 @dataclass
 class FamilyInviteDTO:
     """

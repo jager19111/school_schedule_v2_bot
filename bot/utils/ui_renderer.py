@@ -284,7 +284,7 @@ class UIRenderer:
 
         lines.extend([
             "",
-            "✍️ <b>Как к вам обращаться?</b>",
+            "✅ <b>Продолжите регистрацию?</b>",
         ])
 
         return "\n".join(lines)

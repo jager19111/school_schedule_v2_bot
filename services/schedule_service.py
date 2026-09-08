@@ -4,7 +4,7 @@ from datetime import timedelta
 from core.repository.schedule_repository import ScheduleRepository
 from core.repository.extra_classes_repository import ExtraClassesRepository
 from services.time_service import TimeService
-from core.models.dto import DayScheduleDTO, DaySummaryDTO, WeekSummaryDTO, WeekSummaryDTO, FullWeekScheduleDTO, ClassListDTO, GroupListDTO, TeacherListDTO
+from core.models.dto import DayScheduleDTO, DaySummaryDTO, WeekSummaryDTO, WeekSummaryDTO, FullWeekScheduleDTO, ClassListDTO, GroupListDTO, TeacherListDTO, SchoolDictionariesDTO
 
 class ScheduleService:
     def __init__(
@@ -18,42 +18,54 @@ class ScheduleService:
         self.time_service = time_service
 
 # Вспомогательный универсальный метод. Возвращает человекочитаемые названия класса и группы
-    async def get_readable_class_and_group(
-        self, 
-        class_id: str | None, 
-        group_id: str | None
-    ) -> tuple[str, str]:
-        """Возвращает человекочитаемые названия класса и группы."""
-        classes_dto = await self.get_classes_list()
-        groups_dto = await self.get_groups_list()
-        
-        class_name = classes_dto.classes.get(class_id, class_id) if class_id else "—"
-        
-        if not group_id or group_id == "ALL":
-            group_name = "Весь класс"
-        else:
-            names = [
-                groups_dto.groups.get(g.strip(), f"Группа {g.strip()}") 
-                for g in str(group_id).split(",")
-            ]
-            group_name = ", ".join(names)
-            
-        return class_name, group_name
 
-    async def get_classes_list(self) -> ClassListDTO:
-        """Получает список классов из репозитория и упаковывает в DTO"""
+    async def get_school_dictionaries(self) -> SchoolDictionariesDTO:
+        """Получает справочники классов и групп за один запрос к репозиторию."""
         metadata = await self.schedule_repo.get_metadata()
+        
         classes_raw = metadata.get('classes', {})
-        # Извлекаем строковые имена, если объекты имеют атрибут name
         classes_dict = {k: getattr(v, 'name', v) for k, v in classes_raw.items()}
-        return ClassListDTO(classes=classes_dict)
-
-    async def get_groups_list(self) -> GroupListDTO:
-        """Получает список групп из репозитория и упаковывает в DTO"""
-        metadata = await self.schedule_repo.get_metadata()
-        groups_raw = metadata.get('groups', {})
-        return GroupListDTO(groups=groups_raw)
+        groups_dict = metadata.get('groups', {})
+        
+        return SchoolDictionariesDTO(classes=classes_dict, groups=groups_dict)
     
+    if False:
+        async def get_readable_class_and_group(
+            self, 
+            class_id: str | None, 
+            group_id: str | None
+        ) -> tuple[str, str]:
+            """Возвращает человекочитаемые названия класса и группы."""
+            classes_dto = await self.get_classes_list()
+            groups_dto = await self.get_groups_list()
+            
+            class_name = classes_dto.classes.get(class_id, class_id) if class_id else "—"
+            
+            if not group_id or group_id == "ALL":
+                group_name = "Весь класс"
+            else:
+                names = [
+                    groups_dto.groups.get(g.strip(), f"Группа {g.strip()}") 
+                    for g in str(group_id).split(",")
+                ]
+                group_name = ", ".join(names)
+                
+            return class_name, group_name
+
+        async def get_classes_list(self) -> ClassListDTO:
+            """Получает список классов из репозитория и упаковывает в DTO"""
+            metadata = await self.schedule_repo.get_metadata()
+            classes_raw = metadata.get('classes', {})
+            # Извлекаем строковые имена, если объекты имеют атрибут name
+            classes_dict = {k: getattr(v, 'name', v) for k, v in classes_raw.items()}
+            return ClassListDTO(classes=classes_dict)
+
+        async def get_groups_list(self) -> GroupListDTO:
+            """Получает список групп из репозитория и упаковывает в DTO"""
+            metadata = await self.schedule_repo.get_metadata()
+            groups_raw = metadata.get('groups', {})
+            return GroupListDTO(groups=groups_raw)
+        
     async def get_daily_schedule_for_student(
         self,
         *,

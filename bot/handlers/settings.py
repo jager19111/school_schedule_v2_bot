@@ -261,31 +261,26 @@ async def _show_settings_menu(
     message_obj: Message, 
     user_id: int, 
     profile_service: ProfileService, 
-    schedule_service: ScheduleService,  # <-- Сервис расписания обязателен
+    schedule_service: ScheduleService,
     is_callback: bool
 ):
     user_dto = await profile_service.get_user_profile_dto(user_id)
     family_code = await profile_service.get_family_code(user_dto.family_id) if user_dto.family_id else None
     
-    # Запрашиваем красивые имена из сервиса расписания
-    class_name = None
-    group_names = None
+    # 1. Получаем все школьные справочники за один вызов
+    dicts_dto = await schedule_service.get_school_dictionaries()
     
-    if user_dto.class_id:
-        class_dto = await schedule_service.get_classes_list()
-        class_name = class_dto.classes.get(user_dto.class_id, user_dto.class_id)
-        
-    if user_dto.group_id:
-        if user_dto.group_id == "ALL":
-            group_names = "Весь класс (без групп)"
-        else:
-            groups_dto = await schedule_service.get_groups_list()
-            # Превращаем "4,0,1,2" в "2 группа, Группа 1, Группа 2, Группа 3"
-            names = [groups_dto.groups.get(g, f"Группа {g}") for g in user_dto.group_id.split(",")]
-            group_names = ", ".join(names)
+    # 2. Формируем красивые имена через встроенные хелперы DTO (если ID есть)
+    class_name = dicts_dto.get_readable_class(user_dto.class_id) if user_dto.class_id else None
+    group_names = dicts_dto.get_readable_group(user_dto.group_id) if user_dto.group_id else None
             
-    # Передаем подготовленные строки в рендерер
-    text = UIRenderer.render_settings_main(user_dto, family_code, class_name, group_names)
+    # 3. Передаем чистые строки в рендерер
+    text = UIRenderer.render_settings_main(
+        user_dto=user_dto, 
+        family_code=family_code, 
+        class_name=class_name, 
+        group_names=group_names
+    )
     kb = Keyboards.get_settings_main_kb(user_dto)
     
     if is_callback:
@@ -903,13 +898,21 @@ async def show_family_management(
     
     # Получаем полный состав семьи
     family_members = await profile_service.get_family_members(user_dto.family_id)
-    class_dto = await schedule_service.get_classes_list()
     
-    text = UIRenderer.render_family_members_menu(family_members, user_dto, class_dto.classes)
+    # 1. Запрашиваем единый DTO справочников школы за один вызов
+    dicts_dto = await schedule_service.get_school_dictionaries()
+    
+    # 2. Передаем словарь классов напрямую из свойства единого DTO
+    text = UIRenderer.render_family_members_menu(
+        members=family_members, 
+        current_user=user_dto, 
+        classes_dict=dicts_dto.classes
+    )
+    
     kb = Keyboards.get_family_management_kb(
         members=family_members,
         current_user=user_dto,
-        classes_dict=class_dto.classes,
+        classes_dict=dicts_dto.classes,
         is_family_admin=is_family_admin,
     )
     
@@ -967,15 +970,16 @@ async def show_children_notification_settings(
         await _safe_callback_answer(callback)
         return
     
-    classes_dto = await schedule_service.get_classes_list()
-    groups_dto = await schedule_service.get_groups_list()
+    # 1. Запрашиваем единый DTO справочников школы за один вызов
+    dicts_dto = await schedule_service.get_school_dictionaries()
     
     text = UIRenderer.render_parent_student_notification_menu()
 
+    # 2. Передаем словари напрямую из свойств DTO
     keyboard = Keyboards.get_student_notification_select_kb(
         students=students,
-        classes_dict=classes_dto.classes,
-        groups_dict=groups_dto.groups,
+        classes_dict=dicts_dto.classes,
+        groups_dict=dicts_dto.groups,
     )
 
     await _safe_edit_text(
@@ -985,7 +989,6 @@ async def show_children_notification_settings(
     )
 
     await _safe_callback_answer(callback)
-
 
 # Настройки самого родителя
 @router.callback_query(F.data == "settings:my_notifications")
@@ -1061,20 +1064,20 @@ async def _show_family_students_menu(
         adult_user_id=callback.from_user.id,
     )
 
-# Получаем справочники один раз для всего списка (чтобы не делать лишних запросов в цикле)
-    classes_dto = await schedule_service.get_classes_list()
-    groups_dto = await schedule_service.get_groups_list()
+    # 1. Запрашиваем единый DTO справочников школы за один вызов[cite: 1, 3]
+    dicts_dto = await schedule_service.get_school_dictionaries()
     
+    # 2. Передаем словари напрямую из свойств единого DTO[cite: 1]
     text = UIRenderer.render_family_students(
         students=students,
-        classes_dict=classes_dto.classes,
-        groups_dict=groups_dto.groups,
+        classes_dict=dicts_dto.classes,
+        groups_dict=dicts_dto.groups,
     )
 
     keyboard = Keyboards.get_family_students_kb(
         students,
-        classes_dict=classes_dto.classes,
-        groups_dict=groups_dto.groups,
+        classes_dict=dicts_dto.classes,
+        groups_dict=dicts_dto.groups,
         is_family_admin=is_family_admin,
     )
 
@@ -1308,10 +1311,12 @@ async def settings_change_class(
             )
             return
 
-    class_dto = await schedule_service.get_classes_list()
+    # 1. Получаем справочники школы через единый метод
+    dicts_dto = await schedule_service.get_school_dictionaries()
 
-    text = UIRenderer.render_class_selection(class_dto)
-    keyboard = Keyboards.get_class_selection(class_dto)
+    # 2. Передаем ClassListDTO через вспомогательное свойство as_class_list
+    text = UIRenderer.render_class_selection(dicts_dto.as_class_list)
+    keyboard = Keyboards.get_class_selection(dicts_dto.as_class_list)
 
     await state.update_data(
         is_settings_edit=True,
@@ -1341,20 +1346,21 @@ async def show_watch_targets_menu(
     targets = await watch_targets_service.get_targets(
         owner_user_id=callback.from_user.id,
     )
-    classes_dto = await schedule_service.get_classes_list()
-    groups_dto = await schedule_service.get_groups_list()
     
+    # 1. Запрашиваем справочники школы единым запросом
+    dicts_dto = await schedule_service.get_school_dictionaries()
+    
+    # 2. Рендерим текст и клавиатуру, передавая сырые словари
     text = UIRenderer.render_watch_targets_menu(
         targets=targets,
-        classes_dict=classes_dto.classes,
-        groups_dict=groups_dto.groups,
-        
+        classes_dict=dicts_dto.classes,
+        groups_dict=dicts_dto.groups,
     )
 
     keyboard = Keyboards.get_watch_targets_menu_kb(
         targets=targets,
-        classes_dict=classes_dto.classes,
-        groups_dict=groups_dto.groups,
+        classes_dict=dicts_dto.classes,
+        groups_dict=dicts_dto.groups,
     )
 
     await _safe_edit_text(
@@ -1374,9 +1380,10 @@ async def start_add_watch_target(
     """
     Запускает выбор класса для direct watch target.
     """
-    class_dto = await schedule_service.get_classes_list()
+    # 1. Забираем справочники школы за один запрос
+    dicts_dto = await schedule_service.get_school_dictionaries()
 
-    if not class_dto.classes:
+    if not dicts_dto.classes:
         await _safe_callback_answer(
             callback,
             "Расписание школы ещё не загружено. "
@@ -1390,8 +1397,9 @@ async def start_add_watch_target(
         "Выберите класс, расписание которого хотите отслеживать."
     )
 
+    # 2. Передаем ClassListDTO через вспомогательное свойство as_class_list
     keyboard = Keyboards.get_watch_class_selection_kb(
-        class_dto,
+        dicts_dto.as_class_list,
     )
 
     await _safe_edit_text(
@@ -1505,12 +1513,11 @@ async def select_watch_target_group(
         )
         return
 
-    class_dto = await schedule_service.get_classes_list()
+    # 1. Запрашиваем справочники школы единым запросом
+    dicts_dto = await schedule_service.get_school_dictionaries()
 
-    title = class_dto.classes.get(
-        class_id,
-        f"Класс {class_id}",
-    )
+    # 2. Получаем читаемое название класса через хелпер DTO
+    title = dicts_dto.get_readable_class(class_id)
 
     response = await watch_targets_service.add_target(
         owner_user_id=owner_user_id,
@@ -1547,22 +1554,21 @@ async def select_watch_target_group(
     targets = await watch_targets_service.get_targets(
         owner_user_id=owner_user_id,
     )
-    classes_dto = await schedule_service.get_classes_list()
-    groups_dto = await schedule_service.get_groups_list()
     
+    # 3. Передаем словари напрямую из свойств dicts_dto в рендерер и клавиатуру
     text = (
         "✅ <b>Класс добавлен в отслеживание.</b>\n\n"
         + UIRenderer.render_watch_targets_menu(
             targets=targets,
-            classes_dict=classes_dto.classes,
-            groups_dict=groups_dto.groups,
+            classes_dict=dicts_dto.classes,
+            groups_dict=dicts_dto.groups,
         )
     )
 
     keyboard = Keyboards.get_watch_targets_menu_kb(
         targets=targets,
-        classes_dict=classes_dto.classes,
-        groups_dict=groups_dto.groups,
+        classes_dict=dicts_dto.classes,
+        groups_dict=dicts_dto.groups,
     )
 
     await _safe_edit_text(
@@ -1615,22 +1621,12 @@ async def show_watch_target_details(
         )
         return
 
-    classes_dto = await schedule_service.get_classes_list()
-    groups_dto = await schedule_service.get_groups_list()
+    # 1. Запрашиваем справочники школы единым запросом через новый сервис
+    dicts_dto = await schedule_service.get_school_dictionaries()
 
-    class_name = classes_dto.classes.get(
-        target.class_id,
-        target.class_id,
-    )
-
-    group_name = (
-        "Весь класс"
-        if target.group_id == "ALL"
-        else groups_dto.groups.get(
-            target.group_id,
-            f"Группа {target.group_id}",
-        )
-    )
+    # 2. Получаем читаемое название класса и группы через хелперы DTO
+    class_name = dicts_dto.get_readable_class(target.class_id)
+    group_name = dicts_dto.get_readable_group(target.group_id)
 
     text = UIRenderer.render_watch_target_details(
         target=target,
@@ -1775,22 +1771,12 @@ async def toggle_watch_target_schedule_changes(
         target_id=target_id,
     )
 
-    classes_dto = await schedule_service.get_classes_list()
-    groups_dto = await schedule_service.get_groups_list()
+    # 1. Запрашиваем справочники школы единым запросом через новый сервис
+    dicts_dto = await schedule_service.get_school_dictionaries()
 
-    class_name = classes_dto.classes.get(
-        refreshed_target.class_id,
-        refreshed_target.class_id,
-    )
-
-    group_name = (
-        "Весь класс"
-        if refreshed_target.group_id == "ALL"
-        else groups_dto.groups.get(
-            refreshed_target.group_id,
-            f"Группа {refreshed_target.group_id}",
-        )
-    )
+    # 2. Получаем читаемое название класса и группы через хелперы DTO
+    class_name = dicts_dto.get_readable_class(refreshed_target.class_id)
+    group_name = dicts_dto.get_readable_group(refreshed_target.group_id)
 
     text = UIRenderer.render_watch_target_details(
         target=refreshed_target,
@@ -1916,21 +1902,25 @@ async def delete_watch_target(
     targets = await watch_targets_service.get_targets(
         owner_user_id=callback.from_user.id,
     )
-    classes_dto = await schedule_service.get_classes_list()
-    groups_dto = await schedule_service.get_groups_list()
+    
+    # 1. Запрашиваем справочники школы единым запросом
+    dicts_dto = await schedule_service.get_school_dictionaries()
+    
+    # 2. Рендерим текст, используя сырые словари из dicts_dto
     text = (
         "✅ <b>Отслеживаемый класс удалён.</b>\n\n"
         + UIRenderer.render_watch_targets_menu(
             targets=targets,
-            classes_dict=classes_dto.classes,
-            groups_dict=groups_dto.groups,                                
-            )
+            classes_dict=dicts_dto.classes,
+            groups_dict=dicts_dto.groups,                                
+        )
     )
 
+    # 3. Передаем словари в генератор клавиатуры
     keyboard = Keyboards.get_watch_targets_menu_kb(
         targets=targets,
-        classes_dict=classes_dto.classes,
-        groups_dict=groups_dto.groups,
+        classes_dict=dicts_dto.classes,
+        groups_dict=dicts_dto.groups,
     )
 
     await _safe_edit_text(
@@ -2533,16 +2523,18 @@ async def process_virtual_student_name(
         )
         return
 
-    class_dto = await schedule_service.get_classes_list()
+    # 1. Запрашиваем справочники школы единым запросом через ScheduleServiceV2
+    dicts_dto = await schedule_service.get_school_dictionaries()
 
     await state.update_data(
         virtual_student_name=name,
     )
 
+    # 2. Передаем ClassListDTO через вспомогательное свойство as_class_list
     await message.answer(
         "🎓 <b>Выберите класс ученика</b>",
         reply_markup=Keyboards.get_student_class_selection_kb(
-            class_dto,
+            dto=dicts_dto.as_class_list,
         ),
         parse_mode="HTML",
     )
@@ -2582,12 +2574,14 @@ async def select_virtual_student_class(
         )
         return
 
-    groups_dto = await schedule_service.get_groups_list()
+    # 1. Запрашиваем справочники школы единым запросом
+    dicts_dto = await schedule_service.get_school_dictionaries()
 
     await state.update_data(
         virtual_student_class_id=class_id,
     )
 
+    # 2. Передаем GroupListDTO через вспомогательное свойство as_group_list
     await _safe_edit_text(
         callback.message,
         (
@@ -2595,7 +2589,7 @@ async def select_virtual_student_class(
             "Если группа неизвестна, выберите «Весь класс»."
         ),
         reply_markup=Keyboards.get_student_group_selection_kb(
-            groups_dto,
+            dto=dicts_dto.as_group_list,
         ),
     )
 
@@ -2706,22 +2700,12 @@ async def show_student_details(
 
     student, access = result
 
-    classes_dto = await schedule_service.get_classes_list()
-    groups_dto = await schedule_service.get_groups_list()
+    # 1. Запрашиваем справочники школы единым запросом
+    dicts_dto = await schedule_service.get_school_dictionaries()
 
-    class_name = classes_dto.classes.get(
-        student.class_id,
-        student.class_id,
-    )
-
-    group_name = (
-        "Весь класс"
-        if student.group_id == "ALL"
-        else groups_dto.groups.get(
-            student.group_id,
-            f"Группа {student.group_id}",
-        )
-    )
+    # 2. Получаем читаемые названия класса и группы через хелперы DTO
+    class_name = dicts_dto.get_readable_class(student.class_id)
+    group_name = dicts_dto.get_readable_group(student.group_id)
 
     text = UIRenderer.render_student_details(
         student=student,
@@ -2891,10 +2875,13 @@ async def show_parent_student_notification_settings(
         )
         return
     
-    class_name, group_name = await schedule_service.get_readable_class_and_group(
-        class_id=dto.student_class_id, 
-        group_id=dto.student_group_id
-    )
+    # 1. Получаем настройки и словари
+    dicts_dto = await schedule_service.get_school_dictionaries()
+
+    # 2. Используем хелперы DTO для получения отформатированного текста
+    class_name = dicts_dto.get_readable_class(dto.student_class_id)
+    group_name = dicts_dto.get_readable_group(dto.student_group_id)
+    
     text = UIRenderer.render_parent_student_notification_settings(
         dto=dto,
         class_name=class_name,
@@ -3163,11 +3150,9 @@ async def start_student_class_edit(
 
     student_dto, _access = student
 # 1. Получаем красивые названия через наш хелпер
-    class_name, group_name = await schedule_service.get_readable_class_and_group(
-        student_dto.class_id, 
-        student_dto.group_id
-    )
-    classes_dto = await schedule_service.get_classes_list()
+    dicts_dto = await schedule_service.get_school_dictionaries()
+    class_name=dicts_dto.get_readable_class(student_dto.class_id),
+    group_name=dicts_dto.get_readable_group(student_dto.group_id),
 
     await state.clear()
 
@@ -3184,7 +3169,7 @@ async def start_student_class_edit(
             group_name=group_name,
         ),
         reply_markup=Keyboards.get_student_edit_class_selection_kb(
-            classes_dto,
+            dto=dicts_dto.as_class_list,
             student_id=student_id,
         ),
     )
@@ -3264,21 +3249,19 @@ async def select_student_new_class(
         return
 
     student, _access = student_result
-
+    
+    # 1. Получаем все школьные справочники за один вызов
+    dicts_dto = await schedule_service.get_school_dictionaries()    
     # Используем выбранный class_id в renderer,
     # не меняя profile до окончательного выбора группы.
     student.class_id = class_id
 
-    groups_dto = await schedule_service.get_groups_list()
-
     await state.update_data(
         student_edit_class_id=class_id,
     )
-# Получаем красивое имя для нового класса (группа пока не важна, передаем None)
-    class_name, _ = await schedule_service.get_readable_class_and_group(
-        class_id, 
-        None
-    )
+    # 2. Получаем красивое имя для нового класса через хелпер DTO
+    class_name = dicts_dto.get_readable_class(class_id)
+    
     await _safe_edit_text(
         callback.message,
         UIRenderer.render_student_edit_group_prompt(
@@ -3286,7 +3269,7 @@ async def select_student_new_class(
             class_name=class_name,
             ),
         reply_markup=Keyboards.get_student_edit_group_selection_kb(
-            groups_dto,
+            dto=dicts_dto.as_group_list,
             student_id=student_id,
         ),
     )
@@ -3390,22 +3373,12 @@ async def save_student_new_class_and_group(
 
     student, access = student_result
 
-    classes_dto = await schedule_service.get_classes_list()
-    groups_dto = await schedule_service.get_groups_list()
+    # 1. Запрашиваем справочники школы единым запросом
+    dicts_dto = await schedule_service.get_school_dictionaries()
 
-    class_name = classes_dto.classes.get(
-        student.class_id,
-        student.class_id,
-    )
-
-    group_name = (
-        "Весь класс"
-        if student.group_id == "ALL"
-        else groups_dto.groups.get(
-            student.group_id,
-            f"Группа {student.group_id}",
-        )
-    )
+    # 2. Получаем читаемые названия класса и группы через хелперы DTO
+    class_name = dicts_dto.get_readable_class(student.class_id)
+    group_name = dicts_dto.get_readable_group(student.group_id)
 
     text = (
         "✅ <b>Класс и группа обновлены.</b>\n\n"
