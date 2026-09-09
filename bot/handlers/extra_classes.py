@@ -1146,8 +1146,8 @@ async def choose_edit_field(callback: CallbackQuery, state: FSMContext):
         await callback.message.edit_text(text, reply_markup=Keyboards.get_cancel_keyboard(), parse_mode="HTML")
         await state.set_state(ExtraClassStates.waiting_for_edit_value)
     elif field == "loc":
-        text, _ = UIRenderer.render_extra_class_location()
-        await callback.message.edit_text(text, reply_markup=Keyboards.get_skip_cancel_keyboard("skip_location"), parse_mode="HTML")
+        text, _ = UIRenderer.render_extra_class_edit_location()
+        await callback.message.edit_text(text, reply_markup=Keyboards.get_cancel_keyboard(), parse_mode="HTML")
         await state.set_state(ExtraClassStates.waiting_for_edit_value)
     elif field == "rem":
         text, _ = UIRenderer.render_extra_class_reminder()
@@ -1255,7 +1255,11 @@ async def process_edit_value(message: Message, state: FSMContext, time_service: 
             return await message.answer(text, reply_markup=Keyboards.get_cancel_keyboard(), parse_mode="HTML")
         kwargs["reminder_minutes"] = int(val)
     elif field == "loc":
-        kwargs["location"] = val
+        kwargs["location"] = (
+            None
+            if val in {"", "-"}
+            else val
+        )
     else:
         kwargs["title"] = val
 

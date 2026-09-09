@@ -50,6 +50,22 @@ class Config:
         ]
     )
 
+
+    HELP_PUBLIC_URL = os.getenv(
+        "HELP_PUBLIC_URL",
+        "",
+    ).strip()
+
+    AUTHOR_CONTACT_URL = os.getenv(
+        "AUTHOR_CONTACT_URL",
+        "",
+    ).strip()
+
+    DONATION_URL = os.getenv(
+        "DONATION_URL",
+        "",
+    ).strip()
+
 config = Config()
 
 def validate_config(config: Config) -> None:

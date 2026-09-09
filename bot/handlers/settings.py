@@ -24,7 +24,7 @@
 
 import logging
 import contextlib
-from urllib.parse import urlencode
+from urllib.parse import quote
 from aiogram import Router, F, Bot
 from aiogram.types import Message, CallbackQuery
 from aiogram.exceptions import TelegramBadRequest
@@ -193,7 +193,35 @@ async def _show_student_telegram_settings(
 
     return True
 
+def build_telegram_share_link(
+    *,
+    deep_link: str,
+    share_text: str,
+) -> str:
+    """
+    Создаёт Telegram share URL.
 
+    Используем quote(), а не urlencode()/quote_plus(),
+    чтобы пробелы кодировались как %20, а не как +.
+    Некоторые мобильные Telegram-клиенты отображают +
+    буквально в тексте пересланного приглашения.
+    """
+    encoded_url = quote(
+        deep_link,
+        safe="",
+    )
+
+    encoded_text = quote(
+        share_text,
+        safe="",
+    )
+
+    return (
+        "https://t.me/share/url"
+        f"?url={encoded_url}"
+        f"&text={encoded_text}"
+    )
+    
 class SettingsStates(StatesGroup):
     waiting_for_my_time = State()
     waiting_for_child_time = State()
@@ -537,14 +565,9 @@ async def create_family_invite(
         "Откройте ссылку и завершите регистрацию."
     )
 
-    share_link = (
-        "https://t.me/share/url?"
-        + urlencode(
-            {
-                "url": deep_link,
-                "text": share_text,
-            }
-        )
+    share_link = build_telegram_share_link(
+        deep_link=deep_link,
+        share_text=share_text,
     )
     
     role_label = {
@@ -796,14 +819,9 @@ async def show_family_invite_details(
         "Откройте ссылку и завершите регистрацию."
     )
 
-    share_link = (
-        "https://t.me/share/url?"
-        + urlencode(
-            {
-                "url": deep_link,
-                "text": share_text,
-            }
-        )
+    share_link = build_telegram_share_link(
+        deep_link=deep_link,
+        share_text=share_text,
     )
 
     text = UIRenderer.render_family_invite_details(
@@ -1104,7 +1122,14 @@ async def prompt_my_summary_time(
         return
 
     text = UIRenderer.render_summary_time_prompt()
+
     keyboard = Keyboards.get_summary_time_prompt_kb()
+
+    await state.clear()
+
+    await state.update_data(
+        my_summary_time_user_id=callback.from_user.id,
+    )
 
     await _safe_edit_text(
         callback.message,
@@ -1112,10 +1137,123 @@ async def prompt_my_summary_time(
         reply_markup=keyboard,
     )
 
-    await state.set_state(SettingsStates.waiting_for_my_time)
+    await state.set_state(
+        SettingsStates.waiting_for_my_time,
+    )
 
     await _safe_callback_answer(callback)
 
+@router.callback_query(
+    SettingsStates.waiting_for_my_time,
+    F.data == "set_time:off",
+)
+async def disable_my_summary_time(
+    callback: CallbackQuery,
+    state: FSMContext,
+    profile_service: ProfileService,
+    schedule_service: ScheduleService,
+) -> None:
+    """
+    Выключает личную утреннюю сводку пользователя.
+
+    morning_summary_time = NULL означает, что сводка отключена.
+    """
+    data = await state.get_data()
+
+    if (
+        data.get("my_summary_time_user_id")
+        != callback.from_user.id
+    ):
+        await state.clear()
+
+        await _safe_callback_answer(
+            callback,
+            "Состояние настройки устарело. "
+            "Откройте настройки заново.",
+            show_alert=True,
+        )
+        return
+
+    # Повторяем access check: пользователь мог потерять доступ
+    # между открытием prompt и нажатием кнопки.
+    if not await _require_own_notification_settings_access(
+        callback=callback,
+        profile_service=profile_service,
+    ):
+        await state.clear()
+        return
+
+    changed = await profile_service.update_own_morning_summary_time(
+        user_id=callback.from_user.id,
+        time_str=None,
+    )
+
+    await state.clear()
+
+    if not changed:
+        await _safe_callback_answer(
+            callback,
+            "Не удалось отключить утреннюю сводку.",
+            show_alert=True,
+        )
+        return
+
+    await _show_settings_menu(
+        message_obj=callback.message,
+        user_id=callback.from_user.id,
+        profile_service=profile_service,
+        schedule_service=schedule_service,
+        is_callback=True,
+    )
+
+    await _safe_callback_answer(
+        callback,
+        "🔕 Утренняя сводка отключена.",
+    )
+
+@router.callback_query(
+    SettingsStates.waiting_for_my_time,
+    F.data == "settings:cancel_input",
+)
+async def cancel_my_summary_time_input(
+    callback: CallbackQuery,
+    state: FSMContext,
+    profile_service: ProfileService,
+    schedule_service: ScheduleService,
+) -> None:
+    """
+    Отменяет ввод времени утренней сводки.
+
+    БД не изменяется. Возвращаем пользователя в Settings.
+    """
+    data = await state.get_data()
+
+    if (
+        data.get("my_summary_time_user_id")
+        != callback.from_user.id
+    ):
+        await state.clear()
+
+        await _safe_callback_answer(
+            callback,
+            "Состояние настройки устарело. "
+            "Откройте настройки заново.",
+            show_alert=True,
+        )
+        return
+
+    await state.clear()
+
+    await _show_settings_menu(
+        message_obj=callback.message,
+        user_id=callback.from_user.id,
+        profile_service=profile_service,
+        schedule_service=schedule_service,
+        is_callback=True,
+    )
+
+    await _safe_callback_answer(callback)
+        
 @router.message(SettingsStates.waiting_for_my_time)
 async def process_my_time(
     message: Message,
@@ -1127,6 +1265,20 @@ async def process_my_time(
     """
     Сохраняет личное время утренней сводки пользователя.
     """
+    data = await state.get_data()
+
+    if (
+        data.get("my_summary_time_user_id")
+        != message.from_user.id
+    ):
+        await state.clear()
+
+        await message.answer(
+            "❌ Состояние настройки устарело. "
+            "Откройте настройки заново."
+        )
+        return
+    
     norm_time = time_service.normalize_time(message.text)
 
     if not norm_time:
@@ -3330,14 +3482,9 @@ async def create_student_claim_invite(
         "к профилю школьного расписания."
     )
 
-    share_link = (
-        "https://t.me/share/url?"
-        + urlencode(
-            {
-                "url": deep_link,
-                "text": share_text,
-            }
-        )
+    share_link = build_telegram_share_link(
+        deep_link=deep_link,
+        share_text=share_text,
     )
 
     student = StudentProfileDTO(

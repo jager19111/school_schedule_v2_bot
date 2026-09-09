@@ -455,7 +455,6 @@ class Keyboards:
             [InlineKeyboardButton(text="❌ Отмена", callback_data="extra:cancel")]
         ])
         
-    # Сводка. удалить после рефакторинга
     @staticmethod
     def get_summary_time_prompt_kb() -> InlineKeyboardMarkup:
         """Клавиатура при запросе времени для сводки."""
@@ -1443,7 +1442,7 @@ class Keyboards:
                 [
                     InlineKeyboardButton(
                         text="📅 Открыть расписание",
-                        callback_data=f"watch:open:{target_id}",
+                        callback_data=f"sched:watch:{target_id}",
                     )
                 ],
                 [
