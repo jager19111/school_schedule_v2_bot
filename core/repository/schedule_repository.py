@@ -138,6 +138,7 @@ class ScheduleRepository(BaseRepository):
         db_path,
         time_service: TimeService,
         http_session: aiohttp.ClientSession,
+        tls_fingerprint_sha256: str | None = None,
         proxy: str | None = None,
         nika_base_url: str = "https://lyceum.nstu.ru/rasp",
         history_days: int = 7,
@@ -153,8 +154,19 @@ class ScheduleRepository(BaseRepository):
             session=http_session,
             base_url=nika_base_url,
             proxy=proxy,
+            tls_fingerprint_sha256=tls_fingerprint_sha256,
         )
         self.history_days = history_days
+
+    def is_ssl_degraded(self) -> bool:
+        """
+        True, если NIKA-фетчер работает в обход TLS-проверки.
+
+        Используется main.refresh_schedule_cache для админ-алерта.
+        Состояние обновляется фетчером при каждой попытке запроса.
+        """
+        return self.fetcher.ssl_degraded
+    
 
     async def get_nika_source_state(
         self,

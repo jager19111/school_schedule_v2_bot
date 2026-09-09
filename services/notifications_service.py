@@ -46,7 +46,7 @@ import datetime
 import logging
 import time
 from dataclasses import dataclass, field
-
+from typing import Optional
 from aiogram import Bot
 from aiogram.exceptions import (
     TelegramBadRequest,
@@ -123,7 +123,8 @@ class NotificationService:
         time_service: TimeService,
         schedule_repo: ScheduleRepository,
         extra_classes_repo: ExtraClassesRepository,
-    ):
+        admin_ids: Optional[list[int]] = None,
+    ) -> None:
         self.bot = bot
         self.repo = notification_repo
         self.time_service = time_service
@@ -136,7 +137,8 @@ class NotificationService:
         self._send_lock = asyncio.Lock()
         self._global_last_send_at = 0.0
         self._chat_last_send_at: dict[int, float] = {}
-
+        self._admin_ids = list(admin_ids or [])
+        self._last_admin_alert_at: dict[str, float] = {}
     # ==============================================================
     # Smart Throttling
     # ==============================================================
@@ -263,6 +265,50 @@ class NotificationService:
             # в _paced_send и пометит пользователя при следующем тике.
             logger.exception("Failed to load blocked user ids")
             return set()
+
+    # Повтор одинакового алерта не чаще, чем раз в час.
+    ADMIN_ALERT_COOLDOWN_SEC = 3600.0
+    async def send_admin_alert(
+        self,
+        *,
+        alert_key: str,
+        text: str,
+        cooldown_sec: float = ADMIN_ALERT_COOLDOWN_SEC,
+    ) -> None:
+        """
+        Дедуплицированный алерт всем админам (ADMIN_IDS).
+
+        Дедупликация по alert_key с cooldown: TLS-деградация длится,
+        пока не обновят отпечаток сертификата, поэтому без cooldown
+        админ получал бы сообщение каждые NIKA_REFRESH_INTERVAL_MINUTES.
+        Отправка идёт через _paced_send — с учётом лимитов Telegram
+        и обработкой 429/блокировок.
+        """
+        if not self._admin_ids:
+            return
+
+        now_mono = time.monotonic()
+        last_sent_at = self._last_admin_alert_at.get(alert_key)
+        if (
+            last_sent_at is not None
+            and now_mono - last_sent_at < cooldown_sec
+        ):
+            return
+        self._last_admin_alert_at[alert_key] = now_mono
+
+        for admin_id in self._admin_ids:
+            sent = await self._paced_send(
+                chat_id=admin_id,
+                text=text,
+            )
+            if not sent:
+                logger.warning(
+                    "Admin alert not delivered: admin_id=%s, key=%s",
+                    admin_id,
+                    alert_key,
+                )
+
+
         
     # ==============================================================
     # 3a. Микроочистка кеша per-chat таймстемпов

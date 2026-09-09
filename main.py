@@ -97,6 +97,36 @@ async def refresh_schedule_cache(
     tz: ZoneInfo,
     config: Config,
 ) -> None:
+    # Админ-алерт: парсер NIKA работает в обход TLS-проверки.
+    # Флаг обновляется фетчером при каждой попытке; проверка в начале
+    # тика читает состояние последней попытки (задержка <= 5 мин).
+    # Обновления расписания при этом НЕ останавливаются.
+    try:
+        if schedule_repo.is_ssl_degraded():
+            await notification_service.send_admin_alert(
+                alert_key="ssl_degraded",
+                text=(
+                    "⚠️ <b>Внимание: ошибка SSL-сертификата!</b>\n\n"
+                    "Сайт лицея не прошёл проверку подлинности.\n"
+                    "Парсер автоматически переключился в режим без "
+                    "проверки сертификата.\n"
+                    "Возможен перехват трафика (MITM).\n\n"
+                    "Скорее всего школа сменила сертификат — обновите "
+                    "NIKA_TLS_FINGERPRINT_SHA256 в "
+                    "core/nika/fetcher.py.\n\n"
+                    "Новый отпечаток снять командой:\n"
+                    "<code>echo | openssl s_client -connect "
+                    "lyceum.nstu.ru:443 -servername lyceum.nstu.ru "
+                    "| openssl x509 -noout -fingerprint -sha256"
+                    "</code>\n\n"
+                    "Обновления расписания продолжают поступать — "
+                    "это предупреждение только о снижении защиты."
+                ),
+            )
+    except Exception:
+        # Сбой алерта не должен ломать refresh расписания.
+        logger.exception("SSL degradation admin alert failed")
+
     today = datetime.datetime.now(tz).date()
     monday = today - datetime.timedelta(
         days=today.isoweekday() - 1,
@@ -276,6 +306,7 @@ async def main():
             time_service=time_service,
             nika_base_url=config.NIKA_BASE_URL,
             history_days=config.NIKA_HISTORY_DAYS,
+            tls_fingerprint_sha256=config.NIKA_TLS_FINGERPRINT_SHA256,
         )
 
         logger.info(
@@ -295,7 +326,7 @@ async def main():
         # 5. Сервисы
         schedule_service = ScheduleService(schedule_repo=schedule_repo, extra_classes_repo=extra_classes_repo, time_service=time_service)
         profile_service = ProfileService(profile_repo)
-        notification_service = NotificationService(bot, notification_repo, time_service=time_service, schedule_repo=schedule_repo, extra_classes_repo=extra_classes_repo)
+        notification_service = NotificationService(bot, notification_repo, time_service=time_service, schedule_repo=schedule_repo, extra_classes_repo=extra_classes_repo, admin_ids=config.ADMIN_IDS,)
         cleanup_job = UserCleanupJob(user_repo, time_service=time_service, dormant_days=60)
         students_service = StudentsService(student_repo, profile_service=profile_service)
         admin_service = AdminService(admin_repo=admin_repo, schedule_repo=schedule_repo, admin_ids=config.ADMIN_IDS)

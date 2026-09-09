@@ -2,34 +2,59 @@
 #
 # ЭТАП 2. СЕТЕВОЙ СЛОЙ.
 #
-# ИЗМЕНЕНИЯ:
+# ЧТО РЕАЛИЗОВАНО:
 #
-# 1. (Задача 2.1) Персистентная aiohttp-сессия.
-#    Раньше probe() и fetch_js_content() создавали ClientSession на каждый
-#    вызов: probe() выполняется каждые NIKA_REFRESH_INTERVAL_MINUTES,
-#    то есть каждые 5 минут поднимался новый TCP+TLS-сокет (а при
-#    включённом прокси — ещё и CONNECT), затем закрывался. Keep-alive
-#    не работал. Теперь сессия создаётся ОДИН раз в main.py, живёт весь
-#    жизненный цикл процесса и передаётся сюда через конструктор.
-#    Методы НЕ закрывают сессию — она общая.
+# 1. (Задача 2.1) Персистентная aiohttp-сессия из main.py:
+#    probe() и fetch_js_content() не создают и не закрывают сессии,
+#    keep-alive соединение живёт в общем пуле весь цикл бота.
+#    Таймауты — per-request (15с probe / 30с JS), session-таймаут
+#    в main.py остаётся безопасным дефолтом.
 #
-# 2. (Задача 2.1, уточнение) Таймауты — per-request, а не session-level.
-#    У probe и JS-загрузки разные бюджеты времени (15с vs 30с):
-#    session-таймаут остаётся безопасным дефолтом, а каждый метод
-#    переопределяет его своим ClientTimeout через параметр timeout=
-#    вызова session.get(). Иначе JS-файл ~150КБ на медленном прокси
-#    обрезался бы на 15 секунде.
+# 2. (Задача 2.2) Устаревший fetch() (Compatibility wrapper) удалён.
 #
-# 3. (Задача 2.2) Удалён устаревший fetch() (Compatibility wrapper):
-#    дублировал двухэтапную загрузку и не использовался нигде
-#    (refresh_if_changed работает через probe + fetch_js_content).
+# 3. НОВОЕ: TLS-лестница strict -> pin -> off.
 #
-# 4. Fail-fast валидация сессии в конструкторе: закрытая/отсутствующая
-#    сессия — ошибка старта, а не RuntimeError посреди ночного тика.
+#    Проблема "ssl=True, а на фолбеке ssl=False": чистый фолбек на
+#    незащищённое соединение — это security-даунгрейд: MITM-атака с
+#    подменённым сертификатом неотличима от "протухшего" сертификата,
+#    и бот сам бы переключался на незащищённый канал.
 #
-# НЕ ИЗМЕНИЛОСЬ: headers, ssl=False (обход проблемы с сертификатом
-# lyceum.nstu.ru), логика разбора schedule.html, sha256-хеши,
-# _extract_json_from_js.
+#    Решение — три уровня, каждый запрос начинает с САМОГО строгого:
+#
+#    strict: ssl=True — обычная CA-верификация. Работает, если
+#            сертификат школы подписан доверенным CA (Let's Encrypt
+#            и т.п.) и не просрочен.
+#    pin:    ssl=aiohttp.Fingerprint(...) — certificate pinning:
+#            сверяется SHA256 фактического DER-сертификата сервера с
+#            NIKA_TLS_FINGERPRINT_SHA256. Работает для самоподписанных
+#            сертификатов и защищает от подмены ЛЮБЫМ другим
+#            сертификатом, включая валидный CA-сертификат атакующего.
+#    off:    ssl=False — последний рубеж, только если не прошли ни
+#            CA-верификацию, ни пин (сертификат школы сменился).
+#            ВАЖНО: сопровождается ГРОМКИМ warning в лог и означает,
+#            что NIKA_TLS_FINGERPRINT_SHA256 пора обновить.
+#
+#    Свойства лестницы:
+#    - каждый запрос стартует со strict: когда школа починит/обновит
+#      сертификат, бот сам вернётся к полной верификации (self-healing).
+#      Цена — одна неудачная TLS-попытка (~сотни мс) раз в
+#      NIKA_REFRESH_INTERVAL_MINUTES, пока сертификат невалиден;
+#    - продвигают лестницу ТОЛЬКО SSL-ошибки (ClientConnectorSSLError,
+#      ServerFingerprintMismatch). Сетевые ошибки — падение прокси,
+#      обрыв соединения — пробрасываются немедленно (проверено
+#      экспериментально на aiohttp 3.13: ClientProxyConnectionError
+#      лестницей не ловится);
+#    - соединение не переиспользуется между режимами: пул aiohttp
+#      ключуется по ssl-контексту.
+#
+#    Смена сертификата школой: pin не совпал -> WARNING с инструкцией
+#    обновить NIKA_TLS_FINGERPRINT_SHA256 -> работа продолжается на
+#    off до обновления константы.
+#
+#    Обновить отпечаток:
+#      openssl s_client -connect lyceum.nstu.ru:443 -servername \
+#        lyceum.nstu.ru </dev/null 2>/dev/null \
+#        | openssl x509 -noout -fingerprint -sha256
 
 from __future__ import annotations
 
@@ -39,12 +64,18 @@ import json
 import logging
 import re
 from dataclasses import dataclass
-from typing import Any, Dict
+from typing import Any, List, Optional, Tuple
 from urllib.parse import urljoin
 
 import aiohttp
+from aiohttp.client_exceptions import ServerFingerprintMismatch
 
 logger = logging.getLogger(__name__)
+
+# SHA256-отпечаток сертификата lyceum.nstu.ru (sha256 DER-сертификата,
+# формат openssl x509 -fingerprint -sha256). Обновлять при ротации
+# сертификата школы — см. предупреждение в логе и команду выше.
+
 
 
 @dataclass(frozen=True)
@@ -66,8 +97,12 @@ class ScheduleFetcher:
     2. fetch_js_content() скачивает JS только при новой revision.
 
     Оба метода работают через ОБЩУЮ персистентную сессию,
-    переданную из main.py. Сессия здесь не создаётся и не закрывается.
+    переданную из main.py, и TLS-лестницу strict -> pin -> off.
     """
+
+    SSL_MODE_STRICT = "strict"
+    SSL_MODE_PIN = "pin"
+    SSL_MODE_OFF = "off"
 
     def __init__(
         self,
@@ -75,6 +110,7 @@ class ScheduleFetcher:
         session: aiohttp.ClientSession,
         base_url: str = "https://lyceum.nstu.ru/rasp",
         proxy: str | None = None,
+        tls_fingerprint_sha256: str | None = None, # <-- НОВОЕ
     ) -> None:
         # Fail-fast: проблема с сессией должна всплыть при старте,
         # а не в первом же ночном тике планировщика.
@@ -92,7 +128,28 @@ class ScheduleFetcher:
         self.base_url = base_url.rstrip("/")
         self.proxy = proxy
 
-        # Передаём per-request: сессия общая, навешивать на неё
+        # Пин: hex-строка из openssl -> сырые байты дайджеста.
+        # aiohttp.Fingerprint принимает ТОЛЬКО сырые байты (32 байта =
+        # sha256); hex-строка отвергается с "fingerprint has invalid
+        # length" (проверено на aiohttp 3.13.3).
+
+        self._ssl_fingerprint = self._build_fingerprint(tls_fingerprint_sha256)
+
+        # Лестница SSL-режимов от строгого к слабому.
+        self._ssl_ladder: List[Tuple[str, Any]] = [
+            (self.SSL_MODE_STRICT, True),
+        ]
+        if self._ssl_fingerprint is not None:
+            self._ssl_ladder.append(
+                (self.SSL_MODE_PIN, self._ssl_fingerprint),
+            )
+        self._ssl_ladder.append(
+            (self.SSL_MODE_OFF, False),
+        )
+#         # Состояние TLS-деградации для админ-алертов:
+#         # True = последний успешный fetch шёл в обход проверки.
+        self._ssl_degraded = False
+        # Заголовки per-request: сессия общая, навешивать на неё
         # заголовки одного конкретного клиента было бы неправильно.
         self.headers = {
             "User-Agent": (
@@ -101,6 +158,60 @@ class ScheduleFetcher:
                 "SchoolScheduleBot/2.0"
             )
         }
+        ladder_repr = " -> ".join(
+            mode_name
+            for mode_name, _ in self._ssl_ladder
+        )
+        logger.info(
+            "NIKA TLS ladder armed: %s "
+            "(fingerprint pin: %s)",
+            ladder_repr,
+            (
+                "enabled"
+                if self._ssl_fingerprint is not None
+                else "disabled"
+            ),
+        )
+
+    @property
+    def ssl_degraded(self) -> bool:
+        """
+        True, если последний успешный fetch шёл в обход TLS-проверки.
+
+        Снимается автоматически при первом успехе в strict/pin —
+        когда школа починит сертификат или админ обновит отпечаток.
+        """
+        return self._ssl_degraded
+    
+    @staticmethod
+    def _build_fingerprint(
+        hex_digest: Optional[str],
+    ) -> Optional[aiohttp.Fingerprint]:
+        """
+        Строит aiohttp.Fingerprint из hex-строки отпечатка.
+
+        None/пустая строка — пин отключён (лестница strict -> off).
+        Битовая строка логируется, пин отключается, бот не падает.
+        """
+        if not hex_digest:
+            return None
+
+        normalized = (
+            hex_digest.strip()
+            .replace(":", "")
+            .replace(" ", "")
+            .lower()
+        )
+        try:
+            return aiohttp.Fingerprint(bytes.fromhex(normalized))
+        except (ValueError, TypeError) as exc:
+            logger.warning(
+                "Invalid TLS fingerprint %r: %s. "
+                "Certificate pinning disabled.",
+                hex_digest,
+                exc,
+            )
+            return None
 
     @staticmethod
     def _html_timeout() -> aiohttp.ClientTimeout:
@@ -118,6 +229,82 @@ class ScheduleFetcher:
             sock_read=25,
         )
 
+    async def _get_text(
+        self,
+        url: str,
+        *,
+        timeout: aiohttp.ClientTimeout,
+        encoding: Optional[str] = None,
+    ) -> str:
+        """
+        GET с TLS-лестницей strict -> pin -> off.
+
+        Каждый запрос начинается со strict — самовосстановление при
+        починке сертификата. Продвижение вниз — только по SSL-ошибкам
+        (CA-верификация не прошла / пин не совпал); сетевые ошибки
+        (прокси недоступен и т.п.) пробрасываются немедленно.
+        """
+        last_index = len(self._ssl_ladder) - 1
+
+        for index, (mode_name, ssl_arg) in enumerate(self._ssl_ladder):
+            try:
+                async with self.session.get(
+                    url,
+                    proxy=self.proxy,
+                    ssl=ssl_arg,
+                    headers=self.headers,
+                    timeout=timeout,
+                ) as response:
+                    response.raise_for_status()
+                    if mode_name != self.SSL_MODE_OFF:
+                        # Успех в защищённом режиме снимает флаг
+                        # деградации (сертификат починили/обновили пин).
+                        self._ssl_degraded = False
+                    if encoding is not None:
+                        return await response.text(encoding=encoding)
+                    return await response.text()
+
+            except (
+                aiohttp.ClientConnectorSSLError,
+                ServerFingerprintMismatch,
+            ) as exc:
+                if index == last_index:
+                    raise
+
+                next_mode_name = self._ssl_ladder[index + 1][0]
+
+                if next_mode_name == self.SSL_MODE_PIN:
+                    # Роутинная ситуация, если школа использует
+                    # самоподписанный сертификат: CA-проверка не
+                    # проходит, но пин подтверждает подлинность.
+                    logger.info(
+                        "CA verification failed (%s). "
+                        "Retrying with pinned certificate.",
+                        exc,
+                    )
+                    #
+                else:
+                    # Деградация: дальше работаем без TLS-проверки.
+                    self._ssl_degraded = True
+
+                    # Попали в off: не прошли ни CA, ни пин.
+                    # Либо школа сменила сертификат (обнови
+                    # NIKA_TLS_FINGERPRINT_SHA256), либо это
+                    # потенциальный MITM — внимание обязательно.
+                    logger.warning(
+                        "TLS verification FAILED on strict mode (%s). "
+                        "Certificate does not match pin. "
+                        "Falling back to UNVERIFIED connection (ssl=False): "
+                        "MITM-защита отключена. "
+                        "Скорее всего школа сменила сертификат — обновите "
+                        "NIKA_TLS_FINGERPRINT_SHA256 в .env.",
+                        exc,
+                    )
+                continue
+
+        # Недостижимо: цикл либо вернёт текст, либо пробросит исключение.
+        raise RuntimeError("SSL ladder exhausted without result")  # pragma: no cover
+
     async def probe(self) -> NikaSourceDescriptor:
         """
         Загружает только schedule.html и находит текущий nika_data_*.js.
@@ -127,16 +314,10 @@ class ScheduleFetcher:
         """
         schedule_url = f"{self.base_url}/schedule.html"
 
-        async with self.session.get(
+        html = await self._get_text(
             schedule_url,
-            proxy=self.proxy,
-            ssl=False,
-            headers=self.headers,
             timeout=self._html_timeout(),
-        ) as response:
-            response.raise_for_status()
-
-            html = await response.text()
+        )
 
         match = re.search(
             r"""src=["']([^"']*nika_data_[^"']+\.js)["']""",
@@ -169,18 +350,11 @@ class ScheduleFetcher:
         Должен вызываться только если filename изменился либо отсутствует
         локальный raw cache.
         """
-        async with self.session.get(
+        return await self._get_text(
             source.js_url,
-            proxy=self.proxy,
-            ssl=False,
-            headers=self.headers,
             timeout=self._js_timeout(),
-        ) as response:
-            response.raise_for_status()
-
-            return await response.text(
-                encoding="utf-8",
-            )
+            encoding="utf-8",
+        )
 
     @staticmethod
     def calculate_raw_sha256(content: str) -> str:
@@ -191,7 +365,7 @@ class ScheduleFetcher:
 
     @staticmethod
     def calculate_semantic_sha256(
-        nika_data: Dict[str, Any],
+        nika_data: dict,
     ) -> str:
         """
         SHA-256 данных NIKA без export metadata.
@@ -217,7 +391,7 @@ class ScheduleFetcher:
     @staticmethod
     def _extract_json_from_js(
         js_content: str,
-    ) -> Dict[str, Any]:
+    ) -> dict:
         """
         Извлекает JSON из JS-конструкции var NIKA = {...}.
         """

@@ -23,6 +23,12 @@ class Config:
         .strip()
         .rstrip("/")
     )
+    
+    # Отпечаток сертификата для Certificate Pinning
+    NIKA_TLS_FINGERPRINT_SHA256: Optional[str] = (
+        os.getenv("NIKA_TLS_FINGERPRINT_SHA256", "").strip() or None
+    )
+    
     NIKA_REFRESH_INTERVAL_MINUTES: int = int(
         os.getenv(
             "NIKA_REFRESH_INTERVAL_MINUTES",
