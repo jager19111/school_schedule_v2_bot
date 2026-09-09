@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone, date
+from services.help_service import HelpLinksDTO
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
 from core.models.dto import ( ClassListDTO, GroupListDTO, UserProfileDTO, TeacherListDTO, 
                              FamilyMemberDTO, FamilyInviteDTO, ScheduleWatchTargetDTO, ScheduleViewTargetDTO, StudentProfileDTO, ParentStudentNotificationSettingsDTO,
@@ -29,7 +30,148 @@ class Keyboards:
             group_name = groups_dict.get(group_id, f"Группа {group_id}")
             
         return class_name, group_name
-    
+
+
+    @staticmethod
+    def get_help_kb(
+        *,
+        links: HelpLinksDTO,
+        role: str | None,
+        section: str,
+        show_back_to_settings: bool,
+    ) -> InlineKeyboardMarkup:
+        """
+        Клавиатура справки.
+
+        section нужен, чтобы на внутренних страницах справки
+        показывать кнопку возврата к оглавлению.
+
+        role используется только для решения, нужно ли показывать
+        кнопку возврата в Settings.
+        """
+        buttons = [
+            [
+                InlineKeyboardButton(
+                    text="👨‍👩‍👧 Семья и приглашения",
+                    callback_data="help:family",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🧒 Ученику",
+                    callback_data="help:child",
+                ),
+                InlineKeyboardButton(
+                    text="👨‍👩‍👧 Родителю",
+                    callback_data="help:parent",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="👁 Наблюдателю",
+                    callback_data="help:observer",
+                ),
+                InlineKeyboardButton(
+                    text="👩‍🏫 Учителю",
+                    callback_data="help:teacher",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🔔 Уведомления",
+                    callback_data="help:notifications",
+                ),
+                InlineKeyboardButton(
+                    text="🎨 Доп. занятия",
+                    callback_data="help:extras",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🔐 Данные и приватность",
+                    callback_data="help:privacy",
+                ),
+            ],
+        ]
+
+
+
+        # Контакты и donation показываем только на support page.
+        # Так пользователь сначала читает объяснение, а уже потом
+        # осознанно выбирает внешний переход.
+        if section == "support":
+            support_buttons = []
+
+            if links.author_contact_url:
+                support_buttons.append(
+                    InlineKeyboardButton(
+                        text="💬 Связаться с автором",
+                        url=links.author_contact_url,
+                    )
+                )
+
+            if links.donation_url:
+                support_buttons.append(
+                    InlineKeyboardButton(
+                        text="❤️ Поддержать проект",
+                        url=links.donation_url,
+                    )
+                )
+
+            # Если contact/donation ещё не заданы в config,
+            # всё равно оставляем внутреннюю кнопку, чтобы UX
+            # не выглядел пустым.
+            if not support_buttons:
+                support_buttons.append(
+                    InlineKeyboardButton(
+                        text="💬 Поддержка и обратная связь",
+                        callback_data="help:support",
+                    )
+                )
+
+            buttons.append(support_buttons)
+
+        else:
+            buttons.append([
+                InlineKeyboardButton(
+                    text="💬 Поддержка и обратная связь",
+                    callback_data="help:support",
+                )
+            ])
+        # Полная браузерная справка полезна на любой странице.
+        if links.public_help_url:
+            buttons.append([
+                InlineKeyboardButton(
+                    text="📖 Полная справка в браузере",
+                    url=links.public_help_url,
+                )
+            ])            
+        # На внутренних страницах справки всегда нужна навигация
+        # обратно к главному экрану справки.
+        if section != "main":
+            buttons.append([
+                InlineKeyboardButton(
+                    text="ℹ️ К оглавлению",
+                    callback_data="help:main",
+                )
+            ])
+
+
+        # У зарегистрированного пользователя всегда есть путь назад.
+        # show_back_to_settings оставлен для явного управления
+        # при вызове из Settings.
+        if role is not None or show_back_to_settings:
+            buttons.append([
+                InlineKeyboardButton(
+                    text="⬅️ К настройкам",
+                    callback_data="settings:main",
+                )
+            ])
+
+        return InlineKeyboardMarkup(
+            inline_keyboard=buttons,
+        )
+            
     @staticmethod
     def get_role_selection() -> InlineKeyboardMarkup:
         return InlineKeyboardMarkup(inline_keyboard=[
@@ -174,10 +316,17 @@ class Keyboards:
                 callback_data="settings:notifications",
             )
         ])
+        
+        buttons.append([
+            InlineKeyboardButton(
+                text="ℹ️ Справка",
+                callback_data="help:main",
+            )
+        ])
 
         buttons.append([
             InlineKeyboardButton(
-                text="🔄 Перерегистрироваться / Выйти",
+                text="♻️ Перерегистрация/Выход",
                 callback_data="auth:restart",
             )
         ])

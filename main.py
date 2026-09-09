@@ -2,6 +2,7 @@ import asyncio
 import datetime
 import logging
 import aiohttp
+from aiogram.types import BotCommand
 from zoneinfo import ZoneInfo
 from aiogram import Bot, Dispatcher
 from aiogram.enums import ParseMode
@@ -29,6 +30,7 @@ from services.time_service import TimeService, TimeServiceConfig
 from services.admin_service import AdminService
 from services.watch_targets_service import WatchTargetsService
 from services.students_service import StudentsService
+from services.help_service import HelpService
 
 from bot.handlers import (
     registration,
@@ -37,7 +39,8 @@ from bot.handlers import (
     extra_classes,
     admin,
     search,
-    schedule_teacher
+    schedule_teacher,
+    help
 )
 
 logging.basicConfig(
@@ -173,6 +176,22 @@ async def main():
         token=config.BOT_TOKEN,
         default=DefaultBotProperties(parse_mode=ParseMode.HTML)
     )
+    
+    await bot.set_my_commands([
+        BotCommand(
+            command="start",
+            description="Начать работу с ботом",
+        ),
+        BotCommand(
+            command="help",
+            description="Справка и возможности бота",
+        ),
+#        BotCommand(
+#            command="support",
+#            description="Связь с автором и поддержка проекта",
+#        )
+    ])
+
     dp = Dispatcher()
     tz = ZoneInfo(config.TIMEZONE)
 
@@ -216,13 +235,13 @@ async def main():
     admin_service = AdminService(admin_repo=admin_repo, schedule_repo=schedule_repo, admin_ids=config.ADMIN_IDS)
     extra_classes_service = ExtraClassesService(extra_classes_repo=extra_classes_repo, profile_service=profile_service, students_service=students_service, time_service=time_service)
     watch_targets_service = WatchTargetsService(repository=watch_target_repo)
-
+    help_service = HelpService(public_help_url=config.HELP_PUBLIC_URL, author_contact_url=config.AUTHOR_CONTACT_URL, donation_url=config.DONATION_URL,)
         
     notification_delivery_cleanup_job = NotificationDeliveryCleanupJob(notification_repo=notification_repo, time_service=time_service, retention_days=35)
         
     # 4. Регистрация роутеров команд
     dp.include_router(registration.router)
-
+    dp.include_router(help.router)
     # Teacher router содержит только teacher_sched:* callbacks.
     dp.include_router(schedule_teacher.router)
 
@@ -244,6 +263,7 @@ async def main():
         extra_classes_service=extra_classes_service,
         watch_targets_service=watch_targets_service,
         students_service=students_service,
+        help_service=help_service,
         schedule_repo=schedule_repo,
         user_repository=user_repo,
         profile_repo=profile_repo,

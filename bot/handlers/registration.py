@@ -11,6 +11,7 @@ from services.profiles_service import ProfileService
 from services.students_service import StudentsService
 from core.repository.schedule_repository import ScheduleRepository
 from services.schedule_service import ScheduleService
+from services.help_service import HelpService
 from bot.utils.ui_renderer import UIRenderer
 from bot.keyboards.keyboard import Keyboards
 from core.models.dto import ClassListDTO, GroupListDTO, FamilyCreatedDTO
@@ -23,10 +24,16 @@ async def _show_main_menu(
     *,
     text: str | None = None,
 ) -> None:
+    """
+    Показывает постоянное нижнее меню.
+
+    Сообщение намеренно нейтральное:
+    успешное действие уже описано в основном renderer,
+    а здесь пользователь получает только ориентир по навигации.
+    """
     await message.answer(
         text or (
-            "✅ <b>Настройка завершена.</b>\n\n"
-            "⬇️ Выберите действие в меню внизу экрана."
+            "⬇️ <b>Главное меню</b>\n"
         ),
         reply_markup=Keyboards.get_main_menu(),
         parse_mode="HTML",
@@ -55,6 +62,7 @@ async def cmd_start(
     profile_service: ProfileService,
     students_service: StudentsService,
     schedule_service: ScheduleService,
+    help_service: HelpService,
 ) -> None:
     """
     Старт bot и обработка deep-link family invite.
@@ -91,6 +99,19 @@ async def cmd_start(
         len(payload),
         current_state,
     )
+
+    if payload == "help":
+        from bot.handlers.help import show_help
+
+        await show_help(
+            message=message,
+            actor_user_id=message.from_user.id,
+            section="main",
+            profile_service=profile_service,
+            help_service=help_service,
+            edit_message=False,
+        )
+        return
     
     await profile_service.register_user_initial(
         user_id,
@@ -340,10 +361,7 @@ async def cmd_start(
             user_dto.name,
         )
 
-        await _show_main_menu(
-            message,
-            text=text,
-        )
+        await _show_main_menu(message, text=text,)
 
         await state.clear()
         return
@@ -558,9 +576,9 @@ async def process_name(
             )
             return
 
-        pending_name = data.get("pending_invite_name")
-        class_id = data.get("class_id")
-
+        await state.update_data(
+            pending_invite_name=name,
+        )
         dicts_dto = await schedule_service.get_school_dictionaries()
 
         text = UIRenderer.render_class_selection(
@@ -605,19 +623,17 @@ async def process_name(
             )
             return
 
-        role_label = {
-            "parent": "родителя",
-            "observer": "наблюдателя",
-        }.get(
-            consumed_role,
-            "участника семьи",
+        user_dto = await profile_service.get_user_profile_dto(
+            message.from_user.id,
         )
-
+        
         await state.clear()
 
         await message.answer(
-            "✅ Вы успешно присоединились к семье "
-            f"в роли <b>{role_label}</b>.",
+            UIRenderer.render_success_join(
+                name=user_dto.name,
+                role=consumed_role,
+            ),
             parse_mode="HTML",
         )
 
@@ -746,13 +762,7 @@ async def process_family_create(
 
     # edit_text не показывает нижнее ReplyKeyboardMarkup.
     # Поэтому отправляем меню отдельным сообщением.
-    await _show_main_menu(
-        callback.message,
-        text=(
-            "✅ <b>Семья создана.</b>\n\n"
-            "⬇️ Теперь выберите действие в меню внизу."
-        ),
-    )
+    await _show_main_menu(callback.message,)
 
     await state.clear()
     await callback.answer()
@@ -842,10 +852,10 @@ async def process_family_code_input(
     user_name = getattr(user_dto, "name", "Пользователь")
 
     if role == "child":
-        text_success = UIRenderer.render_success_join(user_dto.name)
+        text_success = UIRenderer.render_success_join(name=user_dto.name,role=role,)
         await message.answer(text_success, parse_mode="HTML")
         
-        # 1. Запрашиваем справочники школы единым запросом через ScheduleServiceV2
+        # 1. Запрашиваем справочники школы единым запросом через ScheduleService
         dicts_dto = await schedule_service.get_school_dictionaries()
         
         # 2. Рендерим выбор класса с использованием as_class_list
@@ -855,7 +865,7 @@ async def process_family_code_input(
         await message.answer(text, reply_markup=kb, parse_mode="HTML")
         await state.set_state(RegistrationStates.waiting_for_class)
     else:
-        text = UIRenderer.render_success_join(user_dto.name)
+        text = UIRenderer.render_success_join(name=user_dto.name,role=role,)
         await message.answer(text, parse_mode="HTML")
         await _show_main_menu(message)
         await state.clear()
