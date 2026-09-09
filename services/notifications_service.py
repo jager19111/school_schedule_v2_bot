@@ -1,21 +1,59 @@
 # services/notifications_service.py
 #
-# ИЗМЕНЕНИЕ (Задача 1.4): send_upcoming_changes теперь генерирует
-# корректную дату через TimeService и передаёт её в
-# get_pending_changes(start_date_iso=..., end_date_iso=...).
+# ЭТАП 2. ФИКС N+1 И TELEGRAM THROTTLING.
 #
-# Раньше вызов был без параметров: репозиторий вытягивал ВСЕ
-# замены/отмены из кэша в память (RAM-бомба), а окно каждого
-# получателя проверялось уже в Python-цикле. Теперь:
-# - нижняя граница — сегодня (изменения в прошлом не рассылаем);
-# - верхняя граница — today + 31 день (максимум changes_window_days
-#   по CHECK-ограичению схемы users). Личный окно каждого получателя
-#   по-прежнему уточняется в цикле — бизнес-логика не изменена.
+# ЧТО ИЗМЕНЕНО:
+#
+# 1. Фикс N+1 (батчевая дедупликация):
+#    Раньше каждый тик APScheduler выполнял одиночный
+#    is_notification_delivered (SELECT 1 ...) на каждого получателя
+#    каждого урока — при 100+ пользователях это тысячи мелких
+#    запросов за тик. Теперь каждый send-метод работает в три фазы:
+#      Фаза 1 (collect):  сбор кандидатов с применением временных
+#                        фильтров (окно/offset) — без обращений к
+#                        notification_delivery_log;
+#      Фаза 2 (dedup):   ОДИН вызов get_delivered_keys на тип
+#                        уведомления (чанками по 400);
+#      Фаза 3 (send):    paced-отправка + запись доставки после
+#                        каждого успешного отправления.
+#
+# 2. Фикс N+1 (получатели):
+#    get_recipients_for_* больше не вызывается на каждый урок/замену.
+#    Внутри тика результаты мемоизируются по ключу:
+#      - (class_id, group_id) — получатели класса;
+#      - teacher_id — учительские подписки.
+#    254 урока ~40 классов => ~40 запросов вместо 254+.
+#
+# 3. Smart Throttling (лимиты Telegram Bot API):
+#    - глобальный темп ~22 msg/сек (запас под лимит 30/сек);
+#    - не более 1 сообщения/сек в один чат (лимит Telegram);
+#    - обработка 429 Too Many Requests: пауза retry_after + повтор;
+#    - TelegramForbiddenError (бот заблокирован): авт отключение
+#      уведомлений пользователю, чтобы не долбить API каждый тик;
+#    - сетевые ошибки: до 3 попыток с backoff.
+#    Вся отправка сериализована через asyncio.Lock — два тика
+#    планировщика физически не могут превысить лимит вместе.
+#
+# 4. ИСПРАВЛЕН БАГ: _send_teacher_morning_reminders существовал,
+#    но нигде не вызывался — утренние сводки учителей не отправлялись.
+#    Теперь send_morning_reminders вызывает его в конце тика.
+#
+# 5. Метрики: каждый тик логирует candidates/pending/sent/failed/
+#    db_queries — контроль эффекта оптимизации.
 
-import logging
+import asyncio
 import datetime
+import logging
+import time
+from dataclasses import dataclass, field
 
 from aiogram import Bot
+from aiogram.exceptions import (
+    TelegramBadRequest,
+    TelegramForbiddenError,
+    TelegramNetworkError,
+    TelegramRetryAfter,
+)
 
 from core.repository.notification_repository import NotificationRepository
 from core.repository.extra_classes_repository import ExtraClassesRepository
@@ -31,15 +69,49 @@ from core.models.dto import (
 
 logger = logging.getLogger(__name__)
 
-# Максимум changes_window_days по CHECK-ограичению в схеме users.
+# Максимум changes_window_days по CHECK-ограничению в схеме users.
 MAX_CHANGES_WINDOW_DAYS = 31
+
+# ==============================================================
+# Smart Throttling: параметры под лимиты Telegram Bot API.
+# ==============================================================
+
+# Глобальный темп: ~22 сообщения/сек (лимит Telegram ~30/сек).
+GLOBAL_SEND_INTERVAL_SEC = 0.045
+# Не более одного сообщения в чат за интервал (лимит Telegram ~1/сек).
+PER_CHAT_SEND_INTERVAL_SEC = 1.1
+# Максимальное число попыток отправки одного сообщения.
+MAX_SEND_ATTEMPTS = 3
+
+
+@dataclass(slots=True)
+class PendingSend:
+    """
+    Кандидат на отправку, собранный в фазе collect.
+
+    Ключ дедупликации: (notification_type, notification_date,
+    source_id, recipient_id) — ровно первичный ключ
+    notification_delivery_log.
+    """
+    notification_type: str
+    notification_date: str
+    source_id: str
+    recipient_id: int
+    text: str
+    # Контекст для логов (lesson_id / change_id / extra_id и т.п.).
+    context: str = ""
 
 
 class NotificationService:
     """
     Сервис уведомлений (Strict DTO & Repository Pattern).
-    Обеспечивает 100% отказоустойчивость рассылок.
-    Введено жесткое использование именованных аргументов для защиты от TypeError.
+
+    Обеспечивает отказоустойчивость рассылок:
+    - батчевая дедупликация доставок (без N+1);
+    - мемоизация получателей внутри тика;
+    - умное дросселирование под лимиты Telegram;
+    - идемпотентность при рестартах (delivery log пишется сразу
+      после каждой успешной отправки).
     """
 
     def __init__(
@@ -56,14 +128,224 @@ class NotificationService:
         self.schedule_repo = schedule_repo
         self.extra_classes_repo = extra_classes_repo
 
-    async def _safe_send(self, student_id: int, text: str) -> bool:
-        """Внутренний метод для 100% отказоустойчивости отправки."""
-        try:
-            await self.bot.send_message(chat_id=student_id, text=text, parse_mode="HTML")
-            return True
-        except Exception as e:
-            logger.warning("Failed to send notification to %s: %s", student_id, e)
+        # Smart Throttling state.
+        # Сериализация ВСЕХ отправок через один lock: планировщик
+        # запускает несколько jobs, но лимиты Telegram — глобальные.
+        self._send_lock = asyncio.Lock()
+        self._global_last_send_at = 0.0
+        self._chat_last_send_at: dict[int, float] = {}
+
+    # ==============================================================
+    # Smart Throttling
+    # ==============================================================
+
+    async def _paced_send(self, *, chat_id: int, text: str) -> bool:
+        """
+        Отправка сообщения с соблюдением лимитов Telegram.
+
+        - глобальный темп GLOBAL_SEND_INTERVAL_SEC между любыми двумя
+          отправками бота;
+        - PER_CHAT_SEND_INTERVAL_SEC между отправками одному чату;
+        - 429 Too Many Requests: ждём retry_after и повторяем;
+        - Forbidden (бот заблокирован): отключаем уведомления
+          пользователю и прекращаем попытки;
+        - сетевые ошибки: до MAX_SEND_ATTEMPTS попыток с backoff.
+
+        Lock держится на всё время отправки И пауз — это намеренно:
+        так параллельные jobs планировщика не могут суммарно
+        превысить глобальный лимит.
+        """
+        async with self._send_lock:
+            for attempt in range(1, MAX_SEND_ATTEMPTS + 1):
+                now_mono = time.monotonic()
+
+                wait_global = (
+                    self._global_last_send_at
+                    + GLOBAL_SEND_INTERVAL_SEC
+                    - now_mono
+                )
+                wait_chat = (
+                    self._chat_last_send_at.get(chat_id, 0.0)
+                    + PER_CHAT_SEND_INTERVAL_SEC
+                    - now_mono
+                )
+                wait = max(wait_global, wait_chat, 0.0)
+                if wait > 0:
+                    await asyncio.sleep(wait)
+
+                try:
+                    await self.bot.send_message(
+                        chat_id=chat_id,
+                        text=text,
+                        parse_mode="HTML",
+                    )
+                    finished_at = time.monotonic()
+                    self._global_last_send_at = finished_at
+                    self._chat_last_send_at[chat_id] = finished_at
+                    return True
+
+                except TelegramRetryAfter as exc:
+                    logger.warning(
+                        "Telegram 429 flood control: chat_id=%s, "
+                        "retry_after=%ss, attempt=%d/%d",
+                        chat_id,
+                        exc.retry_after,
+                        attempt,
+                        MAX_SEND_ATTEMPTS,
+                    )
+                    # Ждём указанное Telegram время и повторяем.
+                    await asyncio.sleep(float(exc.retry_after) + 0.5)
+
+                except TelegramForbiddenError:
+                    logger.warning(
+                        "Chat %s blocked the bot. "
+                        "Disabling notifications for this user.",
+                        chat_id,
+                    )
+                    try:
+                        await self.repo.disable_notifications_for_user(
+                            user_id=chat_id,
+                        )
+                    except Exception:
+                        logger.exception(
+                            "Failed to disable notifications "
+                            "for blocked chat %s",
+                            chat_id,
+                        )
+                    return False
+
+                except TelegramBadRequest as exc:
+                    logger.warning(
+                        "Telegram rejected message: chat_id=%s, error=%s",
+                        chat_id,
+                        exc,
+                    )
+                    return False
+
+                except (TelegramNetworkError, asyncio.TimeoutError, OSError) as exc:
+                    logger.warning(
+                        "Network error sending to chat %s "
+                        "(attempt %d/%d): %s",
+                        chat_id,
+                        attempt,
+                        MAX_SEND_ATTEMPTS,
+                        exc,
+                    )
+                    await asyncio.sleep(0.5 * attempt)
+
+            logger.error(
+                "Giving up sending to chat %s after %d attempts",
+                chat_id,
+                MAX_SEND_ATTEMPTS,
+            )
             return False
+
+    async def _safe_send(self, student_id: int, text: str) -> bool:
+        """Совместимая обёртка над _paced_send."""
+        return await self._paced_send(
+            chat_id=student_id,
+            text=text,
+        )
+
+    # ==============================================================
+    # Общие помощники фаз collect/dedup/send
+    # ==============================================================
+
+    async def _drop_already_delivered(
+        self,
+        pending: list[PendingSend],
+    ) -> list[PendingSend]:
+        """
+        Фаза dedup: батчевая проверка delivery log по каждому типу.
+
+        Один вызов get_delivered_keys на каждый notification_type,
+        встречающийся в pending, независимо от числа кандидатов.
+        """
+        if not pending:
+            return []
+
+        result: list[PendingSend] = []
+        types = sorted({item.notification_type for item in pending})
+
+        for notification_type in types:
+            type_items = [
+                item
+                for item in pending
+                if item.notification_type == notification_type
+            ]
+            candidate_keys = [
+                (
+                    item.notification_date,
+                    item.source_id,
+                    item.recipient_id,
+                )
+                for item in type_items
+            ]
+            delivered = await self.repo.get_delivered_keys(
+                notification_type=notification_type,
+                candidate_keys=candidate_keys,
+            )
+            for item in type_items:
+                key = (
+                    item.notification_date,
+                    item.source_id,
+                    item.recipient_id,
+                )
+                if key not in delivered:
+                    result.append(item)
+
+        return result
+
+    async def _flush_pending(
+        self,
+        pending: list[PendingSend],
+    ) -> tuple[int, int]:
+        """
+        Фаза send: paced-отправка + запись доставки сразу после
+        каждой успешной отправки (идемпотентность при падении
+        процесса в середине рассылки).
+        """
+        sent_count = 0
+        failed_count = 0
+
+        for item in pending:
+            sent = await self._paced_send(
+                chat_id=item.recipient_id,
+                text=item.text,
+            )
+            if not sent:
+                failed_count += 1
+                logger.warning(
+                    "Send failed: type=%s, source_id=%s, "
+                    "recipient_id=%s, context=%s",
+                    item.notification_type,
+                    item.source_id,
+                    item.recipient_id,
+                    item.context,
+                )
+                continue
+
+            await self.repo.record_notification_delivery(
+                notification_type=item.notification_type,
+                notification_date=item.notification_date,
+                source_id=item.source_id,
+                recipient_id=item.recipient_id,
+            )
+            sent_count += 1
+            logger.info(
+                "Delivered: type=%s, source_id=%s, recipient_id=%s, "
+                "context=%s",
+                item.notification_type,
+                item.source_id,
+                item.recipient_id,
+                item.context,
+            )
+
+        return sent_count, failed_count
+
+    # ==============================================================
+    # 1. Утренние сводки
+    # ==============================================================
 
     async def send_morning_reminders(self) -> None:
         """
@@ -73,11 +355,10 @@ class NotificationService:
         Взрослый получает одно сообщение, объединяющее сводки всех детей,
         на которых он подписан через parent_student_settings.
 
-        Успешные доставки логируются отдельно по каждой паре:
-            recipient_id + target_student_id + date.
+        В конце тика отправляются утренние сводки учителей
+        (_send_teacher_morning_reminders). Раньше этот метод
+        существовал, но не вызывался — сводки учителей не уходили.
         """
-        # Утренние сводки для детей, родителей и наблюдателей.
-        # Дедупликация: notification_delivery_log по (type, date, student, recipient).
         now = self.time_service.get_now_base()
         current_time_str = now.strftime("%H:%M")
         today_iso = now.date().isoformat()
@@ -88,6 +369,11 @@ class NotificationService:
         )
 
         if not tasks:
+            # Учительские сводки проверяем независимо от детских задач.
+            await self._send_teacher_morning_reminders(
+                current_time_str=current_time_str,
+                today_iso=today_iso,
+            )
             return
 
         logger.info(
@@ -95,6 +381,20 @@ class NotificationService:
             today_iso,
             current_time_str,
             len(tasks),
+        )
+
+        # --- Фаза 1 (collect/dedup): батчевая проверка delivery log ---
+        candidate_keys = [
+            (
+                today_iso,
+                f"morning_summary:{int(task['target_student_id'])}",
+                int(task["recipient_id"]),
+            )
+            for task in tasks
+        ]
+        delivered = await self.repo.get_delivered_keys(
+            notification_type="morning_summary",
+            candidate_keys=candidate_keys,
         )
 
         metadata = await self.schedule_repo.get_metadata()
@@ -109,13 +409,7 @@ class NotificationService:
                 target_student_id = int(task["target_student_id"])
                 source_id = f"morning_summary:{target_student_id}"
 
-                already_sent = await self.repo.is_notification_delivered(
-                    notification_type="morning_summary",
-                    notification_date=today_iso,
-                    source_id=source_id,
-                    recipient_id=recipient_id,
-                )
-                if already_sent:
+                if (today_iso, source_id, recipient_id) in delivered:
                     continue
 
                 child_class_id = task.get("class_id")
@@ -237,6 +531,10 @@ class NotificationService:
                     task,
                 )
 
+        # --- Фаза send: paced-отправка сгруппированных сводок ---
+        sent_count = 0
+        failed_count = 0
+
         for recipient_id, entries in summaries_by_recipient.items():
             try:
                 rendered_parts = [
@@ -245,11 +543,12 @@ class NotificationService:
                 ]
                 final_text = "\n\n───────────────\n\n".join(rendered_parts)
 
-                sent = await self._safe_send(
-                    student_id=recipient_id,
+                sent = await self._paced_send(
+                    chat_id=recipient_id,
                     text=final_text,
                 )
                 if not sent:
+                    failed_count += 1
                     logger.warning(
                         "Morning summary send failed: recipient_id=%s, "
                         "children=%s",
@@ -261,6 +560,7 @@ class NotificationService:
                     )
                     continue
 
+                sent_count += 1
                 for task, _ in entries:
                     target_student_id = int(task["target_student_id"])
                     await self.repo.record_notification_delivery(
@@ -285,23 +585,36 @@ class NotificationService:
                     recipient_id,
                 )
 
+        logger.info(
+            "Morning summary tick done: tasks=%d, pending_recipients=%d, "
+            "sent=%d, failed=%d",
+            len(tasks),
+            len(summaries_by_recipient),
+            sent_count,
+            failed_count,
+        )
+
+        # Учительские утренние сводки (раньше не вызывались).
+        await self._send_teacher_morning_reminders(
+            current_time_str=current_time_str,
+            today_iso=today_iso,
+        )
+
+    # ==============================================================
+    # 2. Изменения расписания
+    # ==============================================================
+
     async def send_upcoming_changes(self) -> None:
         """
         Отправляет адресные уведомления о заменах и отменах.
 
-        Каждая успешная доставка фиксируется отдельно для каждого ребёнка,
-        родителя или observer в notification_delivery_log.
+        Three-phase: collect (мемоизация получателей по классу и
+        учителю) -> батчевый dedup -> paced send.
         """
-        # Рассылка изменений детям, родителям, наблюдателям и watch targets.
-        # Дедупликация через notification_delivery_log.
         now = self.time_service.get_now_base()
         today = now.date()
         today_iso = today.isoformat()
 
-        # Задача 1.4: дата генерируется через TimeService и передаётся
-        # в репозиторий. Верхняя граница = максимум окна получателей,
-        # чтобы СУБД не возвращала строки, которые гарантированно
-        # отбрасываются в Python-цикле ниже.
         window_end_iso = (
             today + datetime.timedelta(days=MAX_CHANGES_WINDOW_DAYS)
         ).isoformat()
@@ -317,16 +630,28 @@ class NotificationService:
             len(changes),
         )
 
+        # Тиковые кеши получателей (фикс N+1).
+        recipients_cache: dict[tuple[str, str], list[dict]] = {}
+        teacher_cache: dict[str, list[dict]] = {}
+
+        pending: list[PendingSend] = []
+
+        # --- Фаза 1 (collect) ---
         for change in changes:
             try:
                 change_date = self.time_service.date_from_iso(
                     change["date"],
                 )
-                # 1. Отправка уведомлений ученикам, родителям и наблюдателям
-                recipients = await self.repo.get_recipients_for_schedule_change(
-                    class_id=change["class_id"],
-                    group_id=change["group_id"],
-                )
+
+                cache_key = (change["class_id"], change["group_id"])
+                if cache_key not in recipients_cache:
+                    recipients_cache[cache_key] = (
+                        await self.repo.get_recipients_for_schedule_change(
+                            class_id=change["class_id"],
+                            group_id=change["group_id"],
+                        )
+                    )
+                recipients = recipients_cache[cache_key]
 
                 for recipient in recipients:
                     recipient_id = int(recipient["recipient_id"])
@@ -334,8 +659,6 @@ class NotificationService:
                         recipient["changes_window_days"]
                     )
 
-                    # Ноль означает: получатель не хочет уведомления
-                    # об изменениях вперёд.
                     if window_days <= 0:
                         continue
 
@@ -343,15 +666,6 @@ class NotificationService:
                         days=window_days,
                     )
                     if not (today <= change_date <= max_date):
-                        continue
-
-                    already_sent = await self.repo.is_notification_delivered(
-                        notification_type="schedule_change",
-                        notification_date=change["date"],
-                        source_id=change["id"],
-                        recipient_id=recipient_id,
-                    )
-                    if already_sent:
                         continue
 
                     dto = ChangeReminderDTO(
@@ -371,48 +685,33 @@ class NotificationService:
                         ),
                     )
 
-                    sent = await self._safe_send(
-                        student_id=recipient_id,
-                        text=UIRenderer.render_change_reminder(dto),
-                    )
-                    if not sent:
-                        logger.warning(
-                            "Schedule change send failed: change_id=%s, "
-                            "recipient_id=%s",
-                            change["id"],
-                            recipient_id,
+                    pending.append(
+                        PendingSend(
+                            notification_type="schedule_change",
+                            notification_date=change["date"],
+                            source_id=change["id"],
+                            recipient_id=recipient_id,
+                            text=UIRenderer.render_change_reminder(dto),
+                            context=(
+                                f"change_id={change['id']}, "
+                                f"kind={recipient['recipient_kind']}"
+                            ),
                         )
-                        continue
-
-                    await self.repo.record_notification_delivery(
-                        notification_type="schedule_change",
-                        notification_date=change["date"],
-                        source_id=change["id"],
-                        recipient_id=recipient_id,
-                    )
-                    logger.info(
-                        "Schedule change delivered: change_id=%s, "
-                        "student_id=%s, watch_target=%s, "
-                        "recipient_id=%s, recipient_kind=%s",
-                        change["id"],
-                        recipient.get("student_id"),
-                        recipient.get("watch_target_title"),
-                        recipient_id,
-                        recipient["recipient_kind"],
                     )
 
-                # 2. Отправка уведомлений преподавателям
-                # ----------------------------------------------------
                 teacher_id = change.get("teacher_id")
                 if not teacher_id:
                     continue
 
-                teacher_recipients = (
-                    await self.repo.get_teacher_recipients_for_schedule_change(
-                        teacher_id=str(teacher_id),
+                teacher_id = str(teacher_id)
+                if teacher_id not in teacher_cache:
+                    teacher_cache[teacher_id] = (
+                        await self.repo.get_teacher_recipients_for_schedule_change(
+                            teacher_id=teacher_id,
+                        )
                     )
-                )
-                for recipient in teacher_recipients:
+
+                for recipient in teacher_cache[teacher_id]:
                     try:
                         recipient_id = int(recipient["recipient_id"])
                         window_days = int(
@@ -425,15 +724,6 @@ class NotificationService:
                             days=window_days,
                         )
                         if not (today <= change_date <= max_date):
-                            continue
-
-                        already_sent = await self.repo.is_notification_delivered(
-                            notification_type="teacher_change",
-                            notification_date=change["date"],
-                            source_id=change["id"],
-                            recipient_id=recipient_id,
-                        )
-                        if already_sent:
                             continue
 
                         dto = ChangeReminderDTO(
@@ -455,29 +745,22 @@ class NotificationService:
                             f"{UIRenderer.render_change_reminder(dto)}"
                         )
 
-                        sent = await self._safe_send(
-                            student_id=recipient_id,
-                            text=text,
-                        )
-                        if not sent:
-                            continue
-
-                        await self.repo.record_notification_delivery(
-                            notification_type="teacher_change",
-                            notification_date=change["date"],
-                            source_id=change["id"],
-                            recipient_id=recipient_id,
-                        )
-                        logger.info(
-                            "Teacher schedule change delivered: "
-                            "teacher_id=%s change_id=%s recipient_id=%s",
-                            teacher_id,
-                            change["id"],
-                            recipient_id,
+                        pending.append(
+                            PendingSend(
+                                notification_type="teacher_change",
+                                notification_date=change["date"],
+                                source_id=change["id"],
+                                recipient_id=recipient_id,
+                                text=text,
+                                context=(
+                                    f"teacher_id={teacher_id}, "
+                                    f"change_id={change['id']}"
+                                ),
+                            )
                         )
                     except Exception:
                         logger.exception(
-                            "Teacher schedule change notification failed: "
+                            "Teacher schedule change collect failed: "
                             "change=%r recipient=%r",
                             change,
                             recipient,
@@ -491,21 +774,38 @@ class NotificationService:
                 )
             except Exception:
                 logger.exception(
-                    "Unexpected schedule change notification error: change=%r",
+                    "Unexpected schedule change collect error: change=%r",
                     change,
                 )
-                
-    # ---------- 3. Предурочные уведомления ----------
+
+        # --- Фаза 2 (dedup) + Фаза 3 (send) ---
+        to_send = await self._drop_already_delivered(pending)
+        sent_count, failed_count = await self._flush_pending(to_send)
+
+        logger.info(
+            "Schedule changes tick done: changes=%d, candidates=%d, "
+            "pending=%d, sent=%d, failed=%d, "
+            "recipient_queries=%d, teacher_queries=%d",
+            len(changes),
+            len(pending),
+            len(to_send),
+            sent_count,
+            failed_count,
+            len(recipients_cache),
+            len(teacher_cache),
+        )
+
+    # ==============================================================
+    # 3. Предурочные напоминания
+    # ==============================================================
+
     async def send_pre_lesson_reminders(self) -> None:
         """
         Отправляет адресные предурочные напоминания.
 
-        Каждый ребёнок и каждый взрослый — независимый получатель.
-        Успешная доставка фиксируется в notification_delivery_log, поэтому
-        повторный scheduler-run не создаёт дубликаты.
+        Three-phase + тиковая мемоизация получателей:
+        254 урока ~40 классов => ~40 запросов получателей вместо 254+.
         """
-        # Предурочные напоминания. Дедупликация через notification_delivery_log,
-        # окно определяется динамически от scheduler-run к scheduler-run.
         now = self.time_service.get_now_base()
         today_iso = now.date().isoformat()
 
@@ -519,6 +819,13 @@ class NotificationService:
             len(lessons),
         )
 
+        # Тиковые кеши получателей (фикс N+1).
+        recipients_cache: dict[tuple[str, str], list[dict]] = {}
+        teacher_cache: dict[str, list[dict]] = {}
+
+        pending: list[PendingSend] = []
+
+        # --- Фаза 1 (collect) ---
         for lesson in lessons:
             try:
                 lesson_start_at = datetime.datetime.strptime(
@@ -532,33 +839,27 @@ class NotificationService:
                 # Урок уже начался или прошёл.
                 if delta_minutes <= 0:
                     continue
-                
-                # 1. Отправка напоминаний ученикам и родителям
-                recipients = await self.repo.get_recipients_for_pre_lesson_reminder(
-                    class_id=lesson["class_id"],
-                    group_id=lesson["group_id"],
-                )
+
+                cache_key = (lesson["class_id"], lesson["group_id"])
+                if cache_key not in recipients_cache:
+                    recipients_cache[cache_key] = (
+                        await self.repo.get_recipients_for_pre_lesson_reminder(
+                            class_id=lesson["class_id"],
+                            group_id=lesson["group_id"],
+                        )
+                    )
+                recipients = recipients_cache[cache_key]
 
                 for recipient in recipients:
                     recipient_id = int(recipient["recipient_id"])
                     offset_minutes = int(recipient["offset_minutes"])
 
-                    # Значение 0 означает: данный получатель отключил этот тип
-                    # напоминаний через личную настройку времени.
+                    # 0 = получатель отключил этот тип напоминаний.
                     if offset_minutes <= 0:
                         continue
 
                     # До окна уведомления ещё далеко.
                     if delta_minutes > offset_minutes:
-                        continue
-
-                    already_sent = await self.repo.is_notification_delivered(
-                        notification_type="pre_lesson",
-                        notification_date=today_iso,
-                        source_id=lesson["id"],
-                        recipient_id=recipient_id,
-                    )
-                    if already_sent:
                         continue
 
                     dto = LessonReminderDTO(
@@ -573,100 +874,75 @@ class NotificationService:
                         ),
                     )
 
-                    sent = await self._safe_send(
-                        student_id=recipient_id,
-                        text=UIRenderer.render_lesson_reminder(dto),
-                    )
-                    if not sent:
-                        logger.warning(
-                            "Pre-lesson reminder send failed: lesson_id=%s, "
-                            "recipient_id=%s",
-                            lesson["id"],
-                            recipient_id,
+                    pending.append(
+                        PendingSend(
+                            notification_type="pre_lesson",
+                            notification_date=today_iso,
+                            source_id=lesson["id"],
+                            recipient_id=recipient_id,
+                            text=UIRenderer.render_lesson_reminder(dto),
+                            context=(
+                                f"lesson_id={lesson['id']}, "
+                                f"kind={recipient['recipient_kind']}"
+                            ),
                         )
-                        continue
-
-                    await self.repo.record_notification_delivery(
-                        notification_type="pre_lesson",
-                        notification_date=today_iso,
-                        source_id=lesson["id"],
-                        recipient_id=recipient_id,
-                    )
-                    logger.info(
-                        "Pre-lesson reminder delivered: lesson_id=%s, "
-                        "student_id=%s, recipient_id=%s, recipient_kind=%s",
-                        lesson["id"],
-                        recipient["student_id"],
-                        recipient_id,
-                        recipient["recipient_kind"],
                     )
 
                 teacher_id = lesson.get("teacher_id")
-                if teacher_id:
-                    teacher_recipients = (
+                if not teacher_id:
+                    continue
+
+                teacher_id = str(teacher_id)
+                if teacher_id not in teacher_cache:
+                    teacher_cache[teacher_id] = (
                         await self.repo.get_teacher_recipients_for_pre_lesson_reminder(
-                            teacher_id=str(teacher_id),
+                            teacher_id=teacher_id,
                         )
                     )
-                    for recipient in teacher_recipients:
-                        try:
-                            recipient_id = int(recipient["recipient_id"])
-                            offset_minutes = int(recipient["offset_minutes"])
 
-                            if offset_minutes <= 0:
-                                continue
+                for recipient in teacher_cache[teacher_id]:
+                    try:
+                        recipient_id = int(recipient["recipient_id"])
+                        offset_minutes = int(recipient["offset_minutes"])
 
-                            if delta_minutes > offset_minutes:
-                                continue
+                        if offset_minutes <= 0:
+                            continue
 
-                            already_sent = await self.repo.is_notification_delivered(
+                        if delta_minutes > offset_minutes:
+                            continue
+
+                        dto = LessonReminderDTO(
+                            subject_name=lesson["subject_name"] or "—",
+                            start_time=lesson["start_time"],
+                            room_name=lesson["room_name"] or "—",
+                            is_extra=False,
+                            child_name=None,
+                        )
+                        text = (
+                            "👨‍🏫 <b>Напоминание об уроке</b>\n\n"
+                            f"{UIRenderer.render_lesson_reminder(dto)}"
+                        )
+
+                        pending.append(
+                            PendingSend(
                                 notification_type="teacher_pre_lesson",
                                 notification_date=today_iso,
                                 source_id=lesson["id"],
                                 recipient_id=recipient_id,
-                            )
-                            if already_sent:
-                                continue
-
-                            dto = LessonReminderDTO(
-                                subject_name=lesson["subject_name"] or "—",
-                                start_time=lesson["start_time"],
-                                room_name=lesson["room_name"] or "—",
-                                is_extra=False,
-                                child_name=None,
-                            )
-                            text = (
-                                "👨‍🏫 <b>Напоминание об уроке</b>\n\n"
-                                f"{UIRenderer.render_lesson_reminder(dto)}"
-                            )
-
-                            sent = await self._safe_send(
-                                student_id=recipient_id,
                                 text=text,
+                                context=(
+                                    f"teacher_id={teacher_id}, "
+                                    f"lesson_id={lesson['id']}"
+                                ),
                             )
-                            if not sent:
-                                continue
-
-                            await self.repo.record_notification_delivery(
-                                notification_type="teacher_pre_lesson",
-                                notification_date=today_iso,
-                                source_id=lesson["id"],
-                                recipient_id=recipient_id,
-                            )
-                            logger.info(
-                                "Teacher pre-lesson reminder delivered: "
-                                "teacher_id=%s lesson_id=%s recipient_id=%s",
-                                teacher_id,
-                                lesson["id"],
-                                recipient_id,
-                            )
-                        except Exception:
-                            logger.exception(
-                                "Teacher pre-lesson reminder failed: "
-                                "lesson=%r recipient=%r",
-                                lesson,
-                                recipient,
-                            )
+                        )
+                    except Exception:
+                        logger.exception(
+                            "Teacher pre-lesson collect failed: "
+                            "lesson=%r recipient=%r",
+                            lesson,
+                            recipient,
+                        )
 
             except (KeyError, TypeError, ValueError) as exc:
                 logger.exception(
@@ -676,23 +952,38 @@ class NotificationService:
                 )
             except Exception:
                 logger.exception(
-                    "Unexpected pre-lesson reminder error: lesson=%r",
+                    "Unexpected pre-lesson reminder collect error: lesson=%r",
                     lesson,
                 )
+
+        # --- Фаза 2 (dedup) + Фаза 3 (send) ---
+        to_send = await self._drop_already_delivered(pending)
+        sent_count, failed_count = await self._flush_pending(to_send)
+
+        logger.info(
+            "Pre-lesson tick done: lessons=%d, candidates=%d, "
+            "pending=%d, sent=%d, failed=%d, "
+            "recipient_queries=%d, teacher_queries=%d",
+            len(lessons),
+            len(pending),
+            len(to_send),
+            sent_count,
+            failed_count,
+            len(recipients_cache),
+            len(teacher_cache),
+        )
+
+    # ==============================================================
+    # 4. Напоминания о доп. занятиях
+    # ==============================================================
 
     async def send_extra_class_reminders(self) -> None:
         """
         Отправляет адресные напоминания о дополнительных занятиях.
 
-        Получатели формируются в NotificationRepository:
-        - ребёнок получает только своё занятие;
-        - взрослые получают занятия только тех детей, на которых подписаны.
-
-        Успешные отправки фиксируются в notification_delivery_log. Это защищает
-        от дублей при минутном scheduler и при перезапуске приложения.
+        Получатели уже приходят адресно из репозитория — фаза collect
+        только применяет временные фильтры.
         """
-        # Напоминания о доп. занятиях. NotificationRepository отдаёт
-        # кандидатов дня, окно и дедупликация — через notification_delivery_log.
         now = self.time_service.get_now_base()
         today_iso = now.date().isoformat()
         weekday = now.isoweekday()
@@ -708,6 +999,9 @@ class NotificationService:
             len(extras),
         )
 
+        pending: list[PendingSend] = []
+
+        # --- Фаза 1 (collect) ---
         for extra in extras:
             try:
                 extra_id = int(extra["extra_id"])
@@ -731,35 +1025,12 @@ class NotificationService:
                     start_at - now
                 ).total_seconds() / 60.0
 
-                logger.debug(
-                    "Extra candidate: extra_id=%s, student_id=%s, "
-                    "recipient_id=%s, recipient_kind=%s, start=%s, "
-                    "offset=%s, delta=%.2f",
-                    extra_id,
-                    extra["student_id"],
-                    recipient_id,
-                    extra["recipient_kind"],
-                    extra["time_start"],
-                    offset_minutes,
-                    delta_minutes,
-                )
-
-                # Занятие уже началось: обычное pre-reminder больше не нужно.
+                # Занятие уже началось.
                 if delta_minutes <= 0:
                     continue
 
                 # Ещё не вошли в окно напоминания.
                 if delta_minutes > offset_minutes:
-                    continue
-
-                source_id = str(extra_id)
-                already_sent = await self.repo.is_notification_delivered(
-                    notification_type="extra_class",
-                    notification_date=today_iso,
-                    source_id=source_id,
-                    recipient_id=recipient_id,
-                )
-                if already_sent:
                     continue
 
                 dto = LessonReminderDTO(
@@ -774,33 +1045,18 @@ class NotificationService:
                     ),
                 )
 
-                sent = await self._safe_send(
-                    student_id=recipient_id,
-                    text=UIRenderer.render_lesson_reminder(dto),
-                )
-                if not sent:
-                    logger.warning(
-                        "Extra reminder send failed: extra_id=%s, "
-                        "recipient_id=%s",
-                        extra_id,
-                        recipient_id,
+                pending.append(
+                    PendingSend(
+                        notification_type="extra_class",
+                        notification_date=today_iso,
+                        source_id=str(extra_id),
+                        recipient_id=recipient_id,
+                        text=UIRenderer.render_lesson_reminder(dto),
+                        context=(
+                            f"extra_id={extra_id}, "
+                            f"kind={extra['recipient_kind']}"
+                        ),
                     )
-                    continue
-
-                logged = await self.repo.record_notification_delivery(
-                    notification_type="extra_class",
-                    notification_date=today_iso,
-                    source_id=source_id,
-                    recipient_id=recipient_id,
-                )
-                logger.info(
-                    "Extra reminder delivered: extra_id=%s, student_id=%s, "
-                    "recipient_id=%s, recipient_kind=%s, log_created=%s",
-                    extra_id,
-                    extra["student_id"],
-                    recipient_id,
-                    extra["recipient_kind"],
-                    logged,
                 )
 
             except (KeyError, TypeError, ValueError) as exc:
@@ -811,14 +1067,27 @@ class NotificationService:
                 )
             except Exception:
                 logger.exception(
-                    "Unexpected extra reminder processing error: task=%r",
+                    "Unexpected extra reminder collect error: task=%r",
                     extra,
                 )
-                
-    #----------------------
-    #   УЧИТЕЛЬ
-    #----------------------
-    
+
+        # --- Фаза 2 (dedup) + Фаза 3 (send) ---
+        to_send = await self._drop_already_delivered(pending)
+        sent_count, failed_count = await self._flush_pending(to_send)
+
+        logger.info(
+            "Extra reminder tick done: candidates=%d, pending=%d, "
+            "sent=%d, failed=%d",
+            len(pending),
+            len(to_send),
+            sent_count,
+            failed_count,
+        )
+
+    # ==============================================================
+    # Утренние сводки учителей
+    # ==============================================================
+
     async def _send_teacher_morning_reminders(
         self,
         *,
@@ -830,17 +1099,35 @@ class NotificationService:
 
         Teacher summary состоит только из lesson records:
         extra classes student profiles сюда не подмешиваются.
+
+        ИСПРАВЛЕНО (Этап 2): метод существовал, но не вызывался.
+        Теперь вызывается из send_morning_reminders каждый тик.
         """
-        # Teacher morning summary: уроки из lesson records, а не из
-        # extra classes или student profiles.
         tasks = await self.repo.get_teacher_morning_summary_tasks(
             time_str=current_time_str,
         )
         if not tasks:
             return
 
+        # --- Фаза 1 (dedup): батчевая проверка delivery log ---
+        candidate_keys = [
+            (
+                today_iso,
+                f"teacher_morning:{str(task['teacher_id'])}",
+                int(task["recipient_id"]),
+            )
+            for task in tasks
+        ]
+        delivered = await self.repo.get_delivered_keys(
+            notification_type="teacher_morning",
+            candidate_keys=candidate_keys,
+        )
+
         metadata = await self.schedule_repo.get_metadata()
         classes = metadata.get("classes", {})
+
+        sent_count = 0
+        failed_count = 0
 
         for task in tasks:
             try:
@@ -849,13 +1136,7 @@ class NotificationService:
                 teacher_name = task.get("teacher_name") or "Учитель"
                 source_id = f"teacher_morning:{teacher_id}"
 
-                already_sent = await self.repo.is_notification_delivered(
-                    notification_type="teacher_morning",
-                    notification_date=today_iso,
-                    source_id=source_id,
-                    recipient_id=recipient_id,
-                )
-                if already_sent:
+                if (today_iso, source_id, recipient_id) in delivered:
                     continue
 
                 raw_lessons = (
@@ -926,13 +1207,15 @@ class NotificationService:
                     f"{UIRenderer.render_morning_summary(summary_dto)}"
                 )
 
-                sent = await self._safe_send(
-                    student_id=recipient_id,
+                sent = await self._paced_send(
+                    chat_id=recipient_id,
                     text=text,
                 )
                 if not sent:
+                    failed_count += 1
                     continue
 
+                sent_count += 1
                 await self.repo.record_notification_delivery(
                     notification_type="teacher_morning",
                     notification_date=today_iso,
@@ -950,3 +1233,12 @@ class NotificationService:
                     "Teacher morning summary failed: task=%r",
                     task,
                 )
+
+        if sent_count or failed_count:
+            logger.info(
+                "Teacher morning summary tick done: tasks=%d, "
+                "sent=%d, failed=%d",
+                len(tasks),
+                sent_count,
+                failed_count,
+            )

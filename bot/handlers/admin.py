@@ -8,6 +8,7 @@ from aiogram.types import Message
 from bot.utils.ui_renderer import UIRenderer
 from services.admin_service import AdminService
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from services.notifications_service import NotificationService
 
 
 logger = logging.getLogger(__name__)
@@ -106,3 +107,14 @@ async def send_test_button(message: Message):
         ]]
     )
     await message.answer("Жми:", reply_markup=kb)
+    
+    
+
+
+@router.message(Command("test_429"))
+async def cmd_test_429(message: Message, notification_service: NotificationService):
+    await message.answer("Запускаю стресс-тест...")
+    # Пытаемся отправить 40 сообщений за долю секунды
+    for i in range(100):
+        await notification_service._paced_send(chat_id=message.from_user.id, text=f"Тест {i}")
+    await message.answer("Стресс-тест завершен.")

@@ -292,6 +292,7 @@ async def main():
             admin_repo=admin_repo,
             student_repo=student_repo,
             db_path=config.DB_PATH,
+            notification_service=notification_service, # Для теста из админ хендлера
             config=config
         )
 

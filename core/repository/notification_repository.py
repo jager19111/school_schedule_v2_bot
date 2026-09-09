@@ -2,29 +2,32 @@
 #
 # РЕШЁННЫЕ ПРОБЛЕМЫ:
 #
-# 1. RAM-бомба (Задача 1.4): get_pending_changes раньше выполнял
-#    SELECT ... WHERE is_exchange = 1 OR is_cancelled = 1 БЕЗ фильтра
-#    по дате — каждый тик (раз в 15 минут и после каждого refresh NIKA)
-#    вытягивал в Python ВСЕ замены за весь горизонт кэша (~21 день),
-#    а окно получателя (changes_window_days, максимум 31) проверялось
-#    уже в цикле. Теперь:
-#    - обязательный фильтр date >= start_date_iso на уровне СУБД;
-#    - опциональная верхняя граница date <= end_date_iso — сервис
-#      передаёт today + 31 день (максимум по CHECK-ограничению схемы),
-#      что гараитирует выборку не больше реального окна уведомлений.
-#    - выборка идёт по частичному индексу idx_schedule_pending_changes
-#      (см. db.py), а не по full scan.
+# 1. RAM-бомба (Задача 1.4): get_pending_changes с жёстким фильтром
+#    по дате на уровне СУБД + частичный индекс idx_schedule_pending_changes.
 #
 # 2. Strict Time Governance (Задача 1.3): record_notification_delivery
-#    теперь явно пишет sent_at из TimeService — дефолт
-#    CURRENT_TIMESTAMP из схемы удалён, и без этого значения INSERT
-#    на свежей БД упал бы по NOT NULL.
+#    пишет sent_at из TimeService.
+#
+# 3. НОВОЕ (Этап 2, фикс N+1): get_delivered_keys — батчевая проверка
+#    доставки. Раньше сервис стрелял одиночным SELECT 1 ... на каждого
+#    получателя каждого урока (при 100+ пользователях — тысячи мелких
+#    запросов за один тик APScheduler). Теперь один запрос на чанк
+#    кандидатов: WHERE type=? AND date IN (...) AND source IN (...)
+#    AND recipient IN (...), точное членство кортежа проверяется в Python.
+#    Одиночный is_notification_delivered сохранён для редких вызовов.
+#
+# 4. НОВОЕ: disable_notifications_for_user — вызывается сервисом при
+#    TelegramForbiddenError (пользователь заблокировал бота), чтобы
+#    не продолжать бессмысленные попытки отправки каждый тик.
 
 from __future__ import annotations
 
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Sequence, Set, Tuple
 
 from core.repository.base_repository import BaseRepository
+
+# Ключ доставки: (notification_date, source_id, recipient_id).
+DeliveryKey = Tuple[str, str, int]
 
 
 class NotificationRepository(BaseRepository):
@@ -45,8 +48,6 @@ class NotificationRepository(BaseRepository):
         Дедупликация выполняется не через schedule_cache.is_notified, а через
         notification_delivery_log отдельно для каждого получателя.
         """
-        # schedule_cache.is_notified нет — дедупликация идёт через
-        # notification_delivery_log в сервисе.
         return await self._fetch_all(
             """
             SELECT
@@ -86,9 +87,6 @@ class NotificationRepository(BaseRepository):
         - сам сообщения не получает;
         - его родитель/observer получает сообщения при наличии подписки.
         """
-        # student — Telegram-ребёнок, привязанный к student profile.
-        # adult — родитель/наблюдатель c parent_student_settings.receive_pre_lesson_reminders.
-        # Virtual student без Telegram сюда не попадает — рассылать некому.
         query = """
         SELECT
             student.id AS student_id,
@@ -163,10 +161,8 @@ class NotificationRepository(BaseRepository):
 
         Задача 1.4 (RAM-бомба): жесткий фильтp по дате на уровне СУБД.
         - start_date_iso: обычно today (изменения в прошлом не рассылаем);
-        - end_date_iso: верхняя граница окна уведомлений
+        - end_date_iso: верхняя граница окна</arg_key>лений
           (today + max(changes_window_days) = today + 31).
-        Без верхней границы запрос всё равно мог вернуть ~3 недели
-        будущих замен, которые сервис отбросил бы в Python.
         """
         if end_date_iso is None:
             query = """
@@ -226,8 +222,6 @@ class NotificationRepository(BaseRepository):
         - взрослых, подписанных на конкретный student profile;
         - владельцев самостоятельных watch targets.
         """
-        # Рецепиенты изменений: Telegram-ребёнок, взрослые семьи
-        # (через parent_student_settings) и самостоятельные watch targets.
         query = """
         SELECT
             student.id AS student_id,
@@ -332,13 +326,9 @@ class NotificationRepository(BaseRepository):
         Возвращает задачи утренних сводок.
 
         target_student_id — это всегда student_profiles.id.
-
         Virtual student не получает сообщение сам, но может попасть
         в сводку родителя или observer.
         """
-        # target_student_id — это student_profiles.id.
-        # Virtual student без Telegram не получает сводку сам,
-        # но его получают родители через parent_student_settings.
         query = """
         SELECT
             child.user_id AS recipient_id,
@@ -398,7 +388,6 @@ class NotificationRepository(BaseRepository):
         Parent/observer получает занятия student profiles, на которые
         подписан через parent_student_settings.
         """
-        # Допзанятия для Telegram-детей и взрослых семьи.
         query = """
         SELECT
             extra.id AS extra_id,
@@ -481,13 +470,11 @@ class NotificationRepository(BaseRepository):
         recipient_id: int,
     ) -> bool:
         """
-        Проверяет, зарегистрирована ли успешная доставка уведомления.
+        Проверяет, доставлено ли уведомление (одиночная проверка).
 
-        Журналируется только успешная отправка. При Telegram-ошибке запись
-        не создаётся, поэтому следующая задача сможет повторить попытку.
+        Оставлена для редких call-site (единичные проверки).
+        В горячих циклах сервис использует get_delivered_keys.
         """
-        # Была ли уже доставка. Идемпотентность:NSLocalizedString
-        # при повторных запусках задачи и рестартах.
         row = await self._fetch_one(
             """
             SELECT 1 AS delivered
@@ -506,6 +493,89 @@ class NotificationRepository(BaseRepository):
         )
         return row is not None
 
+    # ==============================================================
+    # НОВОЕ (Этап 2): батчевая проверка доставки — фикс N+1.
+    # ==============================================================
+
+    async def get_delivered_keys(
+        self,
+        *,
+        notification_type: str,
+        candidate_keys: Sequence[DeliveryKey],
+        chunk_size: int = 400,
+    ) -> Set[DeliveryKey]:
+        """
+        Батчевая проверка доставки списка кандидатов одним-несколькими
+        запросами вместо одиночного SELECT на каждого получателя.
+
+        candidate_keys: кортежи (notification_date, source_id, recipient_id).
+
+        Как решается N+1:
+        - кандидаты дедуплицируются и режутся на чанки (по умолчанию 400);
+        - для чанка выполняется ОДИН запрос с тремя IN-списками
+          (dates, sources, recipients). PK-индекс
+          (notification_type, notification_date, source_id, recipient_id)
+          используется по префиксу;
+        - IN-списки дают возможный переселект (cross product), поэтому
+          каждый вернувшийся кортеж проверяется на точное членство
+          в множестве кандидатов — ложных срабатываний нет;
+        - чанкинг делает метод независимым от SQLITE_MAX_VARIABLE_NUMBER
+          (999 в старых SQLite, 32766 в новых: 3.45+/3.53+ поддерживают
+          с запасом, но консервативный чанк работает везде).
+
+        Возвращает set кортежей, которые УЖЕ доставлены.
+        """
+        if not candidate_keys:
+            return set()
+
+        unique_keys: Set[DeliveryKey] = set(candidate_keys)
+        delivered: Set[DeliveryKey] = set()
+
+        keys_list = list(unique_keys)
+
+        for offset in range(0, len(keys_list), chunk_size):
+            chunk = keys_list[offset:offset + chunk_size]
+
+            dates = sorted({key[0] for key in chunk})
+            sources = sorted({key[1] for key in chunk})
+            recipients = sorted({key[2] for key in chunk})
+
+            def _placeholders(values: list) -> str:
+                return ",".join("?" for _ in values)
+
+            query = f"""
+            SELECT
+                notification_date,
+                source_id,
+                recipient_id
+            FROM notification_delivery_log
+            WHERE notification_type = ?
+              AND notification_date IN ({_placeholders(dates)})
+              AND source_id IN ({_placeholders(sources)})
+              AND recipient_id IN ({_placeholders(recipients)})
+            """
+            params = (
+                notification_type,
+                *dates,
+                *sources,
+                *recipients,
+            )
+
+            rows = await self._fetch_all(
+                query,
+                params,
+            )
+            for row in rows:
+                key: DeliveryKey = (
+                    row["notification_date"],
+                    row["source_id"],
+                    int(row["recipient_id"]),
+                )
+                if key in unique_keys:
+                    delivered.add(key)
+
+        return delivered
+
     async def record_notification_delivery(
         self,
         *,
@@ -519,10 +589,11 @@ class NotificationRepository(BaseRepository):
 
         Возвращает True, если была создана новая запись.
         INSERT OR IGNORE защищает от дублей при повторном вызове.
+
+        Запись выполняется ПОСЛЕ КАЖДОЙ успешной отправки, а не батчем
+        в конце тика: если процесс упадёт в середине рассылки,
+        уже отправленные сообщения не продублируются на следующем тике.
         """
-        # True, если запись создана. INSERT OR IGNORE — защита от гонки
-        # двух параллельных задач планировщика.
-        # Задача 1.3: sent_at передаётся из Python (раньше — дефолт СУБД).
         now_utc = self._now_utc_str()
         changed = await self._execute(
             """
@@ -545,6 +616,34 @@ class NotificationRepository(BaseRepository):
         )
         return changed == 1
 
+    async def disable_notifications_for_user(
+        self,
+        *,
+        user_id: int,
+    ) -> bool:
+        """
+        Отключает уведомленияя пользователю.
+
+        Вызывается при TelegramForbiddenError (бот заблокирован):
+        нет смысла продолжать попытки отправки каждый тик.
+        Пользователь сможет снова включить уведомления в настройках,
+        если разблокирует бота.
+        """
+        changed = await self._execute(
+            """
+            UPDATE users
+            SET is_notifications_enabled = 0,
+                updated_at = ?
+            WHERE user_id = ?
+              AND is_notifications_enabled = 1
+            """,
+            (
+                self._now_utc_str(),
+                user_id,
+            ),
+        )
+        return changed == 1
+
     async def delete_notification_delivery_before(
         self,
         before_date_iso: str,
@@ -555,8 +654,6 @@ class NotificationRepository(BaseRepository):
         notification_date хранится как ISO YYYY-MM-DD, поэтому строковое
         сравнение корректно соответствует хронологическому.
         """
-        # notification_date — ISO YYYY-MM-DD, сравнение лексикографиически
-        # корректно для этого формата.
         return await self._execute(
             """
             DELETE FROM notification_delivery_log
@@ -578,7 +675,6 @@ class NotificationRepository(BaseRepository):
         Возвращает teacher accounts, для которых настало время
         личной утренней сводки.
         """
-        # Учётные записи учителей, у которых включена утренняя сводка.
         return await self._fetch_all(
             """
             SELECT
@@ -606,7 +702,6 @@ class NotificationRepository(BaseRepository):
 
         Teacher получает только собственные уроки.
         """
-        # Telegram-учителя, привязанные к NIKA teacher_id.
         return await self._fetch_all(
             """
             SELECT
@@ -632,7 +727,6 @@ class NotificationRepository(BaseRepository):
         Возвращает teachers, которым следует отправить уведомление
         о замене или отмене в собственном расписании.
         """
-        # Учителя, получающие изменения.
         return await self._fetch_all(
             """
             SELECT
