@@ -11,15 +11,14 @@
 
 import logging
 
-from aiogram import Router
+from aiogram import Router, F
 from aiogram.filters import Command
-from aiogram.types import Message
+from aiogram.types import Message, CallbackQuery
 
 from bot.utils.ui_renderer import UIRenderer
 from services.admin_service import AdminService
 from services.notifications_service import NotificationService
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -193,7 +192,6 @@ async def cmd_stress(
         result,
     )
 
-
 @router.message(Command("test_btn"))
 async def send_test_button(message: Message):
     """Временная команда для быстрого вызова любого коллбэка."""
@@ -206,3 +204,4 @@ async def send_test_button(message: Message):
         ]]
     )
     await message.answer("Жми:", reply_markup=kb)
+    

@@ -72,6 +72,7 @@ from services.watch_targets_service import WatchTargetsService
 from services.students_service import StudentsService
 from services.help_service import HelpService
 
+from bot.middlewares.error_middleware import GlobalErrorMiddleware
 from bot.handlers import (
     registration,
     schedule_child,
@@ -255,6 +256,14 @@ async def main():
     dp = Dispatcher()
     tz = ZoneInfo(config.TIMEZONE)
 
+    # Этап 3: глобальный перехват ошибок хендлеров.
+    # Один вызов оборачивает весь пайплайн (message, callback_query,
+    # edited_message, my_chat_member): непредвиденное исключение
+    # больше не оставляет пользователя без ответа и не роняет
+    # обработку апдейта. Ожидаемые TelegramBadRequest остаются
+    # на локальных _safe_edit_* как раньше.
+    dp.update.outer_middleware(GlobalErrorMiddleware())
+    
     # 2. Инициализация базы данных
     database = Database(config.DB_PATH)
     await database.init_db()
