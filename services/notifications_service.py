@@ -1,6 +1,20 @@
 # services/notifications_service.py
+#
+# ИЗМЕНЕНИЕ (Задача 1.4): send_upcoming_changes теперь генерирует
+# корректную дату через TimeService и передаёт её в
+# get_pending_changes(start_date_iso=..., end_date_iso=...).
+#
+# Раньше вызов был без параметров: репозиторий вытягивал ВСЕ
+# замены/отмены из кэша в память (RAM-бомба), а окно каждого
+# получателя проверялось уже в Python-цикле. Теперь:
+# - нижняя граница — сегодня (изменения в прошлом не рассылаем);
+# - верхняя граница — today + 31 день (максимум changes_window_days
+#   по CHECK-ограичению схемы users). Личный окно каждого получателя
+#   по-прежнему уточняется в цикле — бизнес-логика не изменена.
+
 import logging
 import datetime
+
 from aiogram import Bot
 
 from core.repository.notification_repository import NotificationRepository
@@ -9,13 +23,17 @@ from core.repository.schedule_repository import ScheduleRepository
 from services.time_service import TimeService
 from bot.utils.ui_renderer import UIRenderer
 from core.models.dto import (
-    LessonReminderDTO, 
-    ChangeReminderDTO, 
-    MorningSummaryDTO, 
+    LessonReminderDTO,
+    ChangeReminderDTO,
+    MorningSummaryDTO,
     MorningLessonDTO
 )
 
 logger = logging.getLogger(__name__)
+
+# Максимум changes_window_days по CHECK-ограичению в схеме users.
+MAX_CHANGES_WINDOW_DAYS = 31
+
 
 class NotificationService:
     """
@@ -47,7 +65,6 @@ class NotificationService:
             logger.warning("Failed to send notification to %s: %s", student_id, e)
             return False
 
-    # ---------- 1. Утренняя сводка ----------
     async def send_morning_reminders(self) -> None:
         """
         Формирует и отправляет утренние сводки.
@@ -59,6 +76,8 @@ class NotificationService:
         Успешные доставки логируются отдельно по каждой паре:
             recipient_id + target_student_id + date.
         """
+        # Утренние сводки для детей, родителей и наблюдателей.
+        # Дедупликация: notification_delivery_log по (type, date, student, recipient).
         now = self.time_service.get_now_base()
         current_time_str = now.strftime("%H:%M")
         today_iso = now.date().isoformat()
@@ -88,7 +107,6 @@ class NotificationService:
             try:
                 recipient_id = int(task["recipient_id"])
                 target_student_id = int(task["target_student_id"])
-
                 source_id = f"morning_summary:{target_student_id}"
 
                 already_sent = await self.repo.is_notification_delivered(
@@ -97,7 +115,6 @@ class NotificationService:
                     source_id=source_id,
                     recipient_id=recipient_id,
                 )
-
                 if already_sent:
                     continue
 
@@ -111,7 +128,6 @@ class NotificationService:
                         class_id=child_class_id,
                         date_iso=today_iso,
                     )
-
                     for lesson in raw_lessons:
                         lesson_group_id = lesson.get("group_id", "ALL")
 
@@ -123,7 +139,6 @@ class NotificationService:
                             continue
 
                         group_name = None
-
                         if lesson_group_id != "ALL":
                             group_name = groups.get(
                                 lesson_group_id,
@@ -152,7 +167,6 @@ class NotificationService:
                     student_id=target_student_id,
                     day_of_week=weekday,
                 )
-
                 for extra in raw_extras:
                     lessons_dtos.append(
                         MorningLessonDTO(
@@ -187,7 +201,6 @@ class NotificationService:
                 )
 
                 class_name = child_class_id
-
                 if child_class_id and child_class_id in classes:
                     class_obj = classes[child_class_id]
                     class_name = getattr(
@@ -230,14 +243,12 @@ class NotificationService:
                     UIRenderer.render_morning_summary(summary_dto)
                     for _, summary_dto in entries
                 ]
-
                 final_text = "\n\n───────────────\n\n".join(rendered_parts)
 
                 sent = await self._safe_send(
                     student_id=recipient_id,
                     text=final_text,
                 )
-
                 if not sent:
                     logger.warning(
                         "Morning summary send failed: recipient_id=%s, "
@@ -252,7 +263,6 @@ class NotificationService:
 
                 for task, _ in entries:
                     target_student_id = int(task["target_student_id"])
-
                     await self.repo.record_notification_delivery(
                         notification_type="morning_summary",
                         notification_date=today_iso,
@@ -269,14 +279,12 @@ class NotificationService:
                         for task, _ in entries
                     ],
                 )
-
             except Exception:
                 logger.exception(
                     "Morning summary sending error: recipient_id=%s",
                     recipient_id,
                 )
 
-    # ---------- 2. Уведомления об изменениях ----------
     async def send_upcoming_changes(self) -> None:
         """
         Отправляет адресные уведомления о заменах и отменах.
@@ -284,12 +292,24 @@ class NotificationService:
         Каждая успешная доставка фиксируется отдельно для каждого ребёнка,
         родителя или observer в notification_delivery_log.
         """
-
+        # Рассылка изменений детям, родителям, наблюдателям и watch targets.
+        # Дедупликация через notification_delivery_log.
         now = self.time_service.get_now_base()
         today = now.date()
         today_iso = today.isoformat()
 
-        changes = await self.repo.get_pending_changes()
+        # Задача 1.4: дата генерируется через TimeService и передаётся
+        # в репозиторий. Верхняя граница = максимум окна получателей,
+        # чтобы СУБД не возвращала строки, которые гарантированно
+        # отбрасываются в Python-цикле ниже.
+        window_end_iso = (
+            today + datetime.timedelta(days=MAX_CHANGES_WINDOW_DAYS)
+        ).isoformat()
+
+        changes = await self.repo.get_pending_changes(
+            start_date_iso=today_iso,
+            end_date_iso=window_end_iso,
+        )
 
         logger.info(
             "Schedule changes tick: date=%s, changes=%d",
@@ -322,7 +342,6 @@ class NotificationService:
                     max_date = today + datetime.timedelta(
                         days=window_days,
                     )
-
                     if not (today <= change_date <= max_date):
                         continue
 
@@ -332,7 +351,6 @@ class NotificationService:
                         source_id=change["id"],
                         recipient_id=recipient_id,
                     )
-
                     if already_sent:
                         continue
 
@@ -357,7 +375,6 @@ class NotificationService:
                         student_id=recipient_id,
                         text=UIRenderer.render_change_reminder(dto),
                     )
-
                     if not sent:
                         logger.warning(
                             "Schedule change send failed: change_id=%s, "
@@ -373,7 +390,6 @@ class NotificationService:
                         source_id=change["id"],
                         recipient_id=recipient_id,
                     )
-
                     logger.info(
                         "Schedule change delivered: change_id=%s, "
                         "student_id=%s, watch_target=%s, "
@@ -396,21 +412,18 @@ class NotificationService:
                         teacher_id=str(teacher_id),
                     )
                 )
-
                 for recipient in teacher_recipients:
                     try:
                         recipient_id = int(recipient["recipient_id"])
                         window_days = int(
                             recipient["changes_window_days"]
                         )
-
                         if window_days <= 0:
                             continue
 
                         max_date = today + datetime.timedelta(
                             days=window_days,
                         )
-
                         if not (today <= change_date <= max_date):
                             continue
 
@@ -420,7 +433,6 @@ class NotificationService:
                             source_id=change["id"],
                             recipient_id=recipient_id,
                         )
-
                         if already_sent:
                             continue
 
@@ -437,7 +449,6 @@ class NotificationService:
                             change.get("teacher_name")
                             or "Учитель"
                         )
-
                         text = (
                             "👨‍🏫 <b>Изменение в расписании учителя</b>\n"
                             f"👤 <b>{UIRenderer.escape_html(teacher_name)}</b>\n\n"
@@ -448,7 +459,6 @@ class NotificationService:
                             student_id=recipient_id,
                             text=text,
                         )
-
                         if not sent:
                             continue
 
@@ -458,7 +468,6 @@ class NotificationService:
                             source_id=change["id"],
                             recipient_id=recipient_id,
                         )
-
                         logger.info(
                             "Teacher schedule change delivered: "
                             "teacher_id=%s change_id=%s recipient_id=%s",
@@ -466,7 +475,6 @@ class NotificationService:
                             change["id"],
                             recipient_id,
                         )
-
                     except Exception:
                         logger.exception(
                             "Teacher schedule change notification failed: "
@@ -496,6 +504,8 @@ class NotificationService:
         Успешная доставка фиксируется в notification_delivery_log, поэтому
         повторный scheduler-run не создаёт дубликаты.
         """
+        # Предурочные напоминания. Дедупликация через notification_delivery_log,
+        # окно определяется динамически от scheduler-run к scheduler-run.
         now = self.time_service.get_now_base()
         today_iso = now.date().isoformat()
 
@@ -515,7 +525,6 @@ class NotificationService:
                     f"{today_iso} {lesson['start_time']}",
                     "%Y-%m-%d %H:%M",
                 ).replace(tzinfo=self.time_service.base_tz)
-
                 delta_minutes = (
                     lesson_start_at - now
                 ).total_seconds() / 60.0
@@ -549,7 +558,6 @@ class NotificationService:
                         source_id=lesson["id"],
                         recipient_id=recipient_id,
                     )
-
                     if already_sent:
                         continue
 
@@ -569,7 +577,6 @@ class NotificationService:
                         student_id=recipient_id,
                         text=UIRenderer.render_lesson_reminder(dto),
                     )
-
                     if not sent:
                         logger.warning(
                             "Pre-lesson reminder send failed: lesson_id=%s, "
@@ -585,7 +592,6 @@ class NotificationService:
                         source_id=lesson["id"],
                         recipient_id=recipient_id,
                     )
-
                     logger.info(
                         "Pre-lesson reminder delivered: lesson_id=%s, "
                         "student_id=%s, recipient_id=%s, recipient_kind=%s",
@@ -595,7 +601,6 @@ class NotificationService:
                         recipient["recipient_kind"],
                     )
 
-                # 2. Отправка напоминаний преподавателям
                 teacher_id = lesson.get("teacher_id")
                 if teacher_id:
                     teacher_recipients = (
@@ -603,7 +608,6 @@ class NotificationService:
                             teacher_id=str(teacher_id),
                         )
                     )
-
                     for recipient in teacher_recipients:
                         try:
                             recipient_id = int(recipient["recipient_id"])
@@ -621,7 +625,6 @@ class NotificationService:
                                 source_id=lesson["id"],
                                 recipient_id=recipient_id,
                             )
-
                             if already_sent:
                                 continue
 
@@ -632,7 +635,6 @@ class NotificationService:
                                 is_extra=False,
                                 child_name=None,
                             )
-
                             text = (
                                 "👨‍🏫 <b>Напоминание об уроке</b>\n\n"
                                 f"{UIRenderer.render_lesson_reminder(dto)}"
@@ -642,7 +644,6 @@ class NotificationService:
                                 student_id=recipient_id,
                                 text=text,
                             )
-
                             if not sent:
                                 continue
 
@@ -652,7 +653,6 @@ class NotificationService:
                                 source_id=lesson["id"],
                                 recipient_id=recipient_id,
                             )
-
                             logger.info(
                                 "Teacher pre-lesson reminder delivered: "
                                 "teacher_id=%s lesson_id=%s recipient_id=%s",
@@ -660,7 +660,6 @@ class NotificationService:
                                 lesson["id"],
                                 recipient_id,
                             )
-
                         except Exception:
                             logger.exception(
                                 "Teacher pre-lesson reminder failed: "
@@ -681,7 +680,6 @@ class NotificationService:
                     lesson,
                 )
 
-    # ---------- 4. Уведомления о доп. занятиях ----------
     async def send_extra_class_reminders(self) -> None:
         """
         Отправляет адресные напоминания о дополнительных занятиях.
@@ -693,6 +691,8 @@ class NotificationService:
         Успешные отправки фиксируются в notification_delivery_log. Это защищает
         от дублей при минутном scheduler и при перезапуске приложения.
         """
+        # Напоминания о доп. занятиях. NotificationRepository отдаёт
+        # кандидатов дня, окно и дедупликация — через notification_delivery_log.
         now = self.time_service.get_now_base()
         today_iso = now.date().isoformat()
         weekday = now.isoweekday()
@@ -727,7 +727,6 @@ class NotificationService:
                     f"{today_iso} {extra['time_start']}",
                     "%Y-%m-%d %H:%M",
                 ).replace(tzinfo=self.time_service.base_tz)
-
                 delta_minutes = (
                     start_at - now
                 ).total_seconds() / 60.0
@@ -754,14 +753,12 @@ class NotificationService:
                     continue
 
                 source_id = str(extra_id)
-
                 already_sent = await self.repo.is_notification_delivered(
                     notification_type="extra_class",
                     notification_date=today_iso,
                     source_id=source_id,
                     recipient_id=recipient_id,
                 )
-
                 if already_sent:
                     continue
 
@@ -781,7 +778,6 @@ class NotificationService:
                     student_id=recipient_id,
                     text=UIRenderer.render_lesson_reminder(dto),
                 )
-
                 if not sent:
                     logger.warning(
                         "Extra reminder send failed: extra_id=%s, "
@@ -797,7 +793,6 @@ class NotificationService:
                     source_id=source_id,
                     recipient_id=recipient_id,
                 )
-
                 logger.info(
                     "Extra reminder delivered: extra_id=%s, student_id=%s, "
                     "recipient_id=%s, recipient_kind=%s, log_created=%s",
@@ -836,10 +831,11 @@ class NotificationService:
         Teacher summary состоит только из lesson records:
         extra classes student profiles сюда не подмешиваются.
         """
+        # Teacher morning summary: уроки из lesson records, а не из
+        # extra classes или student profiles.
         tasks = await self.repo.get_teacher_morning_summary_tasks(
             time_str=current_time_str,
         )
-
         if not tasks:
             return
 
@@ -851,7 +847,6 @@ class NotificationService:
                 recipient_id = int(task["recipient_id"])
                 teacher_id = str(task["teacher_id"])
                 teacher_name = task.get("teacher_name") or "Учитель"
-
                 source_id = f"teacher_morning:{teacher_id}"
 
                 already_sent = await self.repo.is_notification_delivered(
@@ -860,7 +855,6 @@ class NotificationService:
                     source_id=source_id,
                     recipient_id=recipient_id,
                 )
-
                 if already_sent:
                     continue
 
@@ -872,25 +866,19 @@ class NotificationService:
                 )
 
                 lessons_dtos: list[MorningLessonDTO] = []
-
                 for lesson in raw_lessons:
                     class_id = lesson.get("class_id")
-
                     class_obj = classes.get(class_id)
-
                     class_name = (
                         getattr(class_obj, "name", class_obj)
                         if class_obj is not None
                         else class_id
                     )
-
                     room_name = lesson.get("room_name") or "—"
-
                     if class_name:
                         room_name = (
                             f"{room_name} · {class_name}"
                         )
-
                     lessons_dtos.append(
                         MorningLessonDTO(
                             lesson_num=lesson.get("lesson_num"),
@@ -942,7 +930,6 @@ class NotificationService:
                     student_id=recipient_id,
                     text=text,
                 )
-
                 if not sent:
                     continue
 
@@ -952,17 +939,14 @@ class NotificationService:
                     source_id=source_id,
                     recipient_id=recipient_id,
                 )
-
                 logger.info(
                     "Teacher morning summary delivered: "
                     "teacher_id=%s recipient_id=%s",
                     teacher_id,
                     recipient_id,
                 )
-
             except Exception:
                 logger.exception(
                     "Teacher morning summary failed: task=%r",
                     task,
                 )
-                

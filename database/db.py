@@ -1,43 +1,30 @@
 # database/db.py
 #
-# РЕШЁННЫЕ ПРОБЛЕМЫ:
+# ВЕРСИЯ СХЕМЫ 3 (завершение Strict Time Governance).
 #
-# 1. I/O (Задача 1.1): добавлен метод connect(), создающий ЕДИНОЕ
-#    shared-соединение на весь жизненный цикл приложения (его получают
-#    все репозитории), и close() для корректного освобождения.
-#    init_db() по-прежнему открывает короткоживущее соединение —
-#    миграции выполняются один раз при старте.
+# Отличие от v2: таймстемп-колонки ВСЕХ таблиц снова TEXT NOT NULL.
+# Это стало возможно, потому что после рефакторинга репозиториев
+# каждый INSERT в профильный домен явно передаёт created_at/updated_at
+# из TimeService:
+# - users:            ProfileRepository.register_user_initial
+# - families:         ProfileRepository.create_family_and_link
+# - student_profiles: StudentRepository.create_virtual_student / upsert_telegram_student
+# - parent_student_settings: _ensure_parent_student_settings_for_family
+#                     (ProfileRepository и StudentRepository)
+# - student_claim_invites:  StudentRepository.create_student_claim_invite
+# - family_invites:   ProfileRepository.create_family_invite
+# - schedule_watch_targets: WatchTargetRepository.create_watch_target
+# - extra_classes:    ExtraClassesRepository.create_extra_class
+# - notification_delivery_log: NotificationRepository.record_notification_delivery
+# - schedule_cache / raw_nika_cache / nika_source_state: ScheduleRepository
 #
-# 2. WAL-режим: PRAGMA journal_mode = WAL и synchronous = NORMAL
-#    уже присутствовали в init_db(); теперь они применяются И к
-#    shared-соединению в connect(). WAL — персистентный режим файла,
-#    но повторное применение дёшево и гарантирует консистентность.
+# ВАЖНО ПРО МИГРАЦИЮ: CREATE TABLE IF NOT EXISTS не меняет существующую БД.
+# Тестовую базу нужно пересоздать (удалить *.db, *.db-wal, *.db-shm).
+# Продакшн-база на старой схеме продолжает работать: Python всегда
+# передаёт значения явно, и различие только в отсутствии NOT NULL.
 #
-# 3. Strict Time Governance (Задача 1.3): ПОЛНОСТЬЮ удалены
-#    DEFAULT CURRENT_TIMESTAMP из всех таблиц.
-#    - Таблицы NIKA-домена (schedule_cache, raw_nika_cache,
-#      nika_source_state, notification_delivery_log): поля
-#      остались TEXT NOT NULL — значения ВСЕГДА передаёт Python
-#      через TimeService.now_utc_str().
-#    - Таблицы профильного домена (families, users, student_profiles,
-#      parent_student_settings, инвайты, watch_targets, extra_classes):
-#      поля сделаны TEXT (nullable). Причина: их INSERT/UPDATE в других
-#      репозиториях пока рассчитывают на дефолт; на свежей БД дефолта
-#      больше нет, и NOT NULL без значения уронил бы вставку.
-#      После переноса этих репозиториев на явные таймстемпы
-#      (см. сопутствующие правки) верните NOT NULL.
-#
-# 4. Новые индексы:
-#    - частичный индекс idx_schedule_pending_changes — под запрос
-#      get_pending_changes (RAM-бомба, Задача 1.4): индексирует только
-#      замены/отмены, фильтр по дате идёт по индексу, а не по full scan;
-#    - PRAGMA user_version = 2 — версия схемы для будущих миграций.
-#
-# ВАЖНО ПРО МИГРАЦИЮ: CREATE TABLE IF NOT EXISTS не меняет существующую
-# БД. В продакшн-базе старые DEFAULT CURRENT_TIMESTAMP останутся —
-# это безвредно, потому что после рефакторинга Python всегда передаёт
-# значения явно, и дефолты никогда не срабатывают. Строгая схема
-# действует для всех новых БД.
+# Полный DEFAULT CURRENT_TIMESTAMP по-прежнему отсутствует во всех
+# таблицах: единственный источник времени — TimeService (Python).
 
 import aiosqlite
 import logging
@@ -45,7 +32,7 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 class Database:
@@ -53,13 +40,9 @@ class Database:
         self.db_path = db_path
         self._connection: Optional[aiosqlite.Connection] = None
 
-    # ==============================================================
-    # НОВОЕ (Задача 1.1): shared-соединение на весь процесс.
-    # ==============================================================
-
     async def connect(self) -> aiosqlite.Connection:
         """
-        Открывает единое долгоживущее соединение и настраивает PRAGMA.
+        Открывает единое долгоживущее shared-соединение и настраивает PRAGMA.
 
         main.py вызывает один раз при старте, передаёт объект во все
         репозитории и закрывает через close() в finally.
@@ -88,9 +71,8 @@ class Database:
         """
         Ручной WAL-checkpoint с усечением -wal файла.
 
-        Рекомендуется запускать ночью (см. задачу в main.py): без него
-        -wal файл может неограниченно расти при постоянной записи,
-        а AUTOINCREMENT-подобные страницы замедляют чтение.
+        Запускается ночью из main.py: без него -wal файл может
+        неограиченно расти при постоянной записи.
         """
         async with db.execute("PRAGMA wal_checkpoint(TRUNCATE)") as cursor:
             row = await cursor.fetchone()
@@ -100,8 +82,8 @@ class Database:
         """
         Создание схемы. Выполняется один раз при старте.
 
-        Все таймстемп-колонки БЕЗ DEFAULT CURRENT_TIMESTAMP:
-        источником времени является только TimeService (Python).
+        Все таймстемп-колонки NOT NULL и БЕЗ DEFAULT:
+        значения всегда передаёт TimeService через Python.
         """
         async with aiosqlite.connect(self.db_path) as db:
             await db.execute("PRAGMA foreign_keys = ON")
@@ -109,14 +91,13 @@ class Database:
             await db.execute("PRAGMA synchronous = NORMAL")
             await db.execute("PRAGMA busy_timeout = 5000")
 
-            # --- families: created_at/updated_at теперь nullable (см. шапку) ---
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS families (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     family_code TEXT NOT NULL UNIQUE,
                     admin_user_id INTEGER NOT NULL,
-                    created_at TEXT,
-                    updated_at TEXT
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
                 )
             """)
 
@@ -146,8 +127,8 @@ class Database:
                     can_manage_own_extra_classes INTEGER NOT NULL DEFAULT 1
                         CHECK (can_manage_own_extra_classes IN (0, 1)),
                     last_active_at TEXT,
-                    created_at TEXT,
-                    updated_at TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
                     FOREIGN KEY (family_id) REFERENCES families(id)
                 )
             """)
@@ -162,8 +143,8 @@ class Database:
                     group_id TEXT NOT NULL DEFAULT 'ALL',
                     is_active INTEGER NOT NULL DEFAULT 1
                         CHECK (is_active IN (0, 1)),
-                    created_at TEXT,
-                    updated_at TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
                     FOREIGN KEY (family_id)
                         REFERENCES families(id)
                         ON DELETE CASCADE,
@@ -203,8 +184,8 @@ class Database:
                         ),
                     can_manage_extra_classes INTEGER NOT NULL DEFAULT 0
                         CHECK (can_manage_extra_classes IN (0, 1)),
-                    created_at TEXT,
-                    updated_at TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
                     PRIMARY KEY (
                         parent_user_id,
                         student_id
@@ -237,7 +218,7 @@ class Database:
                     is_revoked INTEGER NOT NULL DEFAULT 0
                         CHECK (is_revoked IN (0, 1)),
                     used_by_user_id INTEGER,
-                    created_at TEXT,
+                    created_at TEXT NOT NULL,
                     used_at TEXT,
                     FOREIGN KEY (student_id)
                         REFERENCES student_profiles(id)
@@ -282,7 +263,7 @@ class Database:
                     is_revoked INTEGER NOT NULL DEFAULT 0
                         CHECK (is_revoked IN (0, 1)),
                     used_by_user_id INTEGER,
-                    created_at TEXT,
+                    created_at TEXT NOT NULL,
                     used_at TEXT,
                     FOREIGN KEY (family_id)
                         REFERENCES families(id)
@@ -320,8 +301,8 @@ class Database:
                         CHECK (is_enabled IN (0, 1)),
                     receive_schedule_changes INTEGER NOT NULL DEFAULT 1
                         CHECK (receive_schedule_changes IN (0, 1)),
-                    created_at TEXT,
-                    updated_at TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
                     FOREIGN KEY (owner_user_id)
                         REFERENCES users(user_id)
                         ON DELETE CASCADE,
@@ -354,14 +335,13 @@ class Database:
                     location TEXT,
                     reminder_minutes INTEGER NOT NULL DEFAULT 30
                         CHECK (reminder_minutes BETWEEN 0 AND 180),
-                    created_at TEXT,
-                    updated_at TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
                     FOREIGN KEY (family_id) REFERENCES families(id) ON DELETE CASCADE,
                     FOREIGN KEY (student_id) REFERENCES student_profiles(id) ON DELETE CASCADE
                 )
             """)
 
-            # --- NIKA-домен: значения времени ВСЕГДА передаёт Python ---
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS notification_delivery_log (
                     notification_type TEXT NOT NULL,
@@ -453,17 +433,13 @@ class Database:
                 ON schedule_cache(date, teacher_id)
             """)
 
-            # НОВОЕ (Задача 1.4): частичный индекс под get_pending_changes.
-            # Индекс содержит ТОЛЬКО строки замен/отмен — запрос
-            # "WHERE (is_exchange=1 OR is_cancelled=1) AND date >= ?"
-            # идёт по индексу и не сканирует десятки тысяч обычных уроков.
+            # Частичный индекс под get_pending_changes (RAM-бомба).
             await db.execute("""
                 CREATE INDEX IF NOT EXISTS idx_schedule_pending_changes
                 ON schedule_cache(date, class_id)
                 WHERE is_exchange = 1 OR is_cancelled = 1
             """)
 
-            # Версия схемы для будущих миграций (best practice).
             await db.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
 
             await db.commit()

@@ -1,11 +1,24 @@
 # services/time_service.py
+# ЦЕЛЬ ФАЙЛА: единая точка генерации времени для всего приложения.
+#
+# ИЗМЕНЕНИЕ (Задача 1.3, справочно): добавлен метод now_utc_str() —
+# единственный источник "времени из приложения" для всех репозиториев.
+# Он полностью замещает CURRENT_TIMESTAMP в SQL: время теперь генерирует
+# Python-слой (TimeService), а не внутренние часы СУБД.
+#
+# Формат "YYYY-MM-DD HH:MM:SS" намеренно совпадает с форматом
+# SQLite CURRENT_TIMESTAMP (UTC), поэтому:
+# - старые строки, записанные СУБД, и новые строки, записанные из Python,
+#   сортируются и сравниваются одинаково (лексикографически корректно);
+# - миграция данных не требуется.
+
 from __future__ import annotations
+
 import re
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone, date
 from typing import Optional
-
 from zoneinfo import ZoneInfo
 
 logger = logging.getLogger(__name__)
@@ -13,25 +26,24 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class TimeServiceConfig:
-    """Конфиг для сервиса времени."""
-    timezone: str  # "Asia/Novosibirsk"
+    timezone: str  # например "Asia/Novosibirsk"
 
 
 class TimeService:
     """
-    Централизованное управление временем для школьного бота.
+    Централизованный сервис времени.
 
-    Принципы:
-    - БД хранит UTC (offset 0).
-    - Сервер/школа работает в одном timezone из конфига (например, Asia/Novosibirsk).
-    - Нет пользовательских сдвигов; все пользователи считаются в одной зоне.
+    Правила:
+    - Базовое (пользовательское) время — в таймзоне школы, например
+      Asia/Novosibirsk, offset UTC+7.
+    - Всё, что пишется в БД, — только UTC.
+    - Всё, что читается из БД, конвертируется в aware-UTC datetime.
     """
-    
+
     @property
     def base_tz(self) -> ZoneInfo:
-        """Публичный доступ к базовой таймзоне школы."""
         return self._base_tz
-    
+
     def __init__(self, cfg: TimeServiceConfig):
         self.cfg = cfg
         self._base_tz = ZoneInfo(cfg.timezone)
@@ -41,7 +53,7 @@ class TimeService:
 
     def get_now_base(self) -> datetime:
         """
-        Текущее время в таймзоне школы (tz-aware datetime).
+        tz-aware datetime в базовой таймзоне (Asia/Novosibirsk).
 
         Использовать в:
         - NotificationService (pre-lesson, changes).
@@ -64,10 +76,8 @@ class TimeService:
         """
         if dt is None:
             return None
-
         if dt.tzinfo is None:
             return dt.replace(tzinfo=timezone.utc)
-
         return dt.astimezone(timezone.utc)
 
     def from_utc(self, dt: Optional[datetime]) -> Optional[datetime]:
@@ -79,10 +89,8 @@ class TimeService:
         """
         if dt is None:
             return None
-
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=timezone.utc)
-
         return dt.astimezone(self._base_tz)
 
     @staticmethod
@@ -94,13 +102,40 @@ class TimeService:
         """
         if dt is None:
             return None
-
         if dt.tzinfo is not None:
             return dt
-
         return dt.replace(tzinfo=timezone.utc)
 
-    # ===================== УТИЛИТЫ ДЛЯ ДАТ =====================
+    # ==============================================================
+    # НОВОЕ (Задача 1.3): генерация времени для записи в БД.
+    # ==============================================================
+
+    def now_utc_str(self) -> str:
+        """
+        Текущее UTC-время строкой в формате SQLite:
+            "YYYY-MM-DD HH:MM:SS"
+
+        Это полная замена CURRENT_TIMESTAMP. Время всегда берётся
+        из одного источника (этого сервиса), что даёт:
+        - детерминизм в тестах (можно замокать TimeService целиком);
+        - отсутствие расхождений между "временем СУБД" и временем
+          приложения (например, при записи связанных событий);
+        - единый формат со старыми данными.
+        """
+        now_utc = TimeService.to_utc(self.get_now_base())
+        return now_utc.strftime("%Y-%m-%d %H:%M:%S")
+
+    @staticmethod
+    def utc_str_from(dt: Optional[datetime]) -> Optional[str]:
+        """
+        Конвертация произвольного datetime в строку формата SQLite.
+        Удобно для репозиториев, которые получают время снаружи
+        (например, expires_at для инвайтов), а не генерируют сами.
+        """
+        if dt is None:
+            return None
+        utc = TimeService.to_utc(dt)
+        return utc.strftime("%Y-%m-%d %H:%M:%S")
 
     @staticmethod
     def parse_iso_date(value: str | date | None) -> Optional[date]:
@@ -109,17 +144,14 @@ class TimeService:
         """
         if not value:
             return None
-
         if isinstance(value, date):
             return value
-
         if isinstance(value, str):
             try:
                 return date.fromisoformat(value)
             except ValueError:
                 logger.warning("Failed to parse date: %s", value)
                 return None
-
         logger.warning("Unexpected type for date: %s", type(value))
         return None
 
@@ -135,7 +167,7 @@ class TimeService:
         start = now.date()
         end = (now + timedelta(days=days)).date()
         return start, end
-    
+
     @staticmethod
     def validate_time_format(time_str: str) -> bool:
         """
@@ -144,7 +176,6 @@ class TimeService:
         """
         if not time_str:
             return False
-            
         try:
             datetime.strptime(time_str.strip(), "%H:%M")
             return True
@@ -160,10 +191,9 @@ class TimeService:
             "2026-09-02" -> datetime.date(2026, 9, 2)
         """
         return datetime.fromisoformat(iso_date).date()
-    
+
     @staticmethod
     def validate_time_range(start_time: str, end_time: str) -> bool:
-        """Проверяет, что время окончания строго позже времени начала."""
         try:
             from datetime import datetime
             t_start = datetime.strptime(start_time.strip(), "%H:%M")
@@ -171,8 +201,7 @@ class TimeService:
             return t_start < t_end
         except ValueError:
             return False
-        
-    # Умный валидатор
+
     @staticmethod
     def normalize_time(time_str: str) -> Optional[str]:
         """
@@ -181,11 +210,9 @@ class TimeService:
         """
         if not time_str:
             return None
-        
         time_str = time_str.strip()
         # Разделяем по любым нецифровым символам (точка, запятая, двоеточие, пробел, дефис)
         parts = [p for p in re.split(r'\D+', time_str) if p]
-        
         try:
             if len(parts) == 1:
                 digits = parts[0]
@@ -206,9 +233,20 @@ class TimeService:
                 minute = int(min_str[:2])
             else:
                 return None
-
             if 0 <= hour <= 23 and 0 <= minute <= 59:
                 return f"{hour:02d}:{minute:02d}"
             return None
         except ValueError:
             return None
+
+    def format_base(self, dt) -> Optional[str]:
+        """aware-UTC datetime -> 'DD.MM.YYYY HH:MM' в таймзоне школы."""
+        if dt is None:
+            return None
+        if isinstance(dt, str):
+            try:
+                dt = datetime.fromisoformat(dt)
+            except (ValueError, TypeError):
+                return dt
+        local = self.from_utc(dt)
+        return local.strftime("%d.%m.%Y %H:%M")

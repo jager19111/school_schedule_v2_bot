@@ -1,3 +1,31 @@
+# core/repository/schedule_repository.py
+#
+# РЕШЁННЫЕ ПРОБЛЕМЫ:
+#
+# 1. Bulk Inserts (Задача 1.2): в _apply_new_nika_version цикл
+#    "for lesson in lessons: await db.execute(...)" заменён на
+#    подготовку списка кортежей + ОДИН db.executemany(...).
+#    Раньше смена ревизии NIKA означала до ~20-30 тыс. одиночных
+#    round-trip'ов к SQLite-потоку (21 день x все классы x до 14
+#    уроков x подгруппы). executemany с одним подготовленным
+#    UPSERT-запросом выполняет это на порядки быстрее.
+#
+# 2. Strict Time Governance (Задача 1.3): ВСЕ вхождения
+#    CURRENT_TIMESTAMP (touch_nika_checked_at, record_nika_refresh_error,
+#    _update_revision_only, _apply_new_nika_version) заменены на
+#    плейсхолдеры ? со значением now_utc_str из TimeService.
+#    Конструкция "CASE WHEN ? = 1 THEN CURRENT_TIMESTAMP ELSE ..."
+#    переписана на "CASE WHEN ? = 1 THEN ? ELSE ...".
+#
+# 3. Транзакции: ручные BEGIN/commit/rollback заменены на
+#    self.transaction() из BaseRepository — транзакция теперь
+#    защищена общим lock'ом shared-соединения и не может быть
+#    нарушена параллельной корутиной.
+#
+# 4. I/O (Задача 1.1): репозиторий получает shared-соединение
+#    через db_path=aiosqlite.Connection (см. BaseRepository).
+#    Имя параметра сохранено для совместимости с main.py.
+
 from __future__ import annotations
 
 import datetime
@@ -29,6 +57,50 @@ class ScheduleRefreshResult:
     reason: str = ""
 
 
+# Один подготовленный UPSERT для массовой вставки кэша уроков (Задача 1.2).
+_SCHEDULE_UPSERT_SQL = """
+    INSERT INTO schedule_cache (
+        id,
+        date,
+        period_id,
+        class_id,
+        lesson_num,
+        group_id,
+        group_name,
+        subject_id,
+        subject_name,
+        teacher_id,
+        teacher_name,
+        room_id,
+        room_name,
+        start_time,
+        end_time,
+        is_exchange,
+        is_cancelled,
+        created_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+        date = excluded.date,
+        period_id = excluded.period_id,
+        class_id = excluded.class_id,
+        lesson_num = excluded.lesson_num,
+        group_id = excluded.group_id,
+        group_name = excluded.group_name,
+        subject_id = excluded.subject_id,
+        subject_name = excluded.subject_name,
+        teacher_id = excluded.teacher_id,
+        teacher_name = excluded.teacher_name,
+        room_id = excluded.room_id,
+        room_name = excluded.room_name,
+        start_time = excluded.start_time,
+        end_time = excluded.end_time,
+        is_exchange = excluded.is_exchange,
+        is_cancelled = excluded.is_cancelled,
+        created_at = excluded.created_at
+"""
+
+
 class ScheduleRepository(BaseRepository):
     """
     Репозиторий школьного расписания.
@@ -42,29 +114,26 @@ class ScheduleRepository(BaseRepository):
     - schedule_cache хранит ограниченный горизонт дат.
     """
 
-
     def __init__(
         self,
         *,
-        db_path: str,
+        db_path,
         time_service: TimeService,
         proxy: str | None = None,
         nika_base_url: str = "https://lyceum.nstu.ru/rasp",
         history_days: int = 7,
     ) -> None:
+        # db_path: str (legacy/тесты) ИЛИ aiosqlite.Connection (основной
+        # режим — shared-соединение из main.py, Задача 1.1).
         super().__init__(
             db_path=db_path,
             time_service=time_service,
         )
-
         self.fetcher = ScheduleFetcher(
             base_url=nika_base_url,
             proxy=proxy,
         )
         self.history_days = history_days
-    # ==========================================================
-    # State / raw cache
-    # ==========================================================
 
     async def get_nika_source_state(
         self,
@@ -117,15 +186,17 @@ class ScheduleRepository(BaseRepository):
         """
         Записывает факт успешной HTML-проверки без изменения revision.
         """
+        # Задача 1.3: время передаёт приложение, а не СУБД.
+        now_utc = self._now_utc_str()
         await self._execute(
             """
             UPDATE nika_source_state
-            SET
-                last_checked_at = CURRENT_TIMESTAMP,
+            SET last_checked_at = ?,
                 last_error = NULL,
                 last_error_at = NULL
             WHERE id = 1
-            """
+            """,
+            (now_utc,),
         )
 
     async def record_nika_refresh_error(
@@ -148,18 +219,20 @@ class ScheduleRepository(BaseRepository):
             if error_message
             else "Unknown NIKA refresh error"
         )
-
+        # Задача 1.3: явный таймстемп ошибки из Python.
+        now_utc = self._now_utc_str()
         changed = await self._execute(
             """
             UPDATE nika_source_state
-            SET
-                last_error = ?,
-                last_error_at = CURRENT_TIMESTAMP
+            SET last_error = ?,
+                last_error_at = ?
             WHERE id = 1
             """,
-            (normalized_error,),
+            (
+                normalized_error,
+                now_utc,
+            ),
         )
-
         if changed == 0:
             logger.warning(
                 "NIKA refresh failed before initial source state exists: %s",
@@ -175,8 +248,7 @@ class ScheduleRepository(BaseRepository):
         await self._execute(
             """
             UPDATE nika_source_state
-            SET
-                last_error = NULL,
+            SET last_error = NULL,
                 last_error_at = NULL
             WHERE id = 1
             """
@@ -217,7 +289,6 @@ class ScheduleRepository(BaseRepository):
             if cache_info
             else None
         )
-
         last_date = (
             cache_info.get("last_date")
             if cache_info
@@ -257,50 +328,41 @@ class ScheduleRepository(BaseRepository):
         else:
             status = "healthy"
 
-# определяем coverage_end_date перед return для вычислений ---
         coverage_end_date = (
             state.get("coverage_end_date")
             or last_date
         )
 
-        # вычисление покрытия ---
         coverage_is_current = bool(
             coverage_end_date
             and coverage_end_date >= today_iso
         )
-        
+
         coverage_has_future = bool(
             coverage_end_date
             and coverage_end_date > today_iso
         )
-        
+
         return {
             "status": status,
             "lesson_count": lesson_count,
-
             "coverage_start_date": (
                 state.get("coverage_start_date")
                 or first_date
             ),
-            "coverage_end_date": (
-                state.get("coverage_end_date")
-                or last_date
-            ),
-
+            "coverage_end_date": coverage_end_date,
             "today_date": today_iso,
             "coverage_is_current": coverage_is_current,
             "coverage_has_future": coverage_has_future,
             "js_filename": state.get("js_filename"),
             "export_date": state.get("export_date"),
             "export_time": state.get("export_time"),
-
             "last_checked_at": state.get("last_checked_at"),
             "last_changed_at": state.get("last_changed_at"),
-
             "last_error": state.get("last_error"),
             "last_error_at": state.get("last_error_at"),
         }
-                
+
     @staticmethod
     def _coverage_needs_refresh(
         state: Optional[Dict[str, Any]],
@@ -314,7 +376,6 @@ class ScheduleRepository(BaseRepository):
         """
         if not target_dates:
             return False
-
         if state is None:
             return True
 
@@ -342,7 +403,6 @@ class ScheduleRepository(BaseRepository):
             logger.warning(
                 "NIKA raw cache is empty."
             )
-
             return {
                 "classes": {},
                 "groups": {},
@@ -353,11 +413,9 @@ class ScheduleRepository(BaseRepository):
             nika_data = self.fetcher._extract_json_from_js(
                 raw["content"],
             )
-
             normalizer = NikaNormalizer(
                 nika_data,
             )
-
             classes, teachers, _, _ = normalizer.build_metadata()
 
             return {
@@ -376,12 +434,10 @@ class ScheduleRepository(BaseRepository):
                     False,
                 ),
             }
-
         except Exception:
             logger.exception(
                 "Failed to build NIKA metadata from raw cache."
             )
-
             return {
                 "classes": {},
                 "groups": {},
@@ -457,6 +513,7 @@ class ScheduleRepository(BaseRepository):
             )
 
         source = await self.fetcher.probe()
+
         state = await self.get_nika_source_state()
 
         coverage_changed = self._coverage_needs_refresh(
@@ -472,7 +529,6 @@ class ScheduleRepository(BaseRepository):
             and not coverage_changed
         ):
             await self.touch_nika_checked_at()
-
             return ScheduleRefreshResult(
                 source_changed=False,
                 schedule_changed=False,
@@ -488,14 +544,12 @@ class ScheduleRepository(BaseRepository):
             and coverage_changed
         ):
             raw = await self.get_cached_raw_nika()
-
             if raw and raw.get("content"):
                 return await self._refresh_from_cached_raw(
                     target_dates=target_dates,
                     state=state,
                     raw_content=raw["content"],
                 )
-
             logger.warning(
                 "Coverage changed but raw NIKA cache is missing. "
                 "Downloading JS again."
@@ -513,7 +567,6 @@ class ScheduleRepository(BaseRepository):
         raw_sha256 = self.fetcher.calculate_raw_sha256(
             js_content,
         )
-
         semantic_sha256 = self.fetcher.calculate_semantic_sha256(
             nika_data,
         )
@@ -536,7 +589,6 @@ class ScheduleRepository(BaseRepository):
                 export_date=export_date,
                 export_time=export_time,
             )
-
             return ScheduleRefreshResult(
                 source_changed=True,
                 schedule_changed=False,
@@ -609,111 +661,94 @@ class ScheduleRepository(BaseRepository):
     ) -> None:
         """
         Обновляет revision metadata и singleton raw NIKA cache.
+        schedule_cache не трогается: semantic hash не изменился.
 
-        schedule_cache не трогается, потому что semantic hash совпадает.
+        Задача 1.3: все CURRENT_TIMESTAMP заменены на параметр now_utc.
+        Транзакция выполняется через self.transaction() — с защитой
+        общего lock'а shared-соединения.
         """
-        async with self._connection() as db:
-            await db.execute("BEGIN")
+        now_utc = self._now_utc_str()
 
-            try:
-                await db.execute(
-                    """
-                    INSERT INTO raw_nika_cache (
-                        id,
-                        js_filename,
-                        raw_sha256,
-                        fetched_at,
-                        content
-                    )
-                    VALUES (
-                        1,
-                        ?,
-                        ?,
-                        CURRENT_TIMESTAMP,
+        async with self.transaction() as db:
+            await db.execute(
+                """
+                INSERT INTO raw_nika_cache (
+                    id, js_filename, raw_sha256, fetched_at, content
+                )
+                VALUES (1, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    js_filename = excluded.js_filename,
+                    raw_sha256 = excluded.raw_sha256,
+                    fetched_at = excluded.fetched_at,
+                    content = excluded.content
+                """,
+                (
+                    source.js_filename,
+                    raw_sha256,
+                    now_utc,
+                    js_content,
+                ),
+            )
+
+            await db.execute(
+                """
+                INSERT INTO nika_source_state (
+                    id,
+                    js_filename,
+                    export_date,
+                    export_time,
+                    raw_sha256,
+                    semantic_sha256,
+                    last_checked_at,
+                    last_changed_at,
+                    coverage_start_date,
+                    coverage_end_date,
+                    last_error,
+                    last_error_at
+                )
+                VALUES (
+                    1,
+                    ?,
+                    ?,
+                    ?,
+                    ?,
+                    ?,
+                    ?,
+                    COALESCE(
+                        (SELECT last_changed_at
+                         FROM nika_source_state WHERE id = 1),
                         ?
-                    )
-                    ON CONFLICT(id) DO UPDATE SET
-                        js_filename = excluded.js_filename,
-                        raw_sha256 = excluded.raw_sha256,
-                        fetched_at = CURRENT_TIMESTAMP,
-                        content = excluded.content
-                    """,
-                    (
-                        source.js_filename,
-                        raw_sha256,
-                        js_content,
                     ),
+                    (SELECT coverage_start_date
+                     FROM nika_source_state WHERE id = 1),
+                    (SELECT coverage_end_date
+                     FROM nika_source_state WHERE id = 1),
+                    NULL,
+                    NULL
                 )
-
-                await db.execute(
-                    """
-                    INSERT INTO nika_source_state (
-                        id,
-                        js_filename,
-                        export_date,
-                        export_time,
-                        raw_sha256,
-                        semantic_sha256,
-                        last_checked_at,
-                        last_changed_at,
-                        coverage_start_date,
-                        coverage_end_date,
-                        last_error,
-                        last_error_at
-                    )
-                    VALUES (
-                        1,
-                        ?,
-                        ?,
-                        ?,
-                        ?,
-                        ?,
-                        CURRENT_TIMESTAMP,
-                        COALESCE(
-                            (
-                                SELECT last_changed_at
-                                FROM nika_source_state
-                                WHERE id = 1
-                            ),
-                            CURRENT_TIMESTAMP
-                        ),
-                        (
-                            SELECT coverage_start_date
-                            FROM nika_source_state
-                            WHERE id = 1
-                        ),
-                        (
-                            SELECT coverage_end_date
-                            FROM nika_source_state
-                            WHERE id = 1
-                        ),
-                        NULL,
-                        NULL
-                    )
-                    ON CONFLICT(id) DO UPDATE SET
-                        js_filename = excluded.js_filename,
-                        export_date = excluded.export_date,
-                        export_time = excluded.export_time,
-                        raw_sha256 = excluded.raw_sha256,
-                        semantic_sha256 = excluded.semantic_sha256,
-                        last_checked_at = CURRENT_TIMESTAMP,
-                        last_error = NULL,
-                        last_error_at = NULL
-                    """,
-                    (
-                        source.js_filename,
-                        export_date,
-                        export_time,
-                        raw_sha256,
-                        semantic_sha256,
-                    ),
-                )
-
-                await db.commit()
-
-            except Exception:
-                await db.rollback()
-                raise
+                ON CONFLICT(id) DO UPDATE SET
+                    js_filename = excluded.js_filename,
+                    export_date = excluded.export_date,
+                    export_time = excluded.export_time,
+                    raw_sha256 = excluded.raw_sha256,
+                    semantic_sha256 = excluded.semantic_sha256,
+                    last_checked_at = excluded.last_checked_at,
+                    last_changed_at = excluded.last_changed_at,
+                    coverage_start_date = excluded.coverage_start_date,
+                    coverage_end_date = excluded.coverage_end_date,
+                    last_error = NULL,
+                    last_error_at = NULL
+                """,
+                (
+                    source.js_filename,
+                    export_date,
+                    export_time,
+                    raw_sha256,
+                    semantic_sha256,
+                    now_utc,
+                    now_utc,
+                ),
+            )
 
     async def _apply_new_nika_version(
         self,
@@ -731,13 +766,15 @@ class ScheduleRepository(BaseRepository):
         reason: str,
     ) -> ScheduleRefreshResult:
         """
-        Нормализует NIKA и применяет новый rolling snapshot транзакционно.
+        Применяет новый NIKA rolling snapshot атомарно:
+        - raw cache (singleton);
+        - nika_source_state;
+        - schedule_cache (очистка окна + массовый UPSERT);
+        - очистка history window.
 
-        При ошибке:
-        - raw cache не меняется;
-        - nika state не меняется;
-        - schedule_cache не очищается;
-        - работает прошлый актуальный cache.
+        Задача 1.2: вставка уроков — ONE executemany вместо цикла
+        одиночных execute. Задача 1.3: все CURRENT_TIMESTAMP
+        заменены на now_utc, включая "CASE WHEN ? = 1 THEN ? ELSE ...".
         """
         normalizer = NikaNormalizer(
             nika_data,
@@ -765,7 +802,7 @@ class ScheduleRepository(BaseRepository):
 
         coverage_start_date = target_date_values[0]
         coverage_end_date = target_date_values[-1]
-        
+
         history_cutoff = (
             datetime.date.fromisoformat(
                 coverage_start_date
@@ -778,190 +815,147 @@ class ScheduleRepository(BaseRepository):
             for _ in target_date_values
         )
 
-        async with self._connection() as db:
-            await db.execute("BEGIN")
+        # Единый таймстемп снапшота: создаётся ОДИН раз вне транзакции,
+        # чтобы все строки батча получили идентичное created_at.
+        now_utc = self._now_utc_str()
 
-            try:
-                # Raw NIKA singleton.
-                await db.execute(
-                    """
-                    INSERT INTO raw_nika_cache (
-                        id,
-                        js_filename,
-                        raw_sha256,
-                        fetched_at,
-                        content
-                    )
-                    VALUES (
-                        1,
-                        ?,
-                        ?,
-                        CURRENT_TIMESTAMP,
-                        ?
-                    )
-                    ON CONFLICT(id) DO UPDATE SET
-                        js_filename = excluded.js_filename,
-                        raw_sha256 = excluded.raw_sha256,
-                        fetched_at = CURRENT_TIMESTAMP,
-                        content = excluded.content
-                    """,
-                    (
-                        source.js_filename,
-                        raw_sha256,
-                        js_content,
-                    ),
+        # Задача 1.2: готовим параметры всех уроков как список кортежей.
+        lesson_rows = [
+            (
+                lesson.id,
+                lesson.date,
+                lesson.period_id,
+                lesson.class_id,
+                lesson.lesson_num,
+                lesson.group_id,
+                lesson.group_name,
+                lesson.subject_id,
+                lesson.subject_name,
+                lesson.teacher_id,
+                lesson.teacher_name,
+                lesson.room_id,
+                lesson.room_name,
+                lesson.start_time,
+                lesson.end_time,
+                int(lesson.is_exchange),
+                int(lesson.is_cancelled),
+                now_utc,
+            )
+            for lesson in lessons
+        ]
+
+        async with self.transaction() as db:
+            await db.execute(
+                """
+                INSERT INTO raw_nika_cache (
+                    id, js_filename, raw_sha256, fetched_at, content
+                )
+                VALUES (1, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    js_filename = excluded.js_filename,
+                    raw_sha256 = excluded.raw_sha256,
+                    fetched_at = excluded.fetched_at,
+                    content = excluded.content
+                """,
+                (
+                    source.js_filename,
+                    raw_sha256,
+                    now_utc,
+                    js_content,
+                ),
+            )
+
+            await db.execute(
+                f"""
+                DELETE FROM schedule_cache
+                WHERE date IN ({placeholders})
+                """,
+                tuple(target_date_values),
+            )
+
+            await db.execute(
+                """
+                DELETE FROM schedule_cache
+                WHERE date < ?
+                """,
+                (history_cutoff,),
+            )
+
+            # Массовый UPSERT (Задача 1.2): один подготовленный запрос,
+            # executemany, всё внутри той же транзакции — атомарно.
+            if lesson_rows:
+                await db.executemany(
+                    _SCHEDULE_UPSERT_SQL,
+                    lesson_rows,
                 )
 
-
-                # Удаляем только обновляемый rolling horizon.
-                await db.execute(
-                    f"""
-                    DELETE FROM schedule_cache
-                    WHERE date IN ({placeholders})
-                    """,
-                    tuple(target_date_values),
+            await db.execute(
+                """
+                INSERT INTO nika_source_state (
+                    id,
+                    js_filename,
+                    export_date,
+                    export_time,
+                    raw_sha256,
+                    semantic_sha256,
+                    last_checked_at,
+                    last_changed_at,
+                    coverage_start_date,
+                    coverage_end_date,
+                    last_error,
+                    last_error_at
                 )
-
-                # Очищаем даты старше history window.
-                await db.execute(
-                    """
-                    DELETE FROM schedule_cache
-                    WHERE date < ?
-                    """,
-                    (history_cutoff,),
+                VALUES (
+                    1,
+                    ?,
+                    ?,
+                    ?,
+                    ?,
+                    ?,
+                    ?,
+                    ?,
+                    ?,
+                    ?,
+                    NULL,
+                    NULL
                 )
+                ON CONFLICT(id) DO UPDATE SET
+                    js_filename = excluded.js_filename,
+                    export_date = excluded.export_date,
+                    export_time = excluded.export_time,
+                    raw_sha256 = excluded.raw_sha256,
+                    semantic_sha256 = excluded.semantic_sha256,
+                    last_checked_at = excluded.last_checked_at,
+                    last_changed_at = CASE
+                        WHEN ? = 1 THEN ?
+                        ELSE nika_source_state.last_changed_at
+                    END,
+                    coverage_start_date = excluded.coverage_start_date,
+                    coverage_end_date = excluded.coverage_end_date,
+                    last_error = NULL,
+                    last_error_at = NULL
+                """,
+                (
+                    source.js_filename,
+                    export_date,
+                    export_time,
+                    raw_sha256,
+                    semantic_sha256,
+                    now_utc,
+                    now_utc,
+                    coverage_start_date,
+                    coverage_end_date,
+                    int(schedule_changed),
+                    now_utc,
+                ),
+            )
 
-                for lesson in lessons:
-                    await db.execute(
-                        """
-                        INSERT INTO schedule_cache (
-                            id,
-                            date,
-                            period_id,
-                            class_id,
-                            lesson_num,
-                            group_id,
-                            group_name,
-                            subject_id,
-                            subject_name,
-                            teacher_id,
-                            teacher_name,
-                            room_id,
-                            room_name,
-                            start_time,
-                            end_time,
-                            is_exchange,
-                            is_cancelled,
-                            created_at
-                        )
-                        VALUES (
-                            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                            ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP
-                        )
-                        ON CONFLICT(id) DO UPDATE SET
-                            date = excluded.date,
-                            period_id = excluded.period_id,
-                            class_id = excluded.class_id,
-                            lesson_num = excluded.lesson_num,
-                            group_id = excluded.group_id,
-                            group_name = excluded.group_name,
-                            subject_id = excluded.subject_id,
-                            subject_name = excluded.subject_name,
-                            teacher_id = excluded.teacher_id,
-                            teacher_name = excluded.teacher_name,
-                            room_id = excluded.room_id,
-                            room_name = excluded.room_name,
-                            start_time = excluded.start_time,
-                            end_time = excluded.end_time,
-                            is_exchange = excluded.is_exchange,
-                            is_cancelled = excluded.is_cancelled,
-                            created_at = CURRENT_TIMESTAMP
-                        """,
-                        (
-                            lesson.id,
-                            lesson.date,
-                            lesson.period_id,
-                            lesson.class_id,
-                            lesson.lesson_num,
-                            lesson.group_id,
-                            lesson.group_name,
-                            lesson.subject_id,
-                            lesson.subject_name,
-                            lesson.teacher_id,
-                            lesson.teacher_name,
-                            lesson.room_id,
-                            lesson.room_name,
-                            lesson.start_time,
-                            lesson.end_time,
-                            int(lesson.is_exchange),
-                            int(lesson.is_cancelled),
-                        ),
-                    )
-
-                await db.execute(
-                    """
-                    INSERT INTO nika_source_state (
-                        id,
-                        js_filename,
-                        export_date,
-                        export_time,
-                        raw_sha256,
-                        semantic_sha256,
-                        last_checked_at,
-                        last_changed_at,
-                        coverage_start_date,
-                        coverage_end_date,
-                        last_error,
-                        last_error_at
-                    )
-                    VALUES (
-                        1,
-                        ?,
-                        ?,
-                        ?,
-                        ?,
-                        ?,
-                        CURRENT_TIMESTAMP,
-                        CURRENT_TIMESTAMP,
-                        ?,
-                        ?,
-                        NULL,
-                        NULL
-                    )
-                    ON CONFLICT(id) DO UPDATE SET
-                        js_filename = excluded.js_filename,
-                        export_date = excluded.export_date,
-                        export_time = excluded.export_time,
-                        raw_sha256 = excluded.raw_sha256,
-                        semantic_sha256 = excluded.semantic_sha256,
-                        last_checked_at = CURRENT_TIMESTAMP,
-                        last_changed_at = CASE
-                            WHEN ? = 1
-                            THEN CURRENT_TIMESTAMP
-                            ELSE nika_source_state.last_changed_at
-                        END,
-                        coverage_start_date = excluded.coverage_start_date,
-                        coverage_end_date = excluded.coverage_end_date,
-                        last_error = NULL,
-                        last_error_at = NULL
-                    """,
-                    (
-                        source.js_filename,
-                        export_date,
-                        export_time,
-                        raw_sha256,
-                        semantic_sha256,
-                        coverage_start_date,
-                        coverage_end_date,
-                        int(schedule_changed),
-                    ),
-                )
-
-                await db.commit()
-
-            except Exception:
-                await db.rollback()
-                raise
+        # Обновление статистики query planner'а после массовой
+        # перезаписи кэша (дёшево, заметно ускоряет последующие SELECT).
+        try:
+            await self._execute("PRAGMA optimize")
+        except Exception:
+            logger.debug("PRAGMA optimize after snapshot failed.")
 
         logger.info(
             "NIKA snapshot applied: source_changed=%s, "

@@ -15,15 +15,14 @@ class UserRepository(BaseRepository):
         """
         Отключает уведомления пользователям, чья last_active_at <= cutoff_utc (UTC).
         """
+        cutoff_utc_str = cutoff_utc.strftime("%Y-%m-%d %H:%M:%S")
         query = """
             UPDATE users
             SET is_notifications_enabled = 0
             WHERE last_active_at <= ? AND is_notifications_enabled = 1
         """
-        # cutoff_utc уже должен быть aware-UTC, но sqlite хранит TEXT/naive,
-        # поэтому сюда передаём либо строку, либо naive datetime.
-        return await self._execute(query, (cutoff_utc,))
-    
+        return await self._execute(query, (cutoff_utc_str,))
+        
     async def optimize_database(self) -> None:
         """
         Просит SQLite обновить внутренние статистики и оптимизировать

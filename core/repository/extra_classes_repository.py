@@ -1,10 +1,22 @@
+# core/repository/extra_classes_repository.py
+#
+# РЕШЁННЫЕ ПРОБЛЕМЫ:
+#
+# 1. Strict Time Governance: CURRENT_TIMESTAMP в update_extra_class
+#    заменён на параметр now_utc из TimeService.
+#
+# 2. create_extra_class явно передаёт created_at/updated_at —
+#    дефолтов в схеме больше нет.
+#
+# 3. INSERT обёрнут в self._write_lock(): на shared-соединении
+#    запись сериализуется с транзакциями других репозиториев.
+
 from __future__ import annotations
 
 from typing import Any, Optional
 
 from core.repository.base_repository import BaseRepository
 from services.time_service import TimeService
-
 
 _UNSET = object()
 
@@ -20,9 +32,10 @@ class ExtraClassesRepository(BaseRepository):
 
     def __init__(
         self,
-        db_path: str,
+        db_path,
         time_service: TimeService,
     ) -> None:
+        # db_path: aiosqlite.Connection (основной режим) или str (тесты).
         super().__init__(db_path, time_service)
 
     async def create_extra_class(
@@ -40,6 +53,7 @@ class ExtraClassesRepository(BaseRepository):
         """
         Создаёт дополнительное занятие конкретному student profile.
         """
+        now_utc = self._now_utc_str()
         query = """
         INSERT INTO extra_classes (
             family_id,
@@ -49,11 +63,12 @@ class ExtraClassesRepository(BaseRepository):
             time_end,
             title,
             location,
-            reminder_minutes
+            reminder_minutes,
+            created_at,
+            updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
-
         params = (
             family_id,
             student_id,
@@ -63,13 +78,14 @@ class ExtraClassesRepository(BaseRepository):
             title,
             location,
             reminder_minutes,
+            now_utc,
+            now_utc,
         )
-
-        async with self._connection() as db:
-            cursor = await db.execute(query, params)
-            await db.commit()
-
-            return cursor.lastrowid
+        async with self._write_lock():
+            async with self._connection() as db:
+                cursor = await db.execute(query, params)
+                await db.commit()
+                return cursor.lastrowid
 
     async def get_extra_classes_for_student(
         self,
@@ -79,7 +95,6 @@ class ExtraClassesRepository(BaseRepository):
     ) -> list[dict[str, Any]]:
         """
         Возвращает занятия одного student profile.
-
         Если указан day_of_week, возвращает занятия только на этот день.
         """
         if day_of_week is None:
@@ -103,12 +118,10 @@ class ExtraClassesRepository(BaseRepository):
                 time_start,
                 id
             """
-
             return await self._fetch_all(
                 query,
                 (student_id,),
             )
-
         query = """
         SELECT
             id,
@@ -129,7 +142,6 @@ class ExtraClassesRepository(BaseRepository):
             time_start,
             id
         """
-
         return await self._fetch_all(
             query,
             (student_id, day_of_week),
@@ -143,7 +155,6 @@ class ExtraClassesRepository(BaseRepository):
     ) -> Optional[dict[str, Any]]:
         """
         Возвращает одно занятие, только если оно принадлежит student_id.
-
         Метод нужен сервису для безопасной partial update и проверки
         итогового временного интервала.
         """
@@ -164,7 +175,6 @@ class ExtraClassesRepository(BaseRepository):
         WHERE id = ?
           AND student_id = ?
         """
-
         return await self._fetch_one(
             query,
             (extra_id, student_id),
@@ -184,12 +194,10 @@ class ExtraClassesRepository(BaseRepository):
         WHERE id = ?
           AND student_id = ?
         """
-
         rowcount = await self._execute(
             query,
             (extra_id, student_id),
         )
-
         return rowcount > 0
 
     async def update_extra_class(
@@ -217,23 +225,18 @@ class ExtraClassesRepository(BaseRepository):
         if day_of_week is not None:
             fields.append("day_of_week = ?")
             params.append(day_of_week)
-
         if time_start is not None:
             fields.append("time_start = ?")
             params.append(time_start)
-
         if time_end is not None:
             fields.append("time_end = ?")
             params.append(time_end)
-
         if title is not None:
             fields.append("title = ?")
             params.append(title)
-
         if location is not _UNSET:
             fields.append("location = ?")
             params.append(location)
-
         if reminder_minutes is not None:
             fields.append("reminder_minutes = ?")
             params.append(reminder_minutes)
@@ -241,25 +244,23 @@ class ExtraClassesRepository(BaseRepository):
         if not fields:
             return False
 
-        fields.append("updated_at = CURRENT_TIMESTAMP")
-
+        # Time Governance: updated_at из приложения.
+        fields.append("updated_at = ?")
+        params.append(self._now_utc_str())
         params.extend(
             [
                 extra_id,
                 student_id,
             ]
         )
-
         query = f"""
         UPDATE extra_classes
         SET {", ".join(fields)}
         WHERE id = ?
           AND student_id = ?
         """
-
         rowcount = await self._execute(
             query,
             tuple(params),
         )
-
         return rowcount > 0
