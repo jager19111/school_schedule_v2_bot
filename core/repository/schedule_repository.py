@@ -1,6 +1,5 @@
 # core/repository/schedule_repository.py
-#
-# РЕШЁННЫЕ ПРОБЛЕМЫ:
+## РЕШЁННЫЕ ПРОБЛЕМЫ:
 #
 # 1. Bulk Inserts (Задача 1.2): в _apply_new_nika_version цикл
 #    "for lesson in lessons: await db.execute(...)" заменён на
@@ -26,12 +25,31 @@
 #    через db_path=aiosqlite.Connection (см. BaseRepository).
 #    Имя параметра сохранено для совместимости с main.py.
 
+# ЭТАП 2. ИЗМЕНЕНИЕ (Задача 2.1): конструктор принимает http_session —
+# персистентную aiohttp.ClientSession из main.py — и пробрасывает её
+# в ScheduleFetcher. Раньше фетчер создавал сессию на каждый вызов
+# probe() (каждые 5 минут — новый TCP+TLS-сокет, при прокси — ещё и
+# CONNECT), теперь соединение живёт в keep-alive пуле весь цикл бота.
+#
+# Прочие комментарии Этапа 1 сохранены:
+# - Bulk Inserts (executemany, Задача 1.2);
+# - Strict Time Governance (Задача 1.3);
+# - транзакции через self.transaction() c общим write-lock;
+# - shared-соединение SQLite через db_path=aiosqlite.Connection.
+#
+# Проверка Задачи 2.2: во всём файле используется только связка
+# source = await self.fetcher.probe() и
+# js_content = await self.fetcher.fetch_js_content(source).
+# Вызовов удалённого fetch() нет.
+
 from __future__ import annotations
 
 import datetime
 import logging
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
+
+import aiohttp
 
 from core.models.domain import LessonInstance
 from core.nika.fetcher import (
@@ -119,17 +137,20 @@ class ScheduleRepository(BaseRepository):
         *,
         db_path,
         time_service: TimeService,
+        http_session: aiohttp.ClientSession,
         proxy: str | None = None,
         nika_base_url: str = "https://lyceum.nstu.ru/rasp",
         history_days: int = 7,
     ) -> None:
         # db_path: str (legacy/тесты) ИЛИ aiosqlite.Connection (основной
         # режим — shared-соединение из main.py, Задача 1.1).
+        # http_session: персистентная HTTP-сессия из main.py (Задача 2.1).
         super().__init__(
             db_path=db_path,
             time_service=time_service,
         )
         self.fetcher = ScheduleFetcher(
+            session=http_session,
             base_url=nika_base_url,
             proxy=proxy,
         )
@@ -264,7 +285,7 @@ class ScheduleRepository(BaseRepository):
         Не запускает refresh.
         Безопасен для admin diagnostics.
         """
-        #получение текущей даты относительно часового пояса бота ---
+        # получение текущей даты относительно часового пояса бота ---
         today_iso = self.time_service.get_now_base().date().isoformat()
         state = await self.get_nika_source_state()
 

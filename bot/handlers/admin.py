@@ -120,9 +120,9 @@ async def cmd_stress(
     """
     Стресс-тест боевого пайплайна уведомлений (только админ).
 
-    /stress      — 50 сообщений по умолчанию;
-    /stress 100  — указанное количество (1..500).
-
+    /stress             — 50 сообщений себе по умолчанию;
+    /stress 100          — указанное количество (1..500) себе;
+    /stress 50 1234567  — указанное количество указанному chat_id.
     Что проверяет:
     - дросселирование (глобальный темп + 1 сообщение/сек на чат);
     - обработку 429 Too Many Requests;
@@ -130,8 +130,7 @@ async def cmd_stress(
       бота и запусти снова — рассылка продолжится с места остановки,
       а не начнётся сначала (дедупликация через delivery log).
 
-    Время выполнения ~ count * 1.1 сек из-за пер-чат лимита Telegram.
-    """
+    Время выполнения ~ count * 1.1 сек из-за пер-чат лимита Telegram.    """
     if not await _require_admin(
         message=message,
         admin_service=admin_service,
@@ -140,49 +139,57 @@ async def cmd_stress(
 
     parts = (message.text or "").split()
 
-    count = 100
+    # Значения по умолчанию
+    count = 50
+    target_chat_id = message.from_user.id
+
+    # Парсим количество (первый аргумент)
     if len(parts) > 1 and parts[1].isdigit():
         count = int(parts[1])
+
+    # Парсим кастомный ID получателя (второй аргумент)
+    # lstrip('-') позволяет передавать ID групп (они отрицательные)
+    if len(parts) > 2 and parts[2].lstrip('-').isdigit():
+        target_chat_id = int(parts[2])
 
     count = max(1, min(count, MAX_STRESS_COUNT))
     estimated_seconds = int(count * PER_CHAT_SEND_INTERVAL_SEC)
 
     logger.info(
-        "Stress test started: user_id=%s, count=%d",
+        "Stress test started: admin_id=%s, target_id=%s, count=%d",
         message.from_user.id,
+        target_chat_id,
         count,
     )
 
     await message.answer(
         "🧪 <b>Стресс-тест пайплайна уведомлений</b>\n\n"
+        f"Получатель (chat_id): <code>{target_chat_id}</code>\n"
         f"Сообщений: {count}\n"
-        f"Оценка времени: ~{estimated_seconds} сек "
-        "(лимит Telegram: 1 сообщение/сек на чат).\n\n"
-        "Отправка идёт через боевой конвейер: дросселирование, "
-        "батчевая дедупликация, delivery log.\n\n"
+        f"Оценка времени: ~{estimated_seconds} сек.\n\n"
         "Для теста рестарта: прервите бота на середине (Ctrl+C), "
-        "запустите снова и выполните команду ещё раз — "
-        "рассылка продолжится с места остановки."
+        "запустите снова и выполните команду ещё раз."
     )
 
+    # Используем извлеченный target_chat_id вместо message.from_user.id
     result = await notification_service.debug_send_burst(
-        chat_id=message.from_user.id,
+        chat_id=target_chat_id,
         count=count,
     )
 
     await message.answer(
         "🧪 <b>Стресс-тест завершён</b>\n\n"
+        f"Получатель: <code>{target_chat_id}</code>\n"
         f"Запрошено: {result['requested']}\n"
         f"К отправке после дедупликации: {result['pending']}\n"
         f"Отправлено: {result['sent']}\n"
-        f"Ошибок: {result['failed']}\n\n"
-        "Если 'к отправке' меньше 'запрошено' — дедупликация "
-        "отработала (это уже отправленные сегодня сообщения)."
+        f"Ошибок: {result['failed']}"
     )
 
     logger.info(
-        "Stress test finished: user_id=%s, result=%s",
+        "Stress test finished: admin_id=%s, target_id=%s, result=%s",
         message.from_user.id,
+        target_chat_id,
         result,
     )
 

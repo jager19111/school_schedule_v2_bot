@@ -1,3 +1,36 @@
+# core/nika/fetcher.py
+#
+# ЭТАП 2. СЕТЕВОЙ СЛОЙ.
+#
+# ИЗМЕНЕНИЯ:
+#
+# 1. (Задача 2.1) Персистентная aiohttp-сессия.
+#    Раньше probe() и fetch_js_content() создавали ClientSession на каждый
+#    вызов: probe() выполняется каждые NIKA_REFRESH_INTERVAL_MINUTES,
+#    то есть каждые 5 минут поднимался новый TCP+TLS-сокет (а при
+#    включённом прокси — ещё и CONNECT), затем закрывался. Keep-alive
+#    не работал. Теперь сессия создаётся ОДИН раз в main.py, живёт весь
+#    жизненный цикл процесса и передаётся сюда через конструктор.
+#    Методы НЕ закрывают сессию — она общая.
+#
+# 2. (Задача 2.1, уточнение) Таймауты — per-request, а не session-level.
+#    У probe и JS-загрузки разные бюджеты времени (15с vs 30с):
+#    session-таймаут остаётся безопасным дефолтом, а каждый метод
+#    переопределяет его своим ClientTimeout через параметр timeout=
+#    вызова session.get(). Иначе JS-файл ~150КБ на медленном прокси
+#    обрезался бы на 15 секунде.
+#
+# 3. (Задача 2.2) Удалён устаревший fetch() (Compatibility wrapper):
+#    дублировал двухэтапную загрузку и не использовался нигде
+#    (refresh_if_changed работает через probe + fetch_js_content).
+#
+# 4. Fail-fast валидация сессии в конструкторе: закрытая/отсутствующая
+#    сессия — ошибка старта, а не RuntimeError посреди ночного тика.
+#
+# НЕ ИЗМЕНИЛОСЬ: headers, ssl=False (обход проблемы с сертификатом
+# lyceum.nstu.ru), логика разбора schedule.html, sha256-хеши,
+# _extract_json_from_js.
+
 from __future__ import annotations
 
 import copy
@@ -6,7 +39,7 @@ import json
 import logging
 import re
 from dataclasses import dataclass
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict
 from urllib.parse import urljoin
 
 import aiohttp
@@ -31,17 +64,36 @@ class ScheduleFetcher:
 
     1. probe() загружает только schedule.html и находит актуальный JS.
     2. fetch_js_content() скачивает JS только при новой revision.
+
+    Оба метода работают через ОБЩУЮ персистентную сессию,
+    переданную из main.py. Сессия здесь не создаётся и не закрывается.
     """
 
     def __init__(
         self,
         *,
+        session: aiohttp.ClientSession,
         base_url: str = "https://lyceum.nstu.ru/rasp",
         proxy: str | None = None,
     ) -> None:
+        # Fail-fast: проблема с сессией должна всплыть при старте,
+        # а не в первом же ночном тике планировщика.
+        if session is None:
+            raise ValueError(
+                "ScheduleFetcher требует открытую aiohttp.ClientSession "
+                "(создаётся в main.py, Задача 2.1)."
+            )
+        if session.closed:
+            raise ValueError(
+                "ScheduleFetcher получил уже закрытую aiohttp.ClientSession."
+            )
+
+        self.session = session
         self.base_url = base_url.rstrip("/")
         self.proxy = proxy
 
+        # Передаём per-request: сессия общая, навешивать на неё
+        # заголовки одного конкретного клиента было бы неправильно.
         self.headers = {
             "User-Agent": (
                 "Mozilla/5.0 "
@@ -71,21 +123,20 @@ class ScheduleFetcher:
         Загружает только schedule.html и находит текущий nika_data_*.js.
 
         Это дешёвая операция, которую можно выполнять часто.
+        Соединение переиспользуется из общего keep-alive пула сессии.
         """
         schedule_url = f"{self.base_url}/schedule.html"
 
-        async with aiohttp.ClientSession(
+        async with self.session.get(
+            schedule_url,
+            proxy=self.proxy,
+            ssl=False,
             headers=self.headers,
             timeout=self._html_timeout(),
-        ) as session:
-            async with session.get(
-                schedule_url,
-                proxy=self.proxy,
-                ssl=False,
-            ) as response:
-                response.raise_for_status()
+        ) as response:
+            response.raise_for_status()
 
-                html = await response.text()
+            html = await response.text()
 
         match = re.search(
             r"""src=["']([^"']*nika_data_[^"']+\.js)["']""",
@@ -118,38 +169,18 @@ class ScheduleFetcher:
         Должен вызываться только если filename изменился либо отсутствует
         локальный raw cache.
         """
-        async with aiohttp.ClientSession(
+        async with self.session.get(
+            source.js_url,
+            proxy=self.proxy,
+            ssl=False,
             headers=self.headers,
             timeout=self._js_timeout(),
-        ) as session:
-            async with session.get(
-                source.js_url,
-                proxy=self.proxy,
-                ssl=False,
-            ) as response:
-                response.raise_for_status()
+        ) as response:
+            response.raise_for_status()
 
-                return await response.text(
-                    encoding="utf-8",
-                )
-
-    async def fetch(self) -> Tuple[str, Dict[str, Any]]:
-        """
-        Compatibility wrapper.
-
-        Используйте только в отладочных сценариях.
-        Основной код должен использовать probe() и fetch_js_content().
-        """
-        source = await self.probe()
-
-        js_content = await self.fetch_js_content(
-            source,
-        )
-
-        return (
-            js_content,
-            self._extract_json_from_js(js_content),
-        )
+            return await response.text(
+                encoding="utf-8",
+            )
 
     @staticmethod
     def calculate_raw_sha256(content: str) -> str:

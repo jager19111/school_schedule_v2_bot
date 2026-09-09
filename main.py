@@ -1,6 +1,5 @@
 # main.py
-#
-# РЕШЁННЫЕ ПРОБЛЕМЫ:
+## РЕШЁННЫЕ ПРОБЛЕМЫ:
 #
 # 1. I/O (Задача 1.1): создаётся ЕДИНОЕ постоянное подключение к БД
 #    (db_connection = await database.connect()) и передаётся ВО ВСЕ
@@ -15,6 +14,27 @@
 #
 # 3. Мелкий фикс: убран продублированный
 #    "except asyncio.CancelledError: raise" в refresh_schedule_cache.
+# ЭТАП 2. СЕТЕВОЙ СЛОЙ (Задача 2.1): персистентная aiohttp-сессия.
+#
+# ИЗМЕНЕНИЯ:
+# - В main() создаётся ЕДИНАЯ http_session на весь жизненный цикл:
+#     tcp-коннектор с keep-alive, лимитом пула (хост один, 5 слотов
+#     с запасом), кешем DNS на 5 минут (иначе резолвинг при каждом
+#     соединении) и очисткой закрытых SSL-сокетов (против
+#     ResourceWarning). Session-таймаут 15 сек — безопасный дефолт;
+#     probe() и fetch_js_content() переопределяют его per-request
+#     своими бюджетами (15с и 30с соответственно).
+# - http_session передаётся в ScheduleRepository -> ScheduleFetcher.
+#   Раньше каждый probe() (раз в NIKA_REFRESH_INTERVAL_MINUTES)
+#   поднимал новый TCP+TLS-сокет и закрывал его.
+# - В finally — гарантированное закрытие сессии (с проверкой closed),
+#   в порядке: scheduler -> БД -> HTTP-сессия -> bot.session.
+#
+# ПРОШЛЫЕ ЭТАПЫ (без изменений):
+# - Задача 1.1: единое shared-подключение SQLite на весь жизненный цикл.
+# - Дополнительно: ночная задача PRAGMA wal_checkpoint(TRUNCATE).
+# - Фиксы Этапа 2 сервисного слоя: notification_service в workflow_data
+#   (для админ-команды /stress).
 
 import asyncio
 import datetime
@@ -216,6 +236,30 @@ async def main():
     # ==============================================================
     db_connection = await database.connect()
 
+    # ==============================================================
+    # Задача 2.1: персистентная HTTP-сессия на весь жизненный цикл.
+    #
+    # - keep-alive: соединение к lyceum.nstu.ru переиспользуется
+    #   между тиками probe() вместо нового TCP+TLS-сокета каждые
+    #   NIKA_REFRESH_INTERVAL_MINUTES (при прокси — ещё и CONNECT);
+    # - ttl_dns_cache=300: DNS не резолвится заново на каждое
+    #   соединение;
+    # - limit=5: хост один, пяти слотов пула достаточно с запасом
+    #   (probe и JS-загрузка не параллелятся);
+    # - enable_cleanup_closed=True: чистит закрытые SSL-сокеты,
+    #   иначе копятся ResourceWarning;
+    # - timeout 15 сек — session-дефолт; probe()/fetch_js_content()
+    #   переопределяют его per-request (15с / 30с).
+    # ==============================================================
+    http_session = aiohttp.ClientSession(
+        timeout=aiohttp.ClientTimeout(total=15),
+        connector=aiohttp.TCPConnector(
+            limit=5,
+            ttl_dns_cache=300,
+            enable_cleanup_closed=True,
+        ),
+    )
+
     scheduler: AsyncIOScheduler | None = None
 
     try:
@@ -223,10 +267,11 @@ async def main():
         time_service = TimeService(TimeServiceConfig(timezone=config.TIMEZONE))
 
         # 4. Репозитории.
-        # ВНИМАНИЕ: db_path= теперь принимает ОБЪЕКТ СОЕДИНЕНИЯ, а не строку.
+        # ВНИМАНИЕ: db_path= принимает ОБЪЕКТ СОЕДИНЕНИЯ, а не строку.
         # Это обеспечивает один пул (одно соединение) для всего приложения.
         schedule_repo = ScheduleRepository(
             db_path=db_connection,
+            http_session=http_session,
             proxy=config.PROXY_URL,
             time_service=time_service,
             nika_base_url=config.NIKA_BASE_URL,
@@ -421,10 +466,15 @@ async def main():
         logger.info("🚀 Бот (v2) готов к работе!")
         await dp.start_polling(bot)
     finally:
-        # Задача 1.1: гарантированное освобождение ресурсов.
+        # Гарантированное освобождение ресурсов.
+        # Порядок: scheduler (без ожидания задач) -> БД -> HTTP-сессия
+        # -> aiogram session. HTTP-сессия закрывается с проверкой,
+        # чтобы двойное закрытие не падало.
         if scheduler is not None:
             scheduler.shutdown(wait=False)
         await database.close()
+        if not http_session.closed:
+            await http_session.close()
         await bot.session.close()
 
 
