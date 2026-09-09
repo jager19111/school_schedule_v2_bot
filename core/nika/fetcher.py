@@ -149,6 +149,9 @@ class ScheduleFetcher:
 #         # Состояние TLS-деградации для админ-алертов:
 #         # True = последний успешный fetch шёл в обход проверки.
         self._ssl_degraded = False
+        # Флаг "пин устарел" для freshness-проверки (сбрасывается
+        # при совпадении или перезапуске).
+        self._pin_stale_warned = False
         # Заголовки per-request: сессия общая, навешивать на неё
         # заголовки одного конкретного клиента было бы неправильно.
         self.headers = {
@@ -182,6 +185,73 @@ class ScheduleFetcher:
         когда школа починит сертификат или админ обновит отпечаток.
         """
         return self._ssl_degraded
+
+    def _check_pin_freshness(
+        self,
+        response: "aiohttp.ClientResponse",
+    ) -> None:
+        """
+        Сверяет фактический сертификат strict-соединения с пином.
+
+        Пока CA-верификация проходит, пин никогда не выполняется
+        (лестница завершается на strict). Эта проверка выявляет
+        устаревший отпечаток ЗАРАНЕЕ — до того, как strict упадёт
+        и бот уедет в off с ложным "MITM".
+
+        Предупреждение выводится ОДИН раз до восстановления
+        совпадения (флаг _pin_stale_warned).
+        Ошибки проверки не влияют на запрос.
+        """
+        if self._pin_stale_warned:
+            return
+
+        try:
+            connection = response.connection
+            if connection is None or connection.transport is None:
+                return
+
+            ssl_object = connection.transport.get_extra_info(
+                "ssl_object",
+            )
+            if ssl_object is None:
+                return
+
+            der_cert = ssl_object.getpeercert(binary_form=True)
+            if not der_cert:
+                return
+
+            got_fingerprint = hashlib.sha256(der_cert).hexdigest()
+            expected_fingerprint = (
+                self._ssl_fingerprint.fingerprint.hex()
+            )
+
+            if got_fingerprint == expected_fingerprint:
+                # Пин актуален: всё готово к дню, когда strict упадёт.
+                logger.debug(
+                    "TLS pin freshness OK: server certificate "
+                    "matches configured fingerprint."
+                )
+                return
+
+            self._pin_stale_warned = True
+            logger.warning(
+                "TLS pin is STALE: server certificate "
+                "(sha256=%s...) does not match configured "
+                "NIKA_TLS_FINGERPRINT_SHA256 (%s...). "
+                "CA verification still passes, but the pin will not "
+                "save the connection when CA fails. "
+                "Update the fingerprint in .env while strict works.",
+                got_fingerprint[:16],
+                expected_fingerprint[:16],
+            )
+
+        except Exception:
+            # Диагностика не должна ломать запрос.
+            logger.debug(
+                "TLS pin freshness check failed",
+                exc_info=True,
+            )
+
     
     @staticmethod
     def _build_fingerprint(
@@ -256,13 +326,24 @@ class ScheduleFetcher:
                     timeout=timeout,
                 ) as response:
                     response.raise_for_status()
+
                     if mode_name != self.SSL_MODE_OFF:
                         # Успех в защищённом режиме снимает флаг
                         # деградации (сертификат починили/обновили пин).
                         self._ssl_degraded = False
+
+                    # Freshness-проверка: сверяем фактический
+                    # сертификат с пином, пока strict работает.
+                    if (
+                        mode_name == self.SSL_MODE_STRICT
+                        and self._ssl_fingerprint is not None
+                    ):
+                        self._check_pin_freshness(response)
+
                     if encoding is not None:
                         return await response.text(encoding=encoding)
                     return await response.text()
+
 
             except (
                 aiohttp.ClientConnectorSSLError,
