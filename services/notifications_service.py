@@ -82,6 +82,8 @@ GLOBAL_SEND_INTERVAL_SEC = 0.045
 PER_CHAT_SEND_INTERVAL_SEC = 1.1
 # Максимальное число попыток отправки одного сообщения.
 MAX_SEND_ATTEMPTS = 3
+_CHAT_CACHE_MAX = 1000
+_CHAT_CACHE_TTL_SEC = 600.0
 
 
 @dataclass(slots=True)
@@ -146,7 +148,9 @@ class NotificationService:
         - глобальный темп GLOBAL_SEND_INTERVAL_SEC между любыми двумя
           отправками бота;
         - PER_CHAT_SEND_INTERVAL_SEC между отправками одному чату;
-        - 429 Too Many Requests: ждём retry_after и повторяем;
+        - 429 Too Many Requests: ждём retry_after и повторяем
+          (на ПОСЛЕДНЕЙ попытке не спим — возвращаем False сразу,
+          сон впустую тратил бы до 10+ секунд);
         - Forbidden (бот заблокирован): отключаем уведомления
           пользователю и прекращаем попытки;
         - сетевые ошибки: до MAX_SEND_ATTEMPTS попыток с backoff.
@@ -182,6 +186,7 @@ class NotificationService:
                     finished_at = time.monotonic()
                     self._global_last_send_at = finished_at
                     self._chat_last_send_at[chat_id] = finished_at
+                    self._prune_chat_send_times()
                     return True
 
                 except TelegramRetryAfter as exc:
@@ -193,23 +198,24 @@ class NotificationService:
                         attempt,
                         MAX_SEND_ATTEMPTS,
                     )
-                    # Ждём указанное Telegram время и повторяем.
-                    await asyncio.sleep(float(exc.retry_after) + 0.5)
+                    # Оптимизация (Roman): сон нужен, только если будет
+                    # повторная попытка. На последней — выходим сразу.
+                    if attempt < MAX_SEND_ATTEMPTS:
+                        await asyncio.sleep(float(exc.retry_after) + 0.5)
 
                 except TelegramForbiddenError:
                     logger.warning(
                         "Chat %s blocked the bot. "
-                        "Disabling notifications for this user.",
+                        "Marking user as notifications_blocked.",
                         chat_id,
                     )
                     try:
-                        await self.repo.disable_notifications_for_user(
+                        await self.repo.mark_user_notifications_blocked(
                             user_id=chat_id,
                         )
                     except Exception:
                         logger.exception(
-                            "Failed to disable notifications "
-                            "for blocked chat %s",
+                            "Failed to mark blocked chat %s",
                             chat_id,
                         )
                     return False
@@ -240,12 +246,112 @@ class NotificationService:
             )
             return False
 
-    async def _safe_send(self, student_id: int, text: str) -> bool:
-        """Совместимая обёртка над _paced_send."""
-        return await self._paced_send(
-            chat_id=student_id,
-            text=text,
-        )
+    async def _load_blocked_recipient_ids(self) -> set[int]:
+        """
+        ID пользователей, заблокировавших бот (notifications_blocked=1).
+
+        Системный маркер НЕ связан с is_notifications_enabled.
+        Загружается заново каждый тик: если пользователь разблокировал
+        бота и проявил активность, update_last_active уже снял флаг,
+        и уведомления возобновляются без перезапуска бота.
+        """
+        try:
+            return set(await self.repo.get_blocked_user_ids())
+        except Exception:
+            # Ошибка загрузки не должна ломать рассылку:
+            # фильтр просто пропускается, Forbidden обработается
+            # в _paced_send и пометит пользователя при следующем тике.
+            logger.exception("Failed to load blocked user ids")
+            return set()
+        
+    # ==============================================================
+    # 3a. Микроочистка кеша per-chat таймстемпов
+    # ==============================================================
+
+    def _prune_chat_send_times(self) -> None:
+        """
+        Микроочистка кеша per-chat таймстемпов.
+
+        Строгой утечки нет: словарь ограничен числом уникальных чатов
+        (~число пользователей). Но записи старше TTL бесполезны —
+        пер-чат интервал составляет секунды, поэтому чат, не получавший
+        сообщений >10 минут, эквивалентен "новому".
+
+        Вызывается из _paced_send под _send_lock — дополнительная
+        синхронизация не нужна.
+        """
+        if len(self._chat_last_send_at) < _CHAT_CACHE_MAX:
+            return
+        cutoff = time.monotonic() - _CHAT_CACHE_TTL_SEC
+        self._chat_last_send_at = {
+            chat_id: ts
+            for chat_id, ts in self._chat_last_send_at.items()
+            if ts > cutoff
+        }
+
+    # ==============================================================
+    # 3b. Админ-стресс-тест боевого пайплайна
+    # ==============================================================
+
+    async def debug_send_burst(
+        self,
+        *,
+        chat_id: int,
+        count: int,
+    ) -> dict[str, int]:
+        """
+        Стресс-тест РЕАЛЬНОГО пайплайна уведомлений (только админ).
+
+        В отличие от отправки через message.answer() в хендлере,
+        проходит через все боевые фазы:
+        - collect (PendingSend-кандидаты);
+        - батчевый dedup через get_delivered_keys;
+        - paced send через _paced_send (лимиты Telegram);
+        - запись delivery log после каждой успешной отправки.
+
+        source_id стабилен в течение дня (debug_burst:{i}), поэтому:
+        - повторный запуск в тот же день НЕ повторяет уже
+          отправленные сообщения (дедупликация);
+        - рестарт бота в середине теста -> следующий запуск
+          продолжит с места остановки, а не начнёт сначала.
+
+        ВАЖНО: на один чат действует пер-чат лимит
+        PER_CHAT_SEND_INTERVAL_SEC, поэтому N сообщений одному
+        пользователю занимают ~N * 1.1 секунд. Это честное поведение
+        Telegram, а не замедление теста.
+
+        Используется только из админ-команды /stress.
+        """
+        count = max(1, min(count, 500))
+
+        now = self.time_service.get_now_base()
+        today_iso = now.date().isoformat()
+
+        pending = [
+            PendingSend(
+                notification_type="debug_test",
+                notification_date=today_iso,
+                source_id=f"debug_burst:{index}",
+                recipient_id=chat_id,
+                text=(
+                    f"🧪 Стресс-тест уведомлений: "
+                    f"сообщение {index + 1} из {count}"
+                ),
+                context="stress_test",
+            )
+            for index in range(count)
+        ]
+
+        to_send = await self._drop_already_delivered(pending)
+        sent_count, failed_count = await self._flush_pending(to_send)
+
+        return {
+            "requested": len(pending),
+            "pending": len(to_send),
+            "sent": sent_count,
+            "failed": failed_count,
+        }
+
 
     # ==============================================================
     # Общие помощники фаз collect/dedup/send
@@ -367,6 +473,14 @@ class NotificationService:
         tasks = await self.repo.get_morning_summary_tasks(
             time_str=current_time_str,
         )
+        # Пользователи, заблокировавшие бот, не получают сводки.
+        blocked_ids = await self._load_blocked_recipient_ids()
+        if blocked_ids:
+            tasks = [
+                task
+                for task in tasks
+                if int(task["recipient_id"]) not in blocked_ids
+            ]
 
         if not tasks:
             # Учительские сводки проверяем независимо от детских задач.
@@ -629,7 +743,7 @@ class NotificationService:
             today_iso,
             len(changes),
         )
-
+        blocked_ids = await self._load_blocked_recipient_ids()
         # Тиковые кеши получателей (фикс N+1).
         recipients_cache: dict[tuple[str, str], list[dict]] = {}
         teacher_cache: dict[str, list[dict]] = {}
@@ -655,6 +769,9 @@ class NotificationService:
 
                 for recipient in recipients:
                     recipient_id = int(recipient["recipient_id"])
+                    
+                    if recipient_id in blocked_ids:
+                        continue
                     window_days = int(
                         recipient["changes_window_days"]
                     )
@@ -714,6 +831,8 @@ class NotificationService:
                 for recipient in teacher_cache[teacher_id]:
                     try:
                         recipient_id = int(recipient["recipient_id"])
+                        if recipient_id in blocked_ids:
+                            continue
                         window_days = int(
                             recipient["changes_window_days"]
                         )
@@ -818,6 +937,7 @@ class NotificationService:
             today_iso,
             len(lessons),
         )
+        blocked_ids = await self._load_blocked_recipient_ids()
 
         # Тиковые кеши получателей (фикс N+1).
         recipients_cache: dict[tuple[str, str], list[dict]] = {}
@@ -852,6 +972,8 @@ class NotificationService:
 
                 for recipient in recipients:
                     recipient_id = int(recipient["recipient_id"])
+                    if recipient_id in blocked_ids:
+                        continue
                     offset_minutes = int(recipient["offset_minutes"])
 
                     # 0 = получатель отключил этот тип напоминаний.
@@ -903,6 +1025,8 @@ class NotificationService:
                 for recipient in teacher_cache[teacher_id]:
                     try:
                         recipient_id = int(recipient["recipient_id"])
+                        if recipient_id in blocked_ids:
+                            continue
                         offset_minutes = int(recipient["offset_minutes"])
 
                         if offset_minutes <= 0:
@@ -998,7 +1122,7 @@ class NotificationService:
             weekday,
             len(extras),
         )
-
+        blocked_ids = await self._load_blocked_recipient_ids()
         pending: list[PendingSend] = []
 
         # --- Фаза 1 (collect) ---
@@ -1006,6 +1130,8 @@ class NotificationService:
             try:
                 extra_id = int(extra["extra_id"])
                 recipient_id = int(extra["recipient_id"])
+                if recipient_id in blocked_ids:
+                    continue
                 offset_minutes = int(extra["offset_minutes"])
 
                 if offset_minutes <= 0:
@@ -1106,6 +1232,14 @@ class NotificationService:
         tasks = await self.repo.get_teacher_morning_summary_tasks(
             time_str=current_time_str,
         )
+        blocked_ids = await self._load_blocked_recipient_ids()
+        if blocked_ids:
+            tasks = [
+                task
+                for task in tasks
+                if int(task["recipient_id"]) not in blocked_ids
+            ]
+            
         if not tasks:
             return
 

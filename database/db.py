@@ -1,30 +1,24 @@
-# database/db.py
+# database/db.py — СХЕМА v4
 #
-# ВЕРСИЯ СХЕМЫ 3 (завершение Strict Time Governance).
+# ЧТО НОВОГО В v4:
 #
-# Отличие от v2: таймстемп-колонки ВСЕХ таблиц снова TEXT NOT NULL.
-# Это стало возможно, потому что после рефакторинга репозиториев
-# каждый INSERT в профильный домен явно передаёт created_at/updated_at
-# из TimeService:
-# - users:            ProfileRepository.register_user_initial
-# - families:         ProfileRepository.create_family_and_link
-# - student_profiles: StudentRepository.create_virtual_student / upsert_telegram_student
-# - parent_student_settings: _ensure_parent_student_settings_for_family
-#                     (ProfileRepository и StudentRepository)
-# - student_claim_invites:  StudentRepository.create_student_claim_invite
-# - family_invites:   ProfileRepository.create_family_invite
-# - schedule_watch_targets: WatchTargetRepository.create_watch_target
-# - extra_classes:    ExtraClassesRepository.create_extra_class
-# - notification_delivery_log: NotificationRepository.record_notification_delivery
-# - schedule_cache / raw_nika_cache / nika_source_state: ScheduleRepository
+# users.notifications_blocked INTEGER NOT NULL DEFAULT 0
 #
-# ВАЖНО ПРО МИГРАЦИЮ: CREATE TABLE IF NOT EXISTS не меняет существующую БД.
-# Тестовую базу нужно пересоздать (удалить *.db, *.db-wal, *.db-shm).
-# Продакшн-база на старой схеме продолжает работать: Python всегда
-# передаёт значения явно, и различие только в отсутствии NOT NULL.
+# Системный маркер "пользователь заблокировал бот".
 #
-# Полный DEFAULT CURRENT_TIMESTAMP по-прежнему отсутствует во всех
-# таблицах: единственный источник времени — TimeService (Python).
+# ЗАЧЕМ РАЗДЕЛЕНИЕ С is_notifications_enabled:
+# is_notifications_enabled — личный выключатель пользователя и
+# инструмент родителя (управление уведомлениями по детям).
+# Система его НИКОГДА не трогает.
+# notifications_blocked — устанавливается ТОЛЬКО автоматически
+# при TelegramForbiddenError и снимается автоматически при
+# активности пользователя (profile_repository.update_last_active).
+#
+# МИГРАЦИЯ: CREATE TABLE IF NOT EXISTS не меняет существующую БД,
+# поэтому для БД версий v1–v3 колонка добавляется через
+# ALTER TABLE (блок ниже). Свежие БД получают колонку сразу в CREATE.
+# ALTER TABLE ... ADD COLUMN с CHECK допустим в SQLite, если DEFAULT
+# проходит ограничение (0 IN (0,1) — проходит).
 
 import aiosqlite
 import logging
@@ -32,7 +26,7 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 
 class Database:
@@ -80,10 +74,7 @@ class Database:
 
     async def init_db(self) -> None:
         """
-        Создание схемы. Выполняется один раз при старте.
-
-        Все таймстемп-колонки NOT NULL и БЕЗ DEFAULT:
-        значения всегда передаёт TimeService через Python.
+        Создание схемы + миграции. Выполняется один раз при старте.
         """
         async with aiosqlite.connect(self.db_path) as db:
             await db.execute("PRAGMA foreign_keys = ON")
@@ -113,6 +104,8 @@ class Database:
                     teacher_id TEXT,
                     is_notifications_enabled INTEGER NOT NULL DEFAULT 1
                         CHECK (is_notifications_enabled IN (0, 1)),
+                    notifications_blocked INTEGER NOT NULL DEFAULT 0
+                        CHECK (notifications_blocked IN (0, 1)),
                     morning_summary_time TEXT,
                     pre_lesson_offset_minutes INTEGER NOT NULL DEFAULT 10
                         CHECK (pre_lesson_offset_minutes BETWEEN 0 AND 180),
@@ -132,6 +125,29 @@ class Database:
                     FOREIGN KEY (family_id) REFERENCES families(id)
                 )
             """)
+
+            # ==========================================================
+            # МИГРАЦИЯ v4: notifications_blocked для существующих БД.
+            # CREATE TABLE IF NOT EXISTS не трогает уже созданные таблицы,
+            # поэтому колонку добавляем вручную, если её нет.
+            # ==========================================================
+            info_cursor = await db.execute("PRAGMA table_info(users)")
+            existing_columns = {
+                row[1]
+                for row in await info_cursor.fetchall()
+            }
+            if "notifications_blocked" not in existing_columns:
+                await db.execute(
+                    """
+                    ALTER TABLE users
+                    ADD COLUMN notifications_blocked INTEGER NOT NULL
+                        DEFAULT 0
+                        CHECK (notifications_blocked IN (0, 1))
+                    """
+                )
+                logger.info(
+                    "Migration v4: column users.notifications_blocked added."
+                )
 
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS student_profiles (

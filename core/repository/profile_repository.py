@@ -109,19 +109,28 @@ class ProfileRepository(BaseRepository):
             """,
             (role, self._now_utc_str(), user_id),
         )
-
+        
     async def update_last_active(self, user_id: int) -> None:
         """
         Обновляет last_active_at.
+
+        Авто-разблокировка: активность пользователя
+        означает, что бот разблокирован. Заблокировавший бот
+        пользователь физиически не может отправить боту сообщение,
+        поэтому сброс notifications_blocked здесь безопасен и
+        не затрагивает is_notifications_enabled и родительские
+        настройки.
         """
         await self._execute(
             """
             UPDATE users
-            SET last_active_at = ?
+            SET last_active_at = ?,
+                notifications_blocked = 0
             WHERE user_id = ?
             """,
             (self._now_utc_str(), user_id),
         )
+
 
     async def get_user_row(self, user_id: int) -> Optional[Dict[str, Any]]:
         """
@@ -1126,6 +1135,7 @@ class ProfileRepository(BaseRepository):
                             global_extra_reminder = 30,
                             can_manage_own_extra_classes = 1,
                             is_notifications_enabled = 1,
+                            notifications_blocked = 0,
                             updated_at = ?
                         WHERE user_id = ?
                         """,
@@ -1406,6 +1416,7 @@ class ProfileRepository(BaseRepository):
                             global_extra_reminder = 30,
                             can_manage_own_extra_classes = 1,
                             is_notifications_enabled = 1,
+                            notifications_blocked = 0,
                             updated_at = ?
                         WHERE user_id = ?
                         """,

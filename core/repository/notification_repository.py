@@ -16,9 +16,15 @@
 #    AND recipient IN (...), точное членство кортежа проверяется в Python.
 #    Одиночный is_notification_delivered сохранён для редких вызовов.
 #
-# 4. НОВОЕ: disable_notifications_for_user — вызывается сервисом при
+# 4. get_blocked_user_ids — вызывается сервисом при
 #    TelegramForbiddenError (пользователь заблокировал бота), чтобы
 #    не продолжать бессмысленные попытки отправки каждый тик.
+
+# СЕМАНТИКА
+# - is_notifications_enabled — личный выключатель пользователя и
+#   инструмент родителя. Система его НЕ трогает.
+# - notifications_blocked — ТОЛЬКО системный маркер "пользователь
+#   заблокировал бот". Снимается автоматически при активности.
 
 from __future__ import annotations
 
@@ -616,26 +622,27 @@ class NotificationRepository(BaseRepository):
         )
         return changed == 1
 
-    async def disable_notifications_for_user(
+    async def mark_user_notifications_blocked(
         self,
         *,
         user_id: int,
     ) -> bool:
         """
-        Отключает уведомленияя пользователю.
+        Помечает пользователя как заблокировавшего бот.
 
-        Вызывается при TelegramForbiddenError (бот заблокирован):
-        нет смысла продолжать попытки отправки каждый тик.
-        Пользователь сможет снова включить уведомления в настройках,
-        если разблокирует бота.
+        ВАЖНО: is_notifications_enabled НЕ трогается — это личный
+        выключатель пользователя и инструмент родителя.
+        notifications_blocked — только системный маркер; он снимается
+        автоматически при активности пользователя
+        (profile_repository.update_last_active).
         """
         changed = await self._execute(
             """
             UPDATE users
-            SET is_notifications_enabled = 0,
+            SET notifications_blocked = 1,
                 updated_at = ?
             WHERE user_id = ?
-              AND is_notifications_enabled = 1
+              AND notifications_blocked = 0
             """,
             (
                 self._now_utc_str(),
@@ -643,6 +650,25 @@ class NotificationRepository(BaseRepository):
             ),
         )
         return changed == 1
+
+    async def get_blocked_user_ids(self) -> List[int]:
+        """
+        ID всех пользователей, заблокировавших бот.
+
+        Один дешёвый запрос на тик вместо добавления фильтра в каждый
+        recipient-запрос: при 500 пользователях скан таблицы тривиален.
+        Загружается заново каждый тик, поэтому авто-разблокировка при
+        активности подхватывается без перезапуска бота.
+        """
+        rows = await self._fetch_all(
+            """
+            SELECT user_id
+            FROM users
+            WHERE notifications_blocked = 1
+            """
+        )
+        return [int(row["user_id"]) for row in rows]
+
 
     async def delete_notification_delivery_before(
         self,
