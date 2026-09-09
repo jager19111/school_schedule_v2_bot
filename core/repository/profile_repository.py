@@ -1,7 +1,39 @@
 # core/repository/profile_repository.py
+#
+# РЕШЁННЫЕ ПРОБЛЕМЫ (Strict Time Governance для профильного домена):
+#
+# 1. Все CURRENT_TIMESTAMP удалены из SQL. Единственный источник
+#    времени — TimeService через self._now_utc_str(). Формат
+#    "YYYY-MM-DD HH:MM:SS" совпадает со старыми строками, поэтому
+#    миграция данных НЕ требуется.
+#
+# 2. expires_at инвайтов генерируется через TimeService
+#    (get_now_base + timedelta -> to_utc -> strftime), а не через
+#    datetime.now(timezone.utc) напрямую. Это делает TimeService
+#    единственной точкой времени и позволяет мокать его в тестах.
+#
+# 3. Проверки валидности инвайтов (expires_at > CURRENT_TIMESTAMP)
+#    заменены на сравнение с параметром now_utc — время генерирует
+#    приложение, а не СУБД.
+#
+# 4. Все INSERT теперь явно передают created_at/updated_at
+#    (дефолтов в схеме больше нет) — включая
+#    _ensure_parent_student_settings_for_family.
+#
+# 5. Транзакции (BEGIN/COMMIT) обёрнуты в self._write_lock():
+#    на shared-соединении транзакции разных корутин сериализуются.
+#    create_family_and_link и link_user_to_family дополнительно
+#    получили try/except ROLLBACK, которого не было (при ошибке
+#    соединение оставалось в открытом transaction).
+#
+# 6. Мелкое улучшение: UPDATE users (имя, класс/группа, время сводки,
+#    integer-настройки) теперь тоже проставляют updated_at.
+
 from __future__ import annotations
+
 import secrets
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
+
 import aiosqlite
 import logging
 import uuid
@@ -15,11 +47,11 @@ logger = logging.getLogger(__name__)
 class ProfileRepository(BaseRepository):
     """
     Репозиторий профилей пользователей и семей.
-
     Вся работа с таблицами users и families сосредоточена здесь.
     """
 
-    # users.last_active_at / created_at / updated_at и fetched_at уже покрываются BaseRepository
+    # users.last_active_at / created_at / updated_at и fetched_at
+    # уже покрываются BaseRepository
 
     # ========== USERS ==========
 
@@ -27,24 +59,55 @@ class ProfileRepository(BaseRepository):
         """
         Создаёт пользователя, если его нет, и проставляет last_active_at.
         """
-        async with self._connection() as db:
-            await db.execute(
-                "INSERT OR IGNORE INTO users (user_id) VALUES (?)",
-                (user_id,),
-            )
-            await db.execute(
-                "UPDATE users SET last_active_at = CURRENT_TIMESTAMP WHERE user_id = ?",
-                (user_id,),
-            )
-            await db.commit()
-# Возможно нужно удалить дублирующий метод update_user_role, так как он уже есть в ProfileService.
+        now_utc = self._now_utc_str()
+        async with self._write_lock():
+            async with self._connection() as db:
+                await db.execute("BEGIN")
+                try:
+                    await db.execute(
+                        """
+                        INSERT OR IGNORE INTO users (
+                            user_id,
+                            last_active_at,
+                            created_at,
+                            updated_at
+                        )
+                        VALUES (?, ?, ?, ?)
+                        """,
+                        (
+                            user_id,
+                            now_utc,
+                            now_utc,
+                            now_utc,
+                        ),
+                    )
+                    await db.execute(
+                        """
+                        UPDATE users
+                        SET last_active_at = ?
+                        WHERE user_id = ?
+                        """,
+                        (now_utc, user_id),
+                    )
+                    await db.commit()
+                except Exception:
+                    await db.rollback()
+                    raise
+
+    # Возможно нужно удалить дублирующий метод update_user_role,
+    # так как он уже есть в ProfileService.
     async def update_user_role(self, user_id: int, role: str) -> None:
         """
         Обновляет роль пользователя.
         """
         await self._execute(
-            "UPDATE users SET role = ? WHERE user_id = ?",
-            (role, user_id),
+            """
+            UPDATE users
+            SET role = ?,
+                updated_at = ?
+            WHERE user_id = ?
+            """,
+            (role, self._now_utc_str(), user_id),
         )
 
     async def update_last_active(self, user_id: int) -> None:
@@ -52,8 +115,12 @@ class ProfileRepository(BaseRepository):
         Обновляет last_active_at.
         """
         await self._execute(
-            "UPDATE users SET last_active_at = CURRENT_TIMESTAMP WHERE user_id = ?",
-            (user_id,),
+            """
+            UPDATE users
+            SET last_active_at = ?
+            WHERE user_id = ?
+            """,
+            (self._now_utc_str(), user_id),
         )
 
     async def get_user_row(self, user_id: int) -> Optional[Dict[str, Any]]:
@@ -80,7 +147,6 @@ class ProfileRepository(BaseRepository):
                 group_id,
                 teacher_id,
                 family_id,
-                
                 morning_summary_time,
                 pre_lesson_offset_minutes,
                 receive_schedule_changes,
@@ -100,8 +166,14 @@ class ProfileRepository(BaseRepository):
         Задаёт класс и группу ребёнка.
         """
         await self._execute(
-            "UPDATE users SET class_id = ?, group_id = ? WHERE user_id = ?",
-            (class_id, group_id, user_id),
+            """
+            UPDATE users
+            SET class_id = ?,
+                group_id = ?,
+                updated_at = ?
+            WHERE user_id = ?
+            """,
+            (class_id, group_id, self._now_utc_str(), user_id),
         )
 
     async def set_teacher_profile(
@@ -112,7 +184,6 @@ class ProfileRepository(BaseRepository):
     ) -> bool:
         """
         Финализирует Telegram teacher profile.
-
         Учитель не связан с family/student model:
         family_id, class_id и group_id очищаются.
         """
@@ -125,17 +196,17 @@ class ProfileRepository(BaseRepository):
                 class_id = NULL,
                 group_id = NULL,
                 teacher_id = ?,
-                updated_at = CURRENT_TIMESTAMP
+                updated_at = ?
             WHERE user_id = ?
             """,
             (
                 teacher_id,
+                self._now_utc_str(),
                 user_id,
             ),
         )
-
         return changed == 1
-    
+
     async def _ensure_parent_student_settings_for_family(
         self,
         *,
@@ -144,57 +215,56 @@ class ProfileRepository(BaseRepository):
     ) -> None:
         """
         Создаёт недостающие связи adult → student profile.
-
         Вызывается при вступлении нового parent/observer в семью.
-
         Parent:
         - может управлять допзанятиями по умолчанию.
-
         Observer:
         - видит student profiles и получает subscriptions;
         - не может редактировать кружки по умолчанию.
         """
+        now_utc = self._now_utc_str()
         await db.execute(
             """
             INSERT OR IGNORE INTO parent_student_settings (
                 parent_user_id,
                 student_id,
-
                 receive_morning_summary,
                 receive_pre_lesson_reminders,
                 receive_schedule_changes,
                 receive_extra_class_reminders,
-
                 child_notification_settings_locked,
-                can_manage_extra_classes
+                can_manage_extra_classes,
+                created_at,
+                updated_at
             )
             SELECT
                 adult.user_id,
                 student.id,
-
                 1,
                 1,
                 1,
                 1,
-
                 0,
-
                 CASE
                     WHEN adult.role = 'parent' THEN 1
                     ELSE 0
-                END
-
+                END,
+                ?,
+                ?
             FROM users AS adult
             JOIN student_profiles AS student
                 ON student.family_id = adult.family_id
-
             WHERE adult.family_id = ?
             AND adult.role IN ('parent', 'observer')
             AND student.is_active = 1
             """,
-            (family_id,),
+            (
+                now_utc,
+                now_utc,
+                family_id,
+            ),
         )
-            
+
     # ========== FAMILIES ==========
 
     async def is_family_admin(
@@ -214,9 +284,8 @@ class ProfileRepository(BaseRepository):
             """,
             (family_id, user_id),
         )
-
         return row is not None
- 
+
     async def create_family_invite(
         self,
         *,
@@ -228,71 +297,70 @@ class ProfileRepository(BaseRepository):
     ) -> Optional[Dict[str, Any]]:
         """
         Создаёт одноразовое приглашение с фиксированной ролью.
-
-        Только family admin может выпускать invite.
+        Только family admin может выпускаать invite.
         """
         allowed_roles = {
             "child",
             "parent",
             "observer",
         }
-
         if intended_role not in allowed_roles:
             raise ValueError(
                 f"Unsupported invite role: {intended_role}"
             )
-
         if not 1 <= max_uses <= 10:
             raise ValueError(
                 "max_uses must be in range 1..10"
             )
-
         if not 1 <= expires_in_hours <= 168:
             raise ValueError(
                 "expires_in_hours must be in range 1..168"
             )
-
         is_admin = await self.is_family_admin(
             user_id=created_by_user_id,
             family_id=family_id,
         )
-
         if not is_admin:
             return None
 
         token = secrets.token_urlsafe(24)
 
-        expires_at = (
-            datetime.now(timezone.utc)
-            + timedelta(hours=expires_in_hours)
-        ).strftime("%Y-%m-%d %H:%M:%S")
+        # Time Governance: expiry считается от TimeService,
+        # а не от системных часов напрямую.
+        now_base = self.time_service.get_now_base()
+        expires_utc = self.time_service.to_utc(
+            now_base + timedelta(hours=expires_in_hours),
+        )
+        expires_at_str = expires_utc.strftime("%Y-%m-%d %H:%M:%S")
+        now_utc = self._now_utc_str()
 
-        async with self._connection() as db:
-            cursor = await db.execute(
-                """
-                INSERT INTO family_invites (
-                    token,
-                    family_id,
-                    created_by_user_id,
-                    intended_role,
-                    expires_at,
-                    max_uses
+        async with self._write_lock():
+            async with self._connection() as db:
+                cursor = await db.execute(
+                    """
+                    INSERT INTO family_invites (
+                        token,
+                        family_id,
+                        created_by_user_id,
+                        intended_role,
+                        expires_at,
+                        max_uses,
+                        created_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        token,
+                        family_id,
+                        created_by_user_id,
+                        intended_role,
+                        expires_at_str,
+                        max_uses,
+                        now_utc,
+                    ),
                 )
-                VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    token,
-                    family_id,
-                    created_by_user_id,
-                    intended_role,
-                    expires_at,
-                    max_uses,
-                ),
-            )
-
-            await db.commit()
-
-            invite_id = cursor.lastrowid
+                await db.commit()
+                invite_id = cursor.lastrowid
 
         return await self._fetch_one(
             """
@@ -318,13 +386,13 @@ class ProfileRepository(BaseRepository):
     ) -> Optional[Dict[str, Any]]:
         """
         Возвращает активное invite, которое можно использовать.
-
         Проверяет:
         - invite не отозван;
         - срок не истёк;
         - uses_count меньше max_uses;
         - семья ещё существует.
         """
+        now_utc = self._now_utc_str()
         return await self._fetch_one(
             """
             SELECT
@@ -336,7 +404,6 @@ class ProfileRepository(BaseRepository):
                 invite.max_uses,
                 invite.uses_count,
                 invite.is_revoked,
-
                 family.family_code,
                 family.admin_user_id
             FROM family_invites AS invite
@@ -344,10 +411,13 @@ class ProfileRepository(BaseRepository):
               ON family.id = invite.family_id
             WHERE invite.token = ?
               AND invite.is_revoked = 0
-              AND invite.expires_at > CURRENT_TIMESTAMP
+              AND invite.expires_at > ?
               AND invite.uses_count < invite.max_uses
             """,
-            (token,),
+            (
+                token,
+                now_utc,
+            ),
         )
 
     async def consume_family_invite(
@@ -361,207 +431,205 @@ class ProfileRepository(BaseRepository):
     ) -> Optional[Dict[str, Any]]:
         """
         Атомарно применяет invite к Telegram-пользователю.
-
         Для child invite нужны class_id и group_id.
         Для parent/observer invite class/group должны быть None.
-
         Возвращает {family_id, intended_role} при успехе.
         Возвращает None, если invite истёк, отозван, использован либо
         пользователь уже состоит в семье.
         """
-        async with self._connection() as db:
-            await db.execute("BEGIN")
+        now_utc = self._now_utc_str()
 
-            try:
-                invite_cursor = await db.execute(
-                    """
-                    SELECT
-                        id,
-                        family_id,
-                        intended_role,
-                        max_uses,
-                        uses_count
-                    FROM family_invites
-                    WHERE token = ?
-                      AND is_revoked = 0
-                      AND expires_at > CURRENT_TIMESTAMP
-                      AND uses_count < max_uses
-                    """,
-                    (token,),
-                )
-
-                invite = await invite_cursor.fetchone()
-
-                if invite is None:
-                    await db.rollback()
-                    return None
-
-                invite_id = invite["id"]
-                family_id = invite["family_id"]
-                intended_role = invite["intended_role"]
-
-                user_cursor = await db.execute(
-                    """
-                    SELECT
-                        user_id,
-                        family_id
-                    FROM users
-                    WHERE user_id = ?
-                    """,
-                    (user_id,),
-                )
-
-                user = await user_cursor.fetchone()
-
-                if user is None:
-                    await db.rollback()
-                    return None
-
-                # Не позволяем silently переместить существующего члена семьи
-                # в другую семью через forwarded invite.
-                if user["family_id"] is not None:
-                    await db.rollback()
-                    return None
-
-                if intended_role == "child":
-                    if not class_id or not group_id:
-                        await db.rollback()
-                        raise ValueError(
-                            "Child invite requires class_id and group_id"
-                        )
-                else:
-                    class_id = None
-                    group_id = None
-
-                # Ключевой optimistic lock:
-                # один invite может быть потреблён только ограниченное число раз.
-                consume_cursor = await db.execute(
-                    """
-                    UPDATE family_invites
-                    SET
-                        uses_count = uses_count + 1,
-                        used_by_user_id = ?,
-                        used_at = CURRENT_TIMESTAMP
-                    WHERE id = ?
-                      AND is_revoked = 0
-                      AND expires_at > CURRENT_TIMESTAMP
-                      AND uses_count < max_uses
-                    """,
-                    (user_id, invite_id),
-                )
-
-                if consume_cursor.rowcount != 1:
-                    await db.rollback()
-                    return None
-
-                await db.execute(
-                    """
-                    UPDATE users
-                    SET
-                        name = ?,
-                        family_id = ?,
-                        role = ?,
-                        class_id = ?,
-                        group_id = ?,
-                        updated_at = CURRENT_TIMESTAMP
-                    WHERE user_id = ?
-                    """,
-                    (
-                        name,
-                        family_id,
-                        intended_role,
-                        class_id,
-                        group_id,
-                        user_id,
-                    ),
-                )
-
-                # ---------------------------------------------------------
-                # S11.2a:
-                # Existing standalone child profile becomes a family profile.
-                #
-                # Важно:
-                # - ID student_profile сохраняется;
-                # - Telegram binding сохраняется;
-                # - extra_classes остаются у того же student_id;
-                # - только family context обновляется.
-                # ---------------------------------------------------------
-                if intended_role == "child":
-                    standalone_cursor = await db.execute(
+        async with self._write_lock():
+            async with self._connection() as db:
+                await db.execute("BEGIN")
+                try:
+                    invite_cursor = await db.execute(
                         """
                         SELECT
-                            id
-                        FROM student_profiles
-                        WHERE telegram_user_id = ?
-                        AND family_id IS NULL
-                        AND is_active = 1
+                            id,
+                            family_id,
+                            intended_role,
+                            max_uses,
+                            uses_count
+                        FROM family_invites
+                        WHERE token = ?
+                          AND is_revoked = 0
+                          AND expires_at > ?
+                          AND uses_count < max_uses
+                        """,
+                        (
+                            token,
+                            now_utc,
+                        ),
+                    )
+                    invite = await invite_cursor.fetchone()
+                    if invite is None:
+                        await db.rollback()
+                        return None
+                    invite_id = invite["id"]
+                    family_id = invite["family_id"]
+                    intended_role = invite["intended_role"]
+
+                    user_cursor = await db.execute(
+                        """
+                        SELECT
+                            user_id,
+                            family_id
+                        FROM users
+                        WHERE user_id = ?
                         """,
                         (user_id,),
                     )
+                    user = await user_cursor.fetchone()
+                    if user is None:
+                        await db.rollback()
+                        return None
 
-                    standalone_student = await standalone_cursor.fetchone()
+                    # Не позволя silently переместить существующего члена семьи
+                    # в другую семью через forwarded invite.
+                    if user["family_id"] is not None:
+                        await db.rollback()
+                        return None
 
-                    if standalone_student is not None:
-                        standalone_student_id = standalone_student["id"]
+                    if intended_role == "child":
+                        if not class_id or not group_id:
+                            await db.rollback()
+                            raise ValueError(
+                                "Child invite requires class_id and group_id"
+                            )
+                    else:
+                        class_id = None
+                        group_id = None
 
-                        profile_cursor = await db.execute(
+                    # Ключевой optimistic lock:
+                    # один invite может быть потреблён только ограниченное число раз.
+                    consume_cursor = await db.execute(
+                        """
+                        UPDATE family_invites
+                        SET
+                            uses_count = uses_count + 1,
+                            used_by_user_id = ?,
+                            used_at = ?
+                        WHERE id = ?
+                          AND is_revoked = 0
+                          AND expires_at > ?
+                          AND uses_count < max_uses
+                        """,
+                        (
+                            user_id,
+                            now_utc,
+                            invite_id,
+                            now_utc,
+                        ),
+                    )
+                    if consume_cursor.rowcount != 1:
+                        await db.rollback()
+                        return None
+
+                    await db.execute(
+                        """
+                        UPDATE users
+                        SET
+                            name = ?,
+                            family_id = ?,
+                            role = ?,
+                            class_id = ?,
+                            group_id = ?,
+                            updated_at = ?
+                        WHERE user_id = ?
+                        """,
+                        (
+                            name,
+                            family_id,
+                            intended_role,
+                            class_id,
+                            group_id,
+                            now_utc,
+                            user_id,
+                        ),
+                    )
+
+                    # ---------------------------------------------------------
+                    # S11.2a:
+                    # Existing standalone child profile becomes a family profile.
+                    #
+                    # Важно:
+                    # - ID student_profile сохраняется;
+                    # - Telegram binding сохраняется;
+                    # - extra_classes остаются у того же student_id;
+                    # - только family context обновляется.
+                    # ---------------------------------------------------------
+                    if intended_role == "child":
+                        standalone_cursor = await db.execute(
                             """
-                            UPDATE student_profiles
-                            SET
-                                family_id = ?,
-                                name = ?,
-                                class_id = ?,
-                                group_id = ?,
-                                updated_at = CURRENT_TIMESTAMP
-                            WHERE id = ?
-                            AND telegram_user_id = ?
+                            SELECT
+                                id
+                            FROM student_profiles
+                            WHERE telegram_user_id = ?
                             AND family_id IS NULL
                             AND is_active = 1
                             """,
-                            (
-                                family_id,
-                                name,
-                                class_id,
-                                group_id,
-                                standalone_student_id,
-                                user_id,
-                            ),
+                            (user_id,),
                         )
+                        standalone_student = await standalone_cursor.fetchone()
+                        if standalone_student is not None:
+                            standalone_student_id = standalone_student["id"]
+                            profile_cursor = await db.execute(
+                                """
+                                UPDATE student_profiles
+                                SET
+                                    family_id = ?,
+                                    name = ?,
+                                    class_id = ?,
+                                    group_id = ?,
+                                    updated_at = ?
+                                WHERE id = ?
+                                AND telegram_user_id = ?
+                                AND family_id IS NULL
+                                AND is_active = 1
+                                """,
+                                (
+                                    family_id,
+                                    name,
+                                    class_id,
+                                    group_id,
+                                    now_utc,
+                                    standalone_student_id,
+                                    user_id,
+                                ),
+                            )
+                            if profile_cursor.rowcount != 1:
+                                await db.rollback()
+                                return None
+                            # student_id не меняется. Занятия принадлежат profile,
+                            # поэтому они сохраняются. Обновляем только family context.
+                            await db.execute(
+                                """
+                                UPDATE extra_classes
+                                SET
+                                    family_id = ?,
+                                    updated_at = ?
+                                WHERE student_id = ?
+                                """,
+                                (
+                                    family_id,
+                                    now_utc,
+                                    standalone_student_id,
+                                ),
+                            )
 
-                        if profile_cursor.rowcount != 1:
-                            await db.rollback()
-                            return None
-
-                        # student_id не меняется. Занятия принадлежат profile,
-                        # поэтому они сохраняются. Обновляем только family context.
-                        await db.execute(
-                            """
-                            UPDATE extra_classes
-                            SET
-                                family_id = ?,
-                                updated_at = CURRENT_TIMESTAMP
-                            WHERE student_id = ?
-                            """,
-                            (
-                                family_id,
-                                standalone_student_id,
-                            ),
-                        )
-
-                await self._ensure_parent_student_settings_for_family(
-                    db=db,
-                    family_id=family_id,
-                )
-                await db.commit()
-
-                return {
-                    "family_id": family_id,
-                    "intended_role": intended_role,
-                }
-
-            except Exception:
-                await db.rollback()
-                raise
+                    await self._ensure_parent_student_settings_for_family(
+                        db=db,
+                        family_id=family_id,
+                    )
+                    await db.commit()
+                    return {
+                        "family_id": family_id,
+                        "intended_role": intended_role,
+                    }
+                except Exception:
+                    await db.rollback()
+                    raise
 
     async def get_active_family_invites(
         self,
@@ -571,10 +639,10 @@ class ProfileRepository(BaseRepository):
     ) -> List[Dict[str, Any]]:
         """
         Возвращает активные неиспользованные приглашения семьи.
-
         Запрос сам проверяет admin_user_id, чтобы observer или обычный
         parent не смогли получить список через поддельный callback.
         """
+        now_utc = self._now_utc_str()
         return await self._fetch_all(
             """
             SELECT
@@ -589,23 +657,20 @@ class ProfileRepository(BaseRepository):
                 invite.created_at,
                 invite.used_by_user_id,
                 invite.used_at
-
             FROM family_invites AS invite
-
             JOIN families AS family
               ON family.id = invite.family_id
-
             WHERE invite.family_id = ?
               AND family.admin_user_id = ?
               AND invite.is_revoked = 0
-              AND invite.expires_at > CURRENT_TIMESTAMP
+              AND invite.expires_at > ?
               AND invite.uses_count < invite.max_uses
-
             ORDER BY invite.created_at DESC, invite.id DESC
             """,
             (
                 family_id,
                 admin_user_id,
+                now_utc,
             ),
         )
 
@@ -620,6 +685,7 @@ class ProfileRepository(BaseRepository):
         Возвращает invite только если он принадлежит семье текущего admin
         и ещё пригоден для использования.
         """
+        now_utc = self._now_utc_str()
         return await self._fetch_one(
             """
             SELECT
@@ -634,23 +700,21 @@ class ProfileRepository(BaseRepository):
                 invite.created_at,
                 invite.used_by_user_id,
                 invite.used_at
-
             FROM family_invites AS invite
-
             JOIN families AS family
               ON family.id = invite.family_id
-
             WHERE invite.id = ?
               AND invite.family_id = ?
               AND family.admin_user_id = ?
               AND invite.is_revoked = 0
-              AND invite.expires_at > CURRENT_TIMESTAMP
+              AND invite.expires_at > ?
               AND invite.uses_count < invite.max_uses
             """,
             (
                 invite_id,
                 family_id,
                 admin_user_id,
+                now_utc,
             ),
         )
 
@@ -663,7 +727,6 @@ class ProfileRepository(BaseRepository):
     ) -> bool:
         """
         Отзывает неиспользованное invite.
-
         Использованный invite отзывать бессмысленно: его token уже невалиден
         из-за uses_count == max_uses.
         """
@@ -690,77 +753,83 @@ class ProfileRepository(BaseRepository):
                 admin_user_id,
             ),
         )
-
         return changed == 1
-                                                    
+
     async def create_family_and_link(self, admin_user_id: int) -> str:
         """
         Создаёт новую семью и привязывает создателя как администратора-родителя.
-
         На момент создания семьи детей ещё нет, поэтому строки
         parent_student_settings не создаются. Они появятся автоматически,
         когда к семье присоединится ребёнок.
         """
         family_code = str(uuid.uuid4())[:8].upper()
-
-        async with self._connection() as db:
-            await db.execute("BEGIN")
-
-            user_row = await (
-                await db.execute(
-                    """
-                    SELECT user_id
-                    FROM users
-                    WHERE user_id = ?
-                    """,
-                    (admin_user_id,),
-                )
-            ).fetchone()
-
-            if user_row is None:
-                raise ValueError(
-                    f"Cannot create family for missing user: {admin_user_id}"
-                )
-
-            cursor = await db.execute(
-                """
-                INSERT INTO families (
-                    family_code,
-                    admin_user_id,
-                    created_at,
-                    updated_at
-                )
-                VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-                """,
-                (family_code, admin_user_id),
-            )
-
-            family_id = cursor.lastrowid
-
-            await db.execute(
-                """
-                UPDATE users
-                SET family_id = ?,
-                    role = 'parent',
-                    updated_at = CURRENT_TIMESTAMP
-                WHERE user_id = ?
-                """,
-                (family_id, admin_user_id),
-            )
-
-            await db.commit()
-
+        now_utc = self._now_utc_str()
+        async with self._write_lock():
+            async with self._connection() as db:
+                await db.execute("BEGIN")
+                try:
+                    user_row = await (
+                        await db.execute(
+                            """
+                            SELECT user_id
+                            FROM users
+                            WHERE user_id = ?
+                            """,
+                            (admin_user_id,),
+                        )
+                    ).fetchone()
+                    if user_row is None:
+                        await db.rollback()
+                        raise ValueError(
+                            f"Cannot create family for missing user: {admin_user_id}"
+                        )
+                    cursor = await db.execute(
+                        """
+                        INSERT INTO families (
+                            family_code,
+                            admin_user_id,
+                            created_at,
+                            updated_at
+                        )
+                        VALUES (?, ?, ?, ?)
+                        """,
+                        (
+                            family_code,
+                            admin_user_id,
+                            now_utc,
+                            now_utc,
+                        ),
+                    )
+                    family_id = cursor.lastrowid
+                    await db.execute(
+                        """
+                        UPDATE users
+                        SET family_id = ?,
+                            role = 'parent',
+                            updated_at = ?
+                        WHERE user_id = ?
+                        """,
+                        (
+                            family_id,
+                            now_utc,
+                            admin_user_id,
+                        ),
+                    )
+                    await db.commit()
+                except Exception:
+                    await db.rollback()
+                    raise
         return family_code
-# legacy метод, который создаёт семью и привязывает пользователя. Для обратной совместимости оставлен
+
+    # legacy метод, который создаёт семью и привязывает пользователя. Для обратной совместимости оставлен
     async def get_family_by_code(self, family_code: str) -> Optional[Dict[str, Any]]:
-        """
-        Возвращает семью по коду.
-        """
+        """Возвращает семью по коду."""
         return await self._fetch_one(
             "SELECT id, family_code, admin_user_id FROM families WHERE family_code = ?",
             (family_code,),
         )
-# Рабочий core method, оставить
+
+    # Рабочий core method, оставить
     async def link_user_to_family(
         self,
         user_id: int,
@@ -770,82 +839,93 @@ class ProfileRepository(BaseRepository):
         """
         Привязывает пользователя к семье и создаёт все недостающие
         связи взрослый → ребёнок.
-
         Допустимые сценарии:
         - child подключается к существующей семье;
         - parent подключается к существующей семье;
         - observer подключается к существующей семье.
-
         После операции каждая пара:
             parent/observer × child
         в рамках семьи существует в parent_student_settings.
         """
         allowed_roles = {"child", "parent", "observer"}
-
         if role not in allowed_roles:
             raise ValueError(f"Unsupported family role: {role}")
-
-        async with self._connection() as db:
-            await db.execute("BEGIN")
-
-            family_row = await (
-                await db.execute(
-                    """
-                    SELECT id
-                    FROM families
-                    WHERE id = ?
-                    """,
-                    (family_id,),
-                )
-            ).fetchone()
-
-            if family_row is None:
-                raise ValueError(f"Family does not exist: family_id={family_id}")
-
-            user_row = await (
-                await db.execute(
-                    """
-                    SELECT user_id
-                    FROM users
-                    WHERE user_id = ?
-                    """,
-                    (user_id,),
-                )
-            ).fetchone()
-
-            if user_row is None:
-                raise ValueError(f"User does not exist: user_id={user_id}")
-
-            await db.execute(
-                """
-                UPDATE users
-                SET family_id = ?,
-                    role = ?,
-                    updated_at = CURRENT_TIMESTAMP
-                WHERE user_id = ?
-                """,
-                (family_id, role, user_id),
-            )
-
-            await self._ensure_parent_student_settings_for_family(
-                db=db,
-                family_id=family_id,
-            )
-            await db.commit()
-
+        now_utc = self._now_utc_str()
+        async with self._write_lock():
+            async with self._connection() as db:
+                await db.execute("BEGIN")
+                try:
+                    family_row = await (
+                        await db.execute(
+                            """
+                            SELECT id
+                            FROM families
+                            WHERE id = ?
+                            """,
+                            (family_id,),
+                        )
+                    ).fetchone()
+                    if family_row is None:
+                        await db.rollback()
+                        raise ValueError(f"Family does not exist: family_id={family_id}")
+                    user_row = await (
+                        await db.execute(
+                            """
+                            SELECT user_id
+                            FROM users
+                            WHERE user_id = ?
+                            """,
+                            (user_id,),
+                        )
+                    ).fetchone()
+                    if user_row is None:
+                        await db.rollback()
+                        raise ValueError(f"User does not exist: user_id={user_id}")
+                    await db.execute(
+                        """
+                        UPDATE users
+                        SET family_id = ?,
+                            role = ?,
+                            updated_at = ?
+                        WHERE user_id = ?
+                        """,
+                        (
+                            family_id,
+                            role,
+                            now_utc,
+                            user_id,
+                        ),
+                    )
+                    await self._ensure_parent_student_settings_for_family(
+                        db=db,
+                        family_id=family_id,
+                    )
+                    await db.commit()
+                except Exception:
+                    await db.rollback()
+                    raise
 
     # ========== CHILDREN LIST ==========
 
     async def update_user_name(self, user_id: int, name: str) -> None:
         """Сохраняет имя пользователя."""
         await self._execute(
-            "UPDATE users SET name = ? WHERE user_id = ?",
-            (name, user_id),
+            """
+            UPDATE users
+            SET name = ?,
+                updated_at = ?
+            WHERE user_id = ?
+            """,
+            (name, self._now_utc_str(), user_id),
         )
-# для переключения флагов (toggles) и получения family_code по ID, чтобы изолировать SQL от хендлеров.
 
+    # для переключения флагов (toggles) и получения family_code по ID,
+    # чтобы изолировать SQL от хендлеров.
     async def get_family_code_by_id(self, family_id: int) -> str | None:
-        row = await self._fetch_one("SELECT family_code FROM families WHERE id = ?", (family_id,))
+        row = await self._fetch_one(
+            "SELECT family_code FROM families WHERE id = ?",
+            (family_id,),
+        )
         return row["family_code"] if row else None
 
     async def toggle_boolean_flag(
@@ -862,12 +942,10 @@ class ProfileRepository(BaseRepository):
             "receive_extra_class_reminders",
             "can_manage_own_extra_classes",
         }
-
         if field_name not in allowed_fields:
             raise ValueError(
                 f"Unsupported boolean user field: {field_name}"
             )
-
         await self._execute(
             f"""
             UPDATE users
@@ -876,29 +954,35 @@ class ProfileRepository(BaseRepository):
                     WHEN {field_name} = 1 THEN 0
                     ELSE 1
                 END,
-                updated_at = CURRENT_TIMESTAMP
+                updated_at = ?
             WHERE user_id = ?
             """,
-            (user_id,),
+            (
+                self._now_utc_str(),
+                user_id,
+            ),
         )
-            
- # Сводка       
+
+    # Сводка
     async def update_morning_summary_time(self, user_id: int, time_str: str | None) -> None:
         """Обновляет время утренней сводки. Если None - сводка выключена."""
         await self._execute(
-            "UPDATE users SET morning_summary_time = ? WHERE user_id = ?",
-            (time_str, user_id),
+            """
+            UPDATE users
+            SET morning_summary_time = ?,
+                updated_at = ?
+            WHERE user_id = ?
+            """,
+            (time_str, self._now_utc_str(), user_id),
         )
-        
-    # Перерегистрация   
 
+    # Перерегистрация
     async def get_profile_reset_impact(
         self,
         user_id: int,
     ) -> Optional[Dict[str, Any]]:
         """
         Возвращает последствия перерегистрации пользователя.
-
         Никаких изменений БД не выполняет. Нужен только для confirmation UI.
         """
         return await self._fetch_one(
@@ -907,31 +991,26 @@ class ProfileRepository(BaseRepository):
                 u.user_id,
                 u.role,
                 u.family_id,
-
                 CASE
                     WHEN family.admin_user_id = u.user_id THEN 1
                     ELSE 0
                 END AS is_family_admin,
-
                 (
                     SELECT COUNT(*)
                     FROM users AS family_member
                     WHERE family_member.family_id = u.family_id
                 ) AS family_members_count,
-
                 (
                     SELECT COUNT(*)
                     FROM users AS child
                     WHERE child.family_id = u.family_id
                       AND child.role = 'child'
                 ) AS children_count,
-
                 (
                     SELECT COUNT(*)
                     FROM extra_classes AS family_extra
                     WHERE family_extra.family_id = u.family_id
                 ) AS family_extra_classes_count,
-
                 (
                     SELECT COUNT(*)
                     FROM extra_classes AS own_extra
@@ -939,140 +1018,135 @@ class ProfileRepository(BaseRepository):
                         ON own_student.id = own_extra.student_id
                     WHERE own_student.telegram_user_id = u.user_id
                 ) AS own_extra_classes_count
-
             FROM users AS u
-
             LEFT JOIN families AS family
               ON family.id = u.family_id
-
             WHERE u.user_id = ?
             """,
             (user_id,),
         )
-            
+
     async def reset_non_admin_user(
         self,
         user_id: int,
     ) -> bool:
         """
         Сбрасывает профиль обычного участника семьи.
-
         Возможные роли:
         - child;
         - parent, который не является family admin;
         - observer.
-
         Пользователь отвязывается от семьи. Семья и остальные участники
         продолжают работать.
         """
-        async with self._connection() as db:
-            await db.execute("BEGIN")
+        now_utc = self._now_utc_str()
+        async with self._write_lock():
+            async with self._connection() as db:
+                await db.execute("BEGIN")
+                try:
+                    user_cursor = await db.execute(
+                        """
+                        SELECT
+                            user_id,
+                            role,
+                            family_id
+                        FROM users
+                        WHERE user_id = ?
+                        """,
+                        (user_id,),
+                    )
+                    user = await user_cursor.fetchone()
+                    if user is None:
+                        await db.rollback()
+                        return False
+                    user_role = user["role"]
+                    family_id = user["family_id"]
 
-            user_cursor = await db.execute(
-                """
-                SELECT
-                    user_id,
-                    role,
-                    family_id
-                FROM users
-                WHERE user_id = ?
-                """,
-                (user_id,),
-            )
+                    admin_cursor = await db.execute(
+                        """
+                        SELECT 1
+                        FROM families
+                        WHERE admin_user_id = ?
+                        """,
+                        (user_id,),
+                    )
+                    is_admin = await admin_cursor.fetchone() is not None
+                    if is_admin:
+                        await db.rollback()
+                        raise ValueError(
+                            "Family admin must use disband_family_by_admin"
+                        )
 
-            user = await user_cursor.fetchone()
-
-            if user is None:
-                await db.rollback()
-                return False
-
-            user_role = user["role"]
-            family_id = user["family_id"]
-
-            admin_cursor = await db.execute(
-                """
-                SELECT 1
-                FROM families
-                WHERE admin_user_id = ?
-                """,
-                (user_id,),
-            )
-
-            is_admin = await admin_cursor.fetchone() is not None
-
-            if is_admin:
-                await db.rollback()
-                raise ValueError(
-                    "Family admin must use disband_family_by_admin"
-                )
-
-            # Если выходит ребёнок, его допзанятия нельзя оставить:
-            # extra_classes.family_id и user_id должны оставаться согласованными.
-            if user_role == "child" and family_id is not None:
-                """
-                Telegram child сбрасывает только Telegram-профиль.
-
-                student_profile и его extra_classes сохраняются:
-                профиль ученика превращается в virtual student.
-                """
-                await db.execute(
-                    """
-                    UPDATE student_profiles
-                    SET
-                        telegram_user_id = NULL,
-                        updated_at = CURRENT_TIMESTAMP
-                    WHERE telegram_user_id = ?
-                    """,
-                    (user_id,),
-                )
-
-            if user_role in ("parent", "observer"):
-                await db.execute(
-                    """
-                    DELETE FROM parent_student_settings
-                    WHERE parent_user_id = ?
-                    """,
-                    (user_id,),
-                )
-    
-            # Роль сохраняем допустимой для CHECK constraint.
-            # class/group очищаются, чтобы /start распознал профиль
-            # как незавершённо зарегистрированный.
-            await db.execute(
-                """
-                UPDATE users
-                SET
-                    role = 'child',
-                    family_id = NULL,
-                    class_id = NULL,
-                    group_id = NULL,
-                    teacher_id = NULL,
-                    morning_summary_time = NULL,
-                    pre_lesson_offset_minutes = 10,
-                    receive_schedule_changes = 1,
-                    receive_extra_class_reminders = 1,
-                    changes_window_days = 3,
-                    global_extra_reminder = 30,
-                    can_manage_own_extra_classes = 1,
-                    is_notifications_enabled = 1,
-                    updated_at = CURRENT_TIMESTAMP
-                WHERE user_id = ?
-                """,
-                (user_id,),
-            )
-
-            # Очищаем историю отправленных уведомлений, чтобы при перерегистрации
-            # старые логи не блокировали новые рассылки
-            await db.execute(
-                """
-                DELETE FROM notification_delivery_log
-                WHERE recipient_id = ?
-                """,
-                (user_id,),
-            )
-
-            await db.commit()
-
+                    # Если выходит ребёнок, его допзанятия нельзя оставить:
+                    # extra_classes.family_id и user_id должны оставаться согласованными.
+                    if user_role == "child" and family_id is not None:
+                        """
+                        Telegram child сбрасывает только Telegram-профиль.
+                        student_profile и его extra_classes сохраняются:
+                        профиль ученика превращается в virtual student.
+                        """
+                        await db.execute(
+                            """
+                            UPDATE student_profiles
+                            SET
+                                telegram_user_id = NULL,
+                                updated_at = ?
+                            WHERE telegram_user_id = ?
+                            """,
+                            (
+                                now_utc,
+                                user_id,
+                            ),
+                        )
+                    if user_role in ("parent", "observer"):
+                        await db.execute(
+                            """
+                            DELETE FROM parent_student_settings
+                            WHERE parent_user_id = ?
+                            """,
+                            (user_id,),
+                        )
+                    # Роль сохраняем допустимой для CHECK constraint.
+                    # class/group очищаются, чтобы /start распознал профиль
+                    # как незавершённоый.
+                    await db.execute(
+                        """
+                        UPDATE users
+                        SET
+                            role = 'child',
+                            family_id = NULL,
+                            class_id = NULL,
+                            group_id = NULL,
+                            teacher_id = NULL,
+                            morning_summary_time = NULL,
+                            pre_lesson_offset_minutes = 10,
+                            receive_schedule_changes = 1,
+                            receive_extra_class_reminders = 1,
+                            changes_window_days = 3,
+                            global_extra_reminder = 30,
+                            can_manage_own_extra_classes = 1,
+                            is_notifications_enabled = 1,
+                            updated_at = ?
+                        WHERE user_id = ?
+                        """,
+                        (
+                            now_utc,
+                            user_id,
+                        ),
+                    )
+                    # Очищаем историю отправленных уведомлений, чтобы при перерегистрации
+                    # старые логи не блокировали новые рассылки
+                    await db.execute(
+                        """
+                        DELETE FROM notification_delivery_log
+                        WHERE recipient_id = ?
+                        """,
+                        (user_id,),
+                    )
+                    await db.commit()
+                except Exception:
+                    await db.rollback()
+                    raise
         return True
 
     async def disband_family_by_admin(
@@ -1082,7 +1156,6 @@ class ProfileRepository(BaseRepository):
     ) -> bool:
         """
         Полностью расформировывает семью.
-
         Политика при расформировании:
         - Telegram-linked child profiles становятся standalone;
         - их class/group и extra_classes сохраняются;
@@ -1091,268 +1164,276 @@ class ProfileRepository(BaseRepository):
         - взрослые отвязываются от семьи;
         - family invites удаляются каскадно вместе с family.
         """
-        async with self._connection() as db:
-            await db.execute("BEGIN IMMEDIATE")
-
-            try:
-                family_cursor = await db.execute(
-                    """
-                    SELECT id
-                    FROM families
-                    WHERE admin_user_id = ?
-                    """,
-                    (admin_user_id,),
-                )
-
-                family = await family_cursor.fetchone()
-
-                if family is None:
-                    await db.rollback()
-                    return False
-
-                family_id = family["id"]
-
-                # -------------------------------------------------
-                # 1. Сохраняем Telegram-linked child profiles.
-                #
-                # Это реальные дети, которые должны продолжить
-                # пользоваться расписанием после распуска семьи.
-                # -------------------------------------------------
-                linked_children_cursor = await db.execute(
-                    """
-                    SELECT
-                        student.id,
-                        student.telegram_user_id
-                    FROM student_profiles AS student
-                    JOIN users AS child
-                        ON child.user_id = student.telegram_user_id
-                    WHERE student.family_id = ?
-                    AND student.telegram_user_id IS NOT NULL
-                    AND student.is_active = 1
-                    AND child.role = 'child'
-                    """,
-                    (family_id,),
-                )
-
-                linked_children = await linked_children_cursor.fetchall()
-
-                linked_student_ids = [
-                    row["id"]
-                    for row in linked_children
-                ]
-
-                # -------------------------------------------------
-                # 2. Сохраняем Telegram user IDs для cleanup
-                # notification_delivery_log.
-                # -------------------------------------------------
-                members_cursor = await db.execute(
-                    """
-                    SELECT user_id
-                    FROM users
-                    WHERE family_id = ?
-                    """,
-                    (family_id,),
-                )
-
-                members = await members_cursor.fetchall()
-
-                member_user_ids = [
-                    row["user_id"]
-                    for row in members
-                ]
-
-                # -------------------------------------------------
-                # 3. Удаляем family access rows.
-                #
-                # Нельзя оставлять parent_student_settings:
-                # после удаления family adult и student profile
-                # больше не принадлежат одной семье.
-                # -------------------------------------------------
-                await db.execute(
-                    """
-                    DELETE FROM parent_student_settings
-                    WHERE student_id IN (
+        now_utc = self._now_utc_str()
+        async with self._write_lock():
+            async with self._connection() as db:
+                await db.execute("BEGIN IMMEDIATE")
+                try:
+                    family_cursor = await db.execute(
+                        """
                         SELECT id
-                        FROM student_profiles
-                        WHERE family_id = ?
+                        FROM families
+                        WHERE admin_user_id = ?
+                        """,
+                        (admin_user_id,),
                     )
-                    OR parent_user_id IN (
+                    family = await family_cursor.fetchone()
+                    if family is None:
+                        await db.rollback()
+                        return False
+                    family_id = family["id"]
+
+                    # -------------------------------------------------
+                    # 1. Сохраняем Telegram-linked child profiles.
+                    #
+                    # Это реальные дети, которые должны продолжить
+                    # пользоваться расписанием после распуска семьи.
+                    # -------------------------------------------------
+                    linked_children_cursor = await db.execute(
+                        """
+                        SELECT
+                            student.id,
+                            student.telegram_user_id
+                        FROM student_profiles AS student
+                        JOIN users AS child
+                            ON child.user_id = student.telegram_user_id
+                        WHERE student.family_id = ?
+                        AND student.telegram_user_id IS NOT NULL
+                        AND student.is_active = 1
+                        AND child.role = 'child'
+                        """,
+                        (family_id,),
+                    )
+                    linked_children = await linked_children_cursor.fetchall()
+                    linked_student_ids = [
+                        row["id"]
+                        for row in linked_children
+                    ]
+
+                    # -------------------------------------------------
+                    # 2. Сохраняем Telegram user IDs для cleanup
+                    # notification_delivery_log.
+                    # -------------------------------------------------
+                    members_cursor = await db.execute(
+                        """
                         SELECT user_id
                         FROM users
                         WHERE family_id = ?
+                        """,
+                        (family_id,),
                     )
-                    """,
-                    (
-                        family_id,
-                        family_id,
-                    ),
-                )
+                    members = await members_cursor.fetchall()
+                    member_user_ids = [
+                        row["user_id"]
+                        for row in members
+                    ]
 
-                # -------------------------------------------------
-                # 4. Отвязываем extra_classes реальных детей
-                # от family context.
-                #
-                # student_id не меняется: занятия принадлежат
-                # конкретному student_profile.
-                # -------------------------------------------------
-                if linked_student_ids:
-                    placeholders = ", ".join(
-                        "?"
-                        for _ in linked_student_ids
-                    )
-
+                    # -------------------------------------------------
+                    # 3. Удаляем family access rows.
+                    #
+                    # Нельзя оставлять parent_student_settings:
+                    # после удаления family adult и student profile
+                    # больше не принадлежат одной семье.
+                    # -------------------------------------------------
                     await db.execute(
-                        f"""
-                        UPDATE extra_classes
+                        """
+                        DELETE FROM parent_student_settings
+                        WHERE student_id IN (
+                            SELECT id
+                            FROM student_profiles
+                            WHERE family_id = ?
+                        )
+                        OR parent_user_id IN (
+                            SELECT user_id
+                            FROM users
+                            WHERE family_id = ?
+                        )
+                        """,
+                        (
+                            family_id,
+                            family_id,
+                        ),
+                    )
+
+                    # -------------------------------------------------
+                    # 4. Отвязываем extra_classes реальных детей
+                    # от family context.
+                    #
+                    # student_id не меняется: занятия принадлежат
+                    # конкретному student_profile.
+                    # -------------------------------------------------
+                    if linked_student_ids:
+                        placeholders = ", ".join(
+                            "?"
+                            for _ in linked_student_ids
+                        )
+                        await db.execute(
+                            f"""
+                            UPDATE extra_classes
+                            SET
+                                family_id = NULL,
+                                updated_at = ?
+                            WHERE student_id IN ({placeholders})
+                            """,
+                            (
+                                now_utc,
+                                *linked_student_ids,
+                            ),
+                        )
+
+                    # -------------------------------------------------
+                    # 5. Telegram-linked child profiles становятся
+                    # standalone до DELETE FROM families.
+                    #
+                    # Без этого ON DELETE CASCADE удалит их.
+                    # -------------------------------------------------
+                    if linked_student_ids:
+                        placeholders = ", ".join(
+                            "?"
+                            for _ in linked_student_ids
+                        )
+                        await db.execute(
+                            f"""
+                            UPDATE student_profiles
+                            SET
+                                family_id = NULL,
+                                updated_at = ?
+                            WHERE id IN ({placeholders})
+                            AND telegram_user_id IS NOT NULL
+                            AND is_active = 1
+                            """,
+                            (
+                                now_utc,
+                                *linked_student_ids,
+                            ),
+                        )
+
+                    # -------------------------------------------------
+                    # 6. Удаляем virtual profiles, оставшиеся в семье.
+                    #
+                    # Это profiles без Telegram. Они не могут стать
+                    # самостоятельыми без реального child account.
+                    #
+                    # Их extra_classes удаляются каскадно.
+                    # -------------------------------------------------
+                    await db.execute(
+                        """
+                        DELETE FROM student_profiles
+                        WHERE family_id = ?
+                        """,
+                        (family_id,),
+                    )
+
+                    # -------------------------------------------------
+                    # 7. Отвязываем всех участников от family.
+                    #
+                    # Child users сохраняют class_id/group_id, поэтому
+                    # сразу остаются_whанными standalone child.
+                    # -------------------------------------------------
+                    await db.execute(
+                        """
+                        UPDATE users
                         SET
                             family_id = NULL,
-                            updated_at = CURRENT_TIMESTAMP
-                        WHERE student_id IN ({placeholders})
+                            updated_at = ?
+                        WHERE family_id = ?
                         """,
-                        tuple(linked_student_ids),
+                        (
+                            now_utc,
+                            family_id,
+                        ),
                     )
 
-                # -------------------------------------------------
-                # 5. Telegram-linked child profiles становятся
-                # standalone до DELETE FROM families.
-                #
-                # Без этого ON DELETE CASCADE удалит их.
-                # -------------------------------------------------
-                if linked_student_ids:
-                    placeholders = ", ".join(
-                        "?"
-                        for _ in linked_student_ids
-                    )
+                    # -------------------------------------------------
+                    # 8. Очищаем delivery logs всех бывших участников.
+                    # -------------------------------------------------
+                    if member_user_ids:
+                        placeholders = ", ".join(
+                            "?"
+                            for _ in member_user_ids
+                        )
+                        await db.execute(
+                            f"""
+                            DELETE FROM notification_delivery_log
+                            WHERE recipient_id IN ({placeholders})
+                            """,
+                            tuple(member_user_ids),
+                        )
 
+                    # -------------------------------------------------
+                    # 9. Теперь можно удалить семью.
+                    #
+                    # Family invites удалятся каскадно.
+                    # Virtual profiles уже удалены.
+                    # Linked child profiles уже family_id=NULL.
+                    # -------------------------------------------------
+                    delete_family_cursor = await db.execute(
+                        """
+                        DELETE FROM families
+                        WHERE id = ?
+                        AND admin_user_id = ?
+                        """,
+                        (
+                            family_id,
+                            admin_user_id,
+                        ),
+                    )
+                    if delete_family_cursor.rowcount != 1:
+                        await db.rollback()
+                        return False
+
+                    # -------------------------------------------------
+                    # 10. Бывший family admin становится незавершённым
+                    # standalone user. Он может начать новую регистрацию.
+                    #
+                    # Не меняем остальных adults принудительно:
+                    # их role остаётся parent/observer, но family_id=NULL,
+                    # поэтому /start предложит им регистрацию заново.
+                    # -------------------------------------------------
                     await db.execute(
-                        f"""
-                        UPDATE student_profiles
+                        """
+                        UPDATE users
                         SET
-                            family_id = NULL,
-                            updated_at = CURRENT_TIMESTAMP
-                        WHERE id IN ({placeholders})
-                        AND telegram_user_id IS NOT NULL
-                        AND is_active = 1
+                            role = 'child',
+                            class_id = NULL,
+                            group_id = NULL,
+                            teacher_id = NULL,
+                            morning_summary_time = NULL,
+                            pre_lesson_offset_minutes = 10,
+                            receive_schedule_changes = 1,
+                            receive_extra_class_reminders = 1,
+                            changes_window_days = 3,
+                            global_extra_reminder = 30,
+                            can_manage_own_extra_classes = 1,
+                            is_notifications_enabled = 1,
+                            updated_at = ?
+                        WHERE user_id = ?
                         """,
-                        tuple(linked_student_ids),
+                        (
+                            now_utc,
+                            admin_user_id,
+                        ),
                     )
-
-                # -------------------------------------------------
-                # 6. Удаляем virtual profiles, оставшиеся в семье.
-                #
-                # Это profiles без Telegram. Они не могут стать
-                # самостоятельными без реального child account.
-                #
-                # Их extra_classes удаляются каскадно.
-                # -------------------------------------------------
-                await db.execute(
-                    """
-                    DELETE FROM student_profiles
-                    WHERE family_id = ?
-                    """,
-                    (family_id,),
-                )
-
-                # -------------------------------------------------
-                # 7. Отвязываем всех участников от family.
-                #
-                # Child users сохраняют class_id/group_id, поэтому
-                # сразу остаются зарегистрированными standalone child.
-                # -------------------------------------------------
-                await db.execute(
-                    """
-                    UPDATE users
-                    SET
-                        family_id = NULL,
-                        updated_at = CURRENT_TIMESTAMP
-                    WHERE family_id = ?
-                    """,
-                    (family_id,),
-                )
-
-                # -------------------------------------------------
-                # 8. Очищаем delivery logs всех бывших участников.
-                # -------------------------------------------------
-                if member_user_ids:
-                    placeholders = ", ".join(
-                        "?"
-                        for _ in member_user_ids
-                    )
-
-                    await db.execute(
-                        f"""
-                        DELETE FROM notification_delivery_log
-                        WHERE recipient_id IN ({placeholders})
-                        """,
-                        tuple(member_user_ids),
-                    )
-
-                # -------------------------------------------------
-                # 9. Теперь можно удалить семью.
-                #
-                # Family invites удалятся каскадно.
-                # Virtual profiles уже удалены.
-                # Linked child profiles уже family_id=NULL.
-                # -------------------------------------------------
-                delete_family_cursor = await db.execute(
-                    """
-                    DELETE FROM families
-                    WHERE id = ?
-                    AND admin_user_id = ?
-                    """,
-                    (
-                        family_id,
-                        admin_user_id,
-                    ),
-                )
-
-                if delete_family_cursor.rowcount != 1:
+                    await db.commit()
+                    return True
+                except Exception:
                     await db.rollback()
-                    return False
-
-                # -------------------------------------------------
-                # 10. Бывший family admin становится незавершённым
-                # standalone user. Он может начать новую регистрацию.
-                #
-                # Не меняем остальных adults принудительно:
-                # их role остаётся parent/observer, но family_id=NULL,
-                # поэтому /start предложит им регистрацию заново.
-                # -------------------------------------------------
-                await db.execute(
-                    """
-                    UPDATE users
-                    SET
-                        role = 'child',
-                        class_id = NULL,
-                        group_id = NULL,
-                        teacher_id = NULL,
-                        morning_summary_time = NULL,
-                        pre_lesson_offset_minutes = 10,
-                        receive_schedule_changes = 1,
-                        receive_extra_class_reminders = 1,
-                        changes_window_days = 3,
-                        global_extra_reminder = 30,
-                        can_manage_own_extra_classes = 1,
-                        is_notifications_enabled = 1,
-                        updated_at = CURRENT_TIMESTAMP
-                    WHERE user_id = ?
-                    """,
-                    (admin_user_id,),
-                )
-
-                await db.commit()
-                return True
-
-            except Exception:
-                await db.rollback()
-                raise
+                    raise
 
     async def update_integer_setting(self, user_id: int, field_name: str, value: int) -> None:
         """Безопасное обновление числовых настроек."""
         allowed_fields = {"pre_lesson_offset_minutes", "global_extra_reminder"}
         if field_name in allowed_fields:
-            await self._execute(f"UPDATE users SET {field_name} = ? WHERE user_id = ?", (value, user_id))
-            
+            await self._execute(
+                f"""
+                UPDATE users
+                SET {field_name} = ?,
+                    updated_at = ?
+                WHERE user_id = ?
+                """,
+                (value, self._now_utc_str(), user_id),
+            )
+
     # метод получения состава семьи
     async def get_family_members_rows(self, family_id: int) -> list[dict]:
         """Возвращает сырые данные всех участников семьи."""
@@ -1362,31 +1443,52 @@ class ProfileRepository(BaseRepository):
         )
 
     async def update_role_and_defaults(self, user_id: int, role: str) -> None:
-        """Назначает роль и выставляет дефолтные настройки уведомлений."""
-        async with self._connection() as db:
-            if role in ('parent', 'observer'):
-                # Взрослые: включены только изменения, остальное в 0
-                await db.execute('''
-                    UPDATE users 
-                    SET role = ?, 
-                        pre_lesson_offset_minutes = 0, 
-                        global_extra_reminder = 0
-                    WHERE user_id = ?
-                ''', (role, user_id))
-            elif role == 'child':
-                # Ребенок: предурочные выключены (0), остальное работает
-                await db.execute('''
-                    UPDATE users 
-                    SET role = ?, 
-                        pre_lesson_offset_minutes = 0
-                    WHERE user_id = ?
-                ''', (role, user_id))
-            else:
-                await db.execute("UPDATE users SET role = ? WHERE user_id = ?", (role, user_id))
-            
-            await db.commit()
-            
-    # Виртуальный ученик          
+        """Назначает роль и выставляет дефолтные настройки</arg_key>лений."""
+        now_utc = self._now_utc_str()
+        async with self._write_lock():
+            async with self._connection() as db:
+                try:
+                    if role in ('parent', 'observer'):
+                        # Взрослые: включены только изменения, остальное в 0
+                        await db.execute(
+                            """
+                            UPDATE users
+                            SET role = ?,
+                                pre_lesson_offset_minutes = 0,
+                                global_extra_reminder = 0,
+                                updated_at = ?
+                            WHERE user_id = ?
+                            """,
+                            (role, now_utc, user_id),
+                        )
+                    elif role == 'child':
+                        # Ребенок: предурочные выключены (0), остальное работает
+                        await db.execute(
+                            """
+                            UPDATE users
+                            SET role = ?,
+                                pre_lesson_offset_minutes = 0,
+                                updated_at = ?
+                            WHERE user_id = ?
+                            """,
+                            (role, now_utc, user_id),
+                        )
+                    else:
+                        await db.execute(
+                            """
+                            UPDATE users
+                            SET role = ?,
+                                updated_at = ?
+                            WHERE user_id = ?
+                            """,
+                            (role, now_utc, user_id),
+                        )
+                    await db.commit()
+                except Exception:
+                    await db.rollback()
+                    raise
+
+    # Виртуальный ученик
     async def get_parent_student_notification_settings_row(
         self,
         *,
@@ -1395,7 +1497,6 @@ class ProfileRepository(BaseRepository):
     ) -> Optional[Dict[str, Any]]:
         """
         Возвращает персональные настройки adult → student.
-
         Доступ возможен только для parent/observer, состоящего
         в той же семье, что и student profile.
         """
@@ -1404,25 +1505,20 @@ class ProfileRepository(BaseRepository):
             SELECT
                 settings.parent_user_id,
                 settings.student_id,
-
                 student.name AS student_name,
                 student.class_id AS student_class_id,
                 student.group_id AS student_group_id,
                 student.telegram_user_id,
-
                 settings.receive_morning_summary,
                 settings.receive_pre_lesson_reminders,
                 settings.receive_schedule_changes,
                 settings.receive_extra_class_reminders,
-
                 settings.can_manage_extra_classes
-
             FROM parent_student_settings AS settings
             JOIN users AS adult
                 ON adult.user_id = settings.parent_user_id
             JOIN student_profiles AS student
                 ON student.id = settings.student_id
-
             WHERE settings.parent_user_id = ?
             AND settings.student_id = ?
             AND adult.role IN ('parent', 'observer')
@@ -1434,7 +1530,7 @@ class ProfileRepository(BaseRepository):
                 student_id,
             ),
         )
-        
+
     async def toggle_parent_student_notification_setting(
         self,
         *,
@@ -1445,7 +1541,6 @@ class ProfileRepository(BaseRepository):
         """
         Переключает одну из личных подписок взрослого
         на конкретный student profile.
-
         Безопасность:
         - поле проверяется whitelist-ом;
         - взрослый может менять только собственную строку;
@@ -1457,12 +1552,10 @@ class ProfileRepository(BaseRepository):
             "receive_schedule_changes",
             "receive_extra_class_reminders",
         }
-
         if setting_name not in allowed_fields:
             raise ValueError(
                 f"Unsupported parent-student setting: {setting_name}"
             )
-
         changed = await self._execute(
             f"""
             UPDATE parent_student_settings
@@ -1471,11 +1564,9 @@ class ProfileRepository(BaseRepository):
                     WHEN {setting_name} = 1 THEN 0
                     ELSE 1
                 END,
-                updated_at = CURRENT_TIMESTAMP
-
+                updated_at = ?
             WHERE parent_user_id = ?
             AND student_id = ?
-
             AND EXISTS (
                 SELECT 1
                 FROM users AS adult
@@ -1489,14 +1580,13 @@ class ProfileRepository(BaseRepository):
             )
             """,
             (
+                self._now_utc_str(),
                 parent_user_id,
                 student_id,
-
                 student_id,
                 parent_user_id,
             ),
         )
-
         return changed == 1
 
     async def is_family_admin_for_student(
@@ -1515,7 +1605,6 @@ class ProfileRepository(BaseRepository):
             FROM student_profiles AS student
             JOIN families AS family
                 ON family.id = student.family_id
-
             WHERE student.id = ?
             AND student.is_active = 1
             AND family.admin_user_id = ?
@@ -1525,7 +1614,6 @@ class ProfileRepository(BaseRepository):
                 admin_user_id,
             ),
         )
-
         return row is not None
 
     async def get_adult_student_extra_classes_permissions(
@@ -1537,10 +1625,8 @@ class ProfileRepository(BaseRepository):
         """
         Возвращает права всех non-admin adults семьи
         на допзанятия выбранного student profile.
-
         None:
         инициатор не является family admin.
-
         []:
         family admin существует, но других взрослых в семье нет.
         """
@@ -1548,26 +1634,19 @@ class ProfileRepository(BaseRepository):
             admin_user_id=admin_user_id,
             student_id=student_id,
         )
-
         if not is_admin:
             return None
-
         return await self._fetch_all(
             """
             SELECT
                 adult.user_id AS adult_user_id,
-
                 COALESCE(
                     NULLIF(TRIM(adult.name), ''),
                     CAST(adult.user_id AS TEXT)
                 ) AS adult_name,
-
                 adult.role AS adult_role,
-
                 settings.student_id,
-
                 settings.can_manage_extra_classes
-
             FROM parent_student_settings AS settings
             JOIN student_profiles AS student
                 ON student.id = settings.student_id
@@ -1575,13 +1654,11 @@ class ProfileRepository(BaseRepository):
                 ON family.id = student.family_id
             JOIN users AS adult
                 ON adult.user_id = settings.parent_user_id
-
             WHERE settings.student_id = ?
             AND family.admin_user_id = ?
             AND adult.role IN ('parent', 'observer')
             AND adult.user_id != family.admin_user_id
             AND adult.family_id = student.family_id
-
             ORDER BY
                 CASE adult.role
                     WHEN 'parent' THEN 0
@@ -1595,7 +1672,7 @@ class ProfileRepository(BaseRepository):
                 admin_user_id,
             ),
         )
-        
+
     async def set_adult_student_extra_classes_permission(
         self,
         *,
@@ -1607,7 +1684,6 @@ class ProfileRepository(BaseRepository):
         """
         Family admin выдаёт/отзывает право другому adult
         управлять занятиями указанного student profile.
-
         Admin не может отозвать собственное implicit право:
         его право не хранится как ограничение в UI.
         """
@@ -1616,11 +1692,9 @@ class ProfileRepository(BaseRepository):
             UPDATE parent_student_settings
             SET
                 can_manage_extra_classes = ?,
-                updated_at = CURRENT_TIMESTAMP
-
+                updated_at = ?
             WHERE parent_user_id = ?
             AND student_id = ?
-
             AND EXISTS (
                 SELECT 1
                 FROM student_profiles AS student
@@ -1628,7 +1702,6 @@ class ProfileRepository(BaseRepository):
                     ON family.id = student.family_id
                 JOIN users AS adult
                     ON adult.user_id = parent_student_settings.parent_user_id
-
                 WHERE student.id = ?
                     AND student.is_active = 1
                     AND family.admin_user_id = ?
@@ -1640,15 +1713,14 @@ class ProfileRepository(BaseRepository):
             """,
             (
                 int(can_manage),
+                self._now_utc_str(),
                 adult_user_id,
                 student_id,
-
                 student_id,
                 admin_user_id,
                 adult_user_id,
             ),
         )
-
         return changed == 1
     
     #---------------------------------------------
@@ -1662,7 +1734,6 @@ class ProfileRepository(BaseRepository):
     ) -> Optional[Dict[str, Any]]:
         """
         Возвращает Telegram-настройки student profile.
-
         Вернёт None, если:
         - initiator не family admin;
         - student не существует;
@@ -1673,20 +1744,16 @@ class ProfileRepository(BaseRepository):
             SELECT
                 student.id AS student_id,
                 student.telegram_user_id,
-
                 student.name AS student_name,
                 student.class_id,
                 student.group_id,
-
                 child.is_notifications_enabled,
                 child.morning_summary_time,
                 child.pre_lesson_offset_minutes,
                 child.receive_schedule_changes,
                 child.receive_extra_class_reminders,
                 child.can_manage_own_extra_classes,
-
                 settings.child_notification_settings_locked
-
             FROM student_profiles AS student
             JOIN families AS family
                 ON family.id = student.family_id
@@ -1695,7 +1762,6 @@ class ProfileRepository(BaseRepository):
             LEFT JOIN parent_student_settings AS settings
                 ON settings.student_id = student.id
             AND settings.parent_user_id = family.admin_user_id
-
             WHERE student.id = ?
             AND student.is_active = 1
             AND student.telegram_user_id IS NOT NULL
@@ -1707,7 +1773,7 @@ class ProfileRepository(BaseRepository):
                 admin_user_id,
             ),
         )
-        
+
     async def toggle_student_telegram_boolean_setting(
         self,
         *,
@@ -1725,12 +1791,10 @@ class ProfileRepository(BaseRepository):
             "receive_extra_class_reminders",
             "can_manage_own_extra_classes",
         }
-
         if field_name not in allowed_fields:
             raise ValueError(
                 f"Unsupported student Telegram setting: {field_name}"
             )
-
         changed = await self._execute(
             f"""
             UPDATE users
@@ -1739,14 +1803,12 @@ class ProfileRepository(BaseRepository):
                     WHEN {field_name} = 1 THEN 0
                     ELSE 1
                 END,
-                updated_at = CURRENT_TIMESTAMP
-
+                updated_at = ?
             WHERE user_id = (
                 SELECT student.telegram_user_id
                 FROM student_profiles AS student
                 JOIN families AS family
                     ON family.id = student.family_id
-
                 WHERE student.id = ?
                 AND student.is_active = 1
                 AND student.telegram_user_id IS NOT NULL
@@ -1755,11 +1817,11 @@ class ProfileRepository(BaseRepository):
             AND role = 'child'
             """,
             (
+                self._now_utc_str(),
                 student_id,
                 admin_user_id,
             ),
         )
-
         return changed == 1
 
     async def update_student_telegram_integer_setting(
@@ -1777,31 +1839,26 @@ class ProfileRepository(BaseRepository):
         allowed_fields = {
             "pre_lesson_offset_minutes",
         }
-
         if field_name not in allowed_fields:
             raise ValueError(
                 f"Unsupported student Telegram integer setting: "
                 f"{field_name}"
             )
-
         if not 0 <= value <= 180:
             raise ValueError(
                 "pre_lesson_offset_minutes must be in range 0..180"
             )
-
         changed = await self._execute(
             f"""
             UPDATE users
             SET
                 {field_name} = ?,
-                updated_at = CURRENT_TIMESTAMP
-
+                updated_at = ?
             WHERE user_id = (
                 SELECT student.telegram_user_id
                 FROM student_profiles AS student
                 JOIN families AS family
                     ON family.id = student.family_id
-
                 WHERE student.id = ?
                 AND student.is_active = 1
                 AND student.telegram_user_id IS NOT NULL
@@ -1811,11 +1868,11 @@ class ProfileRepository(BaseRepository):
             """,
             (
                 value,
+                self._now_utc_str(),
                 student_id,
                 admin_user_id,
             ),
         )
-
         return changed == 1
 
     async def update_student_telegram_morning_summary_time(
@@ -1834,14 +1891,12 @@ class ProfileRepository(BaseRepository):
             UPDATE users
             SET
                 morning_summary_time = ?,
-                updated_at = CURRENT_TIMESTAMP
-
+                updated_at = ?
             WHERE user_id = (
                 SELECT student.telegram_user_id
                 FROM student_profiles AS student
                 JOIN families AS family
                     ON family.id = student.family_id
-
                 WHERE student.id = ?
                 AND student.is_active = 1
                 AND student.telegram_user_id IS NOT NULL
@@ -1851,11 +1906,11 @@ class ProfileRepository(BaseRepository):
             """,
             (
                 time_str,
+                self._now_utc_str(),
                 student_id,
                 admin_user_id,
             ),
         )
-
         return changed == 1
 
     async def set_student_notification_settings_locked(
@@ -1868,7 +1923,6 @@ class ProfileRepository(BaseRepository):
         """
         Family admin блокирует или разблокирует personal Telegram settings
         выбранного student profile.
-
         Lock хранится в parent_student_settings admin → student.
         """
         changed = await self._execute(
@@ -1876,17 +1930,14 @@ class ProfileRepository(BaseRepository):
             UPDATE parent_student_settings
             SET
                 child_notification_settings_locked = ?,
-                updated_at = CURRENT_TIMESTAMP
-
+                updated_at = ?
             WHERE parent_user_id = ?
             AND student_id = ?
-
             AND EXISTS (
                 SELECT 1
                 FROM student_profiles AS student
                 JOIN families AS family
                     ON family.id = student.family_id
-
                 WHERE student.id = ?
                     AND student.telegram_user_id IS NOT NULL
                     AND student.is_active = 1
@@ -1895,14 +1946,13 @@ class ProfileRepository(BaseRepository):
             """,
             (
                 int(locked),
+                self._now_utc_str(),
                 admin_user_id,
                 student_id,
-
                 student_id,
                 admin_user_id,
             ),
         )
-
         return changed == 1
 
     async def is_telegram_child_notification_settings_locked(
@@ -1912,12 +1962,10 @@ class ProfileRepository(BaseRepository):
     ) -> bool:
         """
         Проверяет lock personal settings Telegram-child.
-
         Standalone child:
         - student.family_id IS NULL;
         - lock отсутствует;
         - возвращает False.
-
         Family child:
         - lock хранится в parent_student_settings
         family admin → student.
@@ -1926,18 +1974,15 @@ class ProfileRepository(BaseRepository):
             """
             SELECT
                 settings.child_notification_settings_locked AS locked
-
             FROM student_profiles AS student
             JOIN families AS family
                 ON family.id = student.family_id
             LEFT JOIN parent_student_settings AS settings
                 ON settings.student_id = student.id
             AND settings.parent_user_id = family.admin_user_id
-
             WHERE student.telegram_user_id = ?
             AND student.is_active = 1
             """,
             (telegram_user_id,),
         )
-
         return bool(row and row["locked"])
