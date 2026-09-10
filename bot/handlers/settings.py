@@ -2016,12 +2016,23 @@ async def toggle_watch_target(
         "Отслеживание обновлено.",
     )
 
-    # Повторный callback покажет свежую карточку.
-    await show_watch_target_details(
-        callback=callback,
-        watch_targets_service=watch_targets_service,
-        schedule_service=schedule_service,
-    )    
+    # Локальный flip: меняем boolean в памяти, не вызывая другой хендлер
+    # (show_watch_target_details парсит "watch:target:", а у нас "watch:toggle:")
+    refreshed_target = replace(
+        target,
+        is_enabled=not target.is_enabled,
+    )
+
+    dicts_dto = await schedule_service.get_school_dictionaries()
+    vm = WatchTargetsService.build_view_model(refreshed_target, dicts_dto)
+    text = UIRenderer.render_watch_target_details(vm)
+    keyboard = Keyboards.get_watch_target_details_kb(vm)
+
+    await _safe_edit_text(
+        callback.message,
+        text,
+        reply_markup=keyboard,
+    )  
 
 @router.callback_query(
     F.data.startswith("watch:changes:")
