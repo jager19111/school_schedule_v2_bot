@@ -34,6 +34,7 @@ from bot.keyboards.keyboard import Keyboards
 from bot import callbacks
 from core.models.dto import ClassListDTO, GroupListDTO, FamilyCreatedDTO
 
+from bot.utils.fsm_guard import validate_fsm_session
 logger = logging.getLogger(__name__)
 router = Router()
 
@@ -414,26 +415,28 @@ async def process_student_claim_name(
     Получает имя ребёнка и атомарно объединяет standalone profile
     с family virtual student profile из claim invite.
     """
-    data = await state.get_data()
-    actor_user_id = message.from_user.id
-    token = data.get("claim_token")
-    if (
-        data.get("claim_actor_user_id") != actor_user_id
-        or not token
+    if not await validate_fsm_session(
+        message,
+        state,
+        expected={"claim_actor_user_id": message.from_user.id},
+        required=["claim_token"],
     ):
-        await state.clear()
-        await message.answer(
-            "❌ Состояние привязки устарело. "
-            "Откройте ссылку заново."
-        )
         return
+
+    data = await state.get_data()
+    token = data.get("claim_token")
+    # Обязательно возвращаем переменную, так как она нужна ниже
+    actor_user_id = message.from_user.id
+
     name = message.text.strip()
+
     if not name:
         await message.answer(
             "❌ Введите имя ученика.",
             reply_markup=Keyboards.get_claim_cancel_keyboard(),
         )
         return
+
     if len(name) > 64:
         await message.answer(
             "❌ Имя слишком длинное. "
@@ -441,12 +444,15 @@ async def process_student_claim_name(
             reply_markup=Keyboards.get_claim_cancel_keyboard(),
         )
         return
+
     response = await students_service.consume_student_claim_invite(
         token=token,
         telegram_user_id=actor_user_id,
         name=name,
     )
+
     await state.clear()
+
     if not response.success:
         await message.answer(
             "❌ Не удалось привязать профиль.\n\n"
@@ -455,9 +461,11 @@ async def process_student_claim_name(
             "ребёнка в другой семье."
         )
         return
+
     user_dto = await profile_service.get_user_profile_dto(
         actor_user_id,
     )
+
     try:
         await message.answer(
             "✅ <b>Telegram успешно привязан!</b>\n\n"
@@ -470,6 +478,7 @@ async def process_student_claim_name(
             "for user_id=%s",
             actor_user_id,
         )
+
     await _show_main_menu(message)
 
 

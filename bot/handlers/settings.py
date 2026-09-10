@@ -29,6 +29,7 @@ from urllib.parse import quote
 from aiogram import Router, F, Bot
 from aiogram.types import Message, CallbackQuery
 from aiogram.exceptions import TelegramBadRequest
+from dataclasses import replace
 
 from services.profiles_service import ProfileService
 from bot.utils.ui_renderer import UIRenderer
@@ -42,6 +43,7 @@ from services.time_service import TimeService
 from services.schedule_service import ScheduleService
 from bot.handlers.registration import RegistrationStates
 from services.watch_targets_service import WatchTargetsService
+from bot.utils.fsm_guard import validate_fsm_session
 
 
 logger = logging.getLogger(__name__)
@@ -125,31 +127,6 @@ async def _require_own_notification_settings_access(
         callback,
         "🔒 Ваши настройки уведомлений заблокированы "
         "администратором семьи.",
-        show_alert=True,
-    )
-
-    return False
-
-async def _require_family_admin_for_student(
-    *,
-    callback: CallbackQuery,
-    profile_service: ProfileService,
-    student_id: int,
-) -> bool:
-    """
-    Проверяет права family admin на конкретный student profile.
-    """
-    is_admin = await profile_service.is_family_admin_for_student(
-        admin_user_id=callback.from_user.id,
-        student_id=student_id,
-    )
-
-    if is_admin:
-        return True
-
-    await _safe_callback_answer(
-        callback,
-        "Только администратор семьи может менять профиль ученика.",
         show_alert=True,
     )
 
@@ -1138,24 +1115,15 @@ async def disable_my_summary_time(
     schedule_service: ScheduleService,
 ) -> None:
     """
-    Выключает личную утреннюю сводку пользователя.
+    Выключает личной утреннюю сводку пользователя.
 
     morning_summary_time = NULL означает, что сводка отключена.
     """
-    data = await state.get_data()
-
-    if (
-        data.get("my_summary_time_user_id")
-        != callback.from_user.id
+    if not await validate_fsm_session(
+        callback,
+        state,
+        expected={"my_summary_time_user_id": callback.from_user.id},
     ):
-        await state.clear()
-
-        await _safe_callback_answer(
-            callback,
-            "Состояние настройки устарело. "
-            "Откройте настройки заново.",
-            show_alert=True,
-        )
         return
 
     # Повторяем access check: пользователь мог потерять доступ
@@ -1210,20 +1178,11 @@ async def cancel_my_summary_time_input(
 
     БД не изменяется. Возвращаем пользователя в Settings.
     """
-    data = await state.get_data()
-
-    if (
-        data.get("my_summary_time_user_id")
-        != callback.from_user.id
+    if not await validate_fsm_session(
+        callback,
+        state,
+        expected={"my_summary_time_user_id": callback.from_user.id},
     ):
-        await state.clear()
-
-        await _safe_callback_answer(
-            callback,
-            "Состояние настройки устарело. "
-            "Откройте настройки заново.",
-            show_alert=True,
-        )
         return
 
     await state.clear()
@@ -1249,18 +1208,11 @@ async def process_my_time(
     """
     Сохраняет личное время утренней сводки пользователя.
     """
-    data = await state.get_data()
-
-    if (
-        data.get("my_summary_time_user_id")
-        != message.from_user.id
+    if not await validate_fsm_session(
+        message,
+        state,
+        expected={"my_summary_time_user_id": message.from_user.id},
     ):
-        await state.clear()
-
-        await message.answer(
-            "❌ Состояние настройки устарело. "
-            "Откройте настройки заново."
-        )
         return
     
     norm_time = time_service.normalize_time(message.text)
@@ -1540,16 +1492,11 @@ async def select_self_edit_class(
         )
         return
 
-    data = await state.get_data()
-
-    if data.get("self_edit_user_id") != callback.from_user.id:
-        await state.clear()
-
-        await _safe_callback_answer(
-            callback,
-            "Состояние редактирования устарело.",
-            show_alert=True,
-        )
+    if not await validate_fsm_session(
+        callback,
+        state,
+        expected={"self_edit_user_id": callback.from_user.id},
+    ):
         return
 
     groups_dto = await schedule_service.get_groups_list()
@@ -1586,16 +1533,11 @@ async def back_to_self_edit_class(
     """
     Возвращает child из group screen обратно к class screen.
     """
-    data = await state.get_data()
-
-    if data.get("self_edit_user_id") != callback.from_user.id:
-        await state.clear()
-
-        await _safe_callback_answer(
-            callback,
-            "Состояние редактирования устарело.",
-            show_alert=True,
-        )
+    if not await validate_fsm_session(
+        callback,
+        state,
+        expected={"self_edit_user_id": callback.from_user.id},
+    ):
         return
 
     classes_dto = await schedule_service.get_classes_list()
@@ -1635,16 +1577,11 @@ async def cancel_self_edit_class_group(
 
     На этом этапе в БД ещё ничего не сохранено.
     """
-    data = await state.get_data()
-
-    if data.get("self_edit_user_id") != callback.from_user.id:
-        await state.clear()
-
-        await _safe_callback_answer(
-            callback,
-            "Состояние редактирования устарело.",
-            show_alert=True,
-        )
+    if not await validate_fsm_session(
+        callback,
+        state,
+        expected={"self_edit_user_id": callback.from_user.id},
+    ):
         return
 
     await state.clear()
@@ -1684,18 +1621,15 @@ async def save_self_edit_group(
         return
 
     actor_user_id = callback.from_user.id
-    data = await state.get_data()
-
-    if data.get("self_edit_user_id") != actor_user_id:
-        await state.clear()
-
-        await _safe_callback_answer(
-            callback,
-            "Состояние редактирования устарело.",
-            show_alert=True,
-        )
+    
+    if not await validate_fsm_session(
+        callback,
+        state,
+        expected={"self_edit_user_id": actor_user_id},
+    ):
         return
 
+    data = await state.get_data()
     class_id = data.get("self_edit_class_id")
 
     if not class_id:
@@ -1829,16 +1763,11 @@ async def select_watch_target_class(
         )
         return
 
-    data = await state.get_data()
-
-    if data.get("watch_target_owner_id") != callback.from_user.id:
-        await state.clear()
-
-        await _safe_callback_answer(
-            callback,
-            "Состояние добавления устарело.",
-            show_alert=True,
-        )
+    if not await validate_fsm_session(
+        callback,
+        state,
+        expected={"watch_target_owner_id": callback.from_user.id},
+    ):
         return
 
     groups_dto = await schedule_service.get_groups_list()
@@ -1885,15 +1814,18 @@ async def select_watch_target_group(
         )
         return
 
-    data = await state.get_data()
+    if not await validate_fsm_session(
+        callback,
+        state,
+        expected={"watch_target_owner_id": callback.from_user.id},
+    ):
+        return
 
+    data = await state.get_data()
     owner_user_id = data.get("watch_target_owner_id")
     class_id = data.get("watch_target_class_id")
 
-    if (
-        owner_user_id != callback.from_user.id
-        or not class_id
-    ):
+    if not class_id:
         await state.clear()
 
         await _safe_callback_answer(
@@ -2151,9 +2083,9 @@ async def toggle_watch_target_schedule_changes(
         )
         return
 
-    refreshed_target = await watch_targets_service.get_target(
-        owner_user_id=callback.from_user.id,
-        target_id=target_id,
+    refreshed_target = replace(
+        target,
+        receive_schedule_changes=not target.receive_schedule_changes,
     )
 
     # 1. Запрашиваем справочники школы единым запросом через новый сервис
@@ -2664,21 +2596,14 @@ async def disable_student_telegram_summary_time(
         )
         return
 
-    data = await state.get_data()
-
-    if (
-        data.get("student_tg_settings_admin_id")
-        != callback.from_user.id
-        or data.get("student_tg_settings_student_id")
-        != student_id
+    if not await validate_fsm_session(
+        callback,
+        state,
+        expected={
+            "student_tg_settings_admin_id": callback.from_user.id,
+            "student_tg_settings_student_id": student_id
+        },
     ):
-        await state.clear()
-
-        await _safe_callback_answer(
-            callback,
-            "Состояние настройки устарело.",
-            show_alert=True,
-        )
         return
 
     changed = (
@@ -2724,22 +2649,19 @@ async def save_student_telegram_summary_time(
     """
     Сохраняет время personal morning summary Telegram child.
     """
-    data = await state.get_data()
-
-    admin_user_id = data.get(
-        "student_tg_settings_admin_id"
-    )
-
-    student_id = data.get(
-        "student_tg_settings_student_id"
-    )
-
-    if (
-        admin_user_id != message.from_user.id
-        or student_id is None
+    if not await validate_fsm_session(
+        message,
+        state,
+        expected={"student_tg_settings_admin_id": message.from_user.id},
     ):
-        await state.clear()
+        return
 
+    data = await state.get_data()
+    admin_user_id = data.get("student_tg_settings_admin_id")
+    student_id = data.get("student_tg_settings_student_id")
+    
+    if student_id is None:
+        await state.clear()
         await message.answer(
             "❌ Состояние настройки устарело. "
             "Откройте профиль ученика заново."
@@ -2893,15 +2815,11 @@ async def process_virtual_student_name(
         )
         return
 
-    data = await state.get_data()
-
-    if data.get("virtual_student_admin_id") != message.from_user.id:
-        await state.clear()
-
-        await message.answer(
-            "❌ Состояние добавления устарело. "
-            "Откройте управление семьёй заново."
-        )
+    if not await validate_fsm_session(
+        message,
+        state,
+        expected={"virtual_student_admin_id": message.from_user.id},
+    ):
         return
 
     # 1. Запрашиваем справочники школы единым запросом через ScheduleServiceV2
@@ -2942,16 +2860,11 @@ async def select_virtual_student_class(
         )
         return
 
-    data = await state.get_data()
-
-    if data.get("virtual_student_admin_id") != callback.from_user.id:
-        await state.clear()
-
-        await _safe_callback_answer(
-            callback,
-            "Состояние добавления устарело.",
-            show_alert=True,
-        )
+    if not await validate_fsm_session(
+        callback,
+        state,
+        expected={"virtual_student_admin_id": callback.from_user.id},
+    ):
         return
 
     # 1. Запрашиваем справочники школы единым запросом
@@ -2995,21 +2908,21 @@ async def create_virtual_student(
         )
         return
 
-    data = await state.get_data()
+    if not await validate_fsm_session(
+        callback,
+        state,
+        expected={"virtual_student_admin_id": callback.from_user.id},
+    ):
+        return
 
+    data = await state.get_data()
     admin_user_id = data.get("virtual_student_admin_id")
     family_id = data.get("virtual_student_family_id")
     name = data.get("virtual_student_name")
     class_id = data.get("virtual_student_class_id")
 
-    if (
-        admin_user_id != callback.from_user.id
-        or not family_id
-        or not name
-        or not class_id
-    ):
+    if not family_id or not name or not class_id:
         await state.clear()
-
         await _safe_callback_answer(
             callback,
             "Состояние добавления устарело.",
@@ -3325,6 +3238,19 @@ async def toggle_parent_student_notification_setting(
         )
         return
 
+    dto = await profile_service.get_parent_student_notification_settings(
+        parent_user_id=callback.from_user.id,
+        student_id=student_id,
+    )
+
+    if dto is None:
+        await _safe_callback_answer(
+            callback,
+            "Настройки больше недоступны.",
+            show_alert=True,
+        )
+        return
+
     changed = (
         await profile_service.toggle_parent_student_notification_setting(
             parent_user_id=callback.from_user.id,
@@ -3342,18 +3268,9 @@ async def toggle_parent_student_notification_setting(
         )
         return
 
-    dto = await profile_service.get_parent_student_notification_settings(
-        parent_user_id=callback.from_user.id,
-        student_id=student_id,
-    )
+    new_value = not getattr(dto, setting_name)
+    dto = replace(dto, **{setting_name: new_value})
 
-    if dto is None:
-        await _safe_callback_answer(
-            callback,
-            "Настройки больше недоступны.",
-            show_alert=True,
-        )
-        return
     # 1. Получаем настройки и словари
     dicts_dto = await schedule_service.get_school_dictionaries()
     class_name = dicts_dto.get_readable_class(dto.student_class_id)
@@ -3512,19 +3429,12 @@ async def start_student_class_edit(
         )
         return
 
-    if not await _require_family_admin_for_student(
-        callback=callback,
-        profile_service=profile_service,
-        student_id=student_id,
-    ):
-        return
-
-    student = await students_service.get_student_for_adult(
+    student_result = await students_service.get_student_for_adult(
         adult_user_id=callback.from_user.id,
         student_id=student_id,
     )
 
-    if student is None:
+    if student_result is None:
         await _safe_callback_answer(
             callback,
             "Ученик не найден.",
@@ -3532,7 +3442,16 @@ async def start_student_class_edit(
         )
         return
 
-    student_dto, _access = student
+    student_dto, _access = student_result
+
+    if not _access.is_family_admin:
+        await _safe_callback_answer(
+            callback,
+            "Только администратор семьи может менять профиль ученика.",
+            show_alert=True,
+        )
+        return
+
 # 1. Получаем красивые названия через наш хелпер
     dicts_dto = await schedule_service.get_school_dictionaries()
     class_name=dicts_dto.get_readable_class(student_dto.class_id)
@@ -3588,28 +3507,14 @@ async def select_student_new_class(
         return
     student_id, class_id = parsed
 
-    data = await state.get_data()
-
-    if (
-        data.get("student_edit_admin_id") != callback.from_user.id
-        or data.get("student_edit_id") != student_id
+    if not await validate_fsm_session(
+        callback,
+        state,
+        expected={
+            "student_edit_admin_id": callback.from_user.id,
+            "student_edit_id": student_id
+        },
     ):
-        await state.clear()
-
-        await _safe_callback_answer(
-            callback,
-            "Состояние изменения устарело. "
-            "Откройте профиль ученика заново.",
-            show_alert=True,
-        )
-        return
-
-    if not await _require_family_admin_for_student(
-        callback=callback,
-        profile_service=profile_service,
-        student_id=student_id,
-    ):
-        await state.clear()
         return
 
     student_result = await students_service.get_student_for_adult(
@@ -3619,7 +3524,6 @@ async def select_student_new_class(
 
     if student_result is None:
         await state.clear()
-
         await _safe_callback_answer(
             callback,
             "Ученик больше недоступен.",
@@ -3628,6 +3532,15 @@ async def select_student_new_class(
         return
 
     student, _access = student_result
+
+    if not _access.is_family_admin:
+        await state.clear()
+        await _safe_callback_answer(
+            callback,
+            "Только администратор семьи может менять профиль ученика.",
+            show_alert=True,
+        )
+        return
     
     # 1. Получаем все школьные справочники за один вызов
     dicts_dto = await schedule_service.get_school_dictionaries()    
@@ -3686,33 +3599,28 @@ async def save_student_new_class_and_group(
         return
     student_id, group_id = parsed
 
-    data = await state.get_data()
+    if not await validate_fsm_session(
+        callback,
+        state,
+        expected={
+            "student_edit_admin_id": callback.from_user.id,
+            "student_edit_id": student_id
+        },
+    ):
+        return
 
+    data = await state.get_data()
     admin_user_id = data.get("student_edit_admin_id")
     state_student_id = data.get("student_edit_id")
     class_id = data.get("student_edit_class_id")
 
-    if (
-        admin_user_id != callback.from_user.id
-        or state_student_id != student_id
-        or not class_id
-    ):
+    if not class_id:
         await state.clear()
-
         await _safe_callback_answer(
             callback,
-            "Состояние изменения устарело. "
-            "Откройте профиль ученика заново.",
+            "Состояние изменения устарело. Откройте профиль ученика заново.",
             show_alert=True,
         )
-        return
-
-    if not await _require_family_admin_for_student(
-        callback=callback,
-        profile_service=profile_service,
-        student_id=student_id,
-    ):
-        await state.clear()
         return
 
     response = await students_service.update_student_profile(
@@ -4099,16 +4007,11 @@ async def save_teacher_change(
         )
         return
 
-    data = await state.get_data()
-
-    if data.get("teacher_change_user_id") != callback.from_user.id:
-        await state.clear()
-
-        await _safe_callback_answer(
-            callback,
-            "Состояние изменения устарело.",
-            show_alert=True,
-        )
+    if not await validate_fsm_session(
+        callback,
+        state,
+        expected={"teacher_change_user_id": callback.from_user.id},
+    ):
         return
 
     teacher_dto = await profile_service.get_user_profile_dto(

@@ -83,7 +83,8 @@ from bot.handlers import (
     admin,
     search,
     schedule_teacher,
-    help
+    help,
+    fallback
 )
 
 logging.basicConfig(
@@ -363,6 +364,9 @@ async def main():
         dp.include_router(extra_classes.router)
         dp.include_router(admin.router)
         dp.include_router(search.router)
+        # Catch-all: любой неопознанный коллбэк получает тихий toast
+        # вместо вечного спиннера. Должен быть ПОСЛЕДНИМ роутером.
+        dp.include_router(fallback.router)
 
         # Внедрение зависимостей в хендлеры (Dependency Injection)
         dp.workflow_data.update(

@@ -204,4 +204,11 @@ async def send_test_button(message: Message):
         ]]
     )
     await message.answer("Жми:", reply_markup=kb)
-    
+
+
+@router.message(Command("test_fallback"))
+async def cmd_test_fallback(message: Message):
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Кнопка-призрак", callback_data="non_existent_callback_123")]
+    ])
+    await message.answer("Жми:", reply_markup=kb)

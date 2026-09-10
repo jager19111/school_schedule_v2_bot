@@ -1,6 +1,7 @@
 import logging
 import aiosqlite
 from typing import Dict, Any, List, Optional
+import time
 
 from core.repository.profile_repository import ProfileRepository
 from core.models.dto import (
@@ -19,10 +20,44 @@ class ProfileService:
     - Не содержит SQL.
     - Работает через ProfileRepository и оперирует DTO/бизнес-логикой.
     """
+    # Запись last_active_at не чаще раза в 5 минут на пользователя.
+    # Гранулярность 5 минут несущественна для 60-дневной деактивации,
+    # но убирает write-усиление: раньше UPDATE выполнялся при
+    # КАЖДОМ вызове get_user_profile_dto (некоторые хендлеры
+    # дергают его 2-3 раза за экран).
+    _LAST_ACTIVE_WRITE_INTERVAL_SEC = 300.0
 
     def __init__(self, repo: ProfileRepository):
         self.repo = repo
+        self._last_active_written_at: dict[int, float] = {}
 
+    async def _touch_last_active(self, user_id: int) -> None:
+        """
+        Троттлит запись last_active_at: не чаще раза в 5 минут.
+
+        Заодно это троттлит и авто-разблокировку
+        notifications_blocked (update_last_active сбрасывает флаг) —
+        5 минут задержки разблокировки после активности
+        практически незаметны.
+        """
+        now_mono = time.monotonic()
+        if (
+            now_mono - self._last_active_written_at.get(user_id, 0.0)
+            < self._LAST_ACTIVE_WRITE_INTERVAL_SEC
+        ):
+            return
+        self._last_active_written_at[user_id] = now_mono
+        # Микроочистка: не даём словарю расти неограниченно.
+        if len(self._last_active_written_at) > 2000:
+            cutoff = now_mono - self._LAST_ACTIVE_WRITE_INTERVAL_SEC
+            self._last_active_written_at = {
+                uid: ts
+                for uid, ts in self._last_active_written_at.items()
+                if ts > cutoff
+            }
+        logging.getLogger(__name__).info(">>> ФИЗИЧЕСКАЯ ЗАПИСЬ АКТИВНОСТИ В БД ДЛЯ USER_ID: %s", user_id) # <-- Добавь это
+        await self.repo.update_last_active(user_id)
+        
     # ========== БАЗОВЫЕ ОПЕРАЦИИ ==========
     async def update_user_name(self, user_id: int, name: str) -> None:
         """Обновляет имя пользователя."""
@@ -48,68 +83,67 @@ class ProfileService:
     # ========== ПРОФИЛЬ ПОЛЬЗОВАТЕЛЯ ==========
 
     async def get_user_profile_dto(self, user_id: int) -> UserProfileDTO:
-        """
-        Возвращает DTO с информацией о пользователе. 
-        Логика SQL полностью изолирована в ProfileRepository.
-        """
-        row = await self.repo.get_user_profile_for_dto(user_id)
-        if row:
-            await self.repo.update_last_active(user_id)
-        if not row or not row.get("role"):
+            """
+            Возвращает DTO с информацией о пользователе. 
+            Логика SQL полностью изолирована в ProfileRepository.
+            """
+            row = await self.repo.get_user_profile_for_dto(user_id)
+            
+            # Троттлинг активности обновляем только если профиль уже физически есть в БД
+            if row:
+                await self._touch_last_active(user_id)
+
+            # Безопасный словарь. Если профиля нет, подставит {} и .get() сработает штатно.
+            row_data = dict(row) if row else {}
+
+            role = row_data.get("role")
+            is_registered = False
+
+            # Проверка завершенности регистрации
+            if role:
+                if role == "child" and row_data.get("class_id"):
+                    is_registered = True
+                elif role in ("parent", "observer") and row_data.get("family_id"):
+                    is_registered = True
+                elif role == "teacher" and row_data.get("teacher_id"):
+                    is_registered = True
+
             return UserProfileDTO(
                 user_id=user_id,
-                role=None,
-                is_fully_registered=False,
+                role=role,
+                is_fully_registered=is_registered,
+                # ВАЖНО: Везде ниже используем row_data, а не row!
+                name=row_data.get("name"),
+                family_id=row_data.get("family_id"),
+                class_id=row_data.get("class_id"),
+                group_id=row_data.get("group_id"),
+                teacher_id=row_data.get("teacher_id"),
+                morning_summary_time=row_data.get("morning_summary_time"),
+                pre_lesson_offset_minutes=row_data.get(
+                    "pre_lesson_offset_minutes",
+                    10,
+                ),
+                receive_schedule_changes=bool(
+                    row_data.get("receive_schedule_changes", True)
+                ),
+                receive_extra_class_reminders=bool(
+                    row_data.get("receive_extra_class_reminders", True)
+                ),
+                can_manage_own_extra_classes=bool(
+                    row_data.get("can_manage_own_extra_classes", True)
+                ),       
+                changes_window_days=row_data.get(
+                    "changes_window_days",
+                    3,
+                ),
+                is_notifications_enabled=bool(
+                    row_data.get("is_notifications_enabled", True)
+                ),
+                global_extra_reminder=row_data.get(
+                    "global_extra_reminder",
+                    30,
+                ),
             )
-
-        role = row["role"]
-        is_registered = False
-
-        # Проверка завершенности регистрации
-        if role == "child" and row.get("class_id"):
-            is_registered = True
-
-        elif role in ("parent", "observer") and row.get("family_id"):
-            is_registered = True
-
-        elif role == "teacher" and row.get("teacher_id"):
-            is_registered = True
-
-        return UserProfileDTO(
-            user_id=user_id,
-            role=role,
-            is_fully_registered=is_registered,
-            name=row.get("name"),
-            family_id=row.get("family_id"),
-            class_id=row.get("class_id"),
-            group_id=row.get("group_id"),
-            teacher_id=row.get("teacher_id"),
-            morning_summary_time=row.get("morning_summary_time"),
-            pre_lesson_offset_minutes=row.get(
-                "pre_lesson_offset_minutes",
-                10,
-            ),
-            receive_schedule_changes=bool(
-                row.get("receive_schedule_changes", True)
-            ),
-            receive_extra_class_reminders=bool(
-                row.get("receive_extra_class_reminders", True)
-            ),
-            can_manage_own_extra_classes=bool(
-                row.get("can_manage_own_extra_classes", True)
-            ),       
-            changes_window_days=row.get(
-                "changes_window_days",
-                3,
-            ),
-            is_notifications_enabled=bool(
-                row.get("is_notifications_enabled", True)
-            ),
-            global_extra_reminder=row.get(
-                "global_extra_reminder",
-                30,
-            ),
-        )
 
     async def set_teacher_profile(
         self,

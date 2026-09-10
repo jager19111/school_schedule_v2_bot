@@ -24,6 +24,7 @@ from services.extra_classes_service import ExtraClassesService
 from services.profiles_service import ProfileService
 from services.students_service import StudentsService
 from services.schedule_service import ScheduleService
+from bot.utils.fsm_guard import validate_fsm_session
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -360,18 +361,30 @@ async def cancel_action(
     extra_classes_service: ExtraClassesService,
     schedule_service: ScheduleService,
 ) -> None:
-    """Отменяет FSM-действие и возвращает к доступному меню занятий."""
+    """Отменяет FSM-действие и возвращает к меню (или безопасно гасит карточку)."""
     data = await state.get_data()
-    target_student_id = data.get(
-        "target_student_id",
-    )
+    target_student_id = data.get("target_student_id")
+    
+    # Безусловно чистим состояние
     await state.clear()
+    
+    # СЦЕНАРИЙ 1: FSM уже был пуст (сессия устарела)
     if not target_student_id:
-        await callback.answer(
-            "Состояние устарело. Откройте занятия заново.",
-            show_alert=True,
-        )
+        # Убираем всплывающий алерт. Просто гасим сообщение.
+        try:
+            await callback.message.edit_text(
+                "❌ Действие отменено.\n\n"
+                "<i>Откройте меню дополнительных занятий заново.</i>",
+                reply_markup=None,
+                parse_mode="HTML"
+            )
+        except Exception:
+            pass # Игнорируем, если сообщение уже удалено
+            
+        await callback.answer() # Тихий ответ без show_alert=True
         return
+
+    # СЦЕНАРИЙ 2: FSM был жив, возвращаем меню ученика
     shown = await _show_extra_menu_for_student(
         message_obj=callback.message,
         actor_user_id=callback.from_user.id,
@@ -382,13 +395,19 @@ async def cancel_action(
         edit_message=True,
         prefix="❌ Действие отменено.",
     )
+    
+    # СЦЕНАРИЙ 3: Меню недоступно (например, убрали права доступа)
     if not shown:
-        await callback.answer(
-            "Меню занятий больше недоступно.",
-            show_alert=True,
-        )
-        return
-    await callback.answer()
+        try:
+            await callback.message.edit_text(
+                "❌ Действие отменено. Меню занятий больше недоступно.",
+                reply_markup=None,
+                parse_mode="HTML"
+            )
+        except Exception:
+            pass
+            
+    await callback.answer() # Тихий ответ во всех случаях
 
 
 # === СПИСОК И УДАЛЕНИЕ ===
@@ -529,16 +548,16 @@ async def process_delete_id(
     schedule_service: ScheduleService,
 ) -> None:
     """Финально удаляет занятие с повторной service-проверкой прав."""
+    if not await validate_fsm_session(
+        message,
+        state,
+        expected={"extra_actor_user_id": message.from_user.id},
+        required=["target_student_id"],
+    ):
+        return
     data = await state.get_data()
     actor_user_id = message.from_user.id
     target_student_id = data.get("target_student_id")
-    state_actor_id = data.get("extra_actor_user_id")
-    if not target_student_id or state_actor_id != actor_user_id:
-        await state.clear()
-        await message.answer(
-            "❌ Состояние удаления устарело. Откройте меню заново."
-        )
-        return
     raw_extra_id = message.text.strip()
     if not raw_extra_id.isdigit():
         text, _ = UIRenderer.render_extra_class_not_found()
@@ -634,14 +653,11 @@ async def start_add_extra(
     F.data.startswith(callbacks.EXTRA_DAY_PREFIX),
 )
 async def process_day(callback: CallbackQuery, state: FSMContext):
-    data = await state.get_data()
-    # Защита: отсекаем устаревшие сессии в самом начале цепочки
-    if data.get("extra_actor_user_id") != callback.from_user.id:
-        await state.clear()
-        await callback.answer(
-            "❌ Состояние устарело. Откройте меню заново.",
-            show_alert=True
-        )
+    if not await validate_fsm_session(
+        callback,
+        state,
+        expected={"extra_actor_user_id": callback.from_user.id},
+    ):
         return
     # Этап 4: парсинг — в callbacks.parse_extra_day.
     day_num = callbacks.parse_extra_day(callback.data)
@@ -786,23 +802,16 @@ async def finalize_extra_class(
     Перед записью сервис повторно проверяет:
         actor_user_id -> target_student_id -> can_manage_extra_classes
     """
+    if not await validate_fsm_session(
+        event,
+        state,
+        expected={"extra_actor_user_id": event.from_user.id},
+        required=["target_student_id"],
+    ):
+        return
     data = await state.get_data()
     actor_user_id = event.from_user.id
     target_student_id = data.get("target_student_id")
-    state_actor_id = data.get("extra_actor_user_id")
-    if not target_student_id or state_actor_id != actor_user_id:
-        await state.clear()
-        if isinstance(event, CallbackQuery):
-            await event.answer(
-                "❌ Состояние добавления устарело. Откройте меню заново.",
-                show_alert=True,
-            )
-        else:
-            await event.answer(
-                "❌ Состояние добавления устарело. "
-                "Откройте меню дополнительных занятий заново."
-            )
-        return
 
     response = await extra_classes_service.add_extra_class(
         actor_user_id=actor_user_id,
@@ -966,17 +975,16 @@ async def process_edit_id(
     Повторно проверяет права через service, потому что FSM-состояние
     может устареть, а target_student_id нельзя считать доверенным.
     """
+    if not await validate_fsm_session(
+        message,
+        state,
+        expected={"extra_actor_user_id": message.from_user.id},
+        required=["target_student_id"],
+    ):
+        return
     data = await state.get_data()
     actor_user_id = message.from_user.id
     target_student_id = data.get("target_student_id")
-    state_actor_id = data.get("extra_actor_user_id")
-    if not target_student_id or state_actor_id != actor_user_id:
-        await state.clear()
-        await message.answer(
-            "❌ Состояние редактирования устарело. "
-            "Откройте меню дополнительных занятий заново."
-        )
-        return
     raw_extra_id = message.text.strip()
     if not raw_extra_id.isdigit():
         text, _ = UIRenderer.render_extra_class_not_found()
@@ -1028,18 +1036,16 @@ async def process_edit_id(
 
 @router.callback_query(F.data.startswith(callbacks.EDIT_EXT_PREFIX))
 async def choose_edit_field(callback: CallbackQuery, state: FSMContext):
+    if not await validate_fsm_session(
+        callback,
+        state,
+        expected={"extra_actor_user_id": callback.from_user.id},
+        required=["target_student_id"],
+    ):
+        return
     data = await state.get_data()
-    # 1. Защита от старых кнопок и подмены FSM
     actor_user_id = callback.from_user.id
     target_student_id = data.get("target_student_id")
-    state_actor_id = data.get("extra_actor_user_id")
-    if not target_student_id or state_actor_id != actor_user_id:
-        await state.clear()
-        await callback.answer(
-            "❌ Меню устарело. Начните редактирование заново.",
-            show_alert=True
-        )
-        return
     # Этап 4: парсинг — в callbacks.parse_edit_field.
     parsed = callbacks.parse_edit_field(callback.data)
     if parsed is None:
@@ -1098,17 +1104,16 @@ async def process_edit_day(
             show_alert=True,
         )
         return
+    if not await validate_fsm_session(
+        callback,
+        state,
+        expected={"extra_actor_user_id": callback.from_user.id},
+        required=["target_student_id"],
+    ):
+        return
     data = await state.get_data()
     actor_user_id = callback.from_user.id
     target_student_id = data.get("target_student_id")
-    state_actor_id = data.get("extra_actor_user_id")
-    if not target_student_id or state_actor_id != actor_user_id:
-        await state.clear()
-        await callback.answer(
-            "❌ Состояние редактирования устарело. Откройте меню заново.",
-            show_alert=True,
-        )
-        return
     extra_id = data["edit_id"]
     response = await extra_classes_service.update_extra_class(
         actor_user_id=actor_user_id,
@@ -1149,17 +1154,16 @@ async def process_edit_value(
     schedule_service: ScheduleService,
     students_service: StudentsService,
 ):
+    if not await validate_fsm_session(
+        message,
+        state,
+        expected={"extra_actor_user_id": message.from_user.id},
+        required=["target_student_id"],
+    ):
+        return
     data = await state.get_data()
     actor_user_id = message.from_user.id
     target_student_id = data.get("target_student_id")
-    state_actor_id = data.get("extra_actor_user_id")
-    if not target_student_id or state_actor_id != actor_user_id:
-        await state.clear()
-        await message.answer(
-            "❌ Состояние редактирования устарело. "
-            "Откройте меню дополнительных занятий заново."
-        )
-        return
     field = data["edit_field"]
     extra_id = data["edit_id"]
     val = message.text.strip()
@@ -1226,17 +1230,16 @@ async def process_edit_time_end(
     schedule_service: ScheduleService,
     students_service: StudentsService,
 ):
+    if not await validate_fsm_session(
+        message,
+        state,
+        expected={"extra_actor_user_id": message.from_user.id},
+        required=["target_student_id"],
+    ):
+        return
     data = await state.get_data()
     actor_user_id = message.from_user.id
     target_student_id = data.get("target_student_id")
-    state_actor_id = data.get("extra_actor_user_id")
-    if not target_student_id or state_actor_id != actor_user_id:
-        await state.clear()
-        await message.answer(
-            "❌ Состояние редактирования устарело. "
-            "Откройте меню дополнительных занятий заново."
-        )
-        return
     norm_time = time_service.normalize_time(message.text)
     if not norm_time:
         text, _ = UIRenderer.render_extra_class_invalid_time()
