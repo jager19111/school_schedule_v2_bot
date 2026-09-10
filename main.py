@@ -72,6 +72,8 @@ from services.watch_targets_service import WatchTargetsService
 from services.students_service import StudentsService
 from services.help_service import HelpService
 
+from bot.utils.ui_renderer import UIRenderer
+
 from bot.middlewares.error_middleware import GlobalErrorMiddleware
 from bot.handlers import (
     registration,
@@ -304,7 +306,10 @@ async def main():
     try:
         # 3. Сервисы времени
         time_service = TimeService(TimeServiceConfig(timezone=config.TIMEZONE))
-
+        # Форматтер дат для UIRenderer
+        # (инвайты, /source_status и прочие таймстемпы — в местном
+        # времени вместо сырого UTC "+00:00").
+        UIRenderer.set_date_formatter(time_service.format_base)
         # 4. Репозитории.
         # ВНИМАНИЕ: db_path= принимает ОБЪЕКТ СОЕДИНЕНИЯ, а не строку.
         # Это обеспечивает один пул (одно соединение) для всего приложения.

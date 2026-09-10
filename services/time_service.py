@@ -168,6 +168,49 @@ class TimeService:
         end = (now + timedelta(days=days)).date()
         return start, end
 
+    def get_smart_view_datetime(self) -> datetime:
+        """
+        Умная дата для экранов просмотра расписания.
+
+        Правило (единое для поиска и хабов):
+        - до 19:00 — сегодняшний день;
+        - после 19:00 — завтра;
+        - воскресенье пропускается (выходной).
+
+        Возвращает aware-datetime в базовой таймзоне школы.
+        Хендлер сам извлекает .date().isoformat() и считает понедельник
+        недели, если он нужен клавиатуре.
+        """
+        now = self.get_now_base()
+        target = now if now.hour < 19 else now + timedelta(days=1)
+        if target.isoweekday() == 7:
+            target += timedelta(days=1)
+        return target
+
+    def format_base(self, dt) -> Optional[str]:
+        """
+        Форматирует дату/время для UI: 'DD.MM.YYYY HH:MM'
+        в таймзоне школы.
+
+        Принимает:
+        - aware-UTC datetime (так *_at-поля приходят из
+          репозиториев после Strict Time Governance);
+        - ISO-строку (аннотации DTO частично устарели);
+        - None -> None.
+
+        Битая строка возвращается как есть (не роняем рендер).
+        """
+        if dt is None:
+            return None
+        if isinstance(dt, str):
+            try:
+                dt = datetime.fromisoformat(dt)
+            except (ValueError, TypeError):
+                return dt
+        local = self.from_utc(dt)
+        return local.strftime("%d.%m.%Y %H:%M")
+
+
     @staticmethod
     def validate_time_format(time_str: str) -> bool:
         """

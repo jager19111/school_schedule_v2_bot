@@ -1,14 +1,22 @@
+# bot/handlers/schedule_teacher.py
+#
+# ЭТАП 4: парсинг callback_data через bot/callbacks.py
+# (teacher_sched:*). Формат строк на проводе не изменён.
+#
+# Ручная проверка len(text) > 3900 помечена TODO — её закроет
+# общий хелпер длины сообщений (следующий подэтап).
+
 import logging
 
 from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import CallbackQuery, Message
 
+from bot import callbacks
 from bot.keyboards.keyboard import Keyboards
 from bot.utils.ui_renderer import UIRenderer
 from services.profiles_service import ProfileService
 from services.schedule_service import ScheduleService
-
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -43,13 +51,10 @@ async def _get_teacher_profile(
     user = await profile_service.get_user_profile_dto(
         user_id,
     )
-
     if user.role != "teacher":
         return None
-
     if not user.teacher_id:
         return None
-
     return user
 
 
@@ -63,7 +68,6 @@ async def _teacher_name(
     Получает имя учителя из metadata NIKA.
     """
     teachers_dto = await schedule_service.get_teachers_list()
-
     return str(
         teachers_dto.teachers.get(
             teacher_id,
@@ -86,28 +90,23 @@ async def _render_teacher_day(
         teacher_id=teacher_id,
         date_iso=date_iso,
     )
-
     rendered = UIRenderer.render_child_day_schedule(
         day_dto,
         None,
     )
-
     text = (
         rendered[0]
         if isinstance(rendered, tuple)
         else rendered
     )
-
     text = (
         "👨‍🏫 <b>Расписание учителя</b>\n"
         f"👤 {UIRenderer.escape_html(teacher_name)}\n\n"
         f"{text}"
     )
-
     keyboard = Keyboards.get_teacher_schedule_day_kb(
         current_date_iso=date_iso,
     )
-
     return text, keyboard
 
 
@@ -127,7 +126,6 @@ async def _render_teacher_week(
             teacher_id=teacher_id,
             week_start_iso=week_start_iso,
         )
-
         rendered = UIRenderer.render_full_week_schedule(
             dto,
         )
@@ -136,28 +134,23 @@ async def _render_teacher_week(
             teacher_id=teacher_id,
             week_start_iso=week_start_iso,
         )
-
         rendered = UIRenderer.render_week_summary(
             dto,
         )
-
     text = (
         rendered[0]
         if isinstance(rendered, tuple)
         else rendered
     )
-
     text = (
         "👨‍🏫 <b>Расписание учителя</b>\n"
         f"👤 {UIRenderer.escape_html(teacher_name)}\n\n"
         f"{text}"
     )
-
     keyboard = Keyboards.get_teacher_schedule_week_kb(
         week_start_iso=week_start_iso,
         is_full=is_full,
     )
-
     return text, keyboard
 
 
@@ -178,39 +171,34 @@ async def open_teacher_schedule_for_message(
         user_id=message.from_user.id,
         profile_service=profile_service,
     )
-
     if teacher is None:
         return False
-
     teacher_name = await _teacher_name(
         teacher_id=teacher.teacher_id,
         schedule_service=schedule_service,
         fallback=teacher.name or "Учитель",
     )
-
     target_date_iso = (
         await schedule_service.get_smart_teacher_target_date(
             teacher_id=teacher.teacher_id,
         )
     )
-
     text, keyboard = await _render_teacher_day(
         teacher_id=teacher.teacher_id,
         date_iso=target_date_iso,
         teacher_name=teacher_name,
         schedule_service=schedule_service,
     )
-
     await message.answer(
         text,
         reply_markup=keyboard,
         parse_mode="HTML",
     )
-
     return True
 
+
 @router.callback_query(
-    F.data == "teacher_sched:smart_day"
+    F.data == callbacks.TEACHER_SCHED_SMART_DAY
 )
 async def teacher_schedule_smart_day(
     callback: CallbackQuery,
@@ -221,7 +209,6 @@ async def teacher_schedule_smart_day(
         user_id=callback.from_user.id,
         profile_service=profile_service,
     )
-
     if teacher is None:
         await callback.answer(
             "Сессия учителя недоступна. "
@@ -229,121 +216,106 @@ async def teacher_schedule_smart_day(
             show_alert=True,
         )
         return
-
     teacher_name = await _teacher_name(
         teacher_id=teacher.teacher_id,
         schedule_service=schedule_service,
         fallback=teacher.name or "Учитель",
     )
-
     target_date_iso = (
         await schedule_service.get_smart_teacher_target_date(
             teacher_id=teacher.teacher_id,
         )
     )
-
     text, keyboard = await _render_teacher_day(
         teacher_id=teacher.teacher_id,
         date_iso=target_date_iso,
         teacher_name=teacher_name,
         schedule_service=schedule_service,
     )
-
     await _safe_edit_teacher_schedule(
         callback,
         text,
         keyboard,
     )
-
     await callback.answer()
 
 
 @router.callback_query(
-    F.data.startswith("teacher_sched:day:")
+    F.data.startswith(callbacks.TEACHER_SCHED_DAY_PREFIX)
 )
 async def teacher_schedule_day(
     callback: CallbackQuery,
     profile_service: ProfileService,
     schedule_service: ScheduleService,
 ) -> None:
-    try:
-        date_iso = callback.data.split(":")[2]
-    except IndexError:
+    # Этап 4: парсинг — в callbacks.parse_teacher_sched_day.
+    date_iso = callbacks.parse_teacher_sched_day(callback.data)
+    if date_iso is None:
         await callback.answer(
             "Некорректная дата.",
             show_alert=True,
         )
         return
-
     teacher = await _get_teacher_profile(
         user_id=callback.from_user.id,
         profile_service=profile_service,
     )
-
     if teacher is None:
         await callback.answer(
             "Сессия учителя недоступна.",
             show_alert=True,
         )
         return
-
     teacher_name = await _teacher_name(
         teacher_id=teacher.teacher_id,
         schedule_service=schedule_service,
         fallback=teacher.name or "Учитель",
     )
-
     text, keyboard = await _render_teacher_day(
         teacher_id=teacher.teacher_id,
         date_iso=date_iso,
         teacher_name=teacher_name,
         schedule_service=schedule_service,
     )
-
     await _safe_edit_teacher_schedule(
         callback,
         text,
         keyboard,
     )
-
     await callback.answer()
 
 
 @router.callback_query(
-    F.data.startswith("teacher_sched:week:")
+    F.data.startswith(callbacks.TEACHER_SCHED_WEEK_PREFIX)
 )
 async def teacher_schedule_week(
     callback: CallbackQuery,
     profile_service: ProfileService,
     schedule_service: ScheduleService,
 ) -> None:
-    try:
-        week_start_iso = callback.data.split(":")[2]
-    except IndexError:
+    # Этап 4: парсинг — в callbacks.parse_teacher_sched_week.
+    week_start_iso = callbacks.parse_teacher_sched_week(callback.data)
+    if week_start_iso is None:
         await callback.answer(
             "Некорректная дата недели.",
             show_alert=True,
         )
         return
-
     teacher = await _get_teacher_profile(
         user_id=callback.from_user.id,
         profile_service=profile_service,
     )
-
     if teacher is None:
         await callback.answer(
             "Сессия учителя недоступна.",
             show_alert=True,
         )
         return
-
     teacher_name = await _teacher_name(
         teacher_id=teacher.teacher_id,
         schedule_service=schedule_service,
         fallback=teacher.name or "Учитель",
     )
-
     text, keyboard = await _render_teacher_week(
         teacher_id=teacher.teacher_id,
         week_start_iso=week_start_iso,
@@ -351,51 +323,45 @@ async def teacher_schedule_week(
         schedule_service=schedule_service,
         is_full=False,
     )
-
     await _safe_edit_teacher_schedule(
         callback,
         text,
         keyboard,
     )
-
     await callback.answer()
 
 
 @router.callback_query(
-    F.data.startswith("teacher_sched:full_week:")
+    F.data.startswith(callbacks.TEACHER_SCHED_FULL_WEEK_PREFIX)
 )
 async def teacher_schedule_full_week(
     callback: CallbackQuery,
     profile_service: ProfileService,
     schedule_service: ScheduleService,
 ) -> None:
-    try:
-        week_start_iso = callback.data.split(":")[2]
-    except IndexError:
+    # Этап 4: парсинг — в callbacks.parse_teacher_sched_full_week.
+    week_start_iso = callbacks.parse_teacher_sched_full_week(callback.data)
+    if week_start_iso is None:
         await callback.answer(
             "Некорректная дата недели.",
             show_alert=True,
         )
         return
-
     teacher = await _get_teacher_profile(
         user_id=callback.from_user.id,
         profile_service=profile_service,
     )
-
     if teacher is None:
         await callback.answer(
             "Сессия учителя недоступна.",
             show_alert=True,
         )
         return
-
     teacher_name = await _teacher_name(
         teacher_id=teacher.teacher_id,
         schedule_service=schedule_service,
         fallback=teacher.name or "Учитель",
     )
-
     text, keyboard = await _render_teacher_week(
         teacher_id=teacher.teacher_id,
         week_start_iso=week_start_iso,
@@ -403,7 +369,8 @@ async def teacher_schedule_full_week(
         schedule_service=schedule_service,
         is_full=True,
     )
-
+    # TODO (Этап 4, хелпер длины): заменить ручную проверку на общий
+    # helper с авторазбиением длинных сообщений.
     if len(text) > 3900:
         await callback.answer(
             "Подробная неделя слишком длинная. "
@@ -411,11 +378,9 @@ async def teacher_schedule_full_week(
             show_alert=True,
         )
         return
-
     await _safe_edit_teacher_schedule(
         callback,
         text,
         keyboard,
     )
-
     await callback.answer()

@@ -1,4 +1,21 @@
+# bot/keyboards/keyboard.py — ЧАСТЬ 1 из 2
+#
+# ЭТАП 4, финальный шаг протокола: сторона СБОРКИ коллбэков переходит
+# на bot/callbacks.py. Теперь и билд, и парс живут в одном модуле —
+# смена формата возможна только там.
+#
+# Изменения:
+# - все callback_data=f"..." заменены на callbacks.build_*(...);
+# - все литералы точных значений — на константы;
+# - ФОРМАТ СТРОК НА ПРОВОДЕ НЕ ИЗМЕНЁН (байт-в-байт);
+# - сохранены все тексты кнопок, раскладки и docstrings.
+#
+# СКЛЕЙКА: содержимое ЧАСТИ 2 дописать в конец этого файла
+# (класс Keyboards продолжается, файл = часть1 + часть2).
+
 from datetime import datetime, timedelta, timezone, date
+
+from bot import callbacks
 from services.help_service import HelpLinksDTO
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
 from core.models.dto import ( ClassListDTO, GroupListDTO, UserProfileDTO, TeacherListDTO, 
@@ -6,31 +23,27 @@ from core.models.dto import ( ClassListDTO, GroupListDTO, UserProfileDTO, Teache
                             AdultStudentExtraClassesPermissionDTO, StudentTelegramSettingsDTO,
 )
 
+
 class Keyboards:
-    
+
     @staticmethod
     def _week_start_for_date(date_iso: str) -> str:
         """Возвращает понедельник недели для переданной ISO-даты."""
         date_value = datetime.fromisoformat(date_iso).date()
-
         monday = date_value - timedelta(
             days=date_value.isoweekday() - 1
         )
-
         return monday.isoformat()
 
 # Внутренний хелпер для клавиатур (не ходит в базу, просто мапит словари)
     @staticmethod
     def _format_class_and_group(class_id: str | None, group_id: str | None, classes_dict: dict, groups_dict: dict) -> tuple[str, str]:
         class_name = classes_dict.get(class_id, class_id or "—")
-        
         if not group_id or group_id == "ALL":
             group_name = "Весь класс"
         else:
             group_name = groups_dict.get(group_id, f"Группа {group_id}")
-            
         return class_name, group_name
-
 
     @staticmethod
     def get_help_kb(
@@ -45,7 +58,6 @@ class Keyboards:
 
         section нужен, чтобы на внутренних страницах справки
         показывать кнопку возврата к оглавлению.
-
         role используется только для решения, нужно ли показывать
         кнопку возврата в Settings.
         """
@@ -53,55 +65,51 @@ class Keyboards:
             [
                 InlineKeyboardButton(
                     text="👨‍👩‍👧 Семья и приглашения",
-                    callback_data="help:family",
+                    callback_data=callbacks.build_help("family"),
                 ),
             ],
             [
                 InlineKeyboardButton(
                     text="🧒 Ученику",
-                    callback_data="help:child",
+                    callback_data=callbacks.build_help("child"),
                 ),
                 InlineKeyboardButton(
                     text="👨‍👩‍👧 Родителю",
-                    callback_data="help:parent",
+                    callback_data=callbacks.build_help("parent"),
                 ),
             ],
             [
                 InlineKeyboardButton(
                     text="👁 Наблюдателю",
-                    callback_data="help:observer",
+                    callback_data=callbacks.build_help("observer"),
                 ),
                 InlineKeyboardButton(
                     text="👩‍🏫 Учителю",
-                    callback_data="help:teacher",
+                    callback_data=callbacks.build_help("teacher"),
                 ),
             ],
             [
                 InlineKeyboardButton(
                     text="🔔 Уведомления",
-                    callback_data="help:notifications",
+                    callback_data=callbacks.build_help("notifications"),
                 ),
                 InlineKeyboardButton(
                     text="🎨 Доп. занятия",
-                    callback_data="help:extras",
+                    callback_data=callbacks.build_help("extras"),
                 ),
             ],
             [
                 InlineKeyboardButton(
                     text="🔐 Данные и приватность",
-                    callback_data="help:privacy",
+                    callback_data=callbacks.build_help("privacy"),
                 ),
             ],
         ]
-
-
-
         # Контакты и donation показываем только на support page.
         # Так пользователь сначала читает объяснение, а уже потом
         # осознанно выбирает внешний переход.
         if section == "support":
             support_buttons = []
-
             if links.author_contact_url:
                 support_buttons.append(
                     InlineKeyboardButton(
@@ -109,7 +117,6 @@ class Keyboards:
                         url=links.author_contact_url,
                     )
                 )
-
             if links.donation_url:
                 support_buttons.append(
                     InlineKeyboardButton(
@@ -117,7 +124,6 @@ class Keyboards:
                         url=links.donation_url,
                     )
                 )
-
             # Если contact/donation ещё не заданы в config,
             # всё равно оставляем внутреннюю кнопку, чтобы UX
             # не выглядел пустым.
@@ -125,17 +131,15 @@ class Keyboards:
                 support_buttons.append(
                     InlineKeyboardButton(
                         text="💬 Поддержка и обратная связь",
-                        callback_data="help:support",
+                        callback_data=callbacks.build_help("support"),
                     )
                 )
-
             buttons.append(support_buttons)
-
         else:
             buttons.append([
                 InlineKeyboardButton(
                     text="💬 Поддержка и обратная связь",
-                    callback_data="help:support",
+                    callback_data=callbacks.build_help("support"),
                 )
             ])
         # Полная браузерная справка полезна на любой странице.
@@ -152,11 +156,9 @@ class Keyboards:
             buttons.append([
                 InlineKeyboardButton(
                     text="ℹ️ К оглавлению",
-                    callback_data="help:main",
+                    callback_data=callbacks.build_help("main"),
                 )
             ])
-
-
         # У зарегистрированного пользователя всегда есть путь назад.
         # show_back_to_settings оставлен для явного управления
         # при вызове из Settings.
@@ -164,77 +166,69 @@ class Keyboards:
             buttons.append([
                 InlineKeyboardButton(
                     text="⬅️ К настройкам",
-                    callback_data="settings:main",
+                    callback_data=callbacks.SETTINGS_MAIN,
                 )
             ])
-
         return InlineKeyboardMarkup(
             inline_keyboard=buttons,
         )
-            
+
     @staticmethod
     def get_role_selection() -> InlineKeyboardMarkup:
         return InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="👶 Ребёнок", callback_data="role:child")],
-            [InlineKeyboardButton(text="👨‍👩‍👧 Родитель", callback_data="role:parent")],
-            [InlineKeyboardButton(text="👁 Наблюдатель", callback_data="role:observer")],
-            [InlineKeyboardButton(text="👨‍🏫 Учитель", callback_data="role:teacher")],
-            
+            [InlineKeyboardButton(text="👶 Ребёнок", callback_data=callbacks.build_role("child"))],
+            [InlineKeyboardButton(text="👨‍👩‍👧 Родитель", callback_data=callbacks.build_role("parent"))],
+            [InlineKeyboardButton(text="👁 Наблюдатель", callback_data=callbacks.build_role("observer"))],
+            [InlineKeyboardButton(text="👨‍🏫 Учитель", callback_data=callbacks.build_role("teacher"))],
         ])
 
     @staticmethod
     def get_parent_family_action() -> InlineKeyboardMarkup:
         return InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🆕 Создать новую семью", callback_data="family:create")],
-            [InlineKeyboardButton(text="🔗 Присоединиться по коду", callback_data="family:join")]
+            [InlineKeyboardButton(text="🆕 Создать новую семью", callback_data=callbacks.FAMILY_CREATE)],
+            [InlineKeyboardButton(text="🔗 Присоединиться по коду", callback_data=callbacks.FAMILY_JOIN)]
         ])
 
     @staticmethod
     def get_child_family_action() -> InlineKeyboardMarkup:
         return InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🔗 Присоединиться к семье", callback_data="family:join")],
-            [InlineKeyboardButton(text="▶️ Продолжить без семьи", callback_data="family:skip")]
+            [InlineKeyboardButton(text="🔗 Присоединиться к семье", callback_data=callbacks.FAMILY_JOIN)],
+            [InlineKeyboardButton(text="▶️ Продолжить без семьи", callback_data=callbacks.FAMILY_SKIP)]
         ])
 
     @staticmethod
     def get_class_selection(dto: ClassListDTO) -> InlineKeyboardMarkup | None:
         if not dto.classes:
             return None
-            
         buttons = []
         row = []
         for c_id, c_name in dto.classes.items():
-            row.append(InlineKeyboardButton(text=c_name, callback_data=f"class:{c_id}"))
+            row.append(InlineKeyboardButton(text=c_name, callback_data=callbacks.build_class_selection(c_id)))
             if len(row) == 3:
                 buttons.append(row)
                 row = []
         if row: 
             buttons.append(row)
-            
         return InlineKeyboardMarkup(inline_keyboard=buttons)
 
     @staticmethod
     def get_main_group_selection(dto: 'GroupListDTO') -> InlineKeyboardMarkup:
         """Отображает только чистые основные группы (ID 0 и 1)."""
-        buttons = [[InlineKeyboardButton(text="Весь класс (без подгрупп)", callback_data="group:ALL")]]
-        
+        buttons = [[InlineKeyboardButton(text="Весь класс (без подгрупп)", callback_data=callbacks.build_group_selection("ALL"))]]
         main_ids = {"0", "1"}
         added_count = 0
-        
         for g_id, g_name in dto.groups.items():
             if g_id in main_ids:
-                buttons.append([InlineKeyboardButton(text=g_name, callback_data=f"group:{g_id}")])
+                buttons.append([InlineKeyboardButton(text=g_name, callback_data=callbacks.build_group_selection(g_id))])
                 added_count += 1
-                
         # Фолбэк: если у старших классов нет ID 0 и 1, выводим те, где есть цифры 1 или 2 (исключая 3)
         if added_count == 0:
             for g_id, g_name in dto.groups.items():
                 if "1" in g_name or "2" in g_name:
-                    buttons.append([InlineKeyboardButton(text=g_name, callback_data=f"group:{g_id}")])
-                    
+                    buttons.append([InlineKeyboardButton(text=g_name, callback_data=callbacks.build_group_selection(g_id))])
         return InlineKeyboardMarkup(inline_keyboard=buttons)
-# Основное меню
 
+# Основное меню
     @staticmethod
     def get_main_menu() -> ReplyKeyboardMarkup:
         """Универсальная нижняя клавиатура для всех ролей."""
@@ -249,23 +243,22 @@ class Keyboards:
     def get_school_search_kb() -> InlineKeyboardMarkup:
         """Меню поиска по школе."""
         return InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🎓 Расписание классов", callback_data="search:classes")],
-            [InlineKeyboardButton(text="👨‍🏫 Расписание учителей", callback_data="search:teachers")]
+            [InlineKeyboardButton(text="🎓 Расписание классов", callback_data=callbacks.SEARCH_CLASSES)],
+            [InlineKeyboardButton(text="👨‍🏫 Расписание учителей", callback_data=callbacks.SEARCH_TEACHERS)]
         ])
+
 # на удаление
     @staticmethod
     def get_parent_settings_kb(user_dto: 'UserProfileDTO') -> InlineKeyboardMarkup:
         """Настройки родителя."""
         summary_time = user_dto.morning_summary_time if user_dto.morning_summary_time else "ВЫКЛ"
         changes_status = "ВКЛ 🟢" if user_dto.is_notifications_enabled else "ВЫКЛ 🔴"
-
         return InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="👨‍👩‍👧 Управление семьей", callback_data="settings:family")],
-            [InlineKeyboardButton(text=f"⏰ Время моей утренней сводки: {summary_time}", callback_data="settings:my_summary_time")],
-            [InlineKeyboardButton(text=f"🔔 Мои уведомления об изменениях: {changes_status}", callback_data="settings:my_notifications")],
-            [InlineKeyboardButton(text="🔄 Перерегистрироваться / Выйти", callback_data="auth:restart")]
+            [InlineKeyboardButton(text="👨‍👩‍👧 Управление семьей", callback_data=callbacks.SETTINGS_FAMILY)],
+            [InlineKeyboardButton(text=f"⏰ Время моей утренней сводки: {summary_time}", callback_data=callbacks.SETTINGS_MY_SUMMARY_TIME)],
+            [InlineKeyboardButton(text=f"🔔 Мои уведомления об изменениях: {changes_status}", callback_data=callbacks.SETTINGS_MY_NOTIFICATIONS)],
+            [InlineKeyboardButton(text="🔄 Перерегистрироваться / Выйти", callback_data=callbacks.AUTH_RESTART)]
         ])
-
 
     @staticmethod
     def get_settings_main_kb(
@@ -273,66 +266,59 @@ class Keyboards:
     ) -> InlineKeyboardMarkup:
         """Главное меню настроек пользователя."""
         buttons = []
-
         if user_dto.role == "child":
             buttons.append([
                 InlineKeyboardButton(
                     text="🎓 Сменить класс/группу",
-                    callback_data="settings:change_class",
+                    callback_data=callbacks.SETTINGS_CHANGE_CLASS,
                 )
             ])
-
         if user_dto.role == "teacher":
             buttons.append([
                 InlineKeyboardButton(
                     text="👨‍🏫 Сменить профиль учителя",
-                    callback_data="settings:change_teacher",
+                    callback_data=callbacks.SETTINGS_CHANGE_TEACHER,
                 )
             ])
-    
         if user_dto.role in ("parent", "observer"):
             buttons.append([
                 InlineKeyboardButton(
                     text="👨‍👩‍👧 Управление семьей",
-                    callback_data="settings:family",
+                    callback_data=callbacks.SETTINGS_FAMILY,
                 )
             ])
             buttons.append([
                 InlineKeyboardButton(
                     text="🎓 Мои отслеживаемые классы",
-                    callback_data="watch:menu",
+                    callback_data=callbacks.WATCH_MENU,
                 )
             ])
             buttons.append([
                 InlineKeyboardButton(
                     text="🔔 Уведомления по детям",
-                    callback_data="settings:children_notifications",
+                    callback_data=callbacks.SETTINGS_CHILDREN_NOTIFICATIONS,
                 )
             ])
-
         buttons.append([
             InlineKeyboardButton(
                 text="🔔 Мои уведомления",
-                callback_data="settings:notifications",
+                callback_data=callbacks.SETTINGS_NOTIFICATIONS,
             )
         ])
-        
         buttons.append([
             InlineKeyboardButton(
                 text="ℹ️ Справка",
-                callback_data="help:main",
+                callback_data=callbacks.build_help("main"),
             )
         ])
-
         buttons.append([
             InlineKeyboardButton(
                 text="♻️ Перерегистрация/Выход",
-                callback_data="auth:restart",
+                callback_data=callbacks.AUTH_RESTART,
             )
         ])
-
         return InlineKeyboardMarkup(inline_keyboard=buttons)
-    
+
     @staticmethod
     def get_notifications_kb(user_dto: 'UserProfileDTO') -> InlineKeyboardMarkup:
         """Отдельное меню управления всеми уведомлениями."""
@@ -340,14 +326,12 @@ class Keyboards:
         changes_state = "ВКЛ 🟢" if user_dto.receive_schedule_changes else "ВЫКЛ 🔴"
         pre_lesson_state = f"{user_dto.pre_lesson_offset_minutes} мин 🟢" if user_dto.pre_lesson_offset_minutes > 0 else "ВЫКЛ 🔴"
         extra_state = "ВКЛ 🟢" if user_dto.receive_extra_class_reminders else "ВЫКЛ 🔴"
-
-
         return InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text=f"🌅 Утренняя сводка: {morning_time}", callback_data="settings:my_summary_time")],
-            [InlineKeyboardButton(text=f"🔄 Изменения в расписании: {changes_state}", callback_data="set_notif:changes")],
-            [InlineKeyboardButton(text=f"⏰ Начало урока: {pre_lesson_state}", callback_data="set_notif:prelesson")],
-            [InlineKeyboardButton(text=f"🎨 Доп. занятия: {extra_state}", callback_data="set_notif:extra")],
-            [InlineKeyboardButton(text="⬅️ Назад", callback_data="settings:main")]
+            [InlineKeyboardButton(text=f"🌅 Утренняя сводка: {morning_time}", callback_data=callbacks.SETTINGS_MY_SUMMARY_TIME)],
+            [InlineKeyboardButton(text=f"🔄 Изменения в расписании: {changes_state}", callback_data=callbacks.SET_NOTIF_CHANGES)],
+            [InlineKeyboardButton(text=f"⏰ Начало урока: {pre_lesson_state}", callback_data=callbacks.SET_NOTIF_PRELESSON)],
+            [InlineKeyboardButton(text=f"🎨 Доп. занятия: {extra_state}", callback_data=callbacks.SET_NOTIF_EXTRA)],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data=callbacks.SETTINGS_MAIN)]
         ])
 
     @staticmethod
@@ -362,54 +346,46 @@ class Keyboards:
         """
         def bool_status(value: bool) -> str:
             return "ВКЛ 🟢" if value else "ВЫКЛ 🔴"
-
         notifications_text = (
             "🔔 Уведомления ребёнка: "
             f"{bool_status(dto.is_notifications_enabled)}"
         )
-
         summary_time = (
             dto.morning_summary_time
             if dto.morning_summary_time
             else "ВЫКЛ"
         )
-
         prelesson_text = (
             f"{dto.pre_lesson_offset_minutes} мин 🟢"
             if dto.pre_lesson_offset_minutes > 0
             else "ВЫКЛ 🔴"
         )
-
         changes_text = (
             "🔄 Изменения расписания: "
             f"{bool_status(dto.receive_schedule_changes)}"
         )
-
         extra_text = (
             "🎨 Напоминания о кружках: "
             f"{bool_status(dto.receive_extra_class_reminders)}"
         )
-
         own_extra_text = (
             "✏️ Ребёнок редактирует кружки: "
             f"{bool_status(dto.can_manage_own_extra_classes)}"
         )
-
         lock_text = (
             "🔒 Блокировка настроек: ВКЛ 🔒"
             if dto.child_notification_settings_locked
             else "🔒 Блокировка настроек: ВЫКЛ 🔓"
         )
-
         student_id = dto.student_id
-
         return InlineKeyboardMarkup(
             inline_keyboard=[
                 [
                     InlineKeyboardButton(
                         text=notifications_text,
-                        callback_data=(
-                            f"student_tg:toggle:notif:{student_id}"
+                        callback_data=callbacks.build_student_tg_toggle(
+                            "notif",
+                            student_id,
                         ),
                     )
                 ],
@@ -418,8 +394,8 @@ class Keyboards:
                         text=(
                             f"🌅 Утренняя сводка: {summary_time}"
                         ),
-                        callback_data=(
-                            f"student_tg:summary:{student_id}"
+                        callback_data=callbacks.build_student_tg_summary(
+                            student_id,
                         ),
                     )
                 ],
@@ -429,55 +405,58 @@ class Keyboards:
                             "⏰ Напоминания об уроках: "
                             f"{prelesson_text}"
                         ),
-                        callback_data=(
-                            f"student_tg:prelesson:{student_id}"
+                        callback_data=callbacks.build_student_tg_prelesson(
+                            student_id,
                         ),
                     )
                 ],
                 [
                     InlineKeyboardButton(
                         text=changes_text,
-                        callback_data=(
-                            f"student_tg:toggle:changes:{student_id}"
+                        callback_data=callbacks.build_student_tg_toggle(
+                            "changes",
+                            student_id,
                         ),
                     )
                 ],
                 [
                     InlineKeyboardButton(
                         text=extra_text,
-                        callback_data=(
-                            f"student_tg:toggle:extra:{student_id}"
+                        callback_data=callbacks.build_student_tg_toggle(
+                            "extra",
+                            student_id,
                         ),
                     )
                 ],
                 [
                     InlineKeyboardButton(
                         text=own_extra_text,
-                        callback_data=(
-                            f"student_tg:toggle:own_extra:{student_id}"
+                        callback_data=callbacks.build_student_tg_toggle(
+                            "own_extra",
+                            student_id,
                         ),
                     )
                 ],
                 [
                     InlineKeyboardButton(
                         text=lock_text,
-                        callback_data=(
-                            f"student_tg:lock:{student_id}"
+                        callback_data=callbacks.build_student_tg_lock(
+                            student_id,
                         ),
                     )
                 ],
                 [
                     InlineKeyboardButton(
                         text="⬅️ К профилю ученика",
-                        callback_data=f"student:show:{student_id}",
+                        callback_data=callbacks.build_student_show(
+                            student_id,
+                        ),
                     )
                 ],
             ]
         )
-                
-#-----------------------
 
-    
+#-----------------------
     # Доп занятия  ExtraClassesService
     @staticmethod
     def get_extra_classes_menu(
@@ -495,105 +474,97 @@ class Keyboards:
 
         can_switch_student=True:
         parent/observer может выбрать другого доступного ученика.
-
         can_switch_student=False:
         child работает только со своим profile и получает кнопку «Назад».
         """
         buttons = []
-
         if can_add:
             buttons.append([
                 InlineKeyboardButton(
                     text="➕ Добавить занятие",
-                    callback_data=f"extra:add:{target_student_id}",
+                    callback_data=callbacks.build_extra_add(target_student_id),
                 )
             ])
-
         buttons.append([
             InlineKeyboardButton(
                 text="📋 Список занятий",
-                callback_data=f"extra:list:{target_student_id}",
+                callback_data=callbacks.build_extra_list(target_student_id),
             )
         ])
-
         if can_edit:
             buttons.append([
                 InlineKeyboardButton(
                     text="✏️ Изменить занятие",
-                    callback_data=f"extra:edit:{target_student_id}",
+                    callback_data=callbacks.build_extra_edit(target_student_id),
                 )
             ])
-
             buttons.append([
                 InlineKeyboardButton(
                     text="🗑 Удалить занятие",
-                    callback_data=f"extra:delete:{target_student_id}",
+                    callback_data=callbacks.build_extra_delete(target_student_id),
                 )
             ])
-
         if can_switch_student:
             buttons.append([
                 InlineKeyboardButton(
                     text="⬅️ К выбору ученика",
-                    callback_data="extra:students",
+                    callback_data=callbacks.EXTRA_STUDENTS,
                 )
             ])
         else:
             buttons.append([
                 InlineKeyboardButton(
                     text="⬅️ Назад",
-                    callback_data="extra:back",
+                    callback_data=callbacks.EXTRA_BACK,
                 )
             ])
-
         return InlineKeyboardMarkup(
             inline_keyboard=buttons,
         )
-        
+
     @staticmethod
     def get_extra_edit_fields_kb(class_id: int) -> InlineKeyboardMarkup:
         """Клавиатура выбора поля для правки занятия."""
         return InlineKeyboardMarkup(inline_keyboard=[
             [
-                InlineKeyboardButton(text="Название", callback_data=f"edit_ext:title:{class_id}"),
-                InlineKeyboardButton(text="Время", callback_data=f"edit_ext:time:{class_id}")
+                InlineKeyboardButton(text="Название", callback_data=callbacks.build_edit_field("title", class_id)),
+                InlineKeyboardButton(text="Время", callback_data=callbacks.build_edit_field("time", class_id))
             ],
             [
-                InlineKeyboardButton(text="Место", callback_data=f"edit_ext:loc:{class_id}"),
-                InlineKeyboardButton(text="Напоминание", callback_data=f"edit_ext:rem:{class_id}")
+                InlineKeyboardButton(text="Место", callback_data=callbacks.build_edit_field("loc", class_id)),
+                InlineKeyboardButton(text="Напоминание", callback_data=callbacks.build_edit_field("rem", class_id))
             ],
             [
-                InlineKeyboardButton(text="День недели", callback_data=f"edit_ext:day:{class_id}") # <-- ДОБАВЛЕНО
+                InlineKeyboardButton(text="День недели", callback_data=callbacks.build_edit_field("day", class_id))
             ],
-            [InlineKeyboardButton(text="❌ Отмена", callback_data="extra:cancel")]
+            [InlineKeyboardButton(text="❌ Отмена", callback_data=callbacks.EXTRA_CANCEL)]
         ])
 
-    
     @staticmethod
     def get_cancel_keyboard() -> InlineKeyboardMarkup:
         return InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="❌ Отмена", callback_data="extra:cancel")]
+            [InlineKeyboardButton(text="❌ Отмена", callback_data=callbacks.EXTRA_CANCEL)]
         ])
 
     @staticmethod
     def get_back_to_extra_menu(target_user_id: int) -> InlineKeyboardMarkup:
         return InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"extra:menu:{target_user_id}")]
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data=callbacks.build_extra_menu(target_user_id))]
         ])
-        
+
     @staticmethod
     def get_day_selection_kb() -> InlineKeyboardMarkup:
-        """Клавиатура выбора дня недели для доп. занятий[cite: 2]."""
+        """Клавиатура выбора дня недели для доп. занятий."""
         days = [
             ("Пн", 1), ("Вт", 2), ("Ср", 3), 
             ("Чт", 4), ("Пт", 5), ("Сб", 6), ("Вс", 7)
         ]
         buttons = [
-            [InlineKeyboardButton(text=name, callback_data=f"extraday:{num}") for name, num in days[i:i+3]] 
+            [InlineKeyboardButton(text=name, callback_data=callbacks.build_extra_day(num)) for name, num in days[i:i+3]] 
             for i in range(0, 7, 3)
         ]
         # Добавляем кнопку отмены вниз
-        buttons.append([InlineKeyboardButton(text="❌ Отмена", callback_data="extra:cancel")])
+        buttons.append([InlineKeyboardButton(text="❌ Отмена", callback_data=callbacks.EXTRA_CANCEL)])
         return InlineKeyboardMarkup(inline_keyboard=buttons)
 
     @staticmethod
@@ -601,17 +572,17 @@ class Keyboards:
         """Клавиатура с кнопками Пропустить и Отмена."""
         return InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="⏭ Пропустить", callback_data=skip_callback)],
-            [InlineKeyboardButton(text="❌ Отмена", callback_data="extra:cancel")]
+            [InlineKeyboardButton(text="❌ Отмена", callback_data=callbacks.EXTRA_CANCEL)]
         ])
-        
+
     @staticmethod
     def get_summary_time_prompt_kb() -> InlineKeyboardMarkup:
         """Клавиатура при запросе времени для сводки."""
         return InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🔕 Выключить сводку", callback_data="set_time:off")],
-            [InlineKeyboardButton(text="❌ Отмена", callback_data="settings:cancel_input")]
+            [InlineKeyboardButton(text="🔕 Выключить сводку", callback_data=callbacks.SET_TIME_OFF)],
+            [InlineKeyboardButton(text="❌ Отмена", callback_data=callbacks.SETTINGS_CANCEL_INPUT)]
         ])
-        
+
     @staticmethod
     def get_student_telegram_summary_time_kb(
         *,
@@ -625,22 +596,23 @@ class Keyboards:
                 [
                     InlineKeyboardButton(
                         text="🔕 Выключить сводку",
-                        callback_data=(
-                            f"student_tg:summary_off:{student_id}"
+                        callback_data=callbacks.build_student_tg_summary_off(
+                            student_id,
                         ),
                     )
                 ],
                 [
                     InlineKeyboardButton(
                         text="⬅️ Отмена",
-                        callback_data=f"student_tg:show:{student_id}",
+                        callback_data=callbacks.build_student_tg_show(
+                            student_id,
+                        ),
                     )
                 ],
             ]
         )        
         
 # Просмотр расписания
-
     @staticmethod
     def get_schedule_day_kb(
         current_date_iso: str,
@@ -651,46 +623,40 @@ class Keyboards:
         current_date = datetime.fromisoformat(
             current_date_iso
         ).date()
-
         previous_date = (
             current_date - timedelta(days=1)
         ).isoformat()
-
         next_date = (
             current_date + timedelta(days=1)
         ).isoformat()
-
         week_start_iso = Keyboards._week_start_for_date(
             current_date_iso
         )
-
         buttons = [
             [
                 InlineKeyboardButton(
                     text="⬅️ Предыдущий",
-                    callback_data=f"sched:day:{previous_date}",
+                    callback_data=callbacks.build_sched_day(previous_date),
                 ),
                 InlineKeyboardButton(
                     text="Следующий ➡️",
-                    callback_data=f"sched:day:{next_date}",
+                    callback_data=callbacks.build_sched_day(next_date),
                 ),
             ],
             [
                 InlineKeyboardButton(
                     text="📆 Показать неделю",
-                    callback_data=f"sched:week:{week_start_iso}",
+                    callback_data=callbacks.build_sched_week(week_start_iso),
                 ),
             ],
         ]
-
         if show_target_switch:
             buttons.append([
                 InlineKeyboardButton(
                     text="🎯 Сменить цель",
-                    callback_data="sched:targets",
+                    callback_data=callbacks.SCHED_TARGETS,
                 )
             ])
-
         return InlineKeyboardMarkup(
             inline_keyboard=buttons,
         )
@@ -711,12 +677,9 @@ class Keyboards:
         week_start = datetime.fromisoformat(
             week_start_iso
         ).date()
-
         day_buttons = []
-
         for offset in range(6):
             target_date = week_start + timedelta(days=offset)
-
             day_name = [
                 "Пн",
                 "Вт",
@@ -725,38 +688,33 @@ class Keyboards:
                 "Пт",
                 "Сб",
             ][offset]
-
             day_buttons.append(
                 InlineKeyboardButton(
                     text=(
                         f"{day_name} "
                         f"{target_date.strftime('%d.%m')}"
                     ),
-                    callback_data=(
-                        f"sched:day:{target_date.isoformat()}"
+                    callback_data=callbacks.build_sched_day(
+                        target_date.isoformat()
                     ),
                 )
             )
-
         previous_week = (
             week_start - timedelta(days=7)
         ).isoformat()
-
         next_week = (
             week_start + timedelta(days=7)
         ).isoformat()
-
         if is_full:
             details_button = InlineKeyboardButton(
                 text="🗓 Краткая неделя",
-                callback_data=f"sched:week:{week_start_iso}",
+                callback_data=callbacks.build_sched_week(week_start_iso),
             )
         else:
             details_button = InlineKeyboardButton(
                 text="📋 Подробно всю неделю",
-                callback_data=f"sched:full_week:{week_start_iso}",
+                callback_data=callbacks.build_sched_full_week(week_start_iso),
             )
-
         buttons = [
             day_buttons[:3],
             day_buttons[3:],
@@ -764,33 +722,31 @@ class Keyboards:
             [
                 InlineKeyboardButton(
                     text="⬅️ Предыдущая неделя",
-                    callback_data=f"sched:week:{previous_week}",
+                    callback_data=callbacks.build_sched_week(previous_week),
                 ),
                 InlineKeyboardButton(
                     text="Следующая неделя ➡️",
-                    callback_data=f"sched:week:{next_week}",
+                    callback_data=callbacks.build_sched_week(next_week),
                 ),
             ],
             [
                 InlineKeyboardButton(
                     text="📅 К ближайшему дню",
-                    callback_data="sched:smart_day",
+                    callback_data=callbacks.SCHED_SMART_DAY,
                 ),
             ],
         ]
-
         if show_target_switch:
             buttons.append([
                 InlineKeyboardButton(
                     text="🎯 Сменить цель",
-                    callback_data="sched:targets",
+                    callback_data=callbacks.SCHED_TARGETS,
                 )
             ])
-
         return InlineKeyboardMarkup(
             inline_keyboard=buttons,
         )
-    
+
     @staticmethod
     def get_schedule_targets_kb(
         targets: list[ScheduleViewTargetDTO],
@@ -804,7 +760,6 @@ class Keyboards:
         watch — самостоятельный отслеживаемый класс.
         """
         buttons = []
-
         for target in targets:
             # Получаем человекочитаемое название группы для всех типов целей
             if not target.group_id or target.group_id == "ALL":
@@ -815,100 +770,99 @@ class Keyboards:
                     for g in str(target.group_id).split(",")
                 ]
                 group_text = ", ".join(names)
-
             if target.kind == "student":
                 icon = (
                     "📱"
                     if target.telegram_user_id is not None
                     else "🧒"
                 )
-                callback_data = (
-                    f"sched:target:student:{target.target_id}"
+                callback_data = callbacks.build_sched_target(
+                    "student",
+                    target.target_id,
                 )
-
                 # Для ученика выводим: Иконка · Имя · Класс · Группа
                 class_name = classes_dict.get(target.class_id, target.class_id or "—")
                 button_text = f"{icon} {target.title} · {class_name} · {group_text}"
-
             else:
                 icon = "🎓"
-                callback_data = (
-                    f"sched:target:watch:{target.target_id}"
+                callback_data = callbacks.build_sched_target(
+                    "watch",
+                    target.target_id,
                 )
-
                 # Для отслеживаемого класса в title уже заложено имя класса, класс не дублируем
                 button_text = f"{icon} {target.title} · {group_text}"
-
             buttons.append([
                 InlineKeyboardButton(
                     text=button_text,
                     callback_data=callback_data,
                 )
             ])
-
         buttons.append([
             InlineKeyboardButton(
                 text="⬅️ Назад",
-                callback_data="settings:main",
+                callback_data=callbacks.SETTINGS_MAIN,
             )
         ])
-
         return InlineKeyboardMarkup(
             inline_keyboard=buttons,
         )
-             
+
     @staticmethod
     def get_search_days_kb(target_id: str, is_teacher: bool, week_start_iso: str, is_full: bool = False) -> InlineKeyboardMarkup:
-        from datetime import datetime, timedelta
         start_date = datetime.fromisoformat(week_start_iso).date()
-        prefix = "sch_t" if is_teacher else "sch_c"
-
         days = []
         for i in range(6):  # Пн-Сб
             day_date_obj = start_date + timedelta(days=i)
             day_date_iso = day_date_obj.isoformat()
             day_name = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб"][i]
-            
             # НОВОЕ: Динамическая подпись даты в кнопку
             btn_text = f"{day_name} {day_date_obj.strftime('%d.%m')}"
-            days.append(InlineKeyboardButton(text=btn_text, callback_data=f"{prefix}:{target_id}:{day_date_iso}"))
-
+            if is_teacher:
+                day_cb = callbacks.build_search_teacher_day(target_id, day_date_iso)
+            else:
+                day_cb = callbacks.build_search_class_day(target_id, day_date_iso)
+            days.append(InlineKeyboardButton(text=btn_text, callback_data=day_cb))
         buttons = [days[0:3], days[3:6]]
-
         if not is_full:
-            fw_cb = f"{prefix}_fw:{target_id}:{week_start_iso}"
+            if is_teacher:
+                fw_cb = callbacks.build_search_teacher_full_week(target_id, week_start_iso)
+            else:
+                fw_cb = callbacks.build_search_class_full_week(target_id, week_start_iso)
             buttons.append([InlineKeyboardButton(text="📋 Все дни подробно", callback_data=fw_cb)])
         else:
-            w_cb = f"{prefix}_w:{target_id}:{week_start_iso}"
+            if is_teacher:
+                w_cb = callbacks.build_search_teacher_week(target_id, week_start_iso)
+            else:
+                w_cb = callbacks.build_search_class_week(target_id, week_start_iso)
             buttons.append([InlineKeyboardButton(text="🗓 По дням", callback_data=w_cb)])
-
         prev_week = (start_date - timedelta(days=7)).isoformat()
         next_week = (start_date + timedelta(days=7)).isoformat()
-
+        if is_teacher:
+            prev_cb = callbacks.build_search_teacher_week(target_id, prev_week)
+            next_cb = callbacks.build_search_teacher_week(target_id, next_week)
+        else:
+            prev_cb = callbacks.build_search_class_week(target_id, prev_week)
+            next_cb = callbacks.build_search_class_week(target_id, next_week)
         buttons.append([
-            InlineKeyboardButton(text="⬅️ Пред. нед", callback_data=f"{prefix}_w:{target_id}:{prev_week}"),
-            InlineKeyboardButton(text="След. нед ➡️", callback_data=f"{prefix}_w:{target_id}:{next_week}")
+            InlineKeyboardButton(text="⬅️ Пред. нед", callback_data=prev_cb),
+            InlineKeyboardButton(text="След. нед ➡️", callback_data=next_cb)
         ])
-
-        back_cb = "search:teachers" if is_teacher else "search:classes"
+        back_cb = callbacks.SEARCH_TEACHERS if is_teacher else callbacks.SEARCH_CLASSES
         buttons.append([InlineKeyboardButton(text="⬅️ Назад к списку", callback_data=back_cb)])
-
         return InlineKeyboardMarkup(inline_keyboard=buttons)
 
-  
     # Клавиатуры для поиска классов и учителей
-
     @staticmethod
     def get_search_classes_kb(dto: ClassListDTO) -> InlineKeyboardMarkup:
         buttons = []
         row = []
         for c_id, c_name in dto.classes.items():
-            row.append(InlineKeyboardButton(text=c_name, callback_data=f"srch_cls:{c_id}"))
+            row.append(InlineKeyboardButton(text=c_name, callback_data=callbacks.build_search_class(c_id)))
             if len(row) == 4:  # По 4 класса в ряд
                 buttons.append(row)
                 row = []
         if row: buttons.append(row)
-        buttons.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="search:back")])
+        buttons.append([InlineKeyboardButton(text="⬅️ Назад", callback_data=callbacks.SEARCH_BACK)])
         return InlineKeyboardMarkup(inline_keyboard=buttons)
 
     @staticmethod
@@ -920,22 +874,22 @@ class Keyboards:
         for t_id, t_name in sorted_teachers:
             # Извлекаем строковое имя, если это объект Teacher
             name_str = t_name.name if hasattr(t_name, 'name') else t_name
-            row.append(InlineKeyboardButton(text=name_str, callback_data=f"srch_tch:{t_id}"))
+            row.append(InlineKeyboardButton(text=name_str, callback_data=callbacks.build_search_teacher(t_id)))
             if len(row) == 2:  # По 2 учителя в ряд
                 buttons.append(row)
                 row = []
         if row: buttons.append(row)
-        buttons.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="search:back")])
+        buttons.append([InlineKeyboardButton(text="⬅️ Назад", callback_data=callbacks.SEARCH_BACK)])
         return InlineKeyboardMarkup(inline_keyboard=buttons)
 
     @staticmethod
     def get_family_management_error_kb() -> InlineKeyboardMarkup:
         """Клавиатура-заглушка для ребёнка без семьи."""
         return InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🔄 Перерегистрироваться", callback_data="auth:restart")],
-            [InlineKeyboardButton(text="⬅️ Назад", callback_data="settings:main")]
+            [InlineKeyboardButton(text="🔄 Перерегистрироваться", callback_data=callbacks.AUTH_RESTART)],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data=callbacks.SETTINGS_MAIN)]
         ])
-        
+
     # Клавитура семьи
     @staticmethod
     def get_family_management_kb(
@@ -945,45 +899,39 @@ class Keyboards:
         is_family_admin: bool,
     ) -> InlineKeyboardMarkup:
         buttons = []
-
         # Любой parent/observer видит доступные семейные профили.
         # Конкретная проверка доступа к ученику остаётся в handler/service.
         if current_user.role in ("parent", "observer"):
             buttons.append([
                 InlineKeyboardButton(
                     text="🧒 Ученики семьи",
-                    callback_data="family:students",
+                    callback_data=callbacks.FAMILY_STUDENTS,
                 )
             ])
-            
         # Только creator/admin семьи может выдавать invites.
         if is_family_admin:
             buttons.append([
                 InlineKeyboardButton(
                     text="📨 Пригласить участника",
-                    callback_data="family:invite_menu",
+                    callback_data=callbacks.FAMILY_INVITE_MENU,
                 )
             ])
-
             buttons.append([
                 InlineKeyboardButton(
                     text="📬 Активные приглашения",
-                    callback_data="family:invites",
+                    callback_data=callbacks.FAMILY_INVITES,
                 )
             ])
-            
         buttons.append([
             InlineKeyboardButton(
                 text="⬅️ Назад к настройкам",
-                callback_data="settings:main",
+                callback_data=callbacks.SETTINGS_MAIN,
             )
         ])
-
         return InlineKeyboardMarkup(
             inline_keyboard=buttons,
         )
 
-      
     @staticmethod
     def get_extra_students_select_kb(
         students: list[StudentProfileDTO],
@@ -998,17 +946,14 @@ class Keyboards:
         повторно проверяет права на каждом действии.
         """
         buttons = []
-
         for student in students:
             icon = (
                 "📱"
                 if student.telegram_user_id is not None
                 else "🧒"
             )
-
             # Получаем человекочитаемое имя класса
             class_name = classes_dict.get(student.class_id, student.class_id or "—")
-
             # Получаем человекочитаемое имя группы (с поддержкой мультигрупп)
             if not student.group_id or student.group_id == "ALL":
                 group_text = "Весь класс"
@@ -1018,7 +963,6 @@ class Keyboards:
                     for g in str(student.group_id).split(",")
                 ]
                 group_text = ", ".join(names)
-
             buttons.append([
                 InlineKeyboardButton(
                     text=(
@@ -1026,21 +970,18 @@ class Keyboards:
                         f"· {class_name} "
                         f"· {group_text}"
                     ),
-                    callback_data=f"extra:menu:{student.id}",
+                    callback_data=callbacks.build_extra_menu(student.id),
                 )
             ])
-
         buttons.append([
             InlineKeyboardButton(
                 text="⬅️ Назад",
-                callback_data="settings:main",
+                callback_data=callbacks.SETTINGS_MAIN,
             )
         ])
-
         return InlineKeyboardMarkup(
             inline_keyboard=buttons,
         )
-                
 
     @staticmethod
     def get_student_notification_select_kb(
@@ -1055,17 +996,14 @@ class Keyboards:
         через StudentsService.get_students_for_adult().
         """
         buttons = []
-
         for student in students:
             icon = (
                 "📱"
                 if student.telegram_user_id is not None
                 else "🧒"
             )
-
             # Получаем человекочитаемое имя класса
             class_name = classes_dict.get(student.class_id, student.class_id or "—")
-
             # Получаем человекочитаемое имя группы (с поддержкой мультигрупп)
             if not student.group_id or student.group_id == "ALL":
                 group_label = "весь класс"
@@ -1075,7 +1013,6 @@ class Keyboards:
                     for g in str(student.group_id).split(",")
                 ]
                 group_label = ", ".join(names)
-
             buttons.append([
                 InlineKeyboardButton(
                     text=(
@@ -1083,21 +1020,18 @@ class Keyboards:
                         f"· {class_name} "
                         f"· {group_label}"
                     ),
-                    callback_data=f"psn:student:{student.id}",
+                    callback_data=callbacks.build_psn_student(student.id),
                 )
             ])
-
         buttons.append([
             InlineKeyboardButton(
                 text="⬅️ К настройкам",
-                callback_data="settings:main",
+                callback_data=callbacks.SETTINGS_MAIN,
             )
         ])
-
         return InlineKeyboardMarkup(
             inline_keyboard=buttons,
         )
-            
 
     @staticmethod
     def get_parent_student_notification_settings_kb(
@@ -1109,9 +1043,7 @@ class Keyboards:
         """
         def status(value: bool) -> str:
             return "ВКЛ 🟢" if value else "ВЫКЛ 🔴"
-
         student_id = dto.student_id
-
         return InlineKeyboardMarkup(
             inline_keyboard=[
                 [
@@ -1120,8 +1052,9 @@ class Keyboards:
                             "🌅 Утренняя сводка: "
                             f"{status(dto.receive_morning_summary)}"
                         ),
-                        callback_data=(
-                            f"psn:toggle:morning:{student_id}"
+                        callback_data=callbacks.build_psn_toggle(
+                            "morning",
+                            student_id,
                         ),
                     )
                 ],
@@ -1131,8 +1064,9 @@ class Keyboards:
                             "⏰ Напоминания об уроках: "
                             f"{status(dto.receive_pre_lesson_reminders)}"
                         ),
-                        callback_data=(
-                            f"psn:toggle:prelesson:{student_id}"
+                        callback_data=callbacks.build_psn_toggle(
+                            "prelesson",
+                            student_id,
                         ),
                     )
                 ],
@@ -1142,8 +1076,9 @@ class Keyboards:
                             "🔄 Изменения расписания: "
                             f"{status(dto.receive_schedule_changes)}"
                         ),
-                        callback_data=(
-                            f"psn:toggle:changes:{student_id}"
+                        callback_data=callbacks.build_psn_toggle(
+                            "changes",
+                            student_id,
                         ),
                     )
                 ],
@@ -1153,26 +1088,27 @@ class Keyboards:
                             "🎨 Доп. занятия: "
                             f"{status(dto.receive_extra_class_reminders)}"
                         ),
-                        callback_data=(
-                            f"psn:toggle:extra:{student_id}"
+                        callback_data=callbacks.build_psn_toggle(
+                            "extra",
+                            student_id,
                         ),
                     )
                 ],
                 [
                     InlineKeyboardButton(
                         text="⬅️ К ученикам",
-                        callback_data="settings:children_notifications",
+                        callback_data=callbacks.SETTINGS_CHILDREN_NOTIFICATIONS,
                     )
                 ],
                 [
                     InlineKeyboardButton(
                         text="⚙️ Главные настройки",
-                        callback_data="settings:main",
+                        callback_data=callbacks.SETTINGS_MAIN,
                     )
                 ],
             ]
         )
-            
+
     @staticmethod
     def get_adult_student_extra_classes_permissions_kb(
         *,
@@ -1188,20 +1124,17 @@ class Keyboards:
         его право управления считается системным и всегда доступно.
         """
         buttons = []
-
         for permission in permissions:
             role_label = (
                 "👨‍👩‍👧 Родитель"
                 if permission.adult_role == "parent"
                 else "👁 Наблюдатель"
             )
-
             state_label = (
                 "ВКЛ 🟢"
                 if permission.can_manage_extra_classes
                 else "ВЫКЛ 🔴"
             )
-
             buttons.append([
                 InlineKeyboardButton(
                     text=(
@@ -1209,25 +1142,22 @@ class Keyboards:
                         f"{permission.adult_name} — "
                         f"{state_label}"
                     ),
-                    callback_data=(
-                        "student_perm:toggle:"
-                        f"{student_id}:"
-                        f"{permission.adult_user_id}"
+                    callback_data=callbacks.build_student_perm_toggle(
+                        student_id,
+                        permission.adult_user_id,
                     ),
                 )
             ])
-
         buttons.append([
             InlineKeyboardButton(
                 text="⬅️ К профилю ученика",
-                callback_data=f"student:show:{student_id}",
+                callback_data=callbacks.build_student_show(student_id),
             )
         ])
-
         return InlineKeyboardMarkup(
             inline_keyboard=buttons,
         )
-        
+
 #перерегистрация
     @staticmethod
     def get_profile_reset_confirmation_kb() -> InlineKeyboardMarkup:
@@ -1239,18 +1169,18 @@ class Keyboards:
                 [
                     InlineKeyboardButton(
                         text="⚠️ Да, перерегистрироваться",
-                        callback_data="auth:restart_confirm",
+                        callback_data=callbacks.AUTH_RESTART_CONFIRM,
                     )
                 ],
                 [
                     InlineKeyboardButton(
                         text="⬅️ Отмена",
-                        callback_data="settings:main",
+                        callback_data=callbacks.SETTINGS_MAIN,
                     )
                 ],
             ]
         )
-        
+
     @staticmethod
     def get_family_invite_role_kb() -> InlineKeyboardMarkup:
         """
@@ -1261,30 +1191,30 @@ class Keyboards:
                 [
                     InlineKeyboardButton(
                         text="👶 Ребёнка с Telegram",
-                        callback_data="family:invite_role:child",
+                        callback_data=callbacks.build_family_invite_role("child"),
                     )
                 ],
                 [
                     InlineKeyboardButton(
                         text="👨‍👩‍👧 Родителя",
-                        callback_data="family:invite_role:parent",
+                        callback_data=callbacks.build_family_invite_role("parent"),
                     )
                 ],
                 [
                     InlineKeyboardButton(
                         text="👁 Наблюдателя",
-                        callback_data="family:invite_role:observer",
+                        callback_data=callbacks.build_family_invite_role("observer"),
                     )
                 ],
                 [
                     InlineKeyboardButton(
                         text="⬅️ Назад к семье",
-                        callback_data="settings:family",
+                        callback_data=callbacks.SETTINGS_FAMILY,
                     )
                 ],
             ]
         )
-        
+
     @staticmethod
     def get_family_invite_result_kb(
         share_link: str,
@@ -1313,18 +1243,18 @@ class Keyboards:
                 [
                     InlineKeyboardButton(
                         text="📨 Создать ещё приглашение",
-                        callback_data="family:invite_menu",
+                        callback_data=callbacks.FAMILY_INVITE_MENU,
                     )
                 ],
                 [
                     InlineKeyboardButton(
                         text="⬅️ К семье",
-                        callback_data="settings:family",
+                        callback_data=callbacks.SETTINGS_FAMILY,
                     )
                 ],
             ]
         )
-        
+
     @staticmethod
     def get_active_family_invites_kb(
         invites: list[FamilyInviteDTO],
@@ -1333,60 +1263,50 @@ class Keyboards:
         Список active invites family admin.
         """
         buttons = []
-
         role_icons = {
             "child": "👶",
             "parent": "👨‍👩‍👧",
             "observer": "👁",
         }
-
         role_names = {
             "child": "Ребёнок",
             "parent": "Родитель",
             "observer": "Наблюдатель",
         }
-
         for invite in invites:
             icon = role_icons.get(
                 invite.intended_role,
                 "📨",
             )
-
             role_name = role_names.get(
                 invite.intended_role,
                 "Участник",
             )
-
             buttons.append([
                 InlineKeyboardButton(
                     text=(
                         f"{icon} {role_name} · "
                         f"до {invite.expires_at}"
                     ),
-                    callback_data=(
-                        f"family:invite:{invite.id}"
-                    ),
+                    callback_data=callbacks.build_family_invite(invite.id),
                 )
             ])
-
         buttons.append([
             InlineKeyboardButton(
                 text="📨 Создать приглашение",
-                callback_data="family:invite_menu",
+                callback_data=callbacks.FAMILY_INVITE_MENU,
             )
         ])
-
         buttons.append([
             InlineKeyboardButton(
                 text="⬅️ К семье",
-                callback_data="settings:family",
+                callback_data=callbacks.SETTINGS_FAMILY,
             )
         ])
-
         return InlineKeyboardMarkup(
             inline_keyboard=buttons,
         )
-        
+
     @staticmethod
     def get_family_invite_details_kb(
         *,
@@ -1407,20 +1327,20 @@ class Keyboards:
                 [
                     InlineKeyboardButton(
                         text="🚫 Отозвать приглашение",
-                        callback_data=(
-                            f"family:invite_revoke:{invite_id}"
+                        callback_data=callbacks.build_family_invite_revoke(
+                            invite_id,
                         ),
                     )
                 ],
                 [
                     InlineKeyboardButton(
                         text="⬅️ К приглашениям",
-                        callback_data="family:invites",
+                        callback_data=callbacks.FAMILY_INVITES,
                     )
                 ],
             ]
         )
-        
+
     @staticmethod
     def get_family_invite_revoke_confirmation_kb(
         invite_id: int,
@@ -1430,22 +1350,20 @@ class Keyboards:
                 [
                     InlineKeyboardButton(
                         text="🚫 Да, отозвать",
-                        callback_data=(
-                            f"family:invite_revoke_confirm:{invite_id}"
+                        callback_data=callbacks.build_family_invite_revoke_confirm(
+                            invite_id,
                         ),
                     )
                 ],
                 [
                     InlineKeyboardButton(
                         text="⬅️ Отмена",
-                        callback_data=f"family:invite:{invite_id}",
+                        callback_data=callbacks.build_family_invite(invite_id),
                     )
                 ],
             ]
         )
-        
-        
-        
+
     @staticmethod
     def get_watch_targets_menu_kb(
         targets: list[ScheduleWatchTargetDTO],
@@ -1456,10 +1374,8 @@ class Keyboards:
         Список самостоятельных классов пользователя.
         """
         buttons = []
-
         for target in targets:
             status = "🟢" if target.is_enabled else "⚫"
-
             # Вызываем внутренний хелпер
             class_name, group_name = Keyboards._format_class_and_group(
                 target.class_id, target.group_id, classes_dict, groups_dict
@@ -1469,62 +1385,53 @@ class Keyboards:
                     text=(
                         f"{status} {target.title or class_name} · {group_name}"
                     ),
-                    callback_data=f"watch:target:{target.id}",
+                    callback_data=callbacks.build_watch_target(target.id),
                 )
             ])
-
         buttons.append([
             InlineKeyboardButton(
                 text="➕ Добавить класс",
-                callback_data="watch:add",
+                callback_data=callbacks.WATCH_ADD,
             )
         ])
-
         buttons.append([
             InlineKeyboardButton(
                 text="⬅️ К настройкам",
-                callback_data="settings:main",
+                callback_data=callbacks.SETTINGS_MAIN,
             )
         ])
-
         return InlineKeyboardMarkup(
             inline_keyboard=buttons,
         )
-        
+
     @staticmethod
     def get_watch_class_selection_kb(
         dto: ClassListDTO,
     ) -> InlineKeyboardMarkup:
         buttons = []
         row = []
-
         for class_id, class_name in dto.classes.items():
             row.append(
                 InlineKeyboardButton(
                     text=class_name,
-                    callback_data=f"watch:class:{class_id}",
+                    callback_data=callbacks.build_watch_class(class_id),
                 )
             )
-
             if len(row) == 3:
                 buttons.append(row)
                 row = []
-
         if row:
             buttons.append(row)
-
         buttons.append([
             InlineKeyboardButton(
                 text="⬅️ Назад",
-                callback_data="watch:menu",
+                callback_data=callbacks.WATCH_MENU,
             )
         ])
-
         return InlineKeyboardMarkup(
             inline_keyboard=buttons,
         )
-        
-        
+
     @staticmethod
     def get_watch_group_selection_kb(
         dto: GroupListDTO,
@@ -1538,38 +1445,33 @@ class Keyboards:
             [
                 InlineKeyboardButton(
                     text="Весь класс",
-                    callback_data="watch:group:ALL",
+                    callback_data=callbacks.build_watch_group("ALL"),
                 )
             ]
         ]
-
         primary_groups = {
             "0",
             "1",
         }
-
         for group_id, group_name in dto.groups.items():
             if group_id not in primary_groups:
                 continue
-
             buttons.append([
                 InlineKeyboardButton(
                     text=group_name,
-                    callback_data=f"watch:group:{group_id}",
+                    callback_data=callbacks.build_watch_group(group_id),
                 )
             ])
-
         buttons.append([
             InlineKeyboardButton(
                 text="⬅️ Назад к выбору класса",
-                callback_data="watch:add",
+                callback_data=callbacks.WATCH_ADD,
             )
         ])
-
         return InlineKeyboardMarkup(
             inline_keyboard=buttons,
         )
-        
+
     @staticmethod
     def get_watch_target_details_kb(
         target_id: int,
@@ -1591,36 +1493,36 @@ class Keyboards:
                 [
                     InlineKeyboardButton(
                         text="📅 Открыть расписание",
-                        callback_data=f"sched:watch:{target_id}",
+                        callback_data=callbacks.build_sched_watch(target_id),
                     )
                 ],
                 [
                     InlineKeyboardButton(
                         text=changes_text,
-                        callback_data=f"watch:changes:{target_id}",
+                        callback_data=callbacks.build_watch_changes(target_id),
                     )
                 ],
                 [
                     InlineKeyboardButton(
                         text=status_text,
-                        callback_data=f"watch:toggle:{target_id}",
+                        callback_data=callbacks.build_watch_toggle(target_id),
                     )
                 ],
                 [
                     InlineKeyboardButton(
                         text="🗑 Удалить класс",
-                        callback_data=f"watch:delete:{target_id}",
+                        callback_data=callbacks.build_watch_delete(target_id),
                     )
                 ],
                 [
                     InlineKeyboardButton(
                         text="⬅️ К списку классов",
-                        callback_data="watch:menu",
+                        callback_data=callbacks.WATCH_MENU,
                     )
                 ],
             ]
         )
-        
+
     @staticmethod
     def get_watch_target_delete_confirmation_kb(
         target_id: int,
@@ -1630,20 +1532,20 @@ class Keyboards:
                 [
                     InlineKeyboardButton(
                         text="🗑 Да, удалить класс",
-                        callback_data=(
-                            f"watch:delete_confirm:{target_id}"
+                        callback_data=callbacks.build_watch_delete_confirm(
+                            target_id,
                         ),
                     )
                 ],
                 [
                     InlineKeyboardButton(
                         text="⬅️ Отмена",
-                        callback_data=f"watch:target:{target_id}",
+                        callback_data=callbacks.build_watch_target(target_id),
                     )
                 ],
             ]
         )
-        
+
     @staticmethod
     def get_family_students_kb(
         students: list[StudentProfileDTO],
@@ -1659,17 +1561,14 @@ class Keyboards:
         parent_student_settings. Family admin может добавить ученика.
         """
         buttons = []
-
         for student in students:
             telegram_status = (
                 "📱"
                 if student.telegram_user_id is not None
                 else "🧒"
             )
-
             # Получаем человекочитаемое имя класса
             class_name = classes_dict.get(student.class_id, student.class_id or "—")
-
             # Получаем человекочитаемое имя группы
             if not student.group_id or student.group_id == "ALL":
                 group_text = "Весь класс"
@@ -1679,7 +1578,6 @@ class Keyboards:
                     for g in str(student.group_id).split(",")
                 ]
                 group_text = ", ".join(names)
-
             buttons.append([
                 InlineKeyboardButton(
                     text=(
@@ -1687,29 +1585,26 @@ class Keyboards:
                         f"· {class_name} "
                         f"· {group_text}"
                     ),
-                    callback_data=f"student:show:{student.id}",
+                    callback_data=callbacks.build_student_show(student.id),
                 )
             ])
-
         if is_family_admin:
             buttons.append([
                 InlineKeyboardButton(
                     text="➕ Добавить ученика",
-                    callback_data="student:add",
+                    callback_data=callbacks.STUDENT_ADD,
                 )
             ])
-
         buttons.append([
             InlineKeyboardButton(
                 text="⬅️ К семье",
-                callback_data="settings:family",
+                callback_data=callbacks.SETTINGS_FAMILY,
             )
         ])
-
         return InlineKeyboardMarkup(
             inline_keyboard=buttons,
         )
-        
+
     @staticmethod
     def get_student_details_kb(
         *,
@@ -1730,66 +1625,60 @@ class Keyboards:
         ребёнок меняет его через осознанную перерегистрацию/claim.
         """
         buttons = []
-
         if is_family_admin:
             buttons.append([
                 InlineKeyboardButton(
                     text="🎓 Изменить класс / группу",
-                    callback_data=f"student:edit_class:{student_id}",
+                    callback_data=callbacks.build_student_edit_class(student_id),
                 )
             ])
-
             if telegram_user_id is not None:
                 buttons.append([
                     InlineKeyboardButton(
                         text="📱 Настройки Telegram-ребёнка",
-                        callback_data=(
-                            f"student_tg:show:{student_id}"
+                        callback_data=callbacks.build_student_tg_show(
+                            student_id,
                         ),
                     )
                 ])
-    
             buttons.append([
                 InlineKeyboardButton(
                     text="👥 Права взрослых на кружки",
-                    callback_data=f"student:extra_permissions:{student_id}",
+                    callback_data=callbacks.build_student_extra_permissions(
+                        student_id,
+                    ),
                 )
             ])
-
         if telegram_user_id is None and is_family_admin:
             buttons.append([
                 InlineKeyboardButton(
                     text="📱 Привязать Telegram",
-                    callback_data=f"student:claim:{student_id}",
+                    callback_data=callbacks.build_student_claim(student_id),
                 )
             ])
-
             buttons.append([
                 InlineKeyboardButton(
                     text="🗑 Удалить ученика",
-                    callback_data=f"student:delete:{student_id}",
+                    callback_data=callbacks.build_student_delete(student_id),
                 )
             ])
-
         if telegram_user_id is not None:
             buttons.append([
                 InlineKeyboardButton(
                     text="📱 Telegram-профиль подключён",
-                    callback_data=f"student:show:{student_id}",
+                    callback_data=callbacks.build_student_show(student_id),
                 )
             ])
-
         buttons.append([
             InlineKeyboardButton(
                 text="⬅️ К ученикам",
-                callback_data="family:students",
+                callback_data=callbacks.FAMILY_STUDENTS,
             )
         ])
-
         return InlineKeyboardMarkup(
             inline_keyboard=buttons,
         )
-    
+
     @staticmethod
     def get_student_claim_invite_result_kb(
         *,
@@ -1820,13 +1709,13 @@ class Keyboards:
                 [
                     InlineKeyboardButton(
                         text="🔄 Создать новую ссылку",
-                        callback_data=f"student:claim:{student_id}",
+                        callback_data=callbacks.build_student_claim(student_id),
                     )
                 ],
                 [
                     InlineKeyboardButton(
                         text="⬅️ К ученику",
-                        callback_data=f"student:show:{student_id}",
+                        callback_data=callbacks.build_student_show(student_id),
                     )
                 ],
             ]
@@ -1836,6 +1725,7 @@ class Keyboards:
     def get_student_claim_confirmation_kb() -> InlineKeyboardMarkup:
         """
         Подтверждение привязки Telegram к existing student profile.
+
         Token хранится только в FSM, а не в callback_data.
         """
         return InlineKeyboardMarkup(
@@ -1843,51 +1733,46 @@ class Keyboards:
                 [
                     InlineKeyboardButton(
                         text="✅ Это я",
-                        callback_data="claim:confirm",
+                        callback_data=callbacks.CLAIM_CONFIRM,
                     )
                 ],
                 [
                     InlineKeyboardButton(
                         text="❌ Отмена",
-                        callback_data="claim:cancel",
+                        callback_data=callbacks.CLAIM_CANCEL,
                     )
                 ],
             ]
         )
-                    
+
     @staticmethod
     def get_student_class_selection_kb(
         dto: ClassListDTO,
     ) -> InlineKeyboardMarkup:
         buttons = []
         row = []
-
         for class_id, class_name in dto.classes.items():
             row.append(
                 InlineKeyboardButton(
                     text=class_name,
-                    callback_data=f"student:class:{class_id}",
+                    callback_data=callbacks.build_student_class(class_id),
                 )
             )
-
             if len(row) == 3:
                 buttons.append(row)
                 row = []
-
         if row:
             buttons.append(row)
-
         buttons.append([
             InlineKeyboardButton(
                 text="⬅️ К ученикам",
-                callback_data="family:students",
+                callback_data=callbacks.FAMILY_STUDENTS,
             )
         ])
-
         return InlineKeyboardMarkup(
             inline_keyboard=buttons,
         )
-        
+
     @staticmethod
     def get_student_group_selection_kb(
         dto: GroupListDTO,
@@ -1901,38 +1786,33 @@ class Keyboards:
             [
                 InlineKeyboardButton(
                     text="Весь класс",
-                    callback_data="student:group:ALL",
+                    callback_data=callbacks.build_student_group("ALL"),
                 )
             ]
         ]
-
         primary_groups = {
             "0",
             "1",
         }
-
         for group_id, group_name in dto.groups.items():
             if group_id not in primary_groups:
                 continue
-
             buttons.append([
                 InlineKeyboardButton(
                     text=group_name,
-                    callback_data=f"student:group:{group_id}",
+                    callback_data=callbacks.build_student_group(group_id),
                 )
             ])
-
         buttons.append([
             InlineKeyboardButton(
                 text="⬅️ К выбору класса",
-                callback_data="student:add",
+                callback_data=callbacks.STUDENT_ADD,
             )
         ])
-
         return InlineKeyboardMarkup(
             inline_keyboard=buttons,
         )
-        
+
     @staticmethod
     def get_student_delete_confirmation_kb(
         student_id: int,
@@ -1942,20 +1822,20 @@ class Keyboards:
                 [
                     InlineKeyboardButton(
                         text="🗑 Да, удалить ученика",
-                        callback_data=(
-                            f"student:delete_confirm:{student_id}"
+                        callback_data=callbacks.build_student_delete_confirm(
+                            student_id,
                         ),
                     )
                 ],
                 [
                     InlineKeyboardButton(
                         text="⬅️ Отмена",
-                        callback_data=f"student:show:{student_id}",
+                        callback_data=callbacks.build_student_show(student_id),
                     )
                 ],
             ]
         )
-        
+
     @staticmethod
     def get_claim_cancel_keyboard() -> InlineKeyboardMarkup:
         return InlineKeyboardMarkup(
@@ -1963,89 +1843,16 @@ class Keyboards:
                 [
                     InlineKeyboardButton(
                         text="❌ Отмена",
-                        callback_data="claim:cancel",
+                        callback_data=callbacks.CLAIM_CANCEL,
                     )
                 ]
             ]
         )
-    if False:       
-        @staticmethod
-        def get_claim_class_selection_kb(
-            dto: ClassListDTO,
-        ) -> InlineKeyboardMarkup:
-            buttons = []
-            row = []
 
-            for class_id, class_name in dto.classes.items():
-                row.append(
-                    InlineKeyboardButton(
-                        text=class_name,
-                        callback_data=f"claim:class:{class_id}",
-                    )
-                )
+    # ЭТАП 4: удалён мёртвый блок `if False:` с claim-клавиатурами
+    # (get_claim_class_selection_kb / get_claim_group_selection_kb):
+    # не использовались нигде с момента появления FSM claim-флоу.
 
-                if len(row) == 3:
-                    buttons.append(row)
-                    row = []
-
-            if row:
-                buttons.append(row)
-
-            buttons.append([
-                InlineKeyboardButton(
-                    text="❌ Отмена",
-                    callback_data="claim:cancel",
-                )
-            ])
-
-            return InlineKeyboardMarkup(
-                inline_keyboard=buttons,
-            )
-            
-        @staticmethod
-        def get_claim_group_selection_kb(
-            dto: GroupListDTO,
-        ) -> InlineKeyboardMarkup:
-            buttons = [
-                [
-                    InlineKeyboardButton(
-                        text="Весь класс",
-                        callback_data="claim:group:ALL",
-                    )
-                ]
-            ]
-
-            for group_id in ("0", "1"):
-                group_name = dto.groups.get(group_id)
-
-                if group_name is None:
-                    continue
-
-                buttons.append([
-                    InlineKeyboardButton(
-                        text=group_name,
-                        callback_data=f"claim:group:{group_id}",
-                    )
-                ])
-
-            buttons.append([
-                InlineKeyboardButton(
-                    text="⬅️ К выбору класса",
-                    callback_data="claim:back_to_class",
-                )
-            ])
-
-            buttons.append([
-                InlineKeyboardButton(
-                    text="❌ Отмена",
-                    callback_data="claim:cancel",
-                )
-            ])
-
-            return InlineKeyboardMarkup(
-                inline_keyboard=buttons,
-            )    
-            
     @staticmethod
     def get_student_edit_class_selection_kb(
         dto: ClassListDTO,
@@ -2057,36 +1864,31 @@ class Keyboards:
         """
         buttons = []
         row = []
-
         for class_id, class_name in dto.classes.items():
             row.append(
                 InlineKeyboardButton(
                     text=class_name,
-                    callback_data=(
-                        f"student:edit_class_select:"
-                        f"{student_id}:{class_id}"
+                    callback_data=callbacks.build_student_edit_class_select(
+                        student_id,
+                        class_id,
                     ),
                 )
             )
-
             if len(row) == 3:
                 buttons.append(row)
                 row = []
-
         if row:
             buttons.append(row)
-
         buttons.append([
             InlineKeyboardButton(
                 text="⬅️ К профилю ученика",
-                callback_data=f"student:show:{student_id}",
+                callback_data=callbacks.build_student_show(student_id),
             )
         ])
-
         return InlineKeyboardMarkup(
             inline_keyboard=buttons,
         )
-        
+
     @staticmethod
     def get_student_edit_group_selection_kb(
         dto: GroupListDTO,
@@ -2102,48 +1904,42 @@ class Keyboards:
             [
                 InlineKeyboardButton(
                     text="Весь класс",
-                    callback_data=(
-                        f"student:edit_group_select:"
-                        f"{student_id}:ALL"
+                    callback_data=callbacks.build_student_edit_group_select(
+                        student_id,
+                        "ALL",
                     ),
                 )
             ]
         ]
-
         for group_id in ("0", "1"):
             group_name = dto.groups.get(group_id)
-
             if group_name is None:
                 continue
-
             buttons.append([
                 InlineKeyboardButton(
                     text=group_name,
-                    callback_data=(
-                        f"student:edit_group_select:"
-                        f"{student_id}:{group_id}"
+                    callback_data=callbacks.build_student_edit_group_select(
+                        student_id,
+                        group_id,
                     ),
                 )
             ])
-
         buttons.append([
             InlineKeyboardButton(
                 text="⬅️ К выбору класса",
-                callback_data=f"student:edit_class:{student_id}",
+                callback_data=callbacks.build_student_edit_class(student_id),
             )
         ])
-
         buttons.append([
             InlineKeyboardButton(
                 text="⬅️ К профилю ученика",
-                callback_data=f"student:show:{student_id}",
+                callback_data=callbacks.build_student_show(student_id),
             )
         ])
-
         return InlineKeyboardMarkup(
             inline_keyboard=buttons,
         )
-        
+
     @staticmethod
     def get_self_edit_class_selection_kb(
         dto: ClassListDTO,
@@ -2156,29 +1952,24 @@ class Keyboards:
         """
         buttons = []
         row = []
-
         for class_id, class_name in dto.classes.items():
             row.append(
                 InlineKeyboardButton(
                     text=class_name,
-                    callback_data=f"self_edit:class:{class_id}",
+                    callback_data=callbacks.build_self_edit_class(class_id),
                 )
             )
-
             if len(row) == 3:
                 buttons.append(row)
                 row = []
-
         if row:
             buttons.append(row)
-
         buttons.append([
             InlineKeyboardButton(
                 text="⬅️ Назад к настройкам",
-                callback_data="self_edit:cancel",
+                callback_data=callbacks.SELF_EDIT_CANCEL,
             )
         ])
-
         return InlineKeyboardMarkup(
             inline_keyboard=buttons,
         )
@@ -2196,33 +1987,27 @@ class Keyboards:
             [
                 InlineKeyboardButton(
                     text="Весь класс",
-                    callback_data="self_edit:group:ALL",
+                    callback_data=callbacks.build_self_edit_group("ALL"),
                 )
             ]
         ]
-
         primary_group_ids = {"0", "1"}
         added_count = 0
-
         for group_id, group_name in dto.groups.items():
             if group_id not in primary_group_ids:
                 continue
-
             buttons.append([
                 InlineKeyboardButton(
                     text=group_name,
-                    callback_data=f"self_edit:group:{group_id}",
+                    callback_data=callbacks.build_self_edit_group(group_id),
                 )
             ])
-
             added_count += 1
-
         # Такой же fallback, как в get_main_group_selection(...).
         # Нужен для классов, где IDs групп не 0/1.
         if added_count == 0:
             for group_id, group_name in dto.groups.items():
                 normalized_name = str(group_name).lower()
-
                 if (
                     "1" in normalized_name
                     or "2" in normalized_name
@@ -2230,28 +2015,25 @@ class Keyboards:
                     buttons.append([
                         InlineKeyboardButton(
                             text=group_name,
-                            callback_data=f"self_edit:group:{group_id}",
+                            callback_data=callbacks.build_self_edit_group(group_id),
                         )
                     ])
-
         buttons.append([
             InlineKeyboardButton(
                 text="⬅️ К выбору класса",
-                callback_data="self_edit:back_to_class",
+                callback_data=callbacks.SELF_EDIT_BACK_TO_CLASS,
             )
         ])
-
         buttons.append([
             InlineKeyboardButton(
                 text="⬅️ Назад к настройкам",
-                callback_data="self_edit:cancel",
+                callback_data=callbacks.SELF_EDIT_CANCEL,
             )
         ])
-
         return InlineKeyboardMarkup(
             inline_keyboard=buttons,
         )
-                    
+
     #----------------------
     #   УЧИТЕЛЬ
     #----------------------
@@ -2264,46 +2046,41 @@ class Keyboards:
         """
         buttons = []
         row = []
-
         teachers = sorted(
             dto.teachers.items(),
             key=lambda item: (
                 getattr(item[1], "name", item[1]) or ""
             ).lower(),
         )
-
         for teacher_id, teacher_name in teachers:
             name = getattr(
                 teacher_name,
                 "name",
                 teacher_name,
             )
-
             row.append(
                 InlineKeyboardButton(
                     text=str(name),
-                    callback_data=f"reg_teacher:{teacher_id}",
+                    callback_data=callbacks.build_teacher_registration(
+                        teacher_id,
+                    ),
                 )
             )
-
             if len(row) == 2:
                 buttons.append(row)
                 row = []
-
         if row:
             buttons.append(row)
-
         buttons.append([
             InlineKeyboardButton(
                 text="❌ Отмена",
-                callback_data="reg_teacher:cancel",
+                callback_data=callbacks.build_teacher_registration("cancel"),
             )
         ])
-
         return InlineKeyboardMarkup(
             inline_keyboard=buttons,
         )
-            
+
     @staticmethod
     def get_teacher_schedule_day_kb(
         *,
@@ -2312,59 +2089,55 @@ class Keyboards:
         current_date = datetime.fromisoformat(
             current_date_iso
         ).date()
-
         previous_date = (
             current_date - timedelta(days=1)
         ).isoformat()
-
         next_date = (
             current_date + timedelta(days=1)
         ).isoformat()
-
         week_start = (
             current_date
             - timedelta(days=current_date.isoweekday() - 1)
         ).isoformat()
-
         return InlineKeyboardMarkup(
             inline_keyboard=[
                 [
                     InlineKeyboardButton(
                         text="⬅️ Предыдущий",
-                        callback_data=(
-                            f"teacher_sched:day:{previous_date}"
+                        callback_data=callbacks.build_teacher_sched_day(
+                            previous_date,
                         ),
                     ),
                     InlineKeyboardButton(
                         text="Следующий ➡️",
-                        callback_data=(
-                            f"teacher_sched:day:{next_date}"
+                        callback_data=callbacks.build_teacher_sched_day(
+                            next_date,
                         ),
                     ),
                 ],
                 [
                     InlineKeyboardButton(
                         text="📆 Показать неделю",
-                        callback_data=(
-                            f"teacher_sched:week:{week_start}"
+                        callback_data=callbacks.build_teacher_sched_week(
+                            week_start,
                         ),
                     )
                 ],
                 [
                     InlineKeyboardButton(
                         text="📅 К ближайшему дню",
-                        callback_data="teacher_sched:smart_day",
+                        callback_data=callbacks.TEACHER_SCHED_SMART_DAY,
                     )
                 ],
                 [
                     InlineKeyboardButton(
                         text="⚙️ Настройки",
-                        callback_data="settings:main",
+                        callback_data=callbacks.SETTINGS_MAIN,
                     )
                 ],
             ]
         )
-        
+
     @staticmethod
     def get_teacher_schedule_week_kb(
         *,
@@ -2374,12 +2147,9 @@ class Keyboards:
         week_start = datetime.fromisoformat(
             week_start_iso
         ).date()
-
         day_buttons = []
-
         for offset in range(6):
             target_date = week_start + timedelta(days=offset)
-
             day_name = [
                 "Пн",
                 "Вт",
@@ -2388,44 +2158,38 @@ class Keyboards:
                 "Пт",
                 "Сб",
             ][offset]
-
             day_buttons.append(
                 InlineKeyboardButton(
                     text=(
                         f"{day_name} "
                         f"{target_date.strftime('%d.%m')}"
                     ),
-                    callback_data=(
-                        f"teacher_sched:day:"
-                        f"{target_date.isoformat()}"
+                    callback_data=callbacks.build_teacher_sched_day(
+                        target_date.isoformat(),
                     ),
                 )
             )
-
         previous_week = (
             week_start - timedelta(days=7)
         ).isoformat()
-
         next_week = (
             week_start + timedelta(days=7)
         ).isoformat()
-
         details_button = (
             InlineKeyboardButton(
                 text="🗓 Краткая неделя",
-                callback_data=(
-                    f"teacher_sched:week:{week_start_iso}"
+                callback_data=callbacks.build_teacher_sched_week(
+                    week_start_iso,
                 ),
             )
             if is_full
             else InlineKeyboardButton(
                 text="📋 Подробно всю неделю",
-                callback_data=(
-                    f"teacher_sched:full_week:{week_start_iso}"
+                callback_data=callbacks.build_teacher_sched_full_week(
+                    week_start_iso,
                 ),
             )
         )
-
         return InlineKeyboardMarkup(
             inline_keyboard=[
                 day_buttons[:3],
@@ -2434,32 +2198,32 @@ class Keyboards:
                 [
                     InlineKeyboardButton(
                         text="⬅️ Предыдущая неделя",
-                        callback_data=(
-                            f"teacher_sched:week:{previous_week}"
+                        callback_data=callbacks.build_teacher_sched_week(
+                            previous_week,
                         ),
                     ),
                     InlineKeyboardButton(
                         text="Следующая неделя ➡️",
-                        callback_data=(
-                            f"teacher_sched:week:{next_week}"
+                        callback_data=callbacks.build_teacher_sched_week(
+                            next_week,
                         ),
                     ),
                 ],
                 [
                     InlineKeyboardButton(
                         text="📅 К ближайшему дню",
-                        callback_data="teacher_sched:smart_day",
+                        callback_data=callbacks.TEACHER_SCHED_SMART_DAY,
                     )
                 ],
                 [
                     InlineKeyboardButton(
                         text="⚙️ Настройки",
-                        callback_data="settings:main",
+                        callback_data=callbacks.SETTINGS_MAIN,
                     )
                 ],
             ]
         )
-        
+
     @staticmethod
     def get_teacher_change_kb(
         dto: TeacherListDTO,
@@ -2472,7 +2236,6 @@ class Keyboards:
         """
         buttons = []
         row = []
-
         teachers = sorted(
             dto.teachers.items(),
             key=lambda item: (
@@ -2485,37 +2248,31 @@ class Keyboards:
                 ).lower()
             ),
         )
-
         for teacher_id, teacher_name in teachers:
             name = getattr(
                 teacher_name,
                 "name",
                 teacher_name,
             )
-
             row.append(
                 InlineKeyboardButton(
                     text=str(name),
-                    callback_data=(
-                        f"teacher_change:{teacher_id}"
+                    callback_data=callbacks.build_teacher_change(
+                        teacher_id,
                     ),
                 )
             )
-
             if len(row) == 2:
                 buttons.append(row)
                 row = []
-
         if row:
             buttons.append(row)
-
         buttons.append([
             InlineKeyboardButton(
                 text="⬅️ К настройкам",
-                callback_data="settings:main",
+                callback_data=callbacks.SETTINGS_MAIN,
             )
         ])
-
         return InlineKeyboardMarkup(
             inline_keyboard=buttons,
         )

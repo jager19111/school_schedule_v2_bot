@@ -38,29 +38,6 @@ class ScheduleService:
         
         return SchoolDictionariesDTO(classes=classes_dict, groups=groups_dict)
     
-    if False:
-        async def get_readable_class_and_group(
-            self, 
-            class_id: str | None, 
-            group_id: str | None
-        ) -> tuple[str, str]:
-            """Возвращает человекочитаемые названия класса и группы."""
-            classes_dto = await self.get_classes_list()
-            groups_dto = await self.get_groups_list()
-            
-            class_name = classes_dto.classes.get(class_id, class_id) if class_id else "—"
-            
-            if not group_id or group_id == "ALL":
-                group_name = "Весь класс"
-            else:
-                names = [
-                    groups_dto.groups.get(g.strip(), f"Группа {g.strip()}") 
-                    for g in str(group_id).split(",")
-                ]
-                group_name = ", ".join(names)
-                
-            return class_name, group_name
-
     async def get_classes_list(self) -> ClassListDTO:
         """Получает список классов из репозитория и упаковывает в DTO"""
         metadata = await self.schedule_repo.get_metadata()

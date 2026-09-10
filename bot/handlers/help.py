@@ -1,19 +1,19 @@
 import logging
+
 from aiogram import F, Router
 from aiogram.filters import Command
 from aiogram.types import CallbackQuery, Message, InlineKeyboardMarkup
-
 from aiogram.exceptions import TelegramBadRequest
+
+from bot import callbacks
 from bot.keyboards.keyboard import Keyboards
 from bot.utils.ui_renderer import UIRenderer
 from services.help_service import HelpService
 from services.profiles_service import ProfileService
 
-
 router = Router()
-
-
 logger = logging.getLogger(__name__)
+
 
 async def _safe_edit_help_message(
     *,
@@ -36,7 +36,6 @@ async def _safe_edit_help_message(
             parse_mode="HTML",
         )
         return True
-
     except TelegramBadRequest as exc:
         error_text = str(exc).lower()
 
@@ -51,7 +50,8 @@ async def _safe_edit_help_message(
             exc,
         )
         return False
-    
+
+
 async def _resolve_help_role(
     *,
     user_id: int,
@@ -61,8 +61,8 @@ async def _resolve_help_role(
         user_id,
     )
 
-
-    logger.warning(
+    # Этап 4: роутинный путь — debug, не warning (шум в логах убран).
+    logger.debug(
         "Help role resolve: user_id=%s role=%r "
         "registered=%r family_id=%r class_id=%r teacher_id=%r",
         user_id,
@@ -125,6 +125,7 @@ async def show_help(
         parse_mode="HTML",
     )
 
+
 @router.message(Command("help"))
 async def command_help(
     message: Message,
@@ -141,35 +142,15 @@ async def command_help(
     )
 
 
-@router.callback_query(F.data.startswith("help:"))
+@router.callback_query(F.data.startswith(callbacks.HELP_PREFIX))
 async def callback_help(
     callback: CallbackQuery,
     profile_service: ProfileService,
     help_service: HelpService,
 ) -> None:
-    try:
-        section = callback.data.split(":", 1)[1]
-    except IndexError:
-        await callback.answer(
-            "Раздел справки не найден.",
-            show_alert=True,
-        )
-        return
-
-    allowed_sections = {
-        "main",
-        "child",
-        "parent",
-        "observer",
-        "teacher",
-        "family",
-        "notifications",
-        "extras",
-        "privacy",
-        "support",
-    }
-
-    if section not in allowed_sections:
+    # Этап 4: парсинг и whitelist разделов — в callbacks.parse_help.
+    section = callbacks.parse_help(callback.data)
+    if section is None:
         await callback.answer(
             "Раздел справки не найден.",
             show_alert=True,
@@ -184,5 +165,4 @@ async def callback_help(
         help_service=help_service,
         edit_message=True,
     )
-
     await callback.answer()

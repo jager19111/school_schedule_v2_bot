@@ -24,6 +24,7 @@
 
 import logging
 import contextlib
+from bot import callbacks
 from urllib.parse import quote
 from aiogram import Router, F, Bot
 from aiogram.types import Message, CallbackQuery
@@ -158,6 +159,7 @@ async def _show_student_telegram_settings(
     *,
     callback: CallbackQuery,
     profile_service: ProfileService,
+    schedule_service: ScheduleService,
     student_id: int,
 ) -> bool:
     """
@@ -177,8 +179,14 @@ async def _show_student_telegram_settings(
     if dto is None:
         return False
 
+    dicts_dto = await schedule_service.get_school_dictionaries()
+    class_name = dicts_dto.get_readable_class(dto.class_id)
+    group_name = dicts_dto.get_readable_group(dto.group_id)
+
     text = UIRenderer.render_student_telegram_settings(
         dto,
+        class_name=class_name,
+        group_name=group_name,
     )
 
     keyboard = Keyboards.get_student_telegram_settings_kb(
@@ -482,26 +490,11 @@ async def create_family_invite(
     """
     Создаёт one-time role-specific invite и отдаёт deep link.
     """
-    try:
-        intended_role = callback.data.split(":")[2]
-    except IndexError:
+    intended_role = callbacks.parse_family_invite_role(callback.data)
+    if intended_role is None:
         await _safe_callback_answer(
             callback,
             "Некорректная роль приглашения.",
-            show_alert=True,
-        )
-        return
-
-    allowed_roles = {
-        "child",
-        "parent",
-        "observer",
-    }
-
-    if intended_role not in allowed_roles:
-        await _safe_callback_answer(
-            callback,
-            "Неизвестная роль приглашения.",
             show_alert=True,
         )
         return
@@ -615,11 +608,8 @@ async def revoke_family_invite(
     """
     Отзывает invite после явного подтверждения.
     """
-    try:
-        invite_id = int(
-            callback.data.split(":")[2]
-        )
-    except (IndexError, ValueError):
+    invite_id = callbacks.parse_family_invite_revoke_confirm(callback.data)
+    if invite_id is None:
         await _safe_callback_answer(
             callback,
             "Некорректный идентификатор приглашения.",
@@ -689,11 +679,8 @@ async def confirm_family_invite_revoke(
     """
     Показывает confirmation перед revoke active invite.
     """
-    try:
-        invite_id = int(
-            callback.data.split(":")[2]
-        )
-    except (IndexError, ValueError):
+    invite_id = callbacks.parse_family_invite_revoke(callback.data)
+    if invite_id is None:
         await _safe_callback_answer(
             callback,
             "Некорректный идентификатор приглашения.",
@@ -752,11 +739,8 @@ async def show_family_invite_details(
     """
     Показывает active invite и позволяет повторно отправить ссылку.
     """
-    try:
-        invite_id = int(
-            callback.data.split(":")[2]
-        )
-    except (IndexError, ValueError):
+    invite_id = callbacks.parse_family_invite(callback.data)
+    if invite_id is None:
         await _safe_callback_answer(
             callback,
             "Некорректный идентификатор приглашения.",
@@ -1078,10 +1062,10 @@ async def _show_family_students_menu(
         adult_user_id=callback.from_user.id,
     )
 
-    # 1. Запрашиваем единый DTO справочников школы за один вызов[cite: 1, 3]
+    # 1. Запрашиваем единый DTO справочников школы за один вызов
     dicts_dto = await schedule_service.get_school_dictionaries()
     
-    # 2. Передаем словари напрямую из свойств единого DTO[cite: 1]
+    # 2. Передаем словари напрямую из свойств единого DTO
     text = UIRenderer.render_family_students(
         students=students,
         classes_dict=dicts_dto.classes,
@@ -1547,9 +1531,8 @@ async def select_self_edit_class(
     """
     Child выбрал новый class_id и переходит к выбору группы.
     """
-    try:
-        class_id = callback.data.split(":", 2)[2]
-    except IndexError:
+    class_id = callbacks.parse_self_edit_class(callback.data)
+    if class_id is None:
         await _safe_callback_answer(
             callback,
             "Некорректный класс.",
@@ -1691,9 +1674,8 @@ async def save_self_edit_group(
     Сохраняет новый class_id/group_id child и синхронизирует
     Telegram-linked student_profile.
     """
-    try:
-        group_id = callback.data.split(":", 2)[2]
-    except IndexError:
+    group_id = callbacks.parse_self_edit_group(callback.data)
+    if group_id is None:
         await _safe_callback_answer(
             callback,
             "Некорректная группа.",
@@ -1838,9 +1820,8 @@ async def select_watch_target_class(
     state: FSMContext,
     schedule_service: ScheduleService,
 ) -> None:
-    try:
-        class_id = callback.data.split(":")[2]
-    except IndexError:
+    class_id = callbacks.parse_watch_class(callback.data)
+    if class_id is None:
         await _safe_callback_answer(
             callback,
             "Некорректный класс.",
@@ -1895,9 +1876,8 @@ async def select_watch_target_group(
     schedule_service: ScheduleService,
     watch_targets_service: WatchTargetsService,
 ) -> None:
-    try:
-        group_id = callback.data.split(":")[2]
-    except IndexError:
+    group_id = callbacks.parse_watch_group(callback.data)
+    if group_id is None:
         await _safe_callback_answer(
             callback,
             "Некорректная группа.",
@@ -2000,9 +1980,8 @@ async def show_watch_target_details(
     watch_targets_service: WatchTargetsService,
     schedule_service: ScheduleService,
 ) -> None:
-    try:
-        target_id = int(callback.data.split(":")[2])
-    except (IndexError, ValueError):
+    target_id = callbacks.parse_watch_target(callback.data)
+    if target_id is None:
         await _safe_callback_answer(
             callback,
             "Некорректный идентификатор класса.",
@@ -2066,9 +2045,8 @@ async def toggle_watch_target(
     watch_targets_service: WatchTargetsService,
     schedule_service: ScheduleService
 ) -> None:
-    try:
-        target_id = int(callback.data.split(":")[2])
-    except (IndexError, ValueError):
+    target_id = callbacks.parse_watch_toggle(callback.data)
+    if target_id is None:
         await _safe_callback_answer(
             callback,
             "Некорректный идентификатор класса.",
@@ -2135,11 +2113,8 @@ async def toggle_watch_target_schedule_changes(
     Включает или выключает уведомления об изменениях
     только для одного watch target.
     """
-    try:
-        target_id = int(
-            callback.data.split(":")[2]
-        )
-    except (IndexError, ValueError):
+    target_id = callbacks.parse_watch_changes(callback.data)
+    if target_id is None:
         await _safe_callback_answer(
             callback,
             "Некорректный идентификатор класса.",
@@ -2226,9 +2201,8 @@ async def confirm_delete_watch_target(
     callback: CallbackQuery,
     watch_targets_service: WatchTargetsService,
 ) -> None:
-    try:
-        target_id = int(callback.data.split(":")[2])
-    except (IndexError, ValueError):
+    target_id = callbacks.parse_watch_delete(callback.data)
+    if target_id is None:
         await _safe_callback_answer(
             callback,
             "Некорректный идентификатор класса.",
@@ -2286,9 +2260,8 @@ async def delete_watch_target(
     watch_targets_service: WatchTargetsService,
     schedule_service: ScheduleService,
 ) -> None:
-    try:
-        target_id = int(callback.data.split(":")[2])
-    except (IndexError, ValueError):
+    target_id = callbacks.parse_watch_delete_confirm(callback.data)
+    if target_id is None:
         await _safe_callback_answer(
             callback,
             "Некорректный идентификатор класса.",
@@ -2353,15 +2326,13 @@ async def show_student_telegram_settings(
     callback: CallbackQuery,
     state: FSMContext,
     profile_service: ProfileService,
+    schedule_service: ScheduleService,
 ) -> None:
     """
     Family admin открывает personal Telegram settings ученика.
     """
-    try:
-        student_id = int(
-            callback.data.split(":")[2]
-        )
-    except (IndexError, ValueError):
+    student_id = callbacks.parse_student_tg_show(callback.data)
+    if student_id is None:
         await _safe_callback_answer(
             callback,
             "Некорректный идентификатор ученика.",
@@ -2374,6 +2345,7 @@ async def show_student_telegram_settings(
     shown = await _show_student_telegram_settings(
         callback=callback,
         profile_service=profile_service,
+        schedule_service=schedule_service,
         student_id=student_id,
     )
 
@@ -2396,25 +2368,21 @@ async def show_student_telegram_settings(
 async def toggle_student_telegram_setting(
     callback: CallbackQuery,
     profile_service: ProfileService,
+    schedule_service: ScheduleService,
 ) -> None:
     """
     Family admin переключает personal boolean setting
     Telegram-linked student profile.
     """
-    try:
-        _prefix, _action, setting_token, raw_student_id = (
-            callback.data.split(":")
-        )
-
-        student_id = int(raw_student_id)
-
-    except (IndexError, ValueError):
+    parsed = callbacks.parse_student_tg_toggle(callback.data)
+    if parsed is None:
         await _safe_callback_answer(
             callback,
             "Некорректные данные настройки.",
             show_alert=True,
         )
         return
+    setting_token, student_id = parsed
 
     setting_map = {
         "notif": "is_notifications_enabled",
@@ -2455,6 +2423,7 @@ async def toggle_student_telegram_setting(
     shown = await _show_student_telegram_settings(
         callback=callback,
         profile_service=profile_service,
+        schedule_service=schedule_service,
         student_id=student_id,
     )
 
@@ -2477,6 +2446,7 @@ async def toggle_student_telegram_setting(
 async def toggle_student_telegram_prelesson(
     callback: CallbackQuery,
     profile_service: ProfileService,
+    schedule_service: ScheduleService,
 ) -> None:
     """
     Включает или выключает pre-lesson reminders Telegram child.
@@ -2484,11 +2454,8 @@ async def toggle_student_telegram_prelesson(
     0 минут = выключено.
     10 минут = стандартное включённое значение.
     """
-    try:
-        student_id = int(
-            callback.data.split(":")[2]
-        )
-    except (IndexError, ValueError):
+    student_id = callbacks.parse_student_tg_prelesson(callback.data)
+    if student_id is None:
         await _safe_callback_answer(
             callback,
             "Некорректный идентификатор ученика.",
@@ -2535,6 +2502,7 @@ async def toggle_student_telegram_prelesson(
     await _show_student_telegram_settings(
         callback=callback,
         profile_service=profile_service,
+        schedule_service=schedule_service,
         student_id=student_id,
     )
 
@@ -2555,15 +2523,13 @@ async def toggle_student_telegram_prelesson(
 async def toggle_student_telegram_settings_lock(
     callback: CallbackQuery,
     profile_service: ProfileService,
+    schedule_service: ScheduleService,
 ) -> None:
     """
     Family admin включает/выключает lock personal settings child.
     """
-    try:
-        student_id = int(
-            callback.data.split(":")[2]
-        )
-    except (IndexError, ValueError):
+    student_id = callbacks.parse_student_tg_lock(callback.data)
+    if student_id is None:
         await _safe_callback_answer(
             callback,
             "Некорректный идентификатор ученика.",
@@ -2603,6 +2569,7 @@ async def toggle_student_telegram_settings_lock(
     await _show_student_telegram_settings(
         callback=callback,
         profile_service=profile_service,
+        schedule_service=schedule_service,
         student_id=student_id,
     )
 
@@ -2627,11 +2594,8 @@ async def prompt_student_telegram_summary_time(
     Family admin начинает изменение времени утренней сводки
     Telegram-linked student profile.
     """
-    try:
-        student_id = int(
-            callback.data.split(":")[2]
-        )
-    except (IndexError, ValueError):
+    student_id = callbacks.parse_student_tg_summary(callback.data)
+    if student_id is None:
         await _safe_callback_answer(
             callback,
             "Некорректный идентификатор ученика.",
@@ -2685,17 +2649,14 @@ async def disable_student_telegram_summary_time(
     callback: CallbackQuery,
     state: FSMContext,
     profile_service: ProfileService,
+    schedule_service: ScheduleService,
 ) -> None:
     """
     Отключает personal morning summary Telegram child.
     """
-    try:
-        student_id = int(
-            callback.data.split(":")[2]
-        )
-    except (IndexError, ValueError):
+    student_id = callbacks.parse_student_tg_summary_off(callback.data)
+    if student_id is None:
         await state.clear()
-
         await _safe_callback_answer(
             callback,
             "Некорректный идентификатор ученика.",
@@ -2741,6 +2702,7 @@ async def disable_student_telegram_summary_time(
     await _show_student_telegram_settings(
         callback=callback,
         profile_service=profile_service,
+        schedule_service=schedule_service,
         student_id=student_id,
     )
 
@@ -2757,6 +2719,7 @@ async def save_student_telegram_summary_time(
     state: FSMContext,
     time_service: TimeService,
     profile_service: ProfileService,
+    schedule_service: ScheduleService,
 ) -> None:
     """
     Сохраняет время personal morning summary Telegram child.
@@ -2827,9 +2790,17 @@ async def save_student_telegram_summary_time(
         )
         return
 
+    dicts_dto = await schedule_service.get_school_dictionaries()
+    class_name = dicts_dto.get_readable_class(getattr(dto, 'student_class_id', getattr(dto, 'class_id', None)))
+    group_name = dicts_dto.get_readable_group(getattr(dto, 'student_group_id', getattr(dto, 'group_id', None)))
+
     await message.answer(
         "✅ <b>Время утренней сводки обновлено.</b>\n\n"
-        + UIRenderer.render_student_telegram_settings(dto),
+        + UIRenderer.render_student_telegram_settings(
+            dto,
+            class_name=class_name,
+            group_name=group_name,
+        ),
         reply_markup=Keyboards.get_student_telegram_settings_kb(
             dto,
         ),
@@ -2962,9 +2933,8 @@ async def select_virtual_student_class(
     state: FSMContext,
     schedule_service: ScheduleService,
 ) -> None:
-    try:
-        class_id = callback.data.split(":")[2]
-    except IndexError:
+    class_id = callbacks.parse_student_class(callback.data)
+    if class_id is None:
         await _safe_callback_answer(
             callback,
             "Некорректный класс.",
@@ -3016,9 +2986,8 @@ async def create_virtual_student(
     profile_service: ProfileService,
     schedule_service: ScheduleService,
 ) -> None:
-    try:
-        group_id = callback.data.split(":")[2]
-    except IndexError:
+    group_id = callbacks.parse_student_group(callback.data)
+    if group_id is None:
         await _safe_callback_answer(
             callback,
             "Некорректная группа.",
@@ -3087,9 +3056,8 @@ async def show_student_details(
     students_service: StudentsService,
     schedule_service: ScheduleService,
 ) -> None:
-    try:
-        student_id = int(callback.data.split(":")[2])
-    except (IndexError, ValueError):
+    student_id = callbacks.parse_student_show(callback.data)
+    if student_id is None:
         await _safe_callback_answer(
             callback,
             "Некорректный идентификатор ученика.",
@@ -3145,10 +3113,10 @@ async def show_student_details(
 async def confirm_delete_virtual_student(
     callback: CallbackQuery,
     students_service: StudentsService,
+    schedule_service: ScheduleService,
 ) -> None:
-    try:
-        student_id = int(callback.data.split(":")[2])
-    except (IndexError, ValueError):
+    student_id = callbacks.parse_student_delete(callback.data)
+    if student_id is None:
         await _safe_callback_answer(
             callback,
             "Некорректный идентификатор ученика.",
@@ -3188,8 +3156,14 @@ async def confirm_delete_virtual_student(
         )
         return
 
+    dicts_dto = await schedule_service.get_school_dictionaries()
+    class_name = dicts_dto.get_readable_class(student.class_id)
+    group_name = dicts_dto.get_readable_group(student.group_id)
+
     text = UIRenderer.render_virtual_student_delete_confirmation(
         student,
+        class_name=class_name,
+        group_name=group_name,
     )
 
     keyboard = Keyboards.get_student_delete_confirmation_kb(
@@ -3213,9 +3187,8 @@ async def delete_virtual_student(
     profile_service: ProfileService,
     schedule_service: ScheduleService,
 ) -> None:
-    try:
-        student_id = int(callback.data.split(":")[2])
-    except (IndexError, ValueError):
+    student_id = callbacks.parse_student_delete_confirm(callback.data)
+    if student_id is None:
         await _safe_callback_answer(
             callback,
             "Некорректный идентификатор ученика.",
@@ -3264,11 +3237,8 @@ async def show_parent_student_notification_settings(
     Показывает настройки текущего взрослого
     для выбранного student profile.
     """
-    try:
-        student_id = int(
-            callback.data.split(":")[2]
-        )
-    except (IndexError, ValueError):
+    student_id = callbacks.parse_psn_student(callback.data)
+    if student_id is None:
         await _safe_callback_answer(
             callback,
             "Некорректный идентификатор ученика.",
@@ -3328,20 +3298,15 @@ async def toggle_parent_student_notification_setting(
     Переключает одну personal adult subscription
     по student profile.
     """
-    try:
-        _prefix, _action, setting_token, raw_student_id = (
-            callback.data.split(":")
-        )
-
-        student_id = int(raw_student_id)
-
-    except (IndexError, ValueError):
+    parsed = callbacks.parse_psn_toggle(callback.data)
+    if parsed is None:
         await _safe_callback_answer(
             callback,
             "Некорректные данные настройки.",
             show_alert=True,
         )
         return
+    setting_token, student_id = parsed
 
     setting_map = {
         "morning": "receive_morning_summary",
@@ -3429,11 +3394,8 @@ async def create_student_claim_invite(
     Family admin выпускает одноразовый claim link
     для existing virtual student.
     """
-    try:
-        student_id = int(
-            callback.data.split(":")[2]
-        )
-    except (IndexError, ValueError):
+    student_id = callbacks.parse_student_claim(callback.data)
+    if student_id is None:
         await _safe_callback_answer(
             callback,
             "Некорректный идентификатор ученика.",
@@ -3496,11 +3458,17 @@ async def create_student_claim_invite(
         group_id=invite.student_group_id or "ALL",
     )
     dicts_dto = await schedule_service.get_school_dictionaries()
+    class_name = dicts_dto.get_readable_class(
+        invite.student_class_id,
+    )
+    group_name = dicts_dto.get_readable_group(
+        invite.student_group_id,
+    )
     
     text = UIRenderer.render_student_claim_invite_created(
         student=student,
-        #classes=dicts_dto.classes,
-        #groups=dicts_dto.groups,
+        class_name=class_name,
+        group_name=group_name,
         expires_at=invite.expires_at,
         deep_link=deep_link,
     )
@@ -3535,11 +3503,8 @@ async def start_student_class_edit(
     """
     Family admin начинает изменение class/group student profile.
     """
-    try:
-        student_id = int(
-            callback.data.split(":")[2]
-        )
-    except (IndexError, ValueError):
+    student_id = callbacks.parse_student_edit_class(callback.data)
+    if student_id is None:
         await _safe_callback_answer(
             callback,
             "Некорректный идентификатор ученика.",
@@ -3613,20 +3578,15 @@ async def select_student_new_class(
     """
     Сохраняет выбранный class_id в FSM и открывает selector группы.
     """
-    try:
-        _prefix, _action, raw_student_id, class_id = (
-            callback.data.split(":")
-        )
-
-        student_id = int(raw_student_id)
-
-    except (IndexError, ValueError):
+    parsed = callbacks.parse_student_edit_class_select(callback.data)
+    if parsed is None:
         await _safe_callback_answer(
             callback,
             "Некорректный класс.",
             show_alert=True,
         )
         return
+    student_id, class_id = parsed
 
     data = await state.get_data()
 
@@ -3714,22 +3674,17 @@ async def save_student_new_class_and_group(
     Финально сохраняет class_id/group_id student profile.
 
     StudentRepository синхронизирует users.class_id/group_id,
-    если profile связан с Telegram-child.
+    if profile связан с Telegram-child.
     """
-    try:
-        _prefix, _action, raw_student_id, group_id = (
-            callback.data.split(":")
-        )
-
-        student_id = int(raw_student_id)
-
-    except (IndexError, ValueError):
+    parsed = callbacks.parse_student_edit_group_select(callback.data)
+    if parsed is None:
         await _safe_callback_answer(
             callback,
             "Некорректная группа.",
             show_alert=True,
         )
         return
+    student_id, group_id = parsed
 
     data = await state.get_data()
 
@@ -3835,11 +3790,8 @@ async def show_adult_student_extra_classes_permissions(
     Family admin просматривает права других взрослых
     на управление кружками student profile.
     """
-    try:
-        student_id = int(
-            callback.data.split(":")[2]
-        )
-    except (IndexError, ValueError):
+    student_id = callbacks.parse_student_extra_permissions(callback.data)
+    if student_id is None:
         await _safe_callback_answer(
             callback,
             "Некорректный идентификатор ученика.",
@@ -3890,12 +3842,14 @@ async def show_adult_student_extra_classes_permissions(
         )
         return
     dicts_dto = await schedule_service.get_school_dictionaries()
+    class_name = dicts_dto.get_readable_class(student.class_id)
+    group_name = dicts_dto.get_readable_group(student.group_id)
     
     text = UIRenderer.render_adult_student_extra_classes_permissions(
         student=student,
-        #classes=dicts_dto.classes,
-        #groups=dicts_dto.groups,
         permissions=permissions,
+        class_name=class_name,
+        group_name=group_name,
     )
 
     keyboard = (
@@ -3920,26 +3874,21 @@ async def toggle_adult_student_extra_classes_permission(
     callback: CallbackQuery,
     profile_service: ProfileService,
     students_service: StudentsService,
+    schedule_service: ScheduleService,
 ) -> None:
     """
     Family admin переключает право другого adult
     управлять кружками student profile.
     """
-    try:
-        _prefix, _action, raw_student_id, raw_adult_id = (
-            callback.data.split(":")
-        )
-
-        student_id = int(raw_student_id)
-        adult_user_id = int(raw_adult_id)
-
-    except (IndexError, ValueError):
+    parsed = callbacks.parse_student_perm_toggle(callback.data)
+    if parsed is None:
         await _safe_callback_answer(
             callback,
             "Некорректные данные права доступа.",
             show_alert=True,
         )
         return
+    student_id, adult_user_id = parsed
 
     admin_user_id = callback.from_user.id
 
@@ -4038,9 +3987,15 @@ async def toggle_adult_student_extra_classes_permission(
         )
         return
 
+    dicts_dto = await schedule_service.get_school_dictionaries()
+    class_name = dicts_dto.get_readable_class(student.class_id)
+    group_name = dicts_dto.get_readable_group(student.group_id)
+
     text = UIRenderer.render_adult_student_extra_classes_permissions(
         student=student,
         permissions=refreshed_permissions,
+        class_name=class_name,
+        group_name=group_name,
     )
 
     keyboard = (
@@ -4135,9 +4090,8 @@ async def save_teacher_change(
     """
     Сохраняет новый NIKA teacher_id для текущего Telegram teacher.
     """
-    try:
-        teacher_id = callback.data.split(":")[1]
-    except IndexError:
+    teacher_id = callbacks.parse_teacher_change(callback.data)
+    if teacher_id is None:
         await _safe_callback_answer(
             callback,
             "Некорректный учитель.",

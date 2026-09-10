@@ -1,3 +1,11 @@
+# bot/handlers/schedule_child.py
+#
+# ЭТАП 4: парсинг callback_data через bot/callbacks.py (sched:*).
+# Формат строк на проводе не изменён.
+#
+# Дополнительно: logger.warning на роутинном пути открытия расписания
+# (каждый вход в "Моё расписание" с одной целью) переведён в debug.
+
 import logging
 from typing import Optional
 
@@ -6,6 +14,7 @@ from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
+from bot import callbacks
 from bot.keyboards.keyboard import Keyboards
 from bot.utils.ui_renderer import UIRenderer
 from core.models.dto import ScheduleViewTargetDTO
@@ -13,7 +22,6 @@ from services.profiles_service import ProfileService
 from services.schedule_service import ScheduleService
 from services.watch_targets_service import WatchTargetsService
 from services.students_service import StudentsService
-
 from bot.handlers.schedule_teacher import (
     open_teacher_schedule_for_message,
 )
@@ -55,7 +63,6 @@ async def _get_schedule_targets(
 
     Child:
     - только свой student_profile.
-
     Parent / observer:
     - доступные student_profiles семьи;
     - собственные активные watch targets.
@@ -63,7 +70,6 @@ async def _get_schedule_targets(
     actor_dto = await profile_service.get_user_profile_dto(
         actor_user_id,
     )
-
     targets: list[ScheduleViewTargetDTO] = []
 
     # Telegram-ребёнок видит только свой student profile.
@@ -71,14 +77,12 @@ async def _get_schedule_targets(
         student = await students_service.get_student_by_telegram_user_id(
             telegram_user_id=actor_user_id,
         )
-
         if student is None:
             logger.warning(
                 "Child user_id=%s has no student_profile",
                 actor_user_id,
             )
             return []
-
         targets.append(
             ScheduleViewTargetDTO(
                 kind="student",
@@ -89,7 +93,6 @@ async def _get_schedule_targets(
                 telegram_user_id=student.telegram_user_id,
             )
         )
-
         return targets
 
     # Parent / observer получают доступных student profiles.
@@ -97,7 +100,6 @@ async def _get_schedule_targets(
         students = await students_service.get_students_for_adult(
             adult_user_id=actor_user_id,
         )
-
         for student in students:
             targets.append(
                 ScheduleViewTargetDTO(
@@ -116,7 +118,6 @@ async def _get_schedule_targets(
         owner_user_id=actor_user_id,
         enabled_only=True,
     )
-
     for watch_target in watch_targets:
         targets.append(
             ScheduleViewTargetDTO(
@@ -131,8 +132,8 @@ async def _get_schedule_targets(
                 is_enabled=watch_target.is_enabled,
             )
         )
-
     return targets
+
 
 async def _resolve_schedule_target(
     *,
@@ -153,10 +154,8 @@ async def _resolve_schedule_target(
             owner_user_id=actor_user_id,
             target_id=target_id,
         )
-
         if watch_target is None or not watch_target.is_enabled:
             return None
-
         return ScheduleViewTargetDTO(
             kind="watch",
             target_id=watch_target.id,
@@ -182,10 +181,8 @@ async def _resolve_schedule_target(
         student = await students_service.get_student_by_telegram_user_id(
             telegram_user_id=actor_user_id,
         )
-
         if student is None or student.id != target_id:
             return None
-
         return ScheduleViewTargetDTO(
             kind="student",
             target_id=student.id,
@@ -201,12 +198,9 @@ async def _resolve_schedule_target(
         adult_user_id=actor_user_id,
         student_id=target_id,
     )
-
     if result is None:
         return None
-
     student, _access = result
-
     return ScheduleViewTargetDTO(
         kind="student",
         target_id=student.id,
@@ -216,6 +210,7 @@ async def _resolve_schedule_target(
         telegram_user_id=student.telegram_user_id,
         is_enabled=student.is_active,
     )
+
 
 async def _render_day(
     *,
@@ -242,7 +237,6 @@ async def _render_day(
     )
 
     child_name = None
-
     if target.kind == "student" and target.telegram_user_id != actor_user_id:
         child_name = target.title
 
@@ -250,7 +244,6 @@ async def _render_day(
         day_dto,
         child_name,
     )
-
     text = rendered[0] if isinstance(rendered, tuple) else rendered
 
     if target.kind == "watch":
@@ -259,26 +252,23 @@ async def _render_day(
             f"📌 {UIRenderer.escape_html(target.title)}\n\n"
             f"{text}"
         )
-
     elif target.kind == "student" and target.telegram_user_id is None:
         text = (
             "🧒 <b>Ученик без Telegram</b>\n"
             f"👤 {UIRenderer.escape_html(target.title)}\n\n"
             f"{text}"
         )
-        
+
     available_targets = await _get_schedule_targets(
         actor_user_id=actor_user_id,
         profile_service=profile_service,
         students_service=students_service,
         watch_targets_service=watch_targets_service,
     )
-
     keyboard = Keyboards.get_schedule_day_kb(
         current_date_iso=date_iso,
         show_target_switch=len(available_targets) > 1,
     )
-
     return text, keyboard
 
 
@@ -307,7 +297,6 @@ async def _render_week(
                 else None
             )
         )
-
         rendered = UIRenderer.render_full_week_schedule(
             week_dto,
         )
@@ -322,7 +311,6 @@ async def _render_week(
                 else None
             )
         )
-
         rendered = UIRenderer.render_week_summary(
             week_dto,
         )
@@ -335,7 +323,6 @@ async def _render_week(
             f"📌 {UIRenderer.escape_html(target.title)}\n\n"
             f"{text}"
         )
-
     elif target.kind == "student":
         if target.telegram_user_id is None:
             prefix = (
@@ -348,22 +335,19 @@ async def _render_week(
             )
         else:
             prefix = ""
-
         text = prefix + text
-        
+
     available_targets = await _get_schedule_targets(
         actor_user_id=actor_user_id,
         profile_service=profile_service,
         students_service=students_service,
         watch_targets_service=watch_targets_service,
     )
-
     keyboard = Keyboards.get_schedule_week_kb(
         week_start_iso=week_start_iso,
         show_target_switch=len(available_targets) > 1,
         is_full=is_full,
     )
-
     return text, keyboard
 
 
@@ -392,7 +376,6 @@ async def _get_fsm_schedule_target(
     Загружает target из FSM и повторно проверяет доступ.
     """
     data = await state.get_data()
-
     actor_user_id = callback.from_user.id
 
     if data.get("schedule_actor_user_id") != actor_user_id:
@@ -400,7 +383,6 @@ async def _get_fsm_schedule_target(
 
     target_kind = data.get("schedule_target_kind")
     target_id = data.get("schedule_target_id")
-
     if not target_kind or not target_id:
         return None
 
@@ -432,11 +414,8 @@ async def open_schedule_hub(
     Если доступна одна цель — открывается сразу.
     Если доступно несколько целей — пользователь выбирает.
     """
-    
     actor_user_id = message.from_user.id
-    
     actor = await profile_service.get_user_profile_dto(actor_user_id)
-
     if not actor.is_fully_registered:
         await message.answer(UIRenderer.render_unregistered_error())
         return
@@ -447,13 +426,11 @@ async def open_schedule_hub(
             profile_service=profile_service,
             schedule_service=schedule_service,
         )
-
         if not opened:
             await message.answer(
                 "❌ Не удалось открыть расписание учителя. "
                 "Проверьте выбранный профиль учителя в настройках."
             )
-
         return
 
     targets = await _get_schedule_targets(
@@ -462,7 +439,6 @@ async def open_schedule_hub(
         students_service=students_service,
         watch_targets_service=watch_targets_service,
     )
-
     if not targets:
         await message.answer(
             "У вас пока нет доступных учеников или "
@@ -478,10 +454,8 @@ async def open_schedule_hub(
             schedule_target_kind=None,
             schedule_target_id=None,
         )
-        
         # 1. Запрашиваем справочники школы единым запросом
         dicts_dto = await schedule_service.get_school_dictionaries()
-        
         await message.answer(
             "🎯 <b>Выберите расписание</b>",
             reply_markup=Keyboards.get_schedule_targets_kb(
@@ -494,8 +468,8 @@ async def open_schedule_hub(
         return
 
     target = targets[0]
-
-    logger.warning(
+    # Этап 4: роутинный путь — debug, не warning.
+    logger.debug(
         "Schedule Hub targets: actor_id=%s count=%s targets=%r",
         actor_user_id,
         len(targets),
@@ -510,13 +484,11 @@ async def open_schedule_hub(
             for target in targets
         ],
     )
-
     await _save_schedule_target_to_fsm(
         state=state,
         actor_user_id=actor_user_id,
         target=target,
     )
-
     target_date_iso = await schedule_service.get_smart_target_date(
         class_id=target.class_id,
         group_id=target.group_id,
@@ -526,7 +498,6 @@ async def open_schedule_hub(
             else None
         ),
     )
-
     text, keyboard = await _render_day(
         actor_user_id=actor_user_id,
         target=target,
@@ -536,7 +507,6 @@ async def open_schedule_hub(
         students_service=students_service,
         watch_targets_service=watch_targets_service,
     )
-
     await message.answer(
         text,
         reply_markup=keyboard,
@@ -544,7 +514,7 @@ async def open_schedule_hub(
     )
 
 
-@router.callback_query(F.data == "sched:targets")
+@router.callback_query(F.data == callbacks.SCHED_TARGETS)
 async def show_schedule_targets(
     callback: CallbackQuery,
     state: FSMContext,
@@ -562,23 +532,19 @@ async def show_schedule_targets(
         watch_targets_service=watch_targets_service,
         students_service=students_service,
     )
-
     if not targets:
         await callback.answer(
             "Нет доступных целей расписания.",
             show_alert=True,
         )
         return
-
     await state.update_data(
         schedule_actor_user_id=callback.from_user.id,
         schedule_target_kind=None,
         schedule_target_id=None,
     )
-    
     # 1. Запрашиваем справочники школы единым запросом
     dicts_dto = await schedule_service.get_school_dictionaries()
-    
     # 2. Передаем сырые словари напрямую из свойств dicts_dto в клавиатуру
     await _safe_edit_schedule_message(
         callback,
@@ -589,11 +555,10 @@ async def show_schedule_targets(
             groups_dict=dicts_dto.groups,
         ),
     )
-
     await callback.answer()
 
 
-@router.callback_query(F.data.startswith("sched:target:"))
+@router.callback_query(F.data.startswith(callbacks.SCHED_TARGET_PREFIX))
 async def select_schedule_target(
     callback: CallbackQuery,
     state: FSMContext,
@@ -605,19 +570,17 @@ async def select_schedule_target(
     """
     Выбирает child или watch target.
     """
-    try:
-        _, _, target_kind, target_id_raw = callback.data.split(":")
-
-        target_id = int(target_id_raw)
-    except (IndexError, ValueError):
+    # Этап 4: парсинг — в callbacks.parse_sched_target.
+    parsed = callbacks.parse_sched_target(callback.data)
+    if parsed is None:
         await callback.answer(
             "Некорректная цель расписания.",
             show_alert=True,
         )
         return
+    target_kind, target_id = parsed
 
     actor_user_id = callback.from_user.id
-
     target = await _resolve_schedule_target(
         actor_user_id=actor_user_id,
         target_kind=target_kind,
@@ -626,20 +589,17 @@ async def select_schedule_target(
         watch_targets_service=watch_targets_service,
         students_service=students_service,
     )
-
     if target is None:
         await callback.answer(
             "Цель недоступна или была удалена.",
             show_alert=True,
         )
         return
-
     await _save_schedule_target_to_fsm(
         state=state,
         actor_user_id=actor_user_id,
         target=target,
     )
-
     target_date_iso = await schedule_service.get_smart_target_date(
         class_id=target.class_id,
         group_id=target.group_id,
@@ -649,7 +609,6 @@ async def select_schedule_target(
             else None
         ),
     )
-
     text, keyboard = await _render_day(
         actor_user_id=actor_user_id,
         target=target,
@@ -659,17 +618,15 @@ async def select_schedule_target(
         students_service=students_service,
         watch_targets_service=watch_targets_service,
     )
-
     await _safe_edit_schedule_message(
         callback,
         text,
         keyboard,
     )
-
     await callback.answer()
 
 
-@router.callback_query(F.data.startswith("sched:watch:"))
+@router.callback_query(F.data.startswith(callbacks.SCHED_WATCH_PREFIX))
 async def open_watch_target_schedule(
     callback: CallbackQuery,
     state: FSMContext,
@@ -681,19 +638,15 @@ async def open_watch_target_schedule(
     """
     Открывает watch target из карточки отслеживаемого класса.
     """
-    try:
-        target_id = int(
-            callback.data.split(":")[2]
-        )
-    except (IndexError, ValueError):
+    # Этап 4: парсинг — в callbacks.parse_sched_watch.
+    target_id = callbacks.parse_sched_watch(callback.data)
+    if target_id is None:
         await callback.answer(
             "Некорректный класс.",
             show_alert=True,
         )
         return
-
     actor_user_id = callback.from_user.id
-
     target = await _resolve_schedule_target(
         actor_user_id=actor_user_id,
         target_kind="watch",
@@ -702,26 +655,22 @@ async def open_watch_target_schedule(
         watch_targets_service=watch_targets_service,
         students_service=students_service,
     )
-
     if target is None:
         await callback.answer(
             "Класс недоступен или отслеживание выключено.",
             show_alert=True,
         )
         return
-
     await _save_schedule_target_to_fsm(
         state=state,
         actor_user_id=actor_user_id,
         target=target,
     )
-
     target_date_iso = await schedule_service.get_smart_target_date(
         class_id=target.class_id,
         group_id=target.group_id,
         student_id=None,
     )
-
     text, keyboard = await _render_day(
         actor_user_id=actor_user_id,
         target=target,
@@ -731,17 +680,15 @@ async def open_watch_target_schedule(
         watch_targets_service=watch_targets_service,
         students_service=students_service,
     )
-
     await _safe_edit_schedule_message(
         callback,
         text,
         keyboard,
     )
-
     await callback.answer()
 
 
-@router.callback_query(F.data == "sched:smart_day")
+@router.callback_query(F.data == callbacks.SCHED_SMART_DAY)
 async def go_to_smart_day(
     callback: CallbackQuery,
     state: FSMContext,
@@ -757,7 +704,6 @@ async def go_to_smart_day(
         students_service=students_service,
         watch_targets_service=watch_targets_service,
     )
-
     if target is None:
         await callback.answer(
             "Сессия просмотра устарела. "
@@ -765,7 +711,6 @@ async def go_to_smart_day(
             show_alert=True,
         )
         return
-
     target_date_iso = await schedule_service.get_smart_target_date(
         class_id=target.class_id,
         group_id=target.group_id,
@@ -775,7 +720,6 @@ async def go_to_smart_day(
             else None
         ),
     )
-
     text, keyboard = await _render_day(
         actor_user_id=callback.from_user.id,
         target=target,
@@ -785,17 +729,15 @@ async def go_to_smart_day(
         students_service=students_service,
         watch_targets_service=watch_targets_service,
     )
-
     await _safe_edit_schedule_message(
         callback,
         text,
         keyboard,
     )
-
     await callback.answer()
 
 
-@router.callback_query(F.data.startswith("sched:day:"))
+@router.callback_query(F.data.startswith(callbacks.SCHED_DAY_PREFIX))
 async def show_schedule_day(
     callback: CallbackQuery,
     state: FSMContext,
@@ -804,15 +746,14 @@ async def show_schedule_day(
     students_service: StudentsService,
     watch_targets_service: WatchTargetsService,
 ) -> None:
-    try:
-        date_iso = callback.data.split(":")[2]
-    except IndexError:
+    # Этап 4: парсинг — в callbacks.parse_sched_day.
+    date_iso = callbacks.parse_sched_day(callback.data)
+    if date_iso is None:
         await callback.answer(
             "Некорректная дата.",
             show_alert=True,
         )
         return
-
     target = await _get_fsm_schedule_target(
         callback=callback,
         state=state,
@@ -820,7 +761,6 @@ async def show_schedule_day(
         watch_targets_service=watch_targets_service,
         students_service=students_service,
     )
-
     if target is None:
         await callback.answer(
             "Сессия просмотра устарела. "
@@ -828,7 +768,6 @@ async def show_schedule_day(
             show_alert=True,
         )
         return
-
     text, keyboard = await _render_day(
         actor_user_id=callback.from_user.id,
         target=target,
@@ -838,17 +777,15 @@ async def show_schedule_day(
         students_service=students_service,
         watch_targets_service=watch_targets_service,
     )
-
     await _safe_edit_schedule_message(
         callback,
         text,
         keyboard,
     )
-
     await callback.answer()
 
 
-@router.callback_query(F.data.startswith("sched:week:"))
+@router.callback_query(F.data.startswith(callbacks.SCHED_WEEK_PREFIX))
 async def show_schedule_week(
     callback: CallbackQuery,
     state: FSMContext,
@@ -857,15 +794,14 @@ async def show_schedule_week(
     students_service: StudentsService,
     watch_targets_service: WatchTargetsService,
 ) -> None:
-    try:
-        week_start_iso = callback.data.split(":")[2]
-    except IndexError:
+    # Этап 4: парсинг — в callbacks.parse_sched_week.
+    week_start_iso = callbacks.parse_sched_week(callback.data)
+    if week_start_iso is None:
         await callback.answer(
             "Некорректная дата недели.",
             show_alert=True,
         )
         return
-
     target = await _get_fsm_schedule_target(
         callback=callback,
         state=state,
@@ -873,7 +809,6 @@ async def show_schedule_week(
         watch_targets_service=watch_targets_service,
         students_service=students_service,
     )
-
     if target is None:
         await callback.answer(
             "Сессия просмотра устарела. "
@@ -881,7 +816,6 @@ async def show_schedule_week(
             show_alert=True,
         )
         return
-
     text, keyboard = await _render_week(
         actor_user_id=callback.from_user.id,
         target=target,
@@ -892,17 +826,15 @@ async def show_schedule_week(
         students_service=students_service,
         watch_targets_service=watch_targets_service,
     )
-
     await _safe_edit_schedule_message(
         callback,
         text,
         keyboard,
     )
-
     await callback.answer()
 
 
-@router.callback_query(F.data.startswith("sched:full_week:"))
+@router.callback_query(F.data.startswith(callbacks.SCHED_FULL_WEEK_PREFIX))
 async def show_full_schedule_week(
     callback: CallbackQuery,
     state: FSMContext,
@@ -911,15 +843,14 @@ async def show_full_schedule_week(
     students_service: StudentsService,
     watch_targets_service: WatchTargetsService,
 ) -> None:
-    try:
-        week_start_iso = callback.data.split(":")[2]
-    except IndexError:
+    # Этап 4: парсинг — в callbacks.parse_sched_full_week.
+    week_start_iso = callbacks.parse_sched_full_week(callback.data)
+    if week_start_iso is None:
         await callback.answer(
             "Некорректная дата недели.",
             show_alert=True,
         )
         return
-
     target = await _get_fsm_schedule_target(
         callback=callback,
         state=state,
@@ -927,7 +858,6 @@ async def show_full_schedule_week(
         watch_targets_service=watch_targets_service,
         students_service=students_service,
     )
-
     if target is None:
         await callback.answer(
             "Сессия просмотра устарела. "
@@ -935,7 +865,6 @@ async def show_full_schedule_week(
             show_alert=True,
         )
         return
-
     text, keyboard = await _render_week(
         actor_user_id=callback.from_user.id,
         target=target,
@@ -946,7 +875,8 @@ async def show_full_schedule_week(
         students_service=students_service,
         watch_targets_service=watch_targets_service,
     )
-
+    # TODO (Этап 4, хелпер длины): заменить ручную проверку на общий
+    # helper с авторазбиением длинных сообщений.
     if len(text) > 3900:
         await callback.answer(
             "Подробная неделя слишком длинная. "
@@ -954,11 +884,9 @@ async def show_full_schedule_week(
             show_alert=True,
         )
         return
-
     await _safe_edit_schedule_message(
         callback,
         text,
         keyboard,
     )
-
     await callback.answer()
