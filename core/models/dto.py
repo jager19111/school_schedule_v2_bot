@@ -1,3 +1,4 @@
+# bot/core/dto.py
 from dataclasses import dataclass
 from typing import Dict, Optional, Any, List
 from dataclasses import dataclass, field

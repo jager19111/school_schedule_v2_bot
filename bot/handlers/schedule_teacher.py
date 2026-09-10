@@ -17,6 +17,7 @@ from bot.keyboards.keyboard import Keyboards
 from bot.utils.ui_renderer import UIRenderer
 from services.profiles_service import ProfileService
 from services.schedule_service import ScheduleService
+from bot.utils.safe_send import send_or_edit_long
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -339,7 +340,6 @@ async def teacher_schedule_full_week(
     profile_service: ProfileService,
     schedule_service: ScheduleService,
 ) -> None:
-    # Этап 4: парсинг — в callbacks.parse_teacher_sched_full_week.
     week_start_iso = callbacks.parse_teacher_sched_full_week(callback.data)
     if week_start_iso is None:
         await callback.answer(
@@ -347,6 +347,7 @@ async def teacher_schedule_full_week(
             show_alert=True,
         )
         return
+
     teacher = await _get_teacher_profile(
         user_id=callback.from_user.id,
         profile_service=profile_service,
@@ -357,11 +358,13 @@ async def teacher_schedule_full_week(
             show_alert=True,
         )
         return
+
     teacher_name = await _teacher_name(
         teacher_id=teacher.teacher_id,
         schedule_service=schedule_service,
         fallback=teacher.name or "Учитель",
     )
+
     text, keyboard = await _render_teacher_week(
         teacher_id=teacher.teacher_id,
         week_start_iso=week_start_iso,
@@ -369,18 +372,19 @@ async def teacher_schedule_full_week(
         schedule_service=schedule_service,
         is_full=True,
     )
-    # TODO (Этап 4, хелпер длины): заменить ручную проверку на общий
-    # helper с авторазбиением длинных сообщений.
-    if len(text) > 3900:
-        await callback.answer(
-            "Подробная неделя слишком длинная. "
-            "Используйте просмотр по дням.",
-            show_alert=True,
-        )
-        return
-    await _safe_edit_teacher_schedule(
-        callback,
-        text,
-        keyboard,
+
+    # Этап 4.6: авторазбиение вместо отказа
+    delivered = await send_or_edit_long(
+        callback=callback,
+        text=text,
+        keyboard=keyboard,
     )
+    if not delivered:
+        logger.warning(
+            "Teacher full week delivery failed: "
+            "teacher_id=%s week=%s",
+            teacher.teacher_id,
+            week_start_iso,
+        )
+
     await callback.answer()

@@ -22,9 +22,8 @@ from services.profiles_service import ProfileService
 from services.schedule_service import ScheduleService
 from services.watch_targets_service import WatchTargetsService
 from services.students_service import StudentsService
-from bot.handlers.schedule_teacher import (
-    open_teacher_schedule_for_message,
-)
+from bot.handlers.schedule_teacher import open_teacher_schedule_for_message
+from bot.utils.safe_send import send_or_edit_long
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -877,16 +876,18 @@ async def show_full_schedule_week(
     )
     # TODO (Этап 4, хелпер длины): заменить ручную проверку на общий
     # helper с авторазбиением длинных сообщений.
-    if len(text) > 3900:
-        await callback.answer(
-            "Подробная неделя слишком длинная. "
-            "Используйте просмотр по дням.",
-            show_alert=True,
-        )
-        return
-    await _safe_edit_schedule_message(
-        callback,
-        text,
-        keyboard,
+    # Этап 4.6: авторазбиение вместо отказа
+    delivered = await send_or_edit_long(
+        callback=callback,
+        text=text,
+        keyboard=keyboard,
     )
+    if not delivered:
+        logger.warning(
+            "Full week delivery failed: "
+            "actor_id=%s week=%s",
+            callback.from_user.id,
+            week_start_iso,
+        )
+
     await callback.answer()
