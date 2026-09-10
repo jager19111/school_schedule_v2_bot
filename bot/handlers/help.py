@@ -6,6 +6,9 @@ from aiogram.types import CallbackQuery, Message, InlineKeyboardMarkup
 from aiogram.exceptions import TelegramBadRequest
 
 from bot import callbacks
+from bot.callbacks import (
+    HelpCD,
+)
 from bot.keyboards.keyboard import Keyboards
 from bot.utils.ui_renderer import UIRenderer
 from services.help_service import HelpService
@@ -142,20 +145,14 @@ async def command_help(
     )
 
 
-@router.callback_query(F.data.startswith(callbacks.HELP_PREFIX))
+@router.callback_query(HelpCD.filter())
 async def callback_help(
     callback: CallbackQuery,
+    callback_data: HelpCD,
     profile_service: ProfileService,
     help_service: HelpService,
 ) -> None:
-    # Этап 4: парсинг и whitelist разделов — в callbacks.parse_help.
-    section = callbacks.parse_help(callback.data)
-    if section is None:
-        await callback.answer(
-            "Раздел справки не найден.",
-            show_alert=True,
-        )
-        return
+    section = callback_data.section
 
     await show_help(
         message=callback.message,

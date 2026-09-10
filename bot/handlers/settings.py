@@ -25,6 +25,41 @@
 import logging
 import contextlib
 from bot import callbacks
+from bot.callbacks import (
+    AdultExtraPermissionToggleCD,
+    FamilyInviteDetailsCD,
+    FamilyInviteRevokeCD,
+    FamilyInviteRevokeConfirmCD,
+    FamilyInviteRoleCD,
+    ParentStudentSettingsCD,
+    ParentStudentToggleCD,
+    SelfEditClassCD,
+    SelfEditGroupCD,
+    StudentClaimCD,
+    StudentDeleteCD,
+    StudentDeleteConfirmCD,
+    StudentDetailsCD,
+    StudentEditClassCD,
+    StudentEditGroupCD,
+    StudentEditStartCD,
+    StudentExtraPermissionsCD,
+    StudentTelegramLockCD,
+    StudentTelegramPrelessonCD,
+    StudentTelegramSettingsCD,
+    StudentTelegramSummaryCD,
+    StudentTelegramSummaryOffCD,
+    StudentTelegramToggleCD,
+    TeacherChangeCD,
+    VirtualStudentClassCD,
+    VirtualStudentGroupCD,
+    WatchChangesCD,
+    WatchClassCD,
+    WatchDeleteCD,
+    WatchDeleteConfirmCD,
+    WatchDetailsCD,
+    WatchGroupCD,
+    WatchToggleCD,
+)
 from urllib.parse import quote
 from aiogram import Router, F, Bot
 from aiogram.types import Message, CallbackQuery
@@ -267,7 +302,7 @@ async def settings_main_menu(message: Message, profile_service: ProfileService, 
     await _show_settings_menu(message, message.from_user.id, profile_service, schedule_service, is_callback=False)
 
               
-@router.callback_query(F.data == "settings:main")
+@router.callback_query(F.data == callbacks.SETTINGS_MAIN)
 async def settings_main_menu_cb(callback: CallbackQuery, profile_service: ProfileService, schedule_service: ScheduleService):
     """Главное меню настроек. Вызывается из коллбэка после изменения настроек."""
     await _show_settings_menu(callback.message, callback.from_user.id, profile_service, schedule_service, is_callback=True)
@@ -320,7 +355,7 @@ async def _show_settings_menu(
         await message_obj.answer(text, reply_markup=kb, parse_mode="HTML")
 
 # ================= ПЕРЕРЕГИСТРАЦИЯ =================
-@router.callback_query(F.data == "auth:restart")
+@router.callback_query(F.data == callbacks.AUTH_RESTART)
 async def process_restart(
     callback: CallbackQuery,
     profile_service: ProfileService,
@@ -356,7 +391,7 @@ async def process_restart(
 
     await _safe_callback_answer(callback)
 
-@router.callback_query(F.data == "auth:restart_confirm")
+@router.callback_query(F.data == callbacks.AUTH_RESTART_CONFIRM)
 async def confirm_restart(
     callback: CallbackQuery,
     state: FSMContext,
@@ -434,7 +469,7 @@ async def confirm_restart(
 #4. family:invite_revoke:
 #5. family:invite:
 #6. family:invites
-@router.callback_query(F.data == "family:invite_menu")
+@router.callback_query(F.data == callbacks.FAMILY_INVITE_MENU)
 async def show_family_invite_menu(
     callback: CallbackQuery,
     profile_service: ProfileService,
@@ -479,24 +514,18 @@ async def show_family_invite_menu(
     await _safe_callback_answer(callback)
 
 @router.callback_query(
-    F.data.startswith("family:invite_role:")
+    FamilyInviteRoleCD.filter()
 )
 async def create_family_invite(
     callback: CallbackQuery,
+    callback_data: FamilyInviteRoleCD,
     bot: Bot,
     profile_service: ProfileService,
 ) -> None:
     """
     Создаёт one-time role-specific invite и отдаёт deep link.
     """
-    intended_role = callbacks.parse_family_invite_role(callback.data)
-    if intended_role is None:
-        await _safe_callback_answer(
-            callback,
-            "Некорректная роль приглашения.",
-            show_alert=True,
-        )
-        return
+    intended_role = callback_data.role
 
     user_dto = await profile_service.get_user_profile_dto(
         callback.from_user.id,
@@ -598,23 +627,17 @@ async def create_family_invite(
     )
 
 @router.callback_query(
-    F.data.startswith("family:invite_revoke_confirm:")
+    FamilyInviteRevokeConfirmCD.filter()
 )
 async def revoke_family_invite(
     callback: CallbackQuery,
+    callback_data: FamilyInviteRevokeConfirmCD,
     profile_service: ProfileService,
 ) -> None:
     """
     Отзывает invite после явного подтверждения.
     """
-    invite_id = callbacks.parse_family_invite_revoke_confirm(callback.data)
-    if invite_id is None:
-        await _safe_callback_answer(
-            callback,
-            "Некорректный идентификатор приглашения.",
-            show_alert=True,
-        )
-        return
+    invite_id = callback_data.invite_id
 
     user_dto = await profile_service.get_user_profile_dto(
         callback.from_user.id,
@@ -669,23 +692,17 @@ async def revoke_family_invite(
     )
     
 @router.callback_query(
-    F.data.startswith("family:invite_revoke:")
+    FamilyInviteRevokeCD.filter()
 )         
 async def confirm_family_invite_revoke(
     callback: CallbackQuery,
+    callback_data: FamilyInviteRevokeCD,
     profile_service: ProfileService,
 ) -> None:
     """
     Показывает confirmation перед revoke active invite.
     """
-    invite_id = callbacks.parse_family_invite_revoke(callback.data)
-    if invite_id is None:
-        await _safe_callback_answer(
-            callback,
-            "Некорректный идентификатор приглашения.",
-            show_alert=True,
-        )
-        return
+    invite_id = callback_data.invite_id
 
     user_dto = await profile_service.get_user_profile_dto(
         callback.from_user.id,
@@ -729,23 +746,17 @@ async def confirm_family_invite_revoke(
 
     await _safe_callback_answer(callback)
 
-@router.callback_query(F.data.startswith("family:invite:"))
+@router.callback_query(FamilyInviteDetailsCD.filter())
 async def show_family_invite_details(
     callback: CallbackQuery,
+    callback_data: FamilyInviteDetailsCD,
     bot: Bot,
     profile_service: ProfileService,
 ) -> None:
     """
     Показывает active invite и позволяет повторно отправить ссылку.
     """
-    invite_id = callbacks.parse_family_invite(callback.data)
-    if invite_id is None:
-        await _safe_callback_answer(
-            callback,
-            "Некорректный идентификатор приглашения.",
-            show_alert=True,
-        )
-        return
+    invite_id = callback_data.invite_id
 
     user_dto = await profile_service.get_user_profile_dto(
         callback.from_user.id,
@@ -825,7 +836,7 @@ async def show_family_invite_details(
     await _safe_callback_answer(callback)
 
                   
-@router.callback_query(F.data == "family:invites")
+@router.callback_query(F.data == callbacks.FAMILY_INVITES)
 async def show_active_family_invites(
     callback: CallbackQuery,
     profile_service: ProfileService,
@@ -875,7 +886,7 @@ async def show_active_family_invites(
     await _safe_callback_answer(callback)
 
    
-@router.callback_query(F.data == "settings:family")
+@router.callback_query(F.data == callbacks.SETTINGS_FAMILY)
 async def show_family_management(
     callback: CallbackQuery, 
     profile_service: ProfileService, 
@@ -913,7 +924,7 @@ async def show_family_management(
     await callback.answer()
 
 @router.callback_query(
-    F.data == "settings:children_notifications"
+    F.data == callbacks.SETTINGS_CHILDREN_NOTIFICATIONS
 )
 async def show_children_notification_settings(
     callback: CallbackQuery,
@@ -982,7 +993,7 @@ async def show_children_notification_settings(
     await _safe_callback_answer(callback)
 
 # Настройки самого родителя
-@router.callback_query(F.data == "settings:my_notifications")
+@router.callback_query(F.data == callbacks.SETTINGS_MY_NOTIFICATIONS)
 async def toggle_my_notifications(
     callback: CallbackQuery,
     profile_service: ProfileService,
@@ -1074,7 +1085,7 @@ async def _show_family_students_menu(
             
     # ================= 5. ВВОД ВРЕМЕНИ СВОДКИ (FSM) =================
 
-@router.callback_query(F.data == "settings:my_summary_time")
+@router.callback_query(F.data == callbacks.SETTINGS_MY_SUMMARY_TIME)
 async def prompt_my_summary_time(
     callback: CallbackQuery,
     state: FSMContext,
@@ -1116,7 +1127,7 @@ async def prompt_my_summary_time(
 
 @router.callback_query(
     SettingsStates.waiting_for_my_time,
-    F.data == "set_time:off",
+    F.data == callbacks.SET_TIME_OFF,
 )
 async def disable_my_summary_time(
     callback: CallbackQuery,
@@ -1175,7 +1186,7 @@ async def disable_my_summary_time(
 
 @router.callback_query(
     SettingsStates.waiting_for_my_time,
-    F.data == "settings:cancel_input",
+    F.data == callbacks.SETTINGS_CANCEL_INPUT,
 )
 async def cancel_my_summary_time_input(
     callback: CallbackQuery,
@@ -1261,7 +1272,7 @@ async def process_my_time(
    
     
 # ================= НАСТРОЙКИ УВЕДОМЛЕНИЙ =================
-@router.callback_query(F.data == "settings:notifications")
+@router.callback_query(F.data == callbacks.SETTINGS_NOTIFICATIONS)
 async def show_notifications_menu(callback: CallbackQuery, profile_service: ProfileService):
     user_dto = await profile_service.get_user_profile_dto(callback.from_user.id)
     text = UIRenderer.render_notifications_menu(user_dto)
@@ -1274,7 +1285,7 @@ async def show_notifications_menu(callback: CallbackQuery, profile_service: Prof
         
     await callback.answer()
    
-@router.callback_query(F.data == "set_notif:changes")
+@router.callback_query(F.data == callbacks.SET_NOTIF_CHANGES)
 async def toggle_changes_notif(
     callback: CallbackQuery,
     profile_service: ProfileService,
@@ -1302,7 +1313,7 @@ async def toggle_changes_notif(
         profile_service=profile_service,
     )
 
-@router.callback_query(F.data == "set_notif:prelesson")
+@router.callback_query(F.data == callbacks.SET_NOTIF_PRELESSON)
 async def toggle_prelesson_notif(
     callback: CallbackQuery,
     profile_service: ProfileService,
@@ -1342,7 +1353,7 @@ async def toggle_prelesson_notif(
         profile_service=profile_service,
     )    
 
-@router.callback_query(F.data == "set_notif:extra")
+@router.callback_query(F.data == callbacks.SET_NOTIF_EXTRA)
 async def toggle_extra_notif(
     callback: CallbackQuery,
     profile_service: ProfileService,
@@ -1374,7 +1385,7 @@ async def toggle_extra_notif(
 # ================= 5. СМЕНА КЛАССА И ГРУППЫ =================
    
     
-@router.callback_query(F.data == "settings:change_class")
+@router.callback_query(F.data == callbacks.SETTINGS_CHANGE_CLASS)
 async def start_self_edit_class(
     callback: CallbackQuery,
     state: FSMContext,
@@ -1444,7 +1455,7 @@ async def start_self_edit_class(
     await _safe_callback_answer(callback)
     
 # Меню watch targets    
-@router.callback_query(F.data == "watch:menu")
+@router.callback_query(F.data == callbacks.WATCH_MENU)
 async def show_watch_targets_menu(
     callback: CallbackQuery,
     watch_targets_service: WatchTargetsService,
@@ -1477,24 +1488,18 @@ async def show_watch_targets_menu(
 
 @router.callback_query(
     SettingsStates.waiting_for_self_edit_class,
-    F.data.startswith("self_edit:class:"),
+    SelfEditClassCD.filter(),
 )
 async def select_self_edit_class(
     callback: CallbackQuery,
+    callback_data: SelfEditClassCD,
     state: FSMContext,
     schedule_service: ScheduleService,
 ) -> None:
     """
     Child выбрал новый class_id и переходит к выбору группы.
     """
-    class_id = callbacks.parse_self_edit_class(callback.data)
-    if class_id is None:
-        await _safe_callback_answer(
-            callback,
-            "Некорректный класс.",
-            show_alert=True,
-        )
-        return
+    class_id = callback_data.class_id
 
     if not await validate_fsm_session(
         callback,
@@ -1527,7 +1532,7 @@ async def select_self_edit_class(
 
 @router.callback_query(
     SettingsStates.waiting_for_self_edit_group,
-    F.data == "self_edit:back_to_class",
+    F.data == callbacks.SELF_EDIT_BACK_TO_CLASS,
 )
 async def back_to_self_edit_class(
     callback: CallbackQuery,
@@ -1568,7 +1573,7 @@ async def back_to_self_edit_class(
     await _safe_callback_answer(callback)
 
 @router.callback_query(
-    F.data == "self_edit:cancel",
+    F.data == callbacks.SELF_EDIT_CANCEL,
 )
 async def cancel_self_edit_class_group(
     callback: CallbackQuery,
@@ -1602,10 +1607,11 @@ async def cancel_self_edit_class_group(
 
 @router.callback_query(
     SettingsStates.waiting_for_self_edit_group,
-    F.data.startswith("self_edit:group:"),
+    SelfEditGroupCD.filter(),
 )
 async def save_self_edit_group(
     callback: CallbackQuery,
+    callback_data: SelfEditGroupCD,
     state: FSMContext,
     profile_service: ProfileService,
     students_service: StudentsService,
@@ -1615,14 +1621,7 @@ async def save_self_edit_group(
     Сохраняет новый class_id/group_id child и синхронизирует
     Telegram-linked student_profile.
     """
-    group_id = callbacks.parse_self_edit_group(callback.data)
-    if group_id is None:
-        await _safe_callback_answer(
-            callback,
-            "Некорректная группа.",
-            show_alert=True,
-        )
-        return
+    group_id = callback_data.group_id
 
     actor_user_id = callback.from_user.id
     
@@ -1701,7 +1700,7 @@ async def save_self_edit_group(
         "✅ Класс и группа обновлены.",
     )
                 
-@router.callback_query(F.data == "watch:add")
+@router.callback_query(F.data == callbacks.WATCH_ADD)
 async def start_add_watch_target(
     callback: CallbackQuery,
     state: FSMContext,
@@ -1751,21 +1750,15 @@ async def start_add_watch_target(
     
 @router.callback_query(
     SettingsStates.waiting_for_watch_group,
-    F.data.startswith("watch:class:"),
+    WatchClassCD.filter(),
 )
 async def select_watch_target_class(
     callback: CallbackQuery,
+    callback_data: WatchClassCD,
     state: FSMContext,
     schedule_service: ScheduleService,
 ) -> None:
-    class_id = callbacks.parse_watch_class(callback.data)
-    if class_id is None:
-        await _safe_callback_answer(
-            callback,
-            "Некорректный класс.",
-            show_alert=True,
-        )
-        return
+    class_id = callback_data.class_id
 
     if not await validate_fsm_session(
         callback,
@@ -1801,22 +1794,16 @@ async def select_watch_target_class(
     
 @router.callback_query(
     SettingsStates.waiting_for_watch_group,
-    F.data.startswith("watch:group:"),
+    WatchGroupCD.filter(),
 )
 async def select_watch_target_group(
     callback: CallbackQuery,
+    callback_data: WatchGroupCD,
     state: FSMContext,
     schedule_service: ScheduleService,
     watch_targets_service: WatchTargetsService,
 ) -> None:
-    group_id = callbacks.parse_watch_group(callback.data)
-    if group_id is None:
-        await _safe_callback_answer(
-            callback,
-            "Некорректная группа.",
-            show_alert=True,
-        )
-        return
+    group_id = callback_data.group_id
 
     if not await validate_fsm_session(
         callback,
@@ -1907,21 +1894,15 @@ async def select_watch_target_group(
     )
     
 @router.callback_query(
-    F.data.startswith("watch:target:")
+    WatchDetailsCD.filter()
 )
 async def show_watch_target_details(
     callback: CallbackQuery,
+    callback_data: WatchDetailsCD,
     watch_targets_service: WatchTargetsService,
     schedule_service: ScheduleService,
 ) -> None:
-    target_id = callbacks.parse_watch_target(callback.data)
-    if target_id is None:
-        await _safe_callback_answer(
-            callback,
-            "Некорректный идентификатор класса.",
-            show_alert=True,
-        )
-        return
+    target_id = callback_data.target_id
 
     targets = await watch_targets_service.get_targets(
         owner_user_id=callback.from_user.id,
@@ -1960,21 +1941,15 @@ async def show_watch_target_details(
     await _safe_callback_answer(callback)
 
 @router.callback_query(
-    F.data.startswith("watch:toggle:")
+    WatchToggleCD.filter()
 )
 async def toggle_watch_target(
     callback: CallbackQuery,
+    callback_data: WatchToggleCD,
     watch_targets_service: WatchTargetsService,
     schedule_service: ScheduleService
 ) -> None:
-    target_id = callbacks.parse_watch_toggle(callback.data)
-    if target_id is None:
-        await _safe_callback_answer(
-            callback,
-            "Некорректный идентификатор класса.",
-            show_alert=True,
-        )
-        return
+    target_id = callback_data.target_id
 
     targets = await watch_targets_service.get_targets(
         owner_user_id=callback.from_user.id,
@@ -2016,8 +1991,6 @@ async def toggle_watch_target(
         "Отслеживание обновлено.",
     )
 
-    # Локальный flip: меняем boolean в памяти, не вызывая другой хендлер
-    # (show_watch_target_details парсит "watch:target:", а у нас "watch:toggle:")
     refreshed_target = replace(
         target,
         is_enabled=not target.is_enabled,
@@ -2035,10 +2008,11 @@ async def toggle_watch_target(
     )  
 
 @router.callback_query(
-    F.data.startswith("watch:changes:")
+    WatchChangesCD.filter()
 )
 async def toggle_watch_target_schedule_changes(
     callback: CallbackQuery,
+    callback_data: WatchChangesCD,
     watch_targets_service: WatchTargetsService,
     schedule_service: ScheduleService,
 ) -> None:
@@ -2046,14 +2020,7 @@ async def toggle_watch_target_schedule_changes(
     Включает или выключает уведомления об изменениях
     только для одного watch target.
     """
-    target_id = callbacks.parse_watch_changes(callback.data)
-    if target_id is None:
-        await _safe_callback_answer(
-            callback,
-            "Некорректный идентификатор класса.",
-            show_alert=True,
-        )
-        return
+    target_id = callback_data.target_id
 
     target = await watch_targets_service.get_target(
         owner_user_id=callback.from_user.id,
@@ -2117,20 +2084,14 @@ async def toggle_watch_target_schedule_changes(
     )
     
 @router.callback_query(
-    F.data.startswith("watch:delete:")
+    WatchDeleteCD.filter()
 )
 async def confirm_delete_watch_target(
     callback: CallbackQuery,
+    callback_data: WatchDeleteCD,
     watch_targets_service: WatchTargetsService,
 ) -> None:
-    target_id = callbacks.parse_watch_delete(callback.data)
-    if target_id is None:
-        await _safe_callback_answer(
-            callback,
-            "Некорректный идентификатор класса.",
-            show_alert=True,
-        )
-        return
+    target_id = callback_data.target_id
 
     targets = await watch_targets_service.get_targets(
         owner_user_id=callback.from_user.id,
@@ -2175,21 +2136,15 @@ async def confirm_delete_watch_target(
     await _safe_callback_answer(callback)
     
 @router.callback_query(
-    F.data.startswith("watch:delete_confirm:")
+    WatchDeleteConfirmCD.filter()
 )
 async def delete_watch_target(
     callback: CallbackQuery,
+    callback_data: WatchDeleteConfirmCD,
     watch_targets_service: WatchTargetsService,
     schedule_service: ScheduleService,
 ) -> None:
-    target_id = callbacks.parse_watch_delete_confirm(callback.data)
-    if target_id is None:
-        await _safe_callback_answer(
-            callback,
-            "Некорректный идентификатор класса.",
-            show_alert=True,
-        )
-        return
+    target_id = callback_data.target_id
 
     response = await watch_targets_service.delete_target(
         owner_user_id=callback.from_user.id,
@@ -2236,10 +2191,11 @@ async def delete_watch_target(
 # Виртуальный ученик
 
 @router.callback_query(
-    F.data.startswith("student_tg:show:")
+    StudentTelegramSettingsCD.filter()
 )
 async def show_student_telegram_settings(
     callback: CallbackQuery,
+    callback_data: StudentTelegramSettingsCD,
     state: FSMContext,
     profile_service: ProfileService,
     schedule_service: ScheduleService,
@@ -2247,14 +2203,7 @@ async def show_student_telegram_settings(
     """
     Family admin открывает personal Telegram settings ученика.
     """
-    student_id = callbacks.parse_student_tg_show(callback.data)
-    if student_id is None:
-        await _safe_callback_answer(
-            callback,
-            "Некорректный идентификатор ученика.",
-            show_alert=True,
-        )
-        return
+    student_id = callback_data.student_id
 
     await state.clear()
 
@@ -2279,10 +2228,11 @@ async def show_student_telegram_settings(
     await _safe_callback_answer(callback)
 
 @router.callback_query(
-    F.data.startswith("student_tg:toggle:")
+    StudentTelegramToggleCD.filter()
 )
 async def toggle_student_telegram_setting(
     callback: CallbackQuery,
+    callback_data: StudentTelegramToggleCD,
     profile_service: ProfileService,
     schedule_service: ScheduleService,
 ) -> None:
@@ -2290,15 +2240,7 @@ async def toggle_student_telegram_setting(
     Family admin переключает personal boolean setting
     Telegram-linked student profile.
     """
-    parsed = callbacks.parse_student_tg_toggle(callback.data)
-    if parsed is None:
-        await _safe_callback_answer(
-            callback,
-            "Некорректные данные настройки.",
-            show_alert=True,
-        )
-        return
-    setting_token, student_id = parsed
+    setting_token, student_id = callback_data.setting, callback_data.student_id
 
     setting_map = {
         "notif": "is_notifications_enabled",
@@ -2357,10 +2299,11 @@ async def toggle_student_telegram_setting(
     )
 
 @router.callback_query(
-    F.data.startswith("student_tg:prelesson:")
+    StudentTelegramPrelessonCD.filter()
 )
 async def toggle_student_telegram_prelesson(
     callback: CallbackQuery,
+    callback_data: StudentTelegramPrelessonCD,
     profile_service: ProfileService,
     schedule_service: ScheduleService,
 ) -> None:
@@ -2370,14 +2313,7 @@ async def toggle_student_telegram_prelesson(
     0 минут = выключено.
     10 минут = стандартное включённое значение.
     """
-    student_id = callbacks.parse_student_tg_prelesson(callback.data)
-    if student_id is None:
-        await _safe_callback_answer(
-            callback,
-            "Некорректный идентификатор ученика.",
-            show_alert=True,
-        )
-        return
+    student_id = callback_data.student_id
 
     dto = await profile_service.get_student_telegram_settings_for_admin(
         admin_user_id=callback.from_user.id,
@@ -2434,24 +2370,18 @@ async def toggle_student_telegram_prelesson(
     )
 
 @router.callback_query(
-    F.data.startswith("student_tg:lock:")
+    StudentTelegramLockCD.filter()
 )
 async def toggle_student_telegram_settings_lock(
     callback: CallbackQuery,
+    callback_data: StudentTelegramLockCD,
     profile_service: ProfileService,
     schedule_service: ScheduleService,
 ) -> None:
     """
     Family admin включает/выключает lock personal settings child.
     """
-    student_id = callbacks.parse_student_tg_lock(callback.data)
-    if student_id is None:
-        await _safe_callback_answer(
-            callback,
-            "Некорректный идентификатор ученика.",
-            show_alert=True,
-        )
-        return
+    student_id = callback_data.student_id
 
     dto = await profile_service.get_student_telegram_settings_for_admin(
         admin_user_id=callback.from_user.id,
@@ -2499,10 +2429,11 @@ async def toggle_student_telegram_settings_lock(
     )
 
 @router.callback_query(
-    F.data.startswith("student_tg:summary:")
+    StudentTelegramSummaryCD.filter()
 )
 async def prompt_student_telegram_summary_time(
     callback: CallbackQuery,
+    callback_data: StudentTelegramSummaryCD,
     state: FSMContext,
     profile_service: ProfileService,
     schedule_service: ScheduleService,
@@ -2511,14 +2442,7 @@ async def prompt_student_telegram_summary_time(
     Family admin начинает изменение времени утренней сводки
     Telegram-linked student profile.
     """
-    student_id = callbacks.parse_student_tg_summary(callback.data)
-    if student_id is None:
-        await _safe_callback_answer(
-            callback,
-            "Некорректный идентификатор ученика.",
-            show_alert=True,
-        )
-        return
+    student_id = callback_data.student_id
 
     dto = await profile_service.get_student_telegram_settings_for_admin(
         admin_user_id=callback.from_user.id,
@@ -2569,10 +2493,11 @@ async def prompt_student_telegram_summary_time(
 
 @router.callback_query(
     SettingsStates.waiting_for_student_telegram_summary_time,
-    F.data.startswith("student_tg:summary_off:"),
+    StudentTelegramSummaryOffCD.filter(),
 )
 async def disable_student_telegram_summary_time(
     callback: CallbackQuery,
+    callback_data: StudentTelegramSummaryOffCD,
     state: FSMContext,
     profile_service: ProfileService,
     schedule_service: ScheduleService,
@@ -2580,15 +2505,7 @@ async def disable_student_telegram_summary_time(
     """
     Отключает personal morning summary Telegram child.
     """
-    student_id = callbacks.parse_student_tg_summary_off(callback.data)
-    if student_id is None:
-        await state.clear()
-        await _safe_callback_answer(
-            callback,
-            "Некорректный идентификатор ученика.",
-            show_alert=True,
-        )
-        return
+    student_id = callback_data.student_id
 
     if not await validate_fsm_session(
         callback,
@@ -2723,7 +2640,7 @@ async def save_student_telegram_summary_time(
     )
     # ------------------------
                             
-@router.callback_query(F.data == "family:students")
+@router.callback_query(F.data == callbacks.FAMILY_STUDENTS)
 async def show_family_students(
     callback: CallbackQuery,
     profile_service: ProfileService,
@@ -2739,7 +2656,7 @@ async def show_family_students(
 
     await _safe_callback_answer(callback)
     
-@router.callback_query(F.data == "student:add")
+@router.callback_query(F.data == callbacks.STUDENT_ADD)
 async def start_add_virtual_student(
     callback: CallbackQuery,
     state: FSMContext,
@@ -2838,21 +2755,15 @@ async def process_virtual_student_name(
     
 @router.callback_query(
     SettingsStates.waiting_for_virtual_student_group,
-    F.data.startswith("student:class:"),
+    VirtualStudentClassCD.filter(),
 )
 async def select_virtual_student_class(
     callback: CallbackQuery,
+    callback_data: VirtualStudentClassCD,
     state: FSMContext,
     schedule_service: ScheduleService,
 ) -> None:
-    class_id = callbacks.parse_student_class(callback.data)
-    if class_id is None:
-        await _safe_callback_answer(
-            callback,
-            "Некорректный класс.",
-            show_alert=True,
-        )
-        return
+    class_id = callback_data.class_id
 
     if not await validate_fsm_session(
         callback,
@@ -2884,23 +2795,17 @@ async def select_virtual_student_class(
     
 @router.callback_query(
     SettingsStates.waiting_for_virtual_student_group,
-    F.data.startswith("student:group:"),
+    VirtualStudentGroupCD.filter(),
 )
 async def create_virtual_student(
     callback: CallbackQuery,
+    callback_data: VirtualStudentGroupCD,
     state: FSMContext,
     students_service: StudentsService,
     profile_service: ProfileService,
     schedule_service: ScheduleService,
 ) -> None:
-    group_id = callbacks.parse_student_group(callback.data)
-    if group_id is None:
-        await _safe_callback_answer(
-            callback,
-            "Некорректная группа.",
-            show_alert=True,
-        )
-        return
+    group_id = callback_data.group_id
 
     if not await validate_fsm_session(
         callback,
@@ -2956,21 +2861,15 @@ async def create_virtual_student(
     )
     
 @router.callback_query(
-    F.data.startswith("student:show:")
+    StudentDetailsCD.filter()
 )
 async def show_student_details(
     callback: CallbackQuery,
+    callback_data: StudentDetailsCD,
     students_service: StudentsService,
     schedule_service: ScheduleService,
 ) -> None:
-    student_id = callbacks.parse_student_show(callback.data)
-    if student_id is None:
-        await _safe_callback_answer(
-            callback,
-            "Некорректный идентификатор ученика.",
-            show_alert=True,
-        )
-        return
+    student_id = callback_data.student_id
 
     result = await students_service.get_student_for_adult(
         adult_user_id=callback.from_user.id,
@@ -3003,21 +2902,15 @@ async def show_student_details(
     await _safe_callback_answer(callback)
     
 @router.callback_query(
-    F.data.startswith("student:delete:")
+    StudentDeleteCD.filter()
 )
 async def confirm_delete_virtual_student(
     callback: CallbackQuery,
+    callback_data: StudentDeleteCD,
     students_service: StudentsService,
     schedule_service: ScheduleService,
 ) -> None:
-    student_id = callbacks.parse_student_delete(callback.data)
-    if student_id is None:
-        await _safe_callback_answer(
-            callback,
-            "Некорректный идентификатор ученика.",
-            show_alert=True,
-        )
-        return
+    student_id = callback_data.student_id
 
     result = await students_service.get_student_for_adult(
         adult_user_id=callback.from_user.id,
@@ -3070,22 +2963,16 @@ async def confirm_delete_virtual_student(
     await _safe_callback_answer(callback)
     
 @router.callback_query(
-    F.data.startswith("student:delete_confirm:")
+    StudentDeleteConfirmCD.filter()
 )
 async def delete_virtual_student(
     callback: CallbackQuery,
+    callback_data: StudentDeleteConfirmCD,
     students_service: StudentsService,
     profile_service: ProfileService,
     schedule_service: ScheduleService,
 ) -> None:
-    student_id = callbacks.parse_student_delete_confirm(callback.data)
-    if student_id is None:
-        await _safe_callback_answer(
-            callback,
-            "Некорректный идентификатор ученика.",
-            show_alert=True,
-        )
-        return
+    student_id = callback_data.student_id
 
     response = await students_service.delete_virtual_student(
         admin_user_id=callback.from_user.id,
@@ -3117,10 +3004,11 @@ async def delete_virtual_student(
 #PSN
 
 @router.callback_query(
-    F.data.startswith("psn:student:")
+    ParentStudentSettingsCD.filter()
 )
 async def show_parent_student_notification_settings(
     callback: CallbackQuery,
+    callback_data: ParentStudentSettingsCD,
     profile_service: ProfileService,
     schedule_service: ScheduleService,
 ) -> None:
@@ -3128,14 +3016,7 @@ async def show_parent_student_notification_settings(
     Показывает настройки текущего взрослого
     для выбранного student profile.
     """
-    student_id = callbacks.parse_psn_student(callback.data)
-    if student_id is None:
-        await _safe_callback_answer(
-            callback,
-            "Некорректный идентификатор ученика.",
-            show_alert=True,
-        )
-        return
+    student_id = callback_data.student_id
 
     dto = await profile_service.get_parent_student_notification_settings(
         parent_user_id=callback.from_user.id,
@@ -3175,10 +3056,11 @@ async def show_parent_student_notification_settings(
     await _safe_callback_answer(callback)
     
 @router.callback_query(
-    F.data.startswith("psn:toggle:")
+    ParentStudentToggleCD.filter()
 )
 async def toggle_parent_student_notification_setting(
     callback: CallbackQuery,
+    callback_data: ParentStudentToggleCD,
     profile_service: ProfileService,
     schedule_service: ScheduleService,
 ) -> None:
@@ -3186,15 +3068,7 @@ async def toggle_parent_student_notification_setting(
     Переключает одну personal adult subscription
     по student profile.
     """
-    parsed = callbacks.parse_psn_toggle(callback.data)
-    if parsed is None:
-        await _safe_callback_answer(
-            callback,
-            "Некорректные данные настройки.",
-            show_alert=True,
-        )
-        return
-    setting_token, student_id = parsed
+    setting_token, student_id = callback_data.setting, callback_data.student_id
 
     setting_map = {
         "morning": "receive_morning_summary",
@@ -3272,10 +3146,11 @@ async def toggle_parent_student_notification_setting(
     )
         
 @router.callback_query(
-    F.data.startswith("student:claim:")
+    StudentClaimCD.filter()
 )
 async def create_student_claim_invite(
     callback: CallbackQuery,
+    callback_data: StudentClaimCD,
     bot: Bot,
     students_service: StudentsService,
     schedule_service: ScheduleService,
@@ -3284,14 +3159,7 @@ async def create_student_claim_invite(
     Family admin выпускает одноразовый claim link
     для existing virtual student.
     """
-    student_id = callbacks.parse_student_claim(callback.data)
-    if student_id is None:
-        await _safe_callback_answer(
-            callback,
-            "Некорректный идентификатор ученика.",
-            show_alert=True,
-        )
-        return
+    student_id = callback_data.student_id
 
     admin_user_id = callback.from_user.id
 
@@ -3373,10 +3241,11 @@ async def create_student_claim_invite(
     )
     
 @router.callback_query(
-    F.data.startswith("student:edit_class:")
+    StudentEditStartCD.filter()
 )
 async def start_student_class_edit(
     callback: CallbackQuery,
+    callback_data: StudentEditStartCD,
     state: FSMContext,
     profile_service: ProfileService,
     students_service: StudentsService,
@@ -3385,14 +3254,7 @@ async def start_student_class_edit(
     """
     Family admin начинает изменение class/group student profile.
     """
-    student_id = callbacks.parse_student_edit_class(callback.data)
-    if student_id is None:
-        await _safe_callback_answer(
-            callback,
-            "Некорректный идентификатор ученика.",
-            show_alert=True,
-        )
-        return
+    student_id = callback_data.student_id
 
     student_result = await students_service.get_student_for_adult(
         adult_user_id=callback.from_user.id,
@@ -3446,10 +3308,11 @@ async def start_student_class_edit(
     
 @router.callback_query(
     SettingsStates.waiting_for_student_class,
-    F.data.startswith("student:edit_class_select:"),
+    StudentEditClassCD.filter(),
 )
 async def select_student_new_class(
     callback: CallbackQuery,
+    callback_data: StudentEditClassCD,
     state: FSMContext,
     profile_service: ProfileService,
     students_service: StudentsService,
@@ -3458,15 +3321,7 @@ async def select_student_new_class(
     """
     Сохраняет выбранный class_id в FSM и открывает selector группы.
     """
-    parsed = callbacks.parse_student_edit_class_select(callback.data)
-    if parsed is None:
-        await _safe_callback_answer(
-            callback,
-            "Некорректный класс.",
-            show_alert=True,
-        )
-        return
-    student_id, class_id = parsed
+    student_id, class_id = callback_data.student_id, callback_data.class_id
 
     if not await validate_fsm_session(
         callback,
@@ -3534,10 +3389,11 @@ async def select_student_new_class(
     
 @router.callback_query(
     SettingsStates.waiting_for_student_group,
-    F.data.startswith("student:edit_group_select:"),
+    StudentEditGroupCD.filter(),
 )
 async def save_student_new_class_and_group(
     callback: CallbackQuery,
+    callback_data: StudentEditGroupCD,
     state: FSMContext,
     profile_service: ProfileService,
     students_service: StudentsService,
@@ -3549,15 +3405,7 @@ async def save_student_new_class_and_group(
     StudentRepository синхронизирует users.class_id/group_id,
     if profile связан с Telegram-child.
     """
-    parsed = callbacks.parse_student_edit_group_select(callback.data)
-    if parsed is None:
-        await _safe_callback_answer(
-            callback,
-            "Некорректная группа.",
-            show_alert=True,
-        )
-        return
-    student_id, group_id = parsed
+    student_id, group_id = callback_data.student_id, callback_data.group_id
 
     if not await validate_fsm_session(
         callback,
@@ -3635,10 +3483,11 @@ async def save_student_new_class_and_group(
     await _safe_callback_answer(callback)
     
 @router.callback_query(
-    F.data.startswith("student:extra_permissions:")
+    StudentExtraPermissionsCD.filter()
 )
 async def show_adult_student_extra_classes_permissions(
     callback: CallbackQuery,
+    callback_data: StudentExtraPermissionsCD,
     profile_service: ProfileService,
     students_service: StudentsService,
     schedule_service: ScheduleService,
@@ -3647,14 +3496,7 @@ async def show_adult_student_extra_classes_permissions(
     Family admin просматривает права других взрослых
     на управление кружками student profile.
     """
-    student_id = callbacks.parse_student_extra_permissions(callback.data)
-    if student_id is None:
-        await _safe_callback_answer(
-            callback,
-            "Некорректный идентификатор ученика.",
-            show_alert=True,
-        )
-        return
+    student_id = callback_data.student_id
 
     admin_user_id = callback.from_user.id
 
@@ -3722,10 +3564,11 @@ async def show_adult_student_extra_classes_permissions(
     await _safe_callback_answer(callback)
     
 @router.callback_query(
-    F.data.startswith("student_perm:toggle:")
+    AdultExtraPermissionToggleCD.filter()
 )
 async def toggle_adult_student_extra_classes_permission(
     callback: CallbackQuery,
+    callback_data: AdultExtraPermissionToggleCD,
     profile_service: ProfileService,
     students_service: StudentsService,
     schedule_service: ScheduleService,
@@ -3734,15 +3577,7 @@ async def toggle_adult_student_extra_classes_permission(
     Family admin переключает право другого adult
     управлять кружками student profile.
     """
-    parsed = callbacks.parse_student_perm_toggle(callback.data)
-    if parsed is None:
-        await _safe_callback_answer(
-            callback,
-            "Некорректные данные права доступа.",
-            show_alert=True,
-        )
-        return
-    student_id, adult_user_id = parsed
+    student_id, adult_user_id = callback_data.student_id, callback_data.adult_user_id
 
     admin_user_id = callback.from_user.id
 
@@ -3873,7 +3708,7 @@ async def toggle_adult_student_extra_classes_permission(
     #----------------------
     
 @router.callback_query(
-    F.data == "settings:change_teacher"
+    F.data == callbacks.SETTINGS_CHANGE_TEACHER
 )
 async def start_teacher_change(
     callback: CallbackQuery,
@@ -3931,10 +3766,11 @@ async def start_teacher_change(
     
 @router.callback_query(
     SettingsStates.waiting_for_teacher_change,
-    F.data.startswith("teacher_change:"),
+    TeacherChangeCD.filter(),
 )
 async def save_teacher_change(
     callback: CallbackQuery,
+    callback_data: TeacherChangeCD,
     state: FSMContext,
     profile_service: ProfileService,
     schedule_service: ScheduleService,
@@ -3942,14 +3778,7 @@ async def save_teacher_change(
     """
     Сохраняет новый NIKA teacher_id для теку Telegram teacher.
     """
-    teacher_id = callbacks.parse_teacher_change(callback.data)
-    if teacher_id is None:
-        await _safe_callback_answer(
-            callback,
-            "Некорректный учитель.",
-            show_alert=True,
-        )
-        return
+    teacher_id = callback_data.teacher_id
 
     if not await validate_fsm_session(
         callback,

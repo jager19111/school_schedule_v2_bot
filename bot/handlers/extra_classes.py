@@ -1,8 +1,7 @@
 # bot/handlers/extra_classes.py
 #
-# ЭТАП 4: парсинг callback_data через bot/callbacks.py
-# (extra:*, extraday:*, edit_ext:*, skip_location/skip_reminder).
-# Формат строк на проводе не изменён.
+# ЭТАП 7: нативный aiogram CallbackData (Extra*CD).
+# Формат строк на проводе изменён: xm/xl/xa/xe/xd/xy/xf.
 #
 # Дополнительно: process_day/process_edit_day/choose_edit_field раньше
 # парсили аргументы без try/except (битая строка роняла хендлер);
@@ -17,6 +16,15 @@ from aiogram.fsm.state import StatesGroup, State
 from aiogram.exceptions import TelegramBadRequest
 
 from bot import callbacks
+from bot.callbacks import (
+    ExtraAddCD,
+    ExtraDayCD,
+    ExtraDeleteCD,
+    ExtraEditCD,
+    ExtraEditFieldCD,
+    ExtraListCD,
+    ExtraMenuCD,
+)
 from bot.utils.ui_renderer import UIRenderer
 from bot.keyboards.keyboard import Keyboards
 from services.time_service import TimeService
@@ -309,9 +317,10 @@ async def show_extra_students(
     await callback.answer()
 
 
-@router.callback_query(F.data.startswith(callbacks.EXTRA_MENU_PREFIX))
+@router.callback_query(ExtraMenuCD.filter())
 async def show_extra_menu_cb(
     callback: CallbackQuery,
+    callback_data: ExtraMenuCD,
     state: FSMContext,
     extra_classes_service: ExtraClassesService,
     students_service: StudentsService,
@@ -321,14 +330,7 @@ async def show_extra_menu_cb(
     Открывает меню занятий выбранного student profile.
     """
     await state.clear()
-    # Этап 4: парсинг — в callbacks.parse_extra_menu.
-    target_student_id = callbacks.parse_extra_menu(callback.data)
-    if target_student_id is None:
-        await callback.answer(
-            "Некорректный идентификатор ученика.",
-            show_alert=True,
-        )
-        return
+    target_student_id = callback_data.student_id
     shown = await _show_extra_menu_for_student(
         message_obj=callback.message,
         actor_user_id=callback.from_user.id,
@@ -406,20 +408,14 @@ async def cancel_action(
 
 # === СПИСОК И УДАЛЕНИЕ ===
 
-@router.callback_query(F.data.startswith(callbacks.EXTRA_LIST_PREFIX))
+@router.callback_query(ExtraListCD.filter())
 async def show_extra_list(
     callback: CallbackQuery,
+    callback_data: ExtraListCD,
     extra_classes_service: ExtraClassesService,
 ) -> None:
     """Показывает занятия ребёнка только при наличии view-права."""
-    # Этап 4: парсинг — в callbacks.parse_extra_list.
-    target_student_id = callbacks.parse_extra_list(callback.data)
-    if target_student_id is None:
-        await callback.answer(
-            "Некорректный идентификатор ребёнка.",
-            show_alert=True,
-        )
-        return
+    target_student_id = callback_data.student_id
     response = await extra_classes_service.get_student_extra_classes(
         actor_user_id=callback.from_user.id,
         target_student_id=target_student_id,
@@ -452,21 +448,15 @@ async def show_extra_list(
     await callback.answer()
 
 
-@router.callback_query(F.data.startswith(callbacks.EXTRA_DELETE_PREFIX))
+@router.callback_query(ExtraDeleteCD.filter())
 async def start_delete_extra(
     callback: CallbackQuery,
+    callback_data: ExtraDeleteCD,
     state: FSMContext,
     extra_classes_service: ExtraClassesService,
 ) -> None:
     """Запускает удаление занятия при наличии manage-права."""
-    # Этап 4: парсинг — в callbacks.parse_extra_delete.
-    target_student_id = callbacks.parse_extra_delete(callback.data)
-    if target_student_id is None:
-        await callback.answer(
-            "Некорректный идентификатор ребёнка.",
-            show_alert=True,
-        )
-        return
+    target_student_id = callback_data.student_id
     actor_user_id = callback.from_user.id
     can_manage = await _require_extra_manage_access(
         actor_user_id=actor_user_id,
@@ -605,21 +595,15 @@ async def process_delete_id(
 
 # === ДОБАВЛЕНИЕ ЗАНЯТИЯ ===
 
-@router.callback_query(F.data.startswith(callbacks.EXTRA_ADD_PREFIX))
+@router.callback_query(ExtraAddCD.filter())
 async def start_add_extra(
     callback: CallbackQuery,
+    callback_data: ExtraAddCD,
     state: FSMContext,
     extra_classes_service: ExtraClassesService,
 ) -> None:
     """Запускает FSM добавления занятия при наличии manage-права."""
-    # Этап 4: парсинг — в callbacks.parse_extra_add.
-    target_student_id = callbacks.parse_extra_add(callback.data)
-    if target_student_id is None:
-        await callback.answer(
-            "Некорректный идентификатор ребёнка.",
-            show_alert=True,
-        )
-        return
+    target_student_id = callback_data.student_id
     actor_user_id = callback.from_user.id
     can_manage = await _require_extra_manage_access(
         actor_user_id=actor_user_id,
@@ -648,23 +632,20 @@ async def start_add_extra(
 
 @router.callback_query(
     ExtraClassStates.waiting_for_day,
-    F.data.startswith(callbacks.EXTRA_DAY_PREFIX),
+    ExtraDayCD.filter(),
 )
-async def process_day(callback: CallbackQuery, state: FSMContext):
+async def process_day(
+    callback: CallbackQuery,
+    callback_data: ExtraDayCD,
+    state: FSMContext,
+):
     if not await validate_fsm_session(
         callback,
         state,
         expected={"extra_actor_user_id": callback.from_user.id},
     ):
         return
-    # Этап 4: парсинг — в callbacks.parse_extra_day.
-    day_num = callbacks.parse_extra_day(callback.data)
-    if day_num is None:
-        await callback.answer(
-            "❌ Некорректный день недели.",
-            show_alert=True,
-        )
-        return
+    day_num = callback_data.day_of_week
     await state.update_data(day_of_week=day_num)
     text, _ = UIRenderer.render_extra_class_time_start()
     await callback.message.edit_text(text, reply_markup=Keyboards.get_cancel_keyboard())
@@ -706,15 +687,15 @@ async def process_time_end(message: Message, state: FSMContext, time_service: Ti
 async def process_title(message: Message, state: FSMContext):
     await state.update_data(title=message.text.strip())
     text, _ = UIRenderer.render_extra_class_location()
-    await message.answer(text, reply_markup=Keyboards.get_skip_cancel_keyboard(callbacks.SKIP_LOCATION), parse_mode="HTML")
+    await message.answer(text, reply_markup=Keyboards.get_skip_cancel_keyboard(callbacks.EXTRA_SKIP_LOCATION), parse_mode="HTML")
     await state.set_state(ExtraClassStates.waiting_for_location)
 
 
-@router.callback_query(ExtraClassStates.waiting_for_location,  F.data == callbacks.SKIP_LOCATION,)
+@router.callback_query(ExtraClassStates.waiting_for_location,  F.data == callbacks.EXTRA_SKIP_LOCATION,)
 async def skip_location(callback: CallbackQuery, state: FSMContext):
     await state.update_data(location=None)
     text, _ = UIRenderer.render_extra_class_reminder()
-    await callback.message.edit_text(text, reply_markup=Keyboards.get_skip_cancel_keyboard(callbacks.SKIP_REMINDER), parse_mode="HTML")
+    await callback.message.edit_text(text, reply_markup=Keyboards.get_skip_cancel_keyboard(callbacks.EXTRA_SKIP_REMINDER), parse_mode="HTML")
     await state.set_state(ExtraClassStates.waiting_for_reminder)
     await callback.answer()
 
@@ -723,13 +704,13 @@ async def skip_location(callback: CallbackQuery, state: FSMContext):
 async def process_location(message: Message, state: FSMContext):
     await state.update_data(location=message.text.strip())
     text, _ = UIRenderer.render_extra_class_reminder()
-    await message.answer(text, reply_markup=Keyboards.get_skip_cancel_keyboard(callbacks.SKIP_REMINDER), parse_mode="HTML")
+    await message.answer(text, reply_markup=Keyboards.get_skip_cancel_keyboard(callbacks.EXTRA_SKIP_REMINDER), parse_mode="HTML")
     await state.set_state(ExtraClassStates.waiting_for_reminder)
 
 
 @router.callback_query(
     ExtraClassStates.waiting_for_reminder,
-    F.data == callbacks.SKIP_REMINDER,
+    F.data == callbacks.EXTRA_SKIP_REMINDER,
 )
 async def skip_reminder(
     callback: CallbackQuery,
@@ -773,7 +754,7 @@ async def process_reminder(
         text, _ = UIRenderer.render_extra_class_invalid_reminder()
         return await message.answer(
             text,
-            reply_markup=Keyboards.get_skip_cancel_keyboard(callbacks.SKIP_REMINDER),
+            reply_markup=Keyboards.get_skip_cancel_keyboard(callbacks.EXTRA_SKIP_REMINDER),
             parse_mode="HTML",
         )
     await finalize_extra_class(
@@ -898,21 +879,15 @@ async def finalize_extra_class(
 
 # === ИЗМЕНЕНИЕ ЗАНЯТИЯ ===
 
-@router.callback_query(F.data.startswith(callbacks.EXTRA_EDIT_PREFIX))
+@router.callback_query(ExtraEditCD.filter())
 async def start_edit_extra(
     callback: CallbackQuery,
+    callback_data: ExtraEditCD,
     state: FSMContext,
     extra_classes_service: ExtraClassesService,
 ) -> None:
     """Запускает редактирование занятия при наличии manage-права."""
-    # Этап 4: парсинг — в callbacks.parse_extra_edit.
-    target_student_id = callbacks.parse_extra_edit(callback.data)
-    if target_student_id is None:
-        await callback.answer(
-            "Некорректный идентификатор ребёнка.",
-            show_alert=True,
-        )
-        return
+    target_student_id = callback_data.student_id
     actor_user_id = callback.from_user.id
     can_manage = await _require_extra_manage_access(
         actor_user_id=actor_user_id,
@@ -1034,8 +1009,12 @@ async def process_edit_id(
     )
 
 
-@router.callback_query(F.data.startswith(callbacks.EDIT_EXT_PREFIX))
-async def choose_edit_field(callback: CallbackQuery, state: FSMContext):
+@router.callback_query(ExtraEditFieldCD.filter())
+async def choose_edit_field(
+    callback: CallbackQuery,
+    callback_data: ExtraEditFieldCD,
+    state: FSMContext,
+):
     if not await validate_fsm_session(
         callback,
         state,
@@ -1046,15 +1025,8 @@ async def choose_edit_field(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
     actor_user_id = callback.from_user.id
     target_student_id = data.get("target_student_id")
-    # Этап 4: парсинг — в callbacks.parse_edit_field.
-    parsed = callbacks.parse_edit_field(callback.data)
-    if parsed is None:
-        await callback.answer(
-            "❌ Некорректные данные занятия.",
-            show_alert=True,
-        )
-        return
-    field, cb_extra_id = parsed
+    field = callback_data.field
+    cb_extra_id = callback_data.extra_id
     # 2. Дополнительная проверка, что редактируется тот же ID,
     #    что сохранён в FSM
     fsm_edit_id = data.get("edit_id")
@@ -1087,23 +1059,17 @@ async def choose_edit_field(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(
     ExtraClassStates.waiting_for_edit_value,
-    F.data.startswith(callbacks.EXTRA_DAY_PREFIX),
+    ExtraDayCD.filter(),
 )
 async def process_edit_day(
     callback: CallbackQuery,
+    callback_data: ExtraDayCD,
     state: FSMContext,
     extra_classes_service: ExtraClassesService,
     schedule_service: ScheduleService,
     students_service: StudentsService,
 ):
-    # Этап 4: парсинг — в callbacks.parse_extra_day.
-    day_num = callbacks.parse_extra_day(callback.data)
-    if day_num is None:
-        await callback.answer(
-            "❌ Некорректный день недели.",
-            show_alert=True,
-        )
-        return
+    day_num = callback_data.day_of_week
     if not await validate_fsm_session(
         callback,
         state,

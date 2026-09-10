@@ -21,6 +21,16 @@ from aiogram.types import CallbackQuery
 from datetime import timedelta
 
 from bot import callbacks
+from bot.callbacks import (
+    SearchClassCD,
+    SearchClassDayCD,
+    SearchClassFullWeekCD,
+    SearchClassWeekCD,
+    SearchTeacherCD,
+    SearchTeacherDayCD,
+    SearchTeacherFullWeekCD,
+    SearchTeacherWeekCD,
+)
 from services.schedule_service import ScheduleService
 from core.repository.schedule_repository import ScheduleRepository
 from services.time_service import TimeService
@@ -62,13 +72,9 @@ async def search_teachers(callback: CallbackQuery, schedule_repo: ScheduleReposi
     await callback.answer()
 
 
-@router.callback_query(F.data.startswith(callbacks.SEARCH_CLASS_PREFIX))
-async def select_class_day(callback: CallbackQuery, schedule_repo: ScheduleRepository, schedule_service: ScheduleService, time_service: TimeService):
-    # Этап 4: парсинг — в callbacks.parse_search_class.
-    class_id = callbacks.parse_search_class(callback.data)
-    if class_id is None:
-        await callback.answer("Некорректный класс.", show_alert=True)
-        return
+@router.callback_query(SearchClassCD.filter())
+async def select_class_day(callback: CallbackQuery, callback_data: SearchClassCD, schedule_repo: ScheduleRepository, schedule_service: ScheduleService, time_service: TimeService):
+    class_id = callback_data.class_id
     metadata = await schedule_repo.get_metadata()
     cls_obj = metadata.get('classes', {}).get(class_id)
     class_name = cls_obj.name if hasattr(cls_obj, 'name') else "Класс"
@@ -85,13 +91,9 @@ async def select_class_day(callback: CallbackQuery, schedule_repo: ScheduleRepos
     await callback.answer()
 
 
-@router.callback_query(F.data.startswith(callbacks.SEARCH_TEACHER_PREFIX))
-async def select_teacher_day(callback: CallbackQuery, schedule_repo: ScheduleRepository, schedule_service: ScheduleService, time_service: TimeService):
-    # Этап 4: парсинг — в callbacks.parse_search_teacher.
-    teacher_id = callbacks.parse_search_teacher(callback.data)
-    if teacher_id is None:
-        await callback.answer("Некорректный преподаватель.", show_alert=True)
-        return
+@router.callback_query(SearchTeacherCD.filter())
+async def select_teacher_day(callback: CallbackQuery, callback_data: SearchTeacherCD, schedule_repo: ScheduleRepository, schedule_service: ScheduleService, time_service: TimeService):
+    teacher_id = callback_data.teacher_id
     metadata = await schedule_repo.get_metadata()
     tch_obj = metadata.get('teachers', {}).get(teacher_id)
     teacher_name = tch_obj.name if hasattr(tch_obj, 'name') else "Преподаватель"
@@ -109,14 +111,9 @@ async def select_teacher_day(callback: CallbackQuery, schedule_repo: ScheduleRep
 
 # === ПАГИНАЦИЯ НЕДЕЛЬ ===
 
-@router.callback_query(F.data.startswith(callbacks.SEARCH_CLASS_WEEK_PREFIX))
-async def nav_class_week(callback: CallbackQuery, schedule_repo: ScheduleRepository):
-    # Этап 4: парсинг — в callbacks.parse_search_class_week.
-    parsed = callbacks.parse_search_class_week(callback.data)
-    if parsed is None:
-        await callback.answer("Некорректная неделя.", show_alert=True)
-        return
-    class_id, week_start_iso = parsed
+@router.callback_query(SearchClassWeekCD.filter())
+async def nav_class_week(callback: CallbackQuery, callback_data: SearchClassWeekCD, schedule_repo: ScheduleRepository):
+    class_id, week_start_iso = callback_data.class_id, callback_data.week_start_iso
     metadata = await schedule_repo.get_metadata()
     cls_obj = metadata.get('classes', {}).get(class_id)
     class_name = cls_obj.name if hasattr(cls_obj, 'name') else "Класс"
@@ -126,14 +123,9 @@ async def nav_class_week(callback: CallbackQuery, schedule_repo: ScheduleReposit
     await callback.answer()
 
 
-@router.callback_query(F.data.startswith(callbacks.SEARCH_TEACHER_WEEK_PREFIX))
-async def nav_teacher_week(callback: CallbackQuery, schedule_repo: ScheduleRepository):
-    # Этап 4: парсинг — в callbacks.parse_search_teacher_week.
-    parsed = callbacks.parse_search_teacher_week(callback.data)
-    if parsed is None:
-        await callback.answer("Некорректная неделя.", show_alert=True)
-        return
-    teacher_id, week_start_iso = parsed
+@router.callback_query(SearchTeacherWeekCD.filter())
+async def nav_teacher_week(callback: CallbackQuery, callback_data: SearchTeacherWeekCD, schedule_repo: ScheduleRepository):
+    teacher_id, week_start_iso = callback_data.teacher_id, callback_data.week_start_iso
     metadata = await schedule_repo.get_metadata()
     tch_obj = metadata.get('teachers', {}).get(teacher_id)
     teacher_name = tch_obj.name if hasattr(tch_obj, 'name') else "Преподаватель"
@@ -145,14 +137,9 @@ async def nav_teacher_week(callback: CallbackQuery, schedule_repo: ScheduleRepos
 
 # === ВЫВОД РАСПИСАНИЯ ===
 
-@router.callback_query(F.data.startswith(callbacks.SEARCH_CLASS_DAY_PREFIX))
-async def show_class_schedule(callback: CallbackQuery, schedule_service: ScheduleService, schedule_repo: ScheduleRepository):
-    # Этап 4: парсинг — в callbacks.parse_search_class_day.
-    parsed = callbacks.parse_search_class_day(callback.data)
-    if parsed is None:
-        await callback.answer("Некорректная дата.", show_alert=True)
-        return
-    class_id, date_iso = parsed
+@router.callback_query(SearchClassDayCD.filter())
+async def show_class_schedule(callback: CallbackQuery, callback_data: SearchClassDayCD, schedule_service: ScheduleService, schedule_repo: ScheduleRepository):
+    class_id, date_iso = callback_data.class_id, callback_data.date_iso
     day_dto = await schedule_service.get_daily_schedule_for_class(class_id, date_iso)
     metadata = await schedule_repo.get_metadata()
     cls_obj = metadata.get('classes', {}).get(class_id)
@@ -166,14 +153,9 @@ async def show_class_schedule(callback: CallbackQuery, schedule_service: Schedul
     await callback.answer()
 
 
-@router.callback_query(F.data.startswith(callbacks.SEARCH_TEACHER_DAY_PREFIX))
-async def show_teacher_schedule(callback: CallbackQuery, schedule_service: ScheduleService, schedule_repo: ScheduleRepository):
-    # Этап 4: парсинг — в callbacks.parse_search_teacher_day.
-    parsed = callbacks.parse_search_teacher_day(callback.data)
-    if parsed is None:
-        await callback.answer("Некорректная дата.", show_alert=True)
-        return
-    teacher_id, date_iso = parsed
+@router.callback_query(SearchTeacherDayCD.filter())
+async def show_teacher_schedule(callback: CallbackQuery, callback_data: SearchTeacherDayCD, schedule_service: ScheduleService, schedule_repo: ScheduleRepository):
+    teacher_id, date_iso = callback_data.teacher_id, callback_data.date_iso
     day_dto = await schedule_service.get_daily_schedule_for_teacher(teacher_id, date_iso)
     metadata = await schedule_repo.get_metadata()
     tch_obj = metadata.get('teachers', {}).get(teacher_id)
@@ -189,14 +171,9 @@ async def show_teacher_schedule(callback: CallbackQuery, schedule_service: Sched
 
 # === ПОЛНАЯ НЕДЕЛЯ ===
 
-@router.callback_query(F.data.startswith(callbacks.SEARCH_CLASS_FULL_WEEK_PREFIX))
-async def show_class_full_week(callback: CallbackQuery, schedule_service: ScheduleService, schedule_repo: ScheduleRepository):
-    # Этап 4: парсинг — в callbacks.parse_search_class_full_week.
-    parsed = callbacks.parse_search_class_full_week(callback.data)
-    if parsed is None:
-        await callback.answer("Некорректная неделя.", show_alert=True)
-        return
-    class_id, week_start_iso = parsed
+@router.callback_query(SearchClassFullWeekCD.filter())
+async def show_class_full_week(callback: CallbackQuery, callback_data: SearchClassFullWeekCD, schedule_service: ScheduleService, schedule_repo: ScheduleRepository):
+    class_id, week_start_iso = callback_data.class_id, callback_data.week_start_iso
     metadata = await schedule_repo.get_metadata()
     cls_obj = metadata.get('classes', {}).get(class_id)
     class_name = cls_obj.name if hasattr(cls_obj, 'name') else "Класс"
@@ -208,14 +185,9 @@ async def show_class_full_week(callback: CallbackQuery, schedule_service: Schedu
     await callback.answer()
 
 
-@router.callback_query(F.data.startswith(callbacks.SEARCH_TEACHER_FULL_WEEK_PREFIX))
-async def show_teacher_full_week(callback: CallbackQuery, schedule_service: ScheduleService, schedule_repo: ScheduleRepository):
-    # Этап 4: парсинг — в callbacks.parse_search_teacher_full_week.
-    parsed = callbacks.parse_search_teacher_full_week(callback.data)
-    if parsed is None:
-        await callback.answer("Некорректная неделя.", show_alert=True)
-        return
-    teacher_id, week_start_iso = parsed
+@router.callback_query(SearchTeacherFullWeekCD.filter())
+async def show_teacher_full_week(callback: CallbackQuery, callback_data: SearchTeacherFullWeekCD, schedule_service: ScheduleService, schedule_repo: ScheduleRepository):
+    teacher_id, week_start_iso = callback_data.teacher_id, callback_data.week_start_iso
     metadata = await schedule_repo.get_metadata()
     tch_obj = metadata.get('teachers', {}).get(teacher_id)
     teacher_name = tch_obj.name if hasattr(tch_obj, 'name') else "Преподаватель"

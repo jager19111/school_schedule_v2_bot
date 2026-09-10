@@ -15,6 +15,13 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
 from bot import callbacks
+from bot.callbacks import (
+    ScheduleDayCD,
+    ScheduleFullWeekCD,
+    ScheduleTargetCD,
+    ScheduleWatchCD,
+    ScheduleWeekCD,
+)
 from bot.keyboards.keyboard import Keyboards
 from bot.utils.ui_renderer import UIRenderer
 from core.models.dto import ScheduleViewTargetDTO, ScheduleTargetViewModel, SchoolDictionariesDTO
@@ -567,7 +574,7 @@ async def open_schedule_hub(
     )
 
 
-@router.callback_query(F.data == callbacks.SCHED_TARGETS)
+@router.callback_query(F.data == callbacks.SCHEDULE_TARGETS)
 async def show_schedule_targets(
     callback: CallbackQuery,
     state: FSMContext,
@@ -611,9 +618,10 @@ async def show_schedule_targets(
     await callback.answer()
 
 
-@router.callback_query(F.data.startswith(callbacks.SCHED_TARGET_PREFIX))
+@router.callback_query(ScheduleTargetCD.filter())
 async def select_schedule_target(
     callback: CallbackQuery,
+    callback_data: ScheduleTargetCD,
     state: FSMContext,
     profile_service: ProfileService,
     schedule_service: ScheduleService,
@@ -623,15 +631,7 @@ async def select_schedule_target(
     """
     Выбирает child или watch target.
     """
-    # Этап 4: парсинг — в callbacks.parse_sched_target.
-    parsed = callbacks.parse_sched_target(callback.data)
-    if parsed is None:
-        await callback.answer(
-            "Некорректная цель расписания.",
-            show_alert=True,
-        )
-        return
-    target_kind, target_id = parsed
+    target_kind, target_id = callback_data.kind, callback_data.target_id
 
     actor_user_id = callback.from_user.id
     target = await _resolve_schedule_target(
@@ -679,9 +679,10 @@ async def select_schedule_target(
     await callback.answer()
 
 
-@router.callback_query(F.data.startswith(callbacks.SCHED_WATCH_PREFIX))
+@router.callback_query(ScheduleWatchCD.filter())
 async def open_watch_target_schedule(
     callback: CallbackQuery,
+    callback_data: ScheduleWatchCD,
     state: FSMContext,
     profile_service: ProfileService,
     schedule_service: ScheduleService,
@@ -691,14 +692,7 @@ async def open_watch_target_schedule(
     """
     Открывает watch target из карточки отслеживаемого класса.
     """
-    # Этап 4: парсинг — в callbacks.parse_sched_watch.
-    target_id = callbacks.parse_sched_watch(callback.data)
-    if target_id is None:
-        await callback.answer(
-            "Некорректный класс.",
-            show_alert=True,
-        )
-        return
+    target_id = callback_data.target_id
     actor_user_id = callback.from_user.id
     target = await _resolve_schedule_target(
         actor_user_id=actor_user_id,
@@ -741,7 +735,7 @@ async def open_watch_target_schedule(
     await callback.answer()
 
 
-@router.callback_query(F.data == callbacks.SCHED_SMART_DAY)
+@router.callback_query(F.data == callbacks.SCHEDULE_SMART_DAY)
 async def go_to_smart_day(
     callback: CallbackQuery,
     state: FSMContext,
@@ -790,23 +784,17 @@ async def go_to_smart_day(
     await callback.answer()
 
 
-@router.callback_query(F.data.startswith(callbacks.SCHED_DAY_PREFIX))
+@router.callback_query(ScheduleDayCD.filter())
 async def show_schedule_day(
     callback: CallbackQuery,
+    callback_data: ScheduleDayCD,
     state: FSMContext,
     profile_service: ProfileService,
     schedule_service: ScheduleService,
     students_service: StudentsService,
     watch_targets_service: WatchTargetsService,
 ) -> None:
-    # Этап 4: парсинг — в callbacks.parse_sched_day.
-    date_iso = callbacks.parse_sched_day(callback.data)
-    if date_iso is None:
-        await callback.answer(
-            "Некорректная дата.",
-            show_alert=True,
-        )
-        return
+    date_iso = callback_data.date_iso
     target = await _get_fsm_schedule_target(
         callback=callback,
         state=state,
@@ -838,23 +826,17 @@ async def show_schedule_day(
     await callback.answer()
 
 
-@router.callback_query(F.data.startswith(callbacks.SCHED_WEEK_PREFIX))
+@router.callback_query(ScheduleWeekCD.filter())
 async def show_schedule_week(
     callback: CallbackQuery,
+    callback_data: ScheduleWeekCD,
     state: FSMContext,
     profile_service: ProfileService,
     schedule_service: ScheduleService,
     students_service: StudentsService,
     watch_targets_service: WatchTargetsService,
 ) -> None:
-    # Этап 4: парсинг — в callbacks.parse_sched_week.
-    week_start_iso = callbacks.parse_sched_week(callback.data)
-    if week_start_iso is None:
-        await callback.answer(
-            "Некорректная дата недели.",
-            show_alert=True,
-        )
-        return
+    week_start_iso = callback_data.week_start_iso
     target = await _get_fsm_schedule_target(
         callback=callback,
         state=state,
@@ -887,23 +869,17 @@ async def show_schedule_week(
     await callback.answer()
 
 
-@router.callback_query(F.data.startswith(callbacks.SCHED_FULL_WEEK_PREFIX))
+@router.callback_query(ScheduleFullWeekCD.filter())
 async def show_full_schedule_week(
     callback: CallbackQuery,
+    callback_data: ScheduleFullWeekCD,
     state: FSMContext,
     profile_service: ProfileService,
     schedule_service: ScheduleService,
     students_service: StudentsService,
     watch_targets_service: WatchTargetsService,
 ) -> None:
-    # Этап 4: парсинг — в callbacks.parse_sched_full_week.
-    week_start_iso = callbacks.parse_sched_full_week(callback.data)
-    if week_start_iso is None:
-        await callback.answer(
-            "Некорректная дата недели.",
-            show_alert=True,
-        )
-        return
+    week_start_iso = callback_data.week_start_iso
     target = await _get_fsm_schedule_target(
         callback=callback,
         state=state,

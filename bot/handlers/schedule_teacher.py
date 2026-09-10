@@ -8,6 +8,11 @@ from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import CallbackQuery, Message
 
 from bot import callbacks
+from bot.callbacks import (
+    TeacherScheduleDayCD,
+    TeacherScheduleFullWeekCD,
+    TeacherScheduleWeekCD,
+)
 from bot.keyboards.keyboard import Keyboards
 from bot.utils.ui_renderer import UIRenderer
 from services.profiles_service import ProfileService
@@ -194,7 +199,7 @@ async def open_teacher_schedule_for_message(
 
 
 @router.callback_query(
-    F.data == callbacks.TEACHER_SCHED_SMART_DAY
+    F.data == callbacks.TEACHER_SCHEDULE_SMART_DAY
 )
 async def teacher_schedule_smart_day(
     callback: CallbackQuery,
@@ -237,21 +242,15 @@ async def teacher_schedule_smart_day(
 
 
 @router.callback_query(
-    F.data.startswith(callbacks.TEACHER_SCHED_DAY_PREFIX)
+    TeacherScheduleDayCD.filter()
 )
 async def teacher_schedule_day(
     callback: CallbackQuery,
+    callback_data: TeacherScheduleDayCD,
     profile_service: ProfileService,
     schedule_service: ScheduleService,
 ) -> None:
-    # Этап 4: парсинг — в callbacks.parse_teacher_sched_day.
-    date_iso = callbacks.parse_teacher_sched_day(callback.data)
-    if date_iso is None:
-        await callback.answer(
-            "Некорректная дата.",
-            show_alert=True,
-        )
-        return
+    date_iso = callback_data.date_iso
     teacher = await _get_teacher_profile(
         user_id=callback.from_user.id,
         profile_service=profile_service,
@@ -282,21 +281,15 @@ async def teacher_schedule_day(
 
 
 @router.callback_query(
-    F.data.startswith(callbacks.TEACHER_SCHED_WEEK_PREFIX)
+    TeacherScheduleWeekCD.filter()
 )
 async def teacher_schedule_week(
     callback: CallbackQuery,
+    callback_data: TeacherScheduleWeekCD,
     profile_service: ProfileService,
     schedule_service: ScheduleService,
 ) -> None:
-    # Этап 4: парсинг — в callbacks.parse_teacher_sched_week.
-    week_start_iso = callbacks.parse_teacher_sched_week(callback.data)
-    if week_start_iso is None:
-        await callback.answer(
-            "Некорректная дата недели.",
-            show_alert=True,
-        )
-        return
+    week_start_iso = callback_data.week_start_iso
     teacher = await _get_teacher_profile(
         user_id=callback.from_user.id,
         profile_service=profile_service,
@@ -328,20 +321,15 @@ async def teacher_schedule_week(
 
 
 @router.callback_query(
-    F.data.startswith(callbacks.TEACHER_SCHED_FULL_WEEK_PREFIX)
+    TeacherScheduleFullWeekCD.filter()
 )
 async def teacher_schedule_full_week(
     callback: CallbackQuery,
+    callback_data: TeacherScheduleFullWeekCD,
     profile_service: ProfileService,
     schedule_service: ScheduleService,
 ) -> None:
-    week_start_iso = callbacks.parse_teacher_sched_full_week(callback.data)
-    if week_start_iso is None:
-        await callback.answer(
-            "Некорректная дата недели.",
-            show_alert=True,
-        )
-        return
+    week_start_iso = callback_data.week_start_iso
 
     teacher = await _get_teacher_profile(
         user_id=callback.from_user.id,

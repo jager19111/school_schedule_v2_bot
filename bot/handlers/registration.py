@@ -32,6 +32,12 @@ from services.help_service import HelpService
 from bot.utils.ui_renderer import UIRenderer
 from bot.keyboards.keyboard import Keyboards
 from bot import callbacks
+from bot.callbacks import (
+    RegistrationClassCD,
+    RegistrationGroupCD,
+    RoleCD,
+    TeacherRegistrationCD,
+)
 from core.models.dto import ClassListDTO, GroupListDTO, FamilyCreatedDTO
 
 from bot.utils.fsm_guard import validate_fsm_session
@@ -484,17 +490,10 @@ async def process_student_claim_name(
 
 @router.callback_query(
     RegistrationStates.waiting_for_role,
-    F.data.startswith(callbacks.ROLE_PREFIX),
+    RoleCD.filter(),
 )
-async def process_role(callback: CallbackQuery, state: FSMContext, profile_service: ProfileService):
-    # Этап 4: парсинг и whitelist ролей — в callbacks.parse_role.
-    role = callbacks.parse_role(callback.data)
-    if role is None:
-        await callback.answer(
-            "Некорректная роль.",
-            show_alert=True,
-        )
-        return
+async def process_role(callback: CallbackQuery, callback_data: RoleCD, state: FSMContext, profile_service: ProfileService):
+    role = callback_data.role
     await state.update_data(role=role)
     await profile_service.update_user_role(callback.from_user.id, role)
     text = UIRenderer.render_name_prompt()
@@ -789,21 +788,15 @@ async def process_family_code_input(
 
 @router.callback_query(
     RegistrationStates.waiting_for_class,
-    F.data.startswith(callbacks.CLASS_PREFIX),
+    RegistrationClassCD.filter(),
 )
 async def process_class(
     callback: CallbackQuery,
+    callback_data: RegistrationClassCD,
     state: FSMContext,
     schedule_service: ScheduleService,
 ) -> None:
-    # Этап 4: парсинг — в callbacks.parse_class_selection.
-    class_id = callbacks.parse_class_selection(callback.data)
-    if class_id is None:
-        await callback.answer(
-            "❌ Некорректный класс.",
-            show_alert=True,
-        )
-        return
+    class_id = callback_data.class_id
     await state.update_data(class_id=class_id)
     # Запрашиваем справочники школы единым запросом
     dicts_dto = await schedule_service.get_school_dictionaries()
@@ -817,24 +810,18 @@ async def process_class(
 
 @router.callback_query(
     RegistrationStates.waiting_for_group,
-    F.data.startswith(callbacks.GROUP_PREFIX),
+    RegistrationGroupCD.filter(),
 )
 async def process_group(
     callback: CallbackQuery,
+    callback_data: RegistrationGroupCD,
     state: FSMContext,
     profile_service: ProfileService,
     schedule_service: ScheduleService,
     students_service: StudentsService,
 ) -> None:
-    # Этап 4: парсинг — в callbacks.parse_group_selection
     # (семантика старого кода: весь хвост после "group:").
-    group_id = callbacks.parse_group_selection(callback.data)
-    if group_id is None:
-        await callback.answer(
-            "❌ Некорректная группа.",
-            show_alert=True,
-        )
-        return
+    group_id = callback_data.group_id
     actor_user_id = callback.from_user.id
     data = await state.get_data()
     # =========================================================
@@ -957,10 +944,11 @@ async def process_group(
 
 @router.callback_query(
     RegistrationStates.waiting_for_teacher,
-    F.data.startswith(callbacks.TEACHER_REG_PREFIX),
+    TeacherRegistrationCD.filter(),
 )
 async def process_teacher_selection(
     callback: CallbackQuery,
+    callback_data: TeacherRegistrationCD,
     state: FSMContext,
     profile_service: ProfileService,
     schedule_service: ScheduleService,
@@ -968,14 +956,7 @@ async def process_teacher_selection(
     """
     Завершает teacher registration после выбора NIKA teacher ID.
     """
-    # Этап 4: парсинг — в callbacks.parse_teacher_registration.
-    teacher_id = callbacks.parse_teacher_registration(callback.data)
-    if teacher_id is None:
-        await callback.answer(
-            "❌ Некорректный идентификатор учителя.",
-            show_alert=True,
-        )
-        return
+    teacher_id = callback_data.teacher_id
     if teacher_id == "cancel":
         await state.clear()
         await callback.message.edit_text(
