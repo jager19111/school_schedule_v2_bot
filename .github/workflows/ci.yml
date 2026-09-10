@@ -1,0 +1,49 @@
+# .github/workflows/ci.yml
+#
+# Этап «Аудит», пункт 6: CI.
+#
+# На каждый push и pull request:
+#   1. Устанавливает зависимости из requirements.txt (+ dev).
+#   2. Прогоняет весь тестовый пакет:
+#      - guard-тесты (запрет legacy callback-протокола,
+#        fallback последним, импортируемость модулей);
+#      - протокол CallbackData (round-trip, лимит 64 байта);
+#      - рендеринг уведомлений (включая HTML-безопасность);
+#      - TLS-лестницу фетчера (pin спасает, fail-closed).
+#
+# Python 3.12: минимальная мажорная версия, заявленная в коде
+# (используется `str | None` — требует 3.10+; zoneinfo — 3.9+).
+# Если локально работаешь на 3.14, можешь добавить вторую матрицу:
+#   python-version: ["3.12", "3.14"]
+
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Run tests
+        run: pytest tests/ -v
+
+      - name: Lint — no legacy callback protocol
+        run: |
+          ! grep -rn "callbacks\.parse_\|callbacks\.build_\|F\.data\.startswith(" bot/ services/ core/

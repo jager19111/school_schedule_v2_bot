@@ -223,6 +223,9 @@ class ScheduleFetcher:
 
             if got_fingerprint == expected_fingerprint:
                 # Пин актуален: всё готово к дню, когда strict упадёт.
+                # Сброс: сертификат вернулся к запиненному варианту —
+                # предупреждение о свежести больше не нужно.
+                self._pin_stale_warned = False
                 logger.debug(
                     "TLS pin freshness OK: server certificate "
                     "matches configured fingerprint."
