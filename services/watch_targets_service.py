@@ -4,7 +4,7 @@ from typing import List, Optional
 
 from core.models.dto import (
     ActionResponseDTO,
-    ScheduleWatchTargetDTO,
+    ScheduleWatchTargetDTO, SchoolDictionariesDTO, WatchTargetViewModel
 )
 from core.repository.watch_target_repository import (
     WatchTargetRepository,
@@ -192,3 +192,66 @@ class WatchTargetsService:
             )
 
         return ActionResponseDTO(success=True)
+    
+
+    # ==========================================================
+    # ЭТАП 5: ViewModel builders
+    # Чистые функции: DTO + справочники -> ViewModel.
+    # ==========================================================
+
+    @staticmethod
+    def build_view_model(
+        target: ScheduleWatchTargetDTO,
+        dicts_dto: SchoolDictionariesDTO,
+    ) -> WatchTargetViewModel:
+        """
+        Строит ViewModel одного отслеживаемого класса.
+
+        Расшифровка NIKA ID → человекочитаемые имена
+        выполняется ЗДЕСЬ, а не в renderer или keyboard.
+        """
+        class_name = dicts_dto.get_readable_class(
+            target.class_id,
+        )
+        group_name = dicts_dto.get_readable_group(
+            target.group_id,
+        )
+        # Title: пользовательское название или дефолтное "Класс {name}"
+        title = target.title or f"Класс {class_name}"
+
+        return WatchTargetViewModel(
+            target_id=target.id,
+            title=title,
+            class_name=class_name,
+            group_name=group_name,
+            is_enabled_text=(
+                "🟢 Активно"
+                if target.is_enabled
+                else "⚫ Пауза"
+            ),
+            changes_notify_text=(
+                "🔔 Включены"
+                if target.receive_schedule_changes
+                else "🔴 Выключены"
+            ),
+            telegram_status="",  # не используется для watch targets
+            is_enabled=target.is_enabled,
+            receive_schedule_changes=target.receive_schedule_changes,
+        )
+
+    @staticmethod
+    def build_view_models(
+        targets: List[ScheduleWatchTargetDTO],
+        dicts_dto: SchoolDictionariesDTO,
+    ) -> List[WatchTargetViewModel]:
+        """
+        Строит ViewModel для списка отслеживаемых классов.
+        """
+        return [
+            WatchTargetsService.build_view_model(
+                target,
+                dicts_dto,
+            )
+            for target in targets
+        ]
+

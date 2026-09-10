@@ -17,7 +17,7 @@ from aiogram.types import CallbackQuery, Message
 from bot import callbacks
 from bot.keyboards.keyboard import Keyboards
 from bot.utils.ui_renderer import UIRenderer
-from core.models.dto import ScheduleViewTargetDTO
+from core.models.dto import ScheduleViewTargetDTO, ScheduleTargetViewModel, SchoolDictionariesDTO
 from services.profiles_service import ProfileService
 from services.schedule_service import ScheduleService
 from services.watch_targets_service import WatchTargetsService
@@ -394,6 +394,60 @@ async def _get_fsm_schedule_target(
         watch_targets_service=watch_targets_service,
     )
 
+# ==============================================================
+# ФАЙЛ 2: bot/handlers/schedule_child.py
+# ==============================================================
+
+# --- 2.0 Импорт ---
+# Добавить к существующим импортам:
+#
+#     from core.models.dto import ScheduleTargetViewModel
+#     from core.models.dto import SchoolDictionariesDTO
+
+# --- 2.1 ДОБАВИТЬ билдер (модульный уровень, перед классами) ---
+
+def _build_schedule_target_view_models(
+    targets: list[ScheduleViewTargetDTO],
+    dicts_dto: SchoolDictionariesDTO,
+) -> list[ScheduleTargetViewModel]:
+    """
+    Этап 5: строит ViewModel для выбора цели Schedule Hub.
+
+    Расшифровка NIKA ID → имена, выбор иконки —
+    всё ЗДЕСЬ, а не в keyboard.
+    """
+    view_models = []
+    for target in targets:
+        class_name = dicts_dto.get_readable_class(target.class_id)
+        group_name = dicts_dto.get_readable_group(target.group_id)
+
+        if target.kind == "student":
+            if target.telegram_user_id is not None:
+                icon = "📱"
+            else:
+                icon = "🧒"
+            # Для ученика title = имя ребёнка
+            title = target.title
+        else:
+            icon = "🎓"
+            # Для watch target в title уже заложено название класса
+            title = target.title
+
+        view_models.append(
+            ScheduleTargetViewModel(
+                kind=target.kind,
+                target_id=target.target_id,
+                title=title,
+                class_name=class_name,
+                group_name=group_name,
+                icon=icon,
+                telegram_connected=(
+                    target.telegram_user_id is not None
+                ),
+            )
+        )
+    return view_models
+
 
 @router.message(F.text.in_({
     "📅 Моё расписание",
@@ -455,13 +509,13 @@ async def open_schedule_hub(
         )
         # 1. Запрашиваем справочники школы единым запросом
         dicts_dto = await schedule_service.get_school_dictionaries()
+        view_models = _build_schedule_target_view_models(
+            targets,
+            dicts_dto,
+        )
         await message.answer(
             "🎯 <b>Выберите расписание</b>",
-            reply_markup=Keyboards.get_schedule_targets_kb(
-                targets=targets,
-                classes_dict=dicts_dto.classes,
-                groups_dict=dicts_dto.groups,
-            ),
+            reply_markup=Keyboards.get_schedule_targets_kb(view_models),
             parse_mode="HTML",
         )
         return
@@ -544,16 +598,16 @@ async def show_schedule_targets(
     )
     # 1. Запрашиваем справочники школы единым запросом
     dicts_dto = await schedule_service.get_school_dictionaries()
-    # 2. Передаем сырые словари напрямую из свойств dicts_dto в клавиатуру
+    view_models = _build_schedule_target_view_models(
+        targets,
+        dicts_dto,
+    )
     await _safe_edit_schedule_message(
         callback,
         "🎯 <b>Выберите расписание</b>",
-        Keyboards.get_schedule_targets_kb(
-            targets=targets,
-            classes_dict=dicts_dto.classes,
-            groups_dict=dicts_dto.groups,
-        ),
+        Keyboards.get_schedule_targets_kb(view_models),
     )
+
     await callback.answer()
 
 
@@ -891,3 +945,4 @@ async def show_full_schedule_week(
         )
 
     await callback.answer()
+

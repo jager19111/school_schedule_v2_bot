@@ -1,10 +1,5 @@
 # bot/handlers/schedule_teacher.py
-#
-# ЭТАП 4: парсинг callback_data через bot/callbacks.py
-# (teacher_sched:*). Формат строк на проводе не изменён.
-#
-# Ручная проверка len(text) > 3900 помечена TODO — её закроет
-# общий хелпер длины сообщений (следующий подэтап).
+
 
 import logging
 

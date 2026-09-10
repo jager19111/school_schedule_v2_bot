@@ -25,7 +25,9 @@ from services.profiles_service import ProfileService
 from services.students_service import StudentsService
 from services.schedule_service import ScheduleService
 from bot.utils.fsm_guard import validate_fsm_session
-
+from services.extra_classes_service import ExtraClassesService
+from core.models.dto import ExtraClassViewModel
+       
 logger = logging.getLogger(__name__)
 router = Router()
 
@@ -80,22 +82,9 @@ async def _show_extra_menu_for_student(
 
     # Запрашиваем справочники школы единым запросом через ScheduleServiceV2
     dicts_dto = await schedule_service.get_school_dictionaries()
-    # Получаем человекочитаемые названия из словарей dicts_dto
-    class_name = dicts_dto.classes.get(
-        student.class_id,
-        student.class_id if student.class_id else "—"
-    )
-    group_name = (
-        "Весь класс"
-        if not student.group_id or student.group_id == "ALL"
-        else dicts_dto.groups.get(student.group_id, student.group_id)
-    )
-
-    text, _ = UIRenderer.render_student_extra_classes_menu(
-        student=student,
-        class_name=class_name,
-        group_name=group_name,
-    )
+    vm = StudentsService.build_student_view_model(student, dicts_dto)
+    text, _ = UIRenderer.render_student_extra_classes_menu(vm)
+    
     if prefix:
         text = f"{prefix}\n\n{text}"
 
@@ -252,14 +241,17 @@ async def show_extra_menu(
 
     # 1. Запрашиваем справочники школы единым запросом
     dicts_dto = await schedule_service.get_school_dictionaries()
+    view_models = StudentsService.build_student_view_models(
+        students,
+        dicts_dto,
+    )
     text, _ = UIRenderer.render_extra_student_select()
+    keyboard = Keyboards.get_extra_students_select_kb(
+        view_models,
+    )
     await message.answer(
         text,
-        reply_markup=Keyboards.get_extra_students_select_kb(
-            students=students,
-            classes_dict=dicts_dto.classes,
-            groups_dict=dicts_dto.groups,
-        ),
+        reply_markup=keyboard,
         parse_mode="HTML",
     )
 
@@ -301,15 +293,17 @@ async def show_extra_students(
         return
     # 1. Запрашиваем справочники школы единым запросом
     dicts_dto = await schedule_service.get_school_dictionaries()
+    view_models = StudentsService.build_student_view_models(
+        students,
+        dicts_dto,
+    )
     text, _ = UIRenderer.render_extra_student_select()
-    # 2. Передаем словари напрямую из свойств dicts_dto в клавиатуру
+    keyboard = Keyboards.get_extra_students_select_kb(
+        view_models,
+    )
     await callback.message.edit_text(
         text,
-        reply_markup=Keyboards.get_extra_students_select_kb(
-            students=students,
-            classes_dict=dicts_dto.classes,
-            groups_dict=dicts_dto.groups,
-        ),
+        reply_markup=keyboard,
         parse_mode="HTML",
     )
     await callback.answer()
@@ -436,8 +430,10 @@ async def show_extra_list(
             show_alert=True,
         )
         return
-    dto_list = response.data
-    text, _ = UIRenderer.render_extra_classes_list(dto_list)
+    view_models = ExtraClassesService.build_view_models(
+        response.data.items,
+    )
+    text, _ = UIRenderer.render_extra_classes_list(view_models)
     try:
         await callback.message.edit_text(
             text,
@@ -493,9 +489,11 @@ async def start_delete_extra(
             show_alert=True,
         )
         return
-    dto_list = list_response.data
-    if not dto_list.items:
-        text, _ = UIRenderer.render_extra_class_delete_prompt(dto_list)
+    view_models = ExtraClassesService.build_view_models(
+        list_response.data.items,
+    )
+    if not view_models:
+        text, _ = UIRenderer.render_extra_class_delete_prompt(view_models)
         await callback.message.edit_text(
             text,
             reply_markup=Keyboards.get_back_to_extra_menu(
@@ -509,7 +507,7 @@ async def start_delete_extra(
         target_student_id=target_student_id,
         extra_actor_user_id=actor_user_id,
     )
-    text, _ = UIRenderer.render_extra_class_delete_prompt(dto_list)
+    text, _ = UIRenderer.render_extra_class_delete_prompt(view_models)
     await callback.message.edit_text(
         text,
         reply_markup=Keyboards.get_cancel_keyboard(),
@@ -937,9 +935,11 @@ async def start_edit_extra(
             show_alert=True,
         )
         return
-    dto_list = list_response.data
-    if not dto_list.items:
-        text, _ = UIRenderer.render_extra_class_edit_prompt(dto_list)
+    view_models = ExtraClassesService.build_view_models(
+        list_response.data.items,
+    )
+    if not view_models:
+        text, _ = UIRenderer.render_extra_class_edit_prompt(view_models)
         await callback.message.edit_text(
             text,
             reply_markup=Keyboards.get_back_to_extra_menu(
@@ -953,7 +953,7 @@ async def start_edit_extra(
         target_student_id=target_student_id,
         extra_actor_user_id=actor_user_id,
     )
-    text, _ = UIRenderer.render_extra_class_edit_prompt(dto_list)
+    text, _ = UIRenderer.render_extra_class_edit_prompt(view_models)
     await callback.message.edit_text(
         text,
         reply_markup=Keyboards.get_cancel_keyboard(),

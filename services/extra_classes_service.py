@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Optional
+from typing import Any, Optional, List
 
 from core.models.dto import (
     ActionResponseDTO,
-    ExtraClassItemDTO,
+    ExtraClassItemDTO, ExtraClassViewModel,
     ExtraClassListDTO, ExtraClassesAccessDTO
 )
 from core.repository.extra_classes_repository import (
@@ -443,3 +443,67 @@ class ExtraClassesService:
             return "empty_title"
 
         return None
+    
+    
+# ==============================================================
+# БИЛДЕР 
+# ==============================================================
+
+    # Названия дней недели для ViewModel.
+    # НЕ импортируем из UIRenderer — сервисный слой
+    # не должен зависеть от UI-слоя.
+    _DAYS_RU = {
+        1: "Понедельник",
+        2: "Вторник",
+        3: "Среда",
+        4: "Четверг",
+        5: "Пятница",
+        6: "Суббота",
+        7: "Воскресенье",
+    }
+
+    @staticmethod
+    def build_view_model(
+        item: ExtraClassItemDTO,
+    ) -> ExtraClassViewModel:
+        """
+        Строит ViewModel одного доп. занятия.
+
+        Day-of-week int → текст, location fallback.
+        """
+        return ExtraClassViewModel(
+            id=item.id,
+            day_of_week=item.day_of_week,
+            day_of_week_text=ExtraClassesService._DAYS_RU.get(
+                item.day_of_week,
+                "Неизвестно",
+            ),
+            time_start=item.time_start,
+            time_end=item.time_end,
+            title=item.title,
+            location=(
+                item.location
+                if item.location
+                else "Не указано"
+            ),
+            reminder_minutes=item.reminder_minutes,
+        )
+
+    @staticmethod
+    def build_view_models(
+        items: List[ExtraClassItemDTO],
+    ) -> List[ExtraClassViewModel]:
+        """
+        Строит ViewModel для списка доп. занятий.
+
+        Сортирует по (day_of_week, time_start) —
+        как это раньше делал renderer.
+        """
+        view_models = [
+            ExtraClassesService.build_view_model(item)
+            for item in items
+        ]
+        view_models.sort(
+            key=lambda vm: (vm.day_of_week, vm.time_start),
+        )
+        return view_models

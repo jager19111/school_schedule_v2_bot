@@ -3,10 +3,10 @@ from __future__ import annotations
 from typing import List, Optional
 
 from core.models.dto import (
-    ActionResponseDTO,
-    StudentAccessDTO,
-    StudentProfileDTO, StudentClaimInviteDTO,
-)
+        ActionResponseDTO, StudentAccessDTO,
+        StudentProfileDTO, StudentProfileViewModel,
+        StudentClaimInviteDTO, SchoolDictionariesDTO,
+    )
 from core.repository.student_repository import StudentRepository
 from services.profiles_service import ProfileService
 
@@ -365,3 +365,60 @@ class StudentsService:
             success=True,
             data=self._student_dto_from_row(row),
         )
+        
+# ==============================================================
+# БИЛДЕРЫ 
+# ==============================================================
+
+    # ==========================================================
+    # ЭТАП 5: ViewModel builders
+    # Чистые функции: DTO + справочники -> ViewModel.
+    # Не делают запросов, не имеют side effects.
+    # ==========================================================
+
+    @staticmethod
+    def build_student_view_model(
+        student: StudentProfileDTO,
+        dicts_dto: SchoolDictionariesDTO,
+    ) -> StudentProfileViewModel:
+        """
+        Строит ViewModel одного ученика.
+
+        Расшифровка NIKA ID → человекочитаемые имена
+        выполняется ЗДЕСЬ, а не в renderer или keyboard.
+        """
+        return StudentProfileViewModel(
+            student_id=student.id,
+            name=student.name,
+            class_name=dicts_dto.get_readable_class(
+                student.class_id,
+            ),
+            group_name=dicts_dto.get_readable_group(
+                student.group_id,
+            ),
+            telegram_status=(
+                "📱 Подключен"
+                if student.telegram_user_id is not None
+                else "🧒 Без Telegram"
+            ),
+            telegram_connected=(
+                student.telegram_user_id is not None
+            ),
+            is_active=student.is_active,
+        )
+
+    @staticmethod
+    def build_student_view_models(
+        students: List[StudentProfileDTO],
+        dicts_dto: SchoolDictionariesDTO,
+    ) -> List[StudentProfileViewModel]:
+        """
+        Строит ViewModel для списка учеников.
+        """
+        return [
+            StudentsService.build_student_view_model(
+                student,
+                dicts_dto,
+            )
+            for student in students
+        ]

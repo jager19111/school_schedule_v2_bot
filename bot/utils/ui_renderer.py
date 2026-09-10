@@ -32,6 +32,8 @@ from core.models.dto import (ClassListDTO, FamilyCreatedDTO, AdminStatsDTO, DayS
                              MorningSummaryDTO, ChangeReminderDTO, LessonReminderDTO, ProfileResetImpactDTO, FamilyInviteDTO, 
                             ScheduleWatchTargetDTO, StudentProfileDTO, ParentStudentNotificationSettingsDTO,
                             AdultStudentExtraClassesPermissionDTO, StudentTelegramSettingsDTO, NikaSourceHealthDTO,  
+                            StudentProfileViewModel, WatchTargetViewModel, ExtraClassViewModel, FamilyMemberViewModel, StudentTelegramSettingsViewModel,
+                            ParentStudentNotificationSettingsViewModel
 )
 
 # Этап 6: форматтер дат. Устанавливается один раз в main.py:
@@ -814,39 +816,60 @@ class UIRenderer:
         return "❌ У вас нет привязанных детей. Сначала добавьте ребенка в семью через меню настроек.", None
 
     @staticmethod
-    def render_extra_classes_list(dto: 'ExtraClassListDTO', show_id: bool = False) -> tuple[str, None]:
-        if not dto.items:
+    def render_extra_classes_list(
+        view_models: list[ExtraClassViewModel],
+        show_id: bool = False,
+    ) -> tuple[str, None]:
+        """
+        Список доп. занятий (Этап 5: принимает ViewModel).
+        """
+        if not view_models:
             return "📋 <b>Список дополнительных занятий пуст.</b>", None
+
         text = "📋 <b>Ваши дополнительные занятия:</b>\n\n"
-        current_day = None
-        sorted_items = sorted(dto.items, key=lambda x: (x.day_of_week, x.time_start))
-        for item in sorted_items:
-            if item.day_of_week != current_day:
-                current_day = item.day_of_week
-                day_name = UIRenderer.FULL_DAYS_MAP.get(current_day, "Неизвестно")
+        current_day = -1
+
+        for vm in view_models:
+            if vm.day_of_week != current_day:
+                current_day = vm.day_of_week
                 text += "───────────────\n"
-                text += f"📅 <b>{day_name}</b>\n"
+                text += f"📅 <b>{vm.day_of_week_text}</b>\n"
                 text += "───────────────\n"
-            # ЭКРАНИРОВАНИЕ
-            safe_loc = UIRenderer.escape_html(item.location, "Не указано")
-            safe_title = UIRenderer.escape_html(item.title)
+
+            safe_title = UIRenderer.escape_html(vm.title)
+            safe_loc = UIRenderer.escape_html(vm.location)
+
             if show_id:
-                text += f"ID: <code>{item.id}</code> | 🕐 {item.time_start}-{item.time_end}\n"
+                text += (
+                    f"ID: <code>{vm.id}</code> | "
+                    f"🕐 {vm.time_start}-{vm.time_end}\n"
+                )
             else:
-                text += f"🕐 {item.time_start}-{item.time_end}\n"
+                text += f"🕐 {vm.time_start}-{vm.time_end}\n"
+
             text += f"📝 Занятие: <b>{safe_title}</b>\n"
             text += f"📍 Место: {safe_loc}\n"
-            text += f"⏰ Напоминание: {item.reminder_minutes}мин\n"
+            text += f"⏰ Напоминание: {vm.reminder_minutes}мин\n"
             text += " \n"
+
         return text, None
 
     @staticmethod
-    def render_extra_class_edit_prompt(dto: ExtraClassListDTO) -> tuple[str, None]:
-        if not dto.items:
+    def render_extra_class_edit_prompt(
+        view_models: list[ExtraClassViewModel],
+    ) -> tuple[str, None]:
+        """
+        Prompt редактирования (Этап 5: принимает ViewModel).
+        """
+        if not view_models:
             return "Список пуст. Изменять нечего.", None
-        text, _ = UIRenderer.render_extra_classes_list(dto, show_id=True)
+        text, _ = UIRenderer.render_extra_classes_list(
+            view_models,
+            show_id=True,
+        )
         text += "\n✏️ <b>Введите ID занятия для изменения:</b>"
         return text, None
+
 
     @staticmethod
     def render_extra_class_edit_field_select() -> tuple[str, None]:
@@ -857,10 +880,18 @@ class UIRenderer:
         return "✅ Занятие успешно обновлено.", None
 
     @staticmethod
-    def render_extra_class_delete_prompt(dto: ExtraClassListDTO) -> tuple[str, None]:
-        if not dto.items:
+    def render_extra_class_delete_prompt(
+        view_models: list[ExtraClassViewModel],
+    ) -> tuple[str, None]:
+        """
+        Prompt удаления (Этап 5: принимает ViewModel).
+        """
+        if not view_models:
             return "Список пуст. Удалять нечего.", None
-        text, _ = UIRenderer.render_extra_classes_list(dto, show_id=True)
+        text, _ = UIRenderer.render_extra_classes_list(
+            view_models,
+            show_id=True,
+        )
         text += "\n🗑 <b>Введите ID занятия для удаления:</b>"
         return text, None
 
@@ -879,45 +910,19 @@ class UIRenderer:
 
     @staticmethod
     def render_adult_student_extra_classes_permissions(
-        *,
-        student: StudentProfileDTO,
-        permissions: list[
-            AdultStudentExtraClassesPermissionDTO
-        ],
-        class_name: str,
-        group_name: str,
+        vm: StudentProfileViewModel,
+        permissions: list[AdultStudentExtraClassesPermissionDTO],
     ) -> str:
         """
-        Рендерит права взрослых на управление кружками
-        выбранного student profile.
-
-        Этап 6: class_name/group_name передаются хендлером
-        (раньше показывался сырой NIKA class_id вроде "016").
+        Права взрослых на кружки (Этап 5: ViewModel).
         """
-        student_name = UIRenderer.escape_html(
-            student.name,
-            fallback=f"Ученик {student.id}",
-        )
-        safe_class = UIRenderer.escape_html(
-            class_name,
-            fallback="—",
-        )
-        group_text = UIRenderer.escape_html(
-            group_name,
-            fallback="Весь класс",
-        )
-        telegram_status = (
-            "📱 Telegram подключён"
-            if student.telegram_user_id is not None
-            else "🧒 Без Telegram"
-        )
         lines = [
             "👥 <b>Права взрослых</b>",
             "",
-            f"👤 Ученик: <b>{student_name}</b>",
-            f"🎓 Класс: <b>{safe_class}</b>",
-            f"👥 {group_text}",
-            telegram_status,
+            f"👤 Ученик: <b>{UIRenderer.escape_html(vm.name)}</b>",
+            f"🎓 Класс: <b>{UIRenderer.escape_html(vm.class_name)}</b>",
+            f"👥 {UIRenderer.escape_html(vm.group_name)}",
+            vm.telegram_status,
             "",
         ]
         if not permissions:
@@ -959,35 +964,25 @@ class UIRenderer:
         ])
         return "\n".join(lines)
 
+
     @staticmethod
     def render_student_extra_classes_menu(
-        student: StudentProfileDTO,
-        class_name: str, 
-        group_name: str,
+        vm: StudentProfileViewModel,
     ) -> tuple[str, None]:
         """
-        Заголовок меню допзанятий конкретного student profile.
+        Заголовок меню допзанятий (Этап 5: принимает ViewModel).
         """
-        student_name = UIRenderer.escape_html(student.name)
-        telegram_status = (
-            "📱 Telegram подключён"
-            if student.telegram_user_id is not None
-            else "🧒 Без Telegram"
-        )
-        group_text = (
-            "Весь класс"
-            if student.group_id == "ALL"
-            else f"Группа {UIRenderer.escape_html(group_name)}"
-        )
         return (
             "🎨 <b>Дополнительные занятия</b>\n\n"
-            f"👤 Ученик: <b>{student_name}</b>\n"
-            f"🎓 Класс: <b>{UIRenderer.escape_html(class_name, '—')}</b>\n"
-            f"👥 {group_text}\n"
-            f"{telegram_status}\n\n"
+            f"👤 Ученик: <b>{UIRenderer.escape_html(vm.name)}</b>\n"
+            f"🎓 Класс: <b>{UIRenderer.escape_html(vm.class_name)}</b>\n"
+            f"👥 {UIRenderer.escape_html(vm.group_name)}\n"
+            f"{vm.telegram_status}\n\n"
             "Выберите действие:",
             None,
         )
+
+
     #-----------------    
     #ИНВАЙТЫ
     #-----------------
@@ -1153,131 +1148,80 @@ class UIRenderer:
             "личные настройки Telegram-ребёнка."
         )
 
+# --- render_parent_student_notification_settings — ПОЛНАЯ ЗАМЕНА ---
+
     @staticmethod
     def render_parent_student_notification_settings(
-        dto: ParentStudentNotificationSettingsDTO,
-        class_name: str,
-        group_name: str
+        vm: ParentStudentNotificationSettingsViewModel,
     ) -> str:
         """
-        Показывает personal subscriptions взрослого
-        по выбранному student profile.
+        Экран подписок взрослого (Этап 5: ViewModel).
         """
-        # ЭКРАНИРОВАНИЕ
-        safe_student = UIRenderer.escape_html(dto.student_name, fallback=f"Ученик {dto.student_id}")
-        safe_class = UIRenderer.escape_html(class_name, fallback="—")
-        safe_group = UIRenderer.escape_html(group_name, fallback="Весь класс")
-        telegram_status = (
-            "📱 <b>Telegram подключён</b>"
-            if dto.telegram_user_id is not None
-            else "🧒 <b>Telegram пока не подключён</b>"
-        )
         def status(value: bool) -> str:
             return "ВКЛ 🟢" if value else "ВЫКЛ 🔴"
-        manage_status = (
-            "✅ Можно управлять"
-            if dto.can_manage_extra_classes
-            else "👁 Только просмотр"
-        )
+
         return (
             "🔔 <b>Уведомления по ученику</b>\n\n"
-            f"👤 Ученик: <b>{safe_student}</b>\n"
-            f"🎓 Класс: <b>{safe_class}</b>\n"
-            f"👥 {safe_group}\n"
-            f"{telegram_status}\n\n"
+            f"👤 Ученик: <b>{UIRenderer.escape_html(vm.student_name)}</b>\n"
+            f"🎓 Класс: <b>{UIRenderer.escape_html(vm.class_name)}</b>\n"
+            f"👥 {UIRenderer.escape_html(vm.group_name)}\n"
+            f"{vm.telegram_status}\n\n"
             "<b>Ваши подписки</b>\n"
-            f"🌅 Утренняя сводка: {status(dto.receive_morning_summary)}\n"
-            f"⏰ Напоминания об уроках: {status(dto.receive_pre_lesson_reminders)}\n"
-            f"🔄 Изменения расписания: {status(dto.receive_schedule_changes)}\n"
-            f"🎨 Доп. занятия: {status(dto.receive_extra_class_reminders)}\n\n"
-            f"Права на кружки: {manage_status}"
+            f"🌅 Утренняя сводка: {status(vm.receive_morning_summary)}\n"
+            f"⏰ Напоминания об уроках: "
+            f"{status(vm.receive_pre_lesson_reminders)}\n"
+            f"🔄 Изменения расписания: "
+            f"{status(vm.receive_schedule_changes)}\n"
+            f"🎨 Доп. занятия: "
+            f"{status(vm.receive_extra_class_reminders)}\n\n"
+            f"Права на кружки: {vm.manage_status_text}"
         )
 
     @staticmethod
     def render_student_telegram_summary_time_prompt(
-        dto: StudentTelegramSettingsDTO,
+        vm: StudentTelegramSettingsViewModel,
     ) -> str:
         """
-        Prompt family admin для изменения времени
-        личной утренней сводки Telegram child.
+        Prompt изменения времени сводки ребёнка (Этап 5: ViewModel).
         """
-        student_name = UIRenderer.escape_html(
-            dto.student_name,
-            fallback=f"Ученик {dto.student_id}",
-        )
-        current_time = (
-            dto.morning_summary_time
-            if dto.morning_summary_time
-            else "ВЫКЛ"
-        )
         return (
             "🌅 <b>Утренняя сводка ребёнка</b>\n\n"
-            f"👤 Ученик: <b>{student_name}</b>\n"
-            f"Текущее время: <b>{current_time}</b>\n\n"
+            f"👤 Ученик: <b>{UIRenderer.escape_html(vm.student_name)}</b>\n"
+            f"Текущее время: <b>{vm.morning_summary_time}</b>\n\n"
             "Введите новое время в формате:\n"
             "<code>07:00</code>\n\n"
             "Или отключите сводку кнопкой ниже."
         )
 
+
     @staticmethod
     def render_student_telegram_settings(
-        dto: StudentTelegramSettingsDTO,
-        class_name: str,
-        group_name: str,
+        vm: StudentTelegramSettingsViewModel,
     ) -> str:
         """
-        Экран personal Telegram settings ребёнка,
-        открытый family admin.
-
-        Этап 6: class_name/group_name передаются хендлером
-        (раньше показывался сырой NIKA class_id вроде "016").
+        Экран Telegram-настроек ребёнка (Этап 5: ViewModel).
         """
-        student_name = UIRenderer.escape_html(
-            dto.student_name,
-            fallback=f"Ученик {dto.student_id}",
-        )
-        safe_class = UIRenderer.escape_html(
-            class_name,
-            fallback="—",
-        )
-        group_text = UIRenderer.escape_html(
-            group_name,
-            fallback="Весь класс",
-        )
         def status(value: bool) -> str:
             return "ВКЛ 🟢" if value else "ВЫКЛ 🔴"
-        summary_time = (
-            dto.morning_summary_time
-            if dto.morning_summary_time
-            else "ВЫКЛ"
-        )
-        prelesson_text = (
-            f"{dto.pre_lesson_offset_minutes} мин 🟢"
-            if dto.pre_lesson_offset_minutes > 0
-            else "ВЫКЛ 🔴"
-        )
-        lock_text = (
-            "ВКЛ 🔒"
-            if dto.child_notification_settings_locked
-            else "ВЫКЛ 🔓"
-        )
+
         return (
             "📱 <b>Настройки Telegram-ребёнка</b>\n\n"
-            f"👤 Ученик: <b>{student_name}</b>\n"
-            f"🎓 Класс: <b>{safe_class}</b>\n"
-            f"👥 {group_text}\n\n"
+            f"👤 Ученик: <b>{UIRenderer.escape_html(vm.student_name)}</b>\n"
+            f"🎓 Класс: <b>{UIRenderer.escape_html(vm.class_name)}</b>\n"
+            f"👥 {UIRenderer.escape_html(vm.group_name)}\n\n"
             "<b>Личные настройки ребёнка</b>\n"
-            f"🔔 Уведомления: {status(dto.is_notifications_enabled)}\n"
-            f"🌅 Утренняя сводка: {summary_time}\n"
-            f"⏰ Напоминания об уроках: {prelesson_text}\n"
+            f"🔔 Уведомления: {status(vm.is_notifications_enabled)}\n"
+            f"🌅 Утренняя сводка: {vm.morning_summary_time}\n"
+            f"⏰ Напоминания об уроках: {vm.pre_lesson_text}\n"
             f"🔄 Изменения расписания: "
-            f"{status(dto.receive_schedule_changes)}\n"
+            f"{status(vm.receive_schedule_changes)}\n"
             f"🎨 Напоминания о кружках: "
-            f"{status(dto.receive_extra_class_reminders)}\n"
+            f"{status(vm.receive_extra_class_reminders)}\n"
             f"✏️ Самостоятельное управление кружками: "
-            f"{status(dto.can_manage_own_extra_classes)}\n\n"
-            f"🔒 Блокировка настроек ребёнка: <b>{lock_text}</b>"
+            f"{status(vm.can_manage_own_extra_classes)}\n\n"
+            f"🔒 Блокировка настроек ребёнка: <b>{vm.lock_text}</b>"
         )
+
 
     @staticmethod
     def render_settings_main(
@@ -1324,37 +1268,40 @@ class UIRenderer:
 
     @staticmethod
     def render_family_members_menu(
-        members: list['FamilyMemberDTO'], 
-        current_user: 'UserProfileDTO', 
-        classes_dict: dict
+        view_models: list[FamilyMemberViewModel],
     ) -> str:
+        """
+        Список состава семьи (Этап 5: принимает ViewModel).
+
+        Сортировка уже выполнена билдером.
+        """
         text = "👨‍👩‍👧 <b>Ваша семья</b>\n\n"
-        roles_ru = {"parent": "👨‍👩‍👧 Родитель", "child": "👶 Ребёнок", "observer": "👁 Наблюдатель"}
-        # Сортировка: 
-        # 1. Текущий пользователь (0 - первый, 1 - остальные)
-        # 2. Приоритет роли: parent=1, child=2, observer=3
-        sorted_members = sorted(
-            members, 
-            key=lambda m: (
-                0 if m.user_id == current_user.user_id else 1,
-                {"parent": 1, "child": 2, "observer": 3}.get(m.role, 4)
-            )
-        )
-        for m in sorted_members:
-            role_str = roles_ru.get(m.role, m.role)
-            me_flag = " <i>(Вы)</i>" if m.user_id == current_user.user_id else ""
-            # ЭКРАНИРОВАНИЕ
-            safe_name = UIRenderer.escape_html(m.name, "Неизвестно")
-            if m.role == 'child':
-                class_name = classes_dict.get(m.class_id, m.class_id) if m.class_id else "Класс не выбран"
-                safe_class = UIRenderer.escape_html(class_name)
-                text += f"{role_str}: <b>{safe_name}</b>{me_flag} — {safe_class}\n"
+        for vm in view_models:
+            me_flag = " <i>(Вы)</i>" if vm.is_current_user else ""
+            safe_name = UIRenderer.escape_html(vm.name, "Неизвестно")
+
+            if vm.role == "child":
+                safe_class = UIRenderer.escape_html(vm.class_name)
+                text += (
+                    f"{vm.role_display}: <b>{safe_name}</b>{me_flag} "
+                    f"— {safe_class}\n"
+                )
             else:
-                text += f"{role_str}: <b>{safe_name}</b>{me_flag}\n"
-        if current_user.role == 'parent':
+                text += (
+                    f"{vm.role_display}: <b>{safe_name}</b>{me_flag}\n"
+                )
+
+        # Подсказка в конце
+        if view_models and view_models[0].is_current_user:
+            current_role = view_models[0].role
+        else:
+            current_role = ""
+
+        if current_role == "parent":
             text += "\n⚙️ <i>Выберите ребенка ниже для настройки профиля:</i>"
         else:
             text += "\n🔒 <i>Управление настройками доступно только родителям.</i>"
+
         return text
 
     @staticmethod
@@ -1798,11 +1745,12 @@ class UIRenderer:
 
     @staticmethod
     def render_watch_targets_menu(
-        targets: list[ScheduleWatchTargetDTO],
-        classes_dict: dict,
-        groups_dict: dict,
+        view_models: list[WatchTargetViewModel],
     ) -> str:
-        if not targets:
+        """
+        Список отслеживаемых классов (Этап 5: принимает ViewModel).
+        """
+        if not view_models:
             return (
                 "🎓 <b>Мои отслеживаемые классы</b>\n\n"
                 "Вы пока не добавили ни одного класса.\n\n"
@@ -1815,69 +1763,47 @@ class UIRenderer:
             "Выберите класс для управления.",
             "",
         ]
-        for target in targets:
-            # Получаем человекочитаемое имя класса через словарь
-            class_name = classes_dict.get(target.class_id, target.class_id)
-            title = UIRenderer.escape_html(
-                target.title or f"Класс {class_name}"
-            )
-            # Получаем человекочитаемое имя группы/групп через словарь
-            if not target.group_id or target.group_id == "ALL":
-                group = "Весь класс"
-            else:
-                names = [
-                    groups_dict.get(g.strip(), f"Группа {g.strip()}") 
-                    for g in str(target.group_id).split(",")
-                ]
-                group = ", ".join(names)
-            status = (
-                "🟢 включено"
-                if target.is_enabled
-                else "⚫ выключено"
-            )
+        for vm in view_models:
+            status = "🟢" if vm.is_enabled else "⚫"
+            title = UIRenderer.escape_html(vm.title)
             lines.append(
-                f"• <b>{title}</b> — {group}, {status}"
+                f"• {status} <b>{title}</b> — "
+                f"{UIRenderer.escape_html(vm.group_name)}, "
+                f"{vm.is_enabled_text}"
             )
         return "\n".join(lines)
 
     @staticmethod
     def render_watch_target_details(
-        target: ScheduleWatchTargetDTO,
-        class_name: str,
-        group_name: str,
+        vm: WatchTargetViewModel,
     ) -> str:
-        title = UIRenderer.escape_html(
-            target.title or class_name
-        )
-        status = (
-            "🟢 Включено"
-            if target.is_enabled
-            else "⚫ Выключено"
-        )
-        changes_status = (
-            "🟢 Включены"
-            if target.receive_schedule_changes
-            else "🔴 Выключены"
-        )
+        """
+        Карточка отслеживаемого класса (Этап 5: принимает ViewModel).
+        """
+        title = UIRenderer.escape_html(vm.title)
         return (
             "🎓 <b>Отслеживаемый класс</b>\n\n"
             f"Название: <b>{title}</b>\n"
-            f"Класс: <b>{UIRenderer.escape_html(class_name)}</b>\n"
-            f"Группа: <b>{UIRenderer.escape_html(group_name)}</b>\n"
-            f"Изменения расписания: {changes_status}\n\n"                
-            f"Статус: {status}\n\n"
+            f"Класс: <b>{UIRenderer.escape_html(vm.class_name)}</b>\n"
+            f"Группа: <b>{UIRenderer.escape_html(vm.group_name)}</b>\n"
+            f"Изменения расписания: {vm.changes_notify_text}\n\n"
+            f"Статус: {vm.is_enabled_text}\n\n"
             "Этот класс не связан с профилем ребёнка. "
             "Он используется только для вашего самостоятельного "
             "просмотра расписания."
         )
+
 # Виртуальный ученик
     @staticmethod
     def render_family_students(
-        students: list[StudentProfileDTO],
-        classes_dict: dict,
-        groups_dict: dict,
+        view_models: list[StudentProfileViewModel],
     ) -> str:
-        if not students:
+        """
+        Список учеников семьи (Этап 5: принимает ViewModel).
+
+        Все NIKA ID уже расшифрованы билдером в сервисе.
+        """
+        if not view_models:
             return (
                 "🧒 <b>Ученики семьи</b>\n\n"
                 "В семье пока нет профилей учеников.\n\n"
@@ -1890,53 +1816,32 @@ class UIRenderer:
             "Выберите ученика для просмотра профиля.",
             "",
         ]
-        for student in students:
-            name = UIRenderer.escape_html(
-                student.name,
-            )
-            telegram_status = (
-                "📱 Telegram подключён"
-                if student.telegram_user_id is not None
-                else "🧒 Telegram пока не подключён"
-            )
-            # Получаем человекочитаемое имя класса для каждого студента
-            class_name = classes_dict.get(student.class_id, student.class_id or "—")
-            # Получаем человекочитаемое имя группы для каждого студента
-            if not student.group_id or student.group_id == "ALL":
-                group_text = "Весь класс"
-            else:
-                names = [
-                    groups_dict.get(g.strip(), f"Группа {g.strip()}") 
-                    for g in str(student.group_id).split(",")
-                ]
-                group_text = ", ".join(names)
+        for vm in view_models:
+            safe_name = UIRenderer.escape_html(vm.name)
             lines.append(
-                f"• <b>{name}</b>\n"
-                f"  🎓 Класс: {UIRenderer.escape_html(class_name)}\n"
-                f"  👥 {UIRenderer.escape_html(group_text)}\n"
-                f"  {telegram_status}\n"
+                f"• <b>{safe_name}</b>\n"
+                f"  🎓 Класс: {UIRenderer.escape_html(vm.class_name)}\n"
+                f"  👥 {UIRenderer.escape_html(vm.group_name)}\n"
+                f"  {vm.telegram_status}\n"
             )
         return "\n".join(lines)
 
     @staticmethod
     def render_student_details(
-        student: StudentProfileDTO,
-        class_name: str,
-        group_name: str,
+        vm: StudentProfileViewModel,
     ) -> str:
-        telegram_text = (
-            "📱 <b>Telegram подключён</b>"
-            if student.telegram_user_id is not None
-            else "🧒 <b>Telegram пока не подключён</b>"
-        )
+        """
+        Карточка ученика (Этап 5: принимает ViewModel).
+        """
         return (
             "🧒 <b>Профиль ученика</b>\n\n"
-            f"Имя: <b>{UIRenderer.escape_html(student.name)}</b>\n"
-            f"Класс: <b>{UIRenderer.escape_html(class_name)}</b>\n"
-            f"Группа: <b>{UIRenderer.escape_html(group_name)}</b>\n"
-            f"{telegram_text}\n\n"
+            f"Имя: <b>{UIRenderer.escape_html(vm.name)}</b>\n"
+            f"Класс: <b>{UIRenderer.escape_html(vm.class_name)}</b>\n"
+            f"Группа: <b>{UIRenderer.escape_html(vm.group_name)}</b>\n"
+            f"{vm.telegram_status}\n\n"
             "Профиль ученика существует независимо от Telegram-аккаунта."
         )
+
 
     @staticmethod
     def render_virtual_student_name_prompt() -> str:
@@ -1947,19 +1852,16 @@ class UIRenderer:
 
     @staticmethod
     def render_virtual_student_delete_confirmation(
-        student: StudentProfileDTO,
-        class_name: str,
-        group_name: str,
+        vm: StudentProfileViewModel,
     ) -> str:
         """
-        Этап 6: class_name/group_name передаются хендлером
-        (раньше показывался сырой NIKA class_id вроде "016").
+        Подтверждение удаления ученика (Этап 5: принимает ViewModel).
         """
         return (
             "⚠️ <b>Удалить ученика?</b>\n\n"
-            f"Ученик: <b>{UIRenderer.escape_html(student.name)}</b>\n"
-            f"Класс: <b>{UIRenderer.escape_html(class_name, '—')}</b>\n"
-            f"Группа: <b>{UIRenderer.escape_html(group_name, 'Весь класс')}</b>\n\n"
+            f"Ученик: <b>{UIRenderer.escape_html(vm.name)}</b>\n"
+            f"Класс: <b>{UIRenderer.escape_html(vm.class_name)}</b>\n"
+            f"Группа: <b>{UIRenderer.escape_html(vm.group_name)}</b>\n\n"
             "Будут удалены:\n"
             "• профиль ученика;\n"
             "• его дополнительные занятия;\n"
@@ -1970,36 +1872,19 @@ class UIRenderer:
 
     @staticmethod
     def render_student_claim_invite_created(
-        *,
-        student: StudentProfileDTO,
-        class_name: str,
-        group_name: str,
+        vm: StudentProfileViewModel,
         expires_at,
         deep_link: str,
     ) -> str:
         """
-        Экран family admin после выпуска claim token.
-
-        Этап 6: class_name/group_name передаются хендлером
-        (раньше сырые ID); expires_at — местное время.
+        Экран family admin после выпуска claim token
+        (Этап 5: ViewModel + expires_at + deep_link).
         """
-        student_name = UIRenderer.escape_html(
-            student.name,
-            fallback="Ученик",
-        )
-        safe_class = UIRenderer.escape_html(
-            class_name,
-            fallback="—",
-        )
-        group_text = UIRenderer.escape_html(
-            group_name,
-            fallback="Весь класс",
-        )
         return (
             "📱 <b>Ссылка для привязки Telegram</b>\n\n"
-            f"👤 Ученик: <b>{student_name}</b>\n"
-            f"🎓 Класс: <b>{safe_class}</b>\n"
-            f"👥 {group_text}\n\n"
+            f"👤 Ученик: <b>{UIRenderer.escape_html(vm.name)}</b>\n"
+            f"🎓 Класс: <b>{UIRenderer.escape_html(vm.class_name)}</b>\n"
+            f"👥 {UIRenderer.escape_html(vm.group_name)}\n\n"
             "Отправьте ссылку ребёнку. После открытия ссылки он "
             "подтвердит профиль, введёт имя и выберет класс/группу.\n\n"
             f"Ссылка действует до: <code>{UIRenderer.escape_html(UIRenderer.format_dt(expires_at))}</code>\n\n"
@@ -2068,43 +1953,39 @@ class UIRenderer:
 
     @staticmethod
     def render_student_edit_class_prompt(
-        student: StudentProfileDTO,
-        class_name: str,
-        group_name: str,
+        vm: StudentProfileViewModel,
     ) -> str:
         """
-        Запрос выбора класса family admin.
+        Запрос выбора класса family admin (Этап 5: ViewModel).
         """
-        student_name = UIRenderer.escape_html(
-            student.name,
-            fallback=f"Ученик {student.id}",
-        )
         return (
             "🎓 <b>Изменение класса и группы</b>\n\n"
-            f"👤 Ученик: <b>{student_name}</b>\n"
-            f"Текущий класс: <b>{UIRenderer.escape_html(class_name, '—')}</b>\n"
-            f"Текущая группа: <b>{UIRenderer.escape_html(group_name, 'Весь класс')}</b>\n\n"
+            f"👤 Ученик: <b>{UIRenderer.escape_html(vm.name)}</b>\n"
+            f"Текущий класс: <b>{UIRenderer.escape_html(vm.class_name)}</b>\n"
+            f"Текущая группа: <b>{UIRenderer.escape_html(vm.group_name)}</b>\n\n"
             "Выберите новый класс."
         )
 
     @staticmethod
     def render_student_edit_group_prompt(
-        student: StudentProfileDTO,
-        class_name: str,
+        vm: StudentProfileViewModel,
+        new_class_name: str,
     ) -> str:
         """
-        Запрос выбора группы family admin.
+        Запрос выбора группы family admin (Этап 5: ViewModel).
+
+        new_class_name — ВЫБРАННЫЙ новый класс (ещё не сохранён),
+        передаётся отдельным параметром, не из ViewModel.
         """
-        student_name = UIRenderer.escape_html(
-            student.name,
-            fallback=f"Ученик {student.id}",
-        )
         return (
             "👥 <b>Изменение группы</b>\n\n"
-            f"👤 Ученик: <b>{student_name}</b>\n"
-            f"Новый класс: <b>{UIRenderer.escape_html(class_name, '—')}</b>\n\n"
+            f"👤 Ученик: <b>{UIRenderer.escape_html(vm.name)}</b>\n"
+            f"Новый класс: <b>{UIRenderer.escape_html(new_class_name)}</b>\n\n"
             "Выберите группу."
         )
+
+
+
     #----------------------
     #   УЧИТЕЛЬ
     #----------------------

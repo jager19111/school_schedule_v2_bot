@@ -34,7 +34,7 @@ from dataclasses import replace
 from services.profiles_service import ProfileService
 from bot.utils.ui_renderer import UIRenderer
 from bot.keyboards.keyboard import Keyboards
-from core.models.dto import StudentProfileDTO
+from core.models.dto import StudentProfileDTO, StudentProfileViewModel, WatchTargetViewModel
 from services.students_service import StudentsService
 
 from aiogram.fsm.context import FSMContext
@@ -132,6 +132,31 @@ async def _require_own_notification_settings_access(
 
     return False
 
+async def _require_family_admin_for_student(
+    *,
+    callback: CallbackQuery,
+    profile_service: ProfileService,
+    student_id: int,
+) -> bool:
+    """
+    Проверяет права family admin на конкретный student profile.
+    """
+    is_admin = await profile_service.is_family_admin_for_student(
+        admin_user_id=callback.from_user.id,
+        student_id=student_id,
+    )
+
+    if is_admin:
+        return True
+
+    await _safe_callback_answer(
+        callback,
+        "Только администратор семьи может менять профиль ученика.",
+        show_alert=True,
+    )
+
+    return False
+
 async def _show_student_telegram_settings(
     *,
     callback: CallbackQuery,
@@ -157,14 +182,11 @@ async def _show_student_telegram_settings(
         return False
 
     dicts_dto = await schedule_service.get_school_dictionaries()
-    class_name = dicts_dto.get_readable_class(dto.class_id)
-    group_name = dicts_dto.get_readable_group(dto.group_id)
-
-    text = UIRenderer.render_student_telegram_settings(
+    vm = ProfileService.build_student_telegram_settings_view_model(
         dto,
-        class_name=class_name,
-        group_name=group_name,
+        dicts_dto,
     )
+    text = UIRenderer.render_student_telegram_settings(vm)
 
     keyboard = Keyboards.get_student_telegram_settings_kb(
         dto,
@@ -623,7 +645,7 @@ async def revoke_family_invite(
     invites = await profile_service.get_active_family_invites(
         admin_user_id=callback.from_user.id,
         family_id=user_dto.family_id,
-    )
+        )
 
     text = (
         "✅ <b>Приглашение отозвано.</b>\n\n"
@@ -873,23 +895,18 @@ async def show_family_management(
     
     # Получаем полный состав семьи
     family_members = await profile_service.get_family_members(user_dto.family_id)
-    
-    # 1. Запрашиваем единый DTO справочников школы за один вызов
     dicts_dto = await schedule_service.get_school_dictionaries()
-    
-    # 2. Передаем словарь классов напрямую из свойства единого DTO
-    text = UIRenderer.render_family_members_menu(
-        members=family_members, 
-        current_user=user_dto, 
-        classes_dict=dicts_dto.classes
+    view_models = ProfileService.build_family_member_view_models(
+        family_members,
+        current_user_id=user_dto.user_id,
+        dicts_dto=dicts_dto,
     )
-    
+    text = UIRenderer.render_family_members_menu(view_models)
     kb = Keyboards.get_family_management_kb(
-        members=family_members,
-        current_user=user_dto,
-        classes_dict=dicts_dto.classes,
+        current_role=user_dto.role,
         is_family_admin=is_family_admin,
     )
+
     
     with contextlib.suppress(TelegramBadRequest):
         await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
@@ -945,16 +962,15 @@ async def show_children_notification_settings(
         await _safe_callback_answer(callback)
         return
     
-    # 1. Запрашиваем единый DTO справочников школы за один вызов
     dicts_dto = await schedule_service.get_school_dictionaries()
-    
+    view_models = StudentsService.build_student_view_models(
+        students,
+        dicts_dto,
+    )
     text = UIRenderer.render_parent_student_notification_menu()
 
-    # 2. Передаем словари напрямую из свойств DTO
     keyboard = Keyboards.get_student_notification_select_kb(
-        students=students,
-        classes_dict=dicts_dto.classes,
-        groups_dict=dicts_dto.groups,
+        view_models,
     )
 
     await _safe_edit_text(
@@ -1039,20 +1055,14 @@ async def _show_family_students_menu(
         adult_user_id=callback.from_user.id,
     )
 
-    # 1. Запрашиваем единый DTO справочников школы за один вызов
     dicts_dto = await schedule_service.get_school_dictionaries()
-    
-    # 2. Передаем словари напрямую из свойств единого DTO
-    text = UIRenderer.render_family_students(
-        students=students,
-        classes_dict=dicts_dto.classes,
-        groups_dict=dicts_dto.groups,
-    )
-
-    keyboard = Keyboards.get_family_students_kb(
+    view_models = StudentsService.build_student_view_models(
         students,
-        classes_dict=dicts_dto.classes,
-        groups_dict=dicts_dto.groups,
+        dicts_dto,
+    )
+    text = UIRenderer.render_family_students(view_models)
+    keyboard = Keyboards.get_family_students_kb(
+        view_models,
         is_family_admin=is_family_admin,
     )
 
@@ -1115,7 +1125,7 @@ async def disable_my_summary_time(
     schedule_service: ScheduleService,
 ) -> None:
     """
-    Выключает личной утреннюю сводку пользователя.
+    Выключает личную утреннюю сводку пользователя.
 
     morning_summary_time = NULL означает, что сводка отключена.
     """
@@ -1450,18 +1460,12 @@ async def show_watch_targets_menu(
     # 1. Запрашиваем справочники школы единым запросом
     dicts_dto = await schedule_service.get_school_dictionaries()
     
-    # 2. Рендерим текст и клавиатуру, передавая сырые словари
-    text = UIRenderer.render_watch_targets_menu(
-        targets=targets,
-        classes_dict=dicts_dto.classes,
-        groups_dict=dicts_dto.groups,
+    view_models = WatchTargetsService.build_view_models(
+        targets,
+        dicts_dto,
     )
-
-    keyboard = Keyboards.get_watch_targets_menu_kb(
-        targets=targets,
-        classes_dict=dicts_dto.classes,
-        groups_dict=dicts_dto.groups,
-    )
+    text = UIRenderer.render_watch_targets_menu(view_models)
+    keyboard = Keyboards.get_watch_targets_menu_kb(view_models)
 
     await _safe_edit_text(
         callback.message,
@@ -1877,21 +1881,19 @@ async def select_watch_target_group(
         owner_user_id=owner_user_id,
     )
     
-    # 3. Передаем словари напрямую из свойств dicts_dto в рендерер и клавиатуру
+    # 1. Запрашиваем справочники школы единым запросом
+    dicts_dto = await schedule_service.get_school_dictionaries()
+
+    view_models = WatchTargetsService.build_view_models(
+        targets,
+        dicts_dto,
+    )
     text = (
         "✅ <b>Класс добавлен в отслеживание.</b>\n\n"
-        + UIRenderer.render_watch_targets_menu(
-            targets=targets,
-            classes_dict=dicts_dto.classes,
-            groups_dict=dicts_dto.groups,
-        )
+        + UIRenderer.render_watch_targets_menu(view_models)
     )
 
-    keyboard = Keyboards.get_watch_targets_menu_kb(
-        targets=targets,
-        classes_dict=dicts_dto.classes,
-        groups_dict=dicts_dto.groups,
-    )
+    keyboard = Keyboards.get_watch_targets_menu_kb(view_models)
 
     await _safe_edit_text(
         callback.message,
@@ -1945,21 +1947,9 @@ async def show_watch_target_details(
     # 1. Запрашиваем справочники школы единым запросом через новый сервис
     dicts_dto = await schedule_service.get_school_dictionaries()
 
-    # 2. Получаем читаемое название класса и группы через хелперы DTO
-    class_name = dicts_dto.get_readable_class(target.class_id)
-    group_name = dicts_dto.get_readable_group(target.group_id)
-
-    text = UIRenderer.render_watch_target_details(
-        target=target,
-        class_name=class_name,
-        group_name=group_name,
-    )
-
-    keyboard = Keyboards.get_watch_target_details_kb(
-        target_id=target.id,
-        is_enabled=target.is_enabled,
-        receive_schedule_changes=target.receive_schedule_changes,
-    )
+    vm = WatchTargetsService.build_view_model(target, dicts_dto)
+    text = UIRenderer.render_watch_target_details(vm)
+    keyboard = Keyboards.get_watch_target_details_kb(vm)
 
     await _safe_edit_text(
         callback.message,
@@ -2091,23 +2081,12 @@ async def toggle_watch_target_schedule_changes(
     # 1. Запрашиваем справочники школы единым запросом через новый сервис
     dicts_dto = await schedule_service.get_school_dictionaries()
 
-    # 2. Получаем читаемое название класса и группы через хелперы DTO
-    class_name = dicts_dto.get_readable_class(refreshed_target.class_id)
-    group_name = dicts_dto.get_readable_group(refreshed_target.group_id)
-
-    text = UIRenderer.render_watch_target_details(
-        target=refreshed_target,
-        class_name=class_name,
-        group_name=group_name,
+    vm = WatchTargetsService.build_view_model(
+        refreshed_target,
+        dicts_dto,
     )
-
-    keyboard = Keyboards.get_watch_target_details_kb(
-        target_id=refreshed_target.id,
-        is_enabled=refreshed_target.is_enabled,
-        receive_schedule_changes=(
-            refreshed_target.receive_schedule_changes
-        ),
-    )
+    text = UIRenderer.render_watch_target_details(vm)
+    keyboard = Keyboards.get_watch_target_details_kb(vm)
 
     await _safe_edit_text(
         callback.message,
@@ -2221,22 +2200,16 @@ async def delete_watch_target(
     # 1. Запрашиваем справочники школы единым запросом
     dicts_dto = await schedule_service.get_school_dictionaries()
     
-    # 2. Рендерим текст, используя сырые словари из dicts_dto
+    view_models = WatchTargetsService.build_view_models(
+        targets,
+        dicts_dto,
+    )
     text = (
         "✅ <b>Отслеживаемый класс удалён.</b>\n\n"
-        + UIRenderer.render_watch_targets_menu(
-            targets=targets,
-            classes_dict=dicts_dto.classes,
-            groups_dict=dicts_dto.groups,                                
-        )
+        + UIRenderer.render_watch_targets_menu(view_models)
     )
 
-    # 3. Передаем словари в генератор клавиатуры
-    keyboard = Keyboards.get_watch_targets_menu_kb(
-        targets=targets,
-        classes_dict=dicts_dto.classes,
-        groups_dict=dicts_dto.groups,
-    )
+    keyboard = Keyboards.get_watch_targets_menu_kb(view_models)
 
     await _safe_edit_text(
         callback.message,
@@ -2521,6 +2494,7 @@ async def prompt_student_telegram_summary_time(
     callback: CallbackQuery,
     state: FSMContext,
     profile_service: ProfileService,
+    schedule_service: ScheduleService,
 ) -> None:
     """
     Family admin начинает изменение времени утренней сводки
@@ -2555,10 +2529,17 @@ async def prompt_student_telegram_summary_time(
         student_tg_settings_student_id=student_id,
     )
 
+    # --- ПРИМЕНЕННЫЙ ПАТЧ ---
+    dicts_dto = await schedule_service.get_school_dictionaries()
+    vm = ProfileService.build_student_telegram_settings_view_model(
+        dto,
+        dicts_dto,
+    )
+    
     await _safe_edit_text(
         callback.message,
         UIRenderer.render_student_telegram_summary_time_prompt(
-            dto,
+            vm,
         ),
         reply_markup=(
             Keyboards.get_student_telegram_summary_time_kb(
@@ -2566,12 +2547,14 @@ async def prompt_student_telegram_summary_time(
             )
         ),
     )
+    # ------------------------
 
     await state.set_state(
         SettingsStates.waiting_for_student_telegram_summary_time,
     )
 
     await _safe_callback_answer(callback)
+    
 
 @router.callback_query(
     SettingsStates.waiting_for_student_telegram_summary_time,
@@ -2712,22 +2695,22 @@ async def save_student_telegram_summary_time(
         )
         return
 
+    # --- ПРИМЕНЕННЫЙ ПАТЧ ---
     dicts_dto = await schedule_service.get_school_dictionaries()
-    class_name = dicts_dto.get_readable_class(getattr(dto, 'student_class_id', getattr(dto, 'class_id', None)))
-    group_name = dicts_dto.get_readable_group(getattr(dto, 'student_group_id', getattr(dto, 'group_id', None)))
+    vm = ProfileService.build_student_telegram_settings_view_model(
+        dto,
+        dicts_dto,
+    )
 
     await message.answer(
         "✅ <b>Время утренней сводки обновлено.</b>\n\n"
-        + UIRenderer.render_student_telegram_settings(
-            dto,
-            class_name=class_name,
-            group_name=group_name,
-        ),
+        + UIRenderer.render_student_telegram_settings(vm),
         reply_markup=Keyboards.get_student_telegram_settings_kb(
             dto,
         ),
         parse_mode="HTML",
     )
+    # ------------------------
                             
 @router.callback_query(F.data == "family:students")
 async def show_family_students(
@@ -2992,23 +2975,11 @@ async def show_student_details(
         return
 
     student, access = result
-
-    # 1. Запрашиваем справочники школы единым запросом
     dicts_dto = await schedule_service.get_school_dictionaries()
-
-    # 2. Получаем читаемые названия класса и группы через хелперы DTO
-    class_name = dicts_dto.get_readable_class(student.class_id)
-    group_name = dicts_dto.get_readable_group(student.group_id)
-
-    text = UIRenderer.render_student_details(
-        student=student,
-        class_name=class_name,
-        group_name=group_name,
-    )
-
+    vm = StudentsService.build_student_view_model(student, dicts_dto)
+    text = UIRenderer.render_student_details(vm)
     keyboard = Keyboards.get_student_details_kb(
-        student_id=student.id,
-        telegram_user_id=student.telegram_user_id,
+        vm,
         is_family_admin=access.is_family_admin,
     )
 
@@ -3069,15 +3040,11 @@ async def confirm_delete_virtual_student(
         )
         return
 
+    # --- ПРИМЕНЕННЫЙ ПАТЧ ---
     dicts_dto = await schedule_service.get_school_dictionaries()
-    class_name = dicts_dto.get_readable_class(student.class_id)
-    group_name = dicts_dto.get_readable_group(student.group_id)
-
-    text = UIRenderer.render_virtual_student_delete_confirmation(
-        student,
-        class_name=class_name,
-        group_name=group_name,
-    )
+    vm = StudentsService.build_student_view_model(student, dicts_dto)
+    text = UIRenderer.render_virtual_student_delete_confirmation(vm)
+    # ------------------------
 
     keyboard = Keyboards.get_student_delete_confirmation_kb(
         student.id,
@@ -3176,14 +3143,11 @@ async def show_parent_student_notification_settings(
     dicts_dto = await schedule_service.get_school_dictionaries()
 
     # 2. Используем хелперы DTO для получения отформатированного текста
-    class_name = dicts_dto.get_readable_class(dto.student_class_id)
-    group_name = dicts_dto.get_readable_group(dto.student_group_id)
-    
-    text = UIRenderer.render_parent_student_notification_settings(
-        dto=dto,
-        class_name=class_name,
-        group_name=group_name,
+    vm = ProfileService.build_parent_student_notification_view_model(
+        dto,
+        dicts_dto,
     )
+    text = UIRenderer.render_parent_student_notification_settings(vm)
 
     keyboard = (
         Keyboards.get_parent_student_notification_settings_kb(
@@ -3273,13 +3237,11 @@ async def toggle_parent_student_notification_setting(
 
     # 1. Получаем настройки и словари
     dicts_dto = await schedule_service.get_school_dictionaries()
-    class_name = dicts_dto.get_readable_class(dto.student_class_id)
-    group_name = dicts_dto.get_readable_group(dto.student_group_id)
-    text = UIRenderer.render_parent_student_notification_settings(
-        dto=dto,
-        class_name=class_name,
-        group_name=group_name,
+    vm = ProfileService.build_parent_student_notification_view_model(
+        dto,
+        dicts_dto,
     )
+    text = UIRenderer.render_parent_student_notification_settings(vm)
 
     keyboard = (
         Keyboards.get_parent_student_notification_settings_kb(
@@ -3375,17 +3337,9 @@ async def create_student_claim_invite(
         group_id=invite.student_group_id or "ALL",
     )
     dicts_dto = await schedule_service.get_school_dictionaries()
-    class_name = dicts_dto.get_readable_class(
-        invite.student_class_id,
-    )
-    group_name = dicts_dto.get_readable_group(
-        invite.student_group_id,
-    )
-    
+    vm = StudentsService.build_student_view_model(student, dicts_dto)
     text = UIRenderer.render_student_claim_invite_created(
-        student=student,
-        class_name=class_name,
-        group_name=group_name,
+        vm,
         expires_at=invite.expires_at,
         deep_link=deep_link,
     )
@@ -3454,23 +3408,19 @@ async def start_student_class_edit(
 
 # 1. Получаем красивые названия через наш хелпер
     dicts_dto = await schedule_service.get_school_dictionaries()
-    class_name=dicts_dto.get_readable_class(student_dto.class_id)
-    group_name=dicts_dto.get_readable_group(student_dto.group_id)
+    vm = StudentsService.build_student_view_model(student_dto, dicts_dto)
 
+    # --- ВОССТАНОВЛЕНО: Сохранение состояния FSM ---
     await state.clear()
-
     await state.update_data(
         student_edit_id=student_id,
         student_edit_admin_id=callback.from_user.id,
     )
+    # -----------------------------------------------
 
     await _safe_edit_text(
         callback.message,
-        UIRenderer.render_student_edit_class_prompt(
-            student=student_dto,
-            class_name=class_name,
-            group_name=group_name,
-        ),
+        UIRenderer.render_student_edit_class_prompt(vm),
         reply_markup=Keyboards.get_student_edit_class_selection_kb(
             dto=dicts_dto.as_class_list,
             student_id=student_id,
@@ -3542,24 +3492,23 @@ async def select_student_new_class(
         )
         return
     
-    # 1. Получаем все школьные справочники за один вызов
+# 1. Получаем все школьные справочники за один вызов
     dicts_dto = await schedule_service.get_school_dictionaries()    
-    # Используем выбранный class_id в renderer,
-    # не меняя profile до окончательного выбора группы.
-    student.class_id = class_id
-
+    vm = StudentsService.build_student_view_model(student, dicts_dto)
+    new_class_name = dicts_dto.get_readable_class(class_id)
+    
+    # --- ВОССТАНОВЛЕНО: Запоминаем выбранный класс ---
     await state.update_data(
         student_edit_class_id=class_id,
     )
-    # 2. Получаем красивое имя для нового класса через хелпер DTO
-    class_name = dicts_dto.get_readable_class(class_id)
-    
+    # -------------------------------------------------
+
     await _safe_edit_text(
         callback.message,
         UIRenderer.render_student_edit_group_prompt(
-            student=student,
-            class_name=class_name,
-            ),
+            vm,
+            new_class_name=new_class_name,
+        ),
         reply_markup=Keyboards.get_student_edit_group_selection_kb(
             dto=dicts_dto.as_group_list,
             student_id=student_id,
@@ -3655,25 +3604,14 @@ async def save_student_new_class_and_group(
 
     student, access = student_result
 
-    # 1. Запрашиваем справочники школы единым запросом
     dicts_dto = await schedule_service.get_school_dictionaries()
-
-    # 2. Получаем читаемые названия класса и группы через хелперы DTO
-    class_name = dicts_dto.get_readable_class(student.class_id)
-    group_name = dicts_dto.get_readable_group(student.group_id)
-
+    vm = StudentsService.build_student_view_model(student, dicts_dto)
     text = (
         "✅ <b>Класс и группа обновлены.</b>\n\n"
-        + UIRenderer.render_student_details(
-            student=student,
-            class_name=class_name,
-            group_name=group_name,
-        )
+        + UIRenderer.render_student_details(vm)
     )
-
     keyboard = Keyboards.get_student_details_kb(
-        student_id=student.id,
-        telegram_user_id=student.telegram_user_id,
+        vm,
         is_family_admin=access.is_family_admin,
     )
 
@@ -3750,15 +3688,12 @@ async def show_adult_student_extra_classes_permissions(
         )
         return
     dicts_dto = await schedule_service.get_school_dictionaries()
-    class_name = dicts_dto.get_readable_class(student.class_id)
-    group_name = dicts_dto.get_readable_group(student.group_id)
-    
+    vm = StudentsService.build_student_view_model(student, dicts_dto)
     text = UIRenderer.render_adult_student_extra_classes_permissions(
-        student=student,
-        permissions=permissions,
-        class_name=class_name,
-        group_name=group_name,
+        vm,
+        permissions,
     )
+
 
     keyboard = (
         Keyboards.get_adult_student_extra_classes_permissions_kb(
@@ -3896,14 +3831,12 @@ async def toggle_adult_student_extra_classes_permission(
         return
 
     dicts_dto = await schedule_service.get_school_dictionaries()
-    class_name = dicts_dto.get_readable_class(student.class_id)
-    group_name = dicts_dto.get_readable_group(student.group_id)
-
+    vm = StudentsService.build_student_view_model(student, dicts_dto)
+    
+    # ИСПРАВЛЕНО: передаем refreshed_permissions, а не старый permissions
     text = UIRenderer.render_adult_student_extra_classes_permissions(
-        student=student,
-        permissions=refreshed_permissions,
-        class_name=class_name,
-        group_name=group_name,
+        vm,
+        refreshed_permissions,
     )
 
     keyboard = (
@@ -3996,7 +3929,7 @@ async def save_teacher_change(
     schedule_service: ScheduleService,
 ) -> None:
     """
-    Сохраняет новый NIKA teacher_id для текущего Telegram teacher.
+    Сохраняет новый NIKA teacher_id для теку Telegram teacher.
     """
     teacher_id = callbacks.parse_teacher_change(callback.data)
     if teacher_id is None:

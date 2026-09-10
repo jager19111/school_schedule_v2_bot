@@ -20,7 +20,7 @@ from services.help_service import HelpLinksDTO
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
 from core.models.dto import ( ClassListDTO, GroupListDTO, UserProfileDTO, TeacherListDTO, 
                              FamilyMemberDTO, FamilyInviteDTO, ScheduleWatchTargetDTO, ScheduleViewTargetDTO, StudentProfileDTO, ParentStudentNotificationSettingsDTO,
-                            AdultStudentExtraClassesPermissionDTO, StudentTelegramSettingsDTO,
+                            AdultStudentExtraClassesPermissionDTO, StudentTelegramSettingsDTO, StudentProfileViewModel, ScheduleTargetViewModel, WatchTargetViewModel
 )
 
 
@@ -749,52 +749,34 @@ class Keyboards:
 
     @staticmethod
     def get_schedule_targets_kb(
-        targets: list[ScheduleViewTargetDTO],
-        classes_dict: dict,
-        groups_dict: dict,
+        view_models: list[ScheduleTargetViewModel],
     ) -> InlineKeyboardMarkup:
         """
-        Выбор цели Schedule Hub.
+        Выбор цели Schedule Hub (Этап 5: принимает ViewModel).
 
-        student — реальный или virtual student profile.
-        watch — самостоятельный отслеживаемый класс.
+        Все расшифровки и иконки — в ViewModel.
+        Keyboard только строит текст кнопки и callback_data.
         """
         buttons = []
-        for target in targets:
-            # Получаем человекочитаемое название группы для всех типов целей
-            if not target.group_id or target.group_id == "ALL":
-                group_text = "Весь класс"
+        for vm in view_models:
+            if vm.kind == "student":
+                # Для ученика: Иконка · Имя · Класс · Группа
+                button_text = (
+                    f"{vm.icon} {vm.title} · "
+                    f"{vm.class_name} · {vm.group_name}"
+                )
             else:
-                names = [
-                    groups_dict.get(g.strip(), f"Группа {g.strip()}") 
-                    for g in str(target.group_id).split(",")
-                ]
-                group_text = ", ".join(names)
-            if target.kind == "student":
-                icon = (
-                    "📱"
-                    if target.telegram_user_id is not None
-                    else "🧒"
+                # Для watch target: title уже содержит название класса
+                button_text = (
+                    f"{vm.icon} {vm.title} · {vm.group_name}"
                 )
-                callback_data = callbacks.build_sched_target(
-                    "student",
-                    target.target_id,
-                )
-                # Для ученика выводим: Иконка · Имя · Класс · Группа
-                class_name = classes_dict.get(target.class_id, target.class_id or "—")
-                button_text = f"{icon} {target.title} · {class_name} · {group_text}"
-            else:
-                icon = "🎓"
-                callback_data = callbacks.build_sched_target(
-                    "watch",
-                    target.target_id,
-                )
-                # Для отслеживаемого класса в title уже заложено имя класса, класс не дублируем
-                button_text = f"{icon} {target.title} · {group_text}"
             buttons.append([
                 InlineKeyboardButton(
                     text=button_text,
-                    callback_data=callback_data,
+                    callback_data=callbacks.build_sched_target(
+                        vm.kind,
+                        vm.target_id,
+                    ),
                 )
             ])
         buttons.append([
@@ -891,24 +873,30 @@ class Keyboards:
         ])
 
     # Клавитура семьи
+    # ВАЖНО: keyboard не использовала members/classes_dict даже в старой
+# версии — упрощаем сигнатуру до того, что реально нужно.
     @staticmethod
     def get_family_management_kb(
-        members: list[FamilyMemberDTO],
-        current_user: UserProfileDTO,
-        classes_dict: dict,
+        *,
+        current_role: str,
         is_family_admin: bool,
     ) -> InlineKeyboardMarkup:
+        """
+        Клавиатура управления семьёй (Этап 5: упрощённая).
+
+        Не зависит от списка членов семьи — только от роли
+        текущего пользователя и флага администратора.
+        """
         buttons = []
-        # Любой parent/observer видит доступные семейные профили.
-        # Конкретная проверка доступа к ученику остаётся в handler/service.
-        if current_user.role in ("parent", "observer"):
+
+        if current_role in ("parent", "observer"):
             buttons.append([
                 InlineKeyboardButton(
                     text="🧒 Ученики семьи",
                     callback_data=callbacks.FAMILY_STUDENTS,
                 )
             ])
-        # Только creator/admin семьи может выдавать invites.
+
         if is_family_admin:
             buttons.append([
                 InlineKeyboardButton(
@@ -922,55 +910,39 @@ class Keyboards:
                     callback_data=callbacks.FAMILY_INVITES,
                 )
             ])
+
         buttons.append([
             InlineKeyboardButton(
                 text="⬅️ Назад к настройкам",
                 callback_data=callbacks.SETTINGS_MAIN,
             )
         ])
+
         return InlineKeyboardMarkup(
             inline_keyboard=buttons,
         )
 
+
     @staticmethod
     def get_extra_students_select_kb(
-        students: list[StudentProfileDTO],
-        classes_dict: dict,
-        groups_dict: dict,
+        view_models: list[StudentProfileViewModel],
     ) -> InlineKeyboardMarkup:
         """
-        Выбор student profile для работы с допзанятиями.
-
-        Доступ к каждой кнопке уже предварительно отфильтрован
-        StudentsService.get_students_for_adult(), но service всё равно
-        повторно проверяет права на каждом действии.
+        Выбор student profile для допзанятий (Этап 5: ViewModel).
         """
         buttons = []
-        for student in students:
-            icon = (
-                "📱"
-                if student.telegram_user_id is not None
-                else "🧒"
-            )
-            # Получаем человекочитаемое имя класса
-            class_name = classes_dict.get(student.class_id, student.class_id or "—")
-            # Получаем человекочитаемое имя группы (с поддержкой мультигрупп)
-            if not student.group_id or student.group_id == "ALL":
-                group_text = "Весь класс"
-            else:
-                names = [
-                    groups_dict.get(g.strip(), f"Группа {g.strip()}") 
-                    for g in str(student.group_id).split(",")
-                ]
-                group_text = ", ".join(names)
+        for vm in view_models:
+            icon = "📱" if vm.telegram_connected else "🧒"
             buttons.append([
                 InlineKeyboardButton(
                     text=(
-                        f"{icon} {student.name} "
-                        f"· {class_name} "
-                        f"· {group_text}"
+                        f"{icon} {vm.name} "
+                        f"· {vm.class_name} "
+                        f"· {vm.group_name}"
                     ),
-                    callback_data=callbacks.build_extra_menu(student.id),
+                    callback_data=callbacks.build_extra_menu(
+                        vm.student_id,
+                    ),
                 )
             ])
         buttons.append([
@@ -985,42 +957,26 @@ class Keyboards:
 
     @staticmethod
     def get_student_notification_select_kb(
-        students: list[StudentProfileDTO],
-        classes_dict: dict,
-        groups_dict: dict,
+        view_models: list[StudentProfileViewModel],
     ) -> InlineKeyboardMarkup:
         """
-        Выбор student profile для персональных подписок взрослого.
-
-        В список передаются только профили, доступные текущему взрослому
-        через StudentsService.get_students_for_adult().
+        Выбор ученика для уведомлений (Этап 5: ViewModel).
         """
         buttons = []
-        for student in students:
-            icon = (
-                "📱"
-                if student.telegram_user_id is not None
-                else "🧒"
-            )
-            # Получаем человекочитаемое имя класса
-            class_name = classes_dict.get(student.class_id, student.class_id or "—")
-            # Получаем человекочитаемое имя группы (с поддержкой мультигрупп)
-            if not student.group_id or student.group_id == "ALL":
-                group_label = "весь класс"
-            else:
-                names = [
-                    groups_dict.get(g.strip(), f"группа {g.strip()}") 
-                    for g in str(student.group_id).split(",")
-                ]
-                group_label = ", ".join(names)
+        for vm in view_models:
+            icon = "📱" if vm.telegram_connected else "🧒"
+            # Для этого экрана группа — lowercase (как в оригинале)
+            group_lower = vm.group_name.lower()
             buttons.append([
                 InlineKeyboardButton(
                     text=(
-                        f"{icon} {student.name} "
-                        f"· {class_name} "
-                        f"· {group_label}"
+                        f"{icon} {vm.name} "
+                        f"· {vm.class_name} "
+                        f"· {group_lower}"
                     ),
-                    callback_data=callbacks.build_psn_student(student.id),
+                    callback_data=callbacks.build_psn_student(
+                        vm.student_id,
+                    ),
                 )
             ])
         buttons.append([
@@ -1366,26 +1322,22 @@ class Keyboards:
 
     @staticmethod
     def get_watch_targets_menu_kb(
-        targets: list[ScheduleWatchTargetDTO],
-        classes_dict: dict,
-        groups_dict: dict,
+        view_models: list[WatchTargetViewModel],
     ) -> InlineKeyboardMarkup:
         """
-        Список самостоятельных классов пользователя.
+        Список отслеживаемых классов (Этап 5: принимает ViewModel).
         """
         buttons = []
-        for target in targets:
-            status = "🟢" if target.is_enabled else "⚫"
-            # Вызываем внутренний хелпер
-            class_name, group_name = Keyboards._format_class_and_group(
-                target.class_id, target.group_id, classes_dict, groups_dict
-            )
+        for vm in view_models:
+            status = "🟢" if vm.is_enabled else "⚫"
             buttons.append([
                 InlineKeyboardButton(
                     text=(
-                        f"{status} {target.title or class_name} · {group_name}"
+                        f"{status} {vm.title} · {vm.group_name}"
                     ),
-                    callback_data=callbacks.build_watch_target(target.id),
+                    callback_data=callbacks.build_watch_target(
+                        vm.target_id,
+                    ),
                 )
             ])
         buttons.append([
@@ -1474,18 +1426,21 @@ class Keyboards:
 
     @staticmethod
     def get_watch_target_details_kb(
-        target_id: int,
-        is_enabled: bool,
-        receive_schedule_changes: bool,
+        vm: WatchTargetViewModel,
     ) -> InlineKeyboardMarkup:
+        """
+        Карточка отслеживаемого класса (Этап 5: принимает ViewModel).
+
+        Boolean-поля ViewModel определяют текст кнопок-тумблеров.
+        """
         status_text = (
             "⚫ Выключить отслеживание"
-            if is_enabled
+            if vm.is_enabled
             else "🟢 Включить отслеживание"
         )
         changes_text = (
             "🔄 Изменения: ВКЛ 🟢"
-            if receive_schedule_changes
+            if vm.receive_schedule_changes
             else "🔄 Изменения: ВЫКЛ 🔴"
         )
         return InlineKeyboardMarkup(
@@ -1493,25 +1448,33 @@ class Keyboards:
                 [
                     InlineKeyboardButton(
                         text="📅 Открыть расписание",
-                        callback_data=callbacks.build_sched_watch(target_id),
+                        callback_data=callbacks.build_sched_watch(
+                            vm.target_id,
+                        ),
                     )
                 ],
                 [
                     InlineKeyboardButton(
                         text=changes_text,
-                        callback_data=callbacks.build_watch_changes(target_id),
+                        callback_data=callbacks.build_watch_changes(
+                            vm.target_id,
+                        ),
                     )
                 ],
                 [
                     InlineKeyboardButton(
                         text=status_text,
-                        callback_data=callbacks.build_watch_toggle(target_id),
+                        callback_data=callbacks.build_watch_toggle(
+                            vm.target_id,
+                        ),
                     )
                 ],
                 [
                     InlineKeyboardButton(
                         text="🗑 Удалить класс",
-                        callback_data=callbacks.build_watch_delete(target_id),
+                        callback_data=callbacks.build_watch_delete(
+                            vm.target_id,
+                        ),
                     )
                 ],
                 [
@@ -1522,6 +1485,7 @@ class Keyboards:
                 ],
             ]
         )
+
 
     @staticmethod
     def get_watch_target_delete_confirmation_kb(
@@ -1548,44 +1512,29 @@ class Keyboards:
 
     @staticmethod
     def get_family_students_kb(
-        students: list[StudentProfileDTO],
-        classes_dict: dict,
-        groups_dict: dict,
+        view_models: list[StudentProfileViewModel],
         *,
         is_family_admin: bool,
     ) -> InlineKeyboardMarkup:
         """
-        Список student_profiles семьи.
+        Список student_profiles семьи (Этап 5: принимает ViewModel).
 
         Parent/observer видит учеников, доступных через
         parent_student_settings. Family admin может добавить ученика.
         """
         buttons = []
-        for student in students:
-            telegram_status = (
-                "📱"
-                if student.telegram_user_id is not None
-                else "🧒"
-            )
-            # Получаем человекочитаемое имя класса
-            class_name = classes_dict.get(student.class_id, student.class_id or "—")
-            # Получаем человекочитаемое имя группы
-            if not student.group_id or student.group_id == "ALL":
-                group_text = "Весь класс"
-            else:
-                names = [
-                    groups_dict.get(g.strip(), f"Группа {g.strip()}") 
-                    for g in str(student.group_id).split(",")
-                ]
-                group_text = ", ".join(names)
+        for vm in view_models:
+            icon = "📱" if vm.telegram_connected else "🧒"
             buttons.append([
                 InlineKeyboardButton(
                     text=(
-                        f"{telegram_status} {student.name} "
-                        f"· {class_name} "
-                        f"· {group_text}"
+                        f"{icon} {vm.name} "
+                        f"· {vm.class_name} "
+                        f"· {vm.group_name}"
                     ),
-                    callback_data=callbacks.build_student_show(student.id),
+                    callback_data=callbacks.build_student_show(
+                        vm.student_id,
+                    ),
                 )
             ])
         if is_family_admin:
@@ -1605,39 +1554,32 @@ class Keyboards:
             inline_keyboard=buttons,
         )
 
+
     @staticmethod
     def get_student_details_kb(
+        vm: StudentProfileViewModel,
         *,
-        student_id: int,
-        telegram_user_id: int | None,
         is_family_admin: bool,
     ) -> InlineKeyboardMarkup:
         """
-        Действия над student profile.
-
-        Family admin:
-        - меняет class/group;
-        - управляет правами других взрослых на кружки;
-        - создаёт claim link для virtual student;
-        - удаляет только virtual student.
-
-        Имя Telegram-linked ученика не меняется отсюда:
-        ребёнок меняет его через осознанную перерегистрацию/claim.
+        Действия над student profile (Этап 5: принимает ViewModel).
         """
         buttons = []
         if is_family_admin:
             buttons.append([
                 InlineKeyboardButton(
                     text="🎓 Изменить класс / группу",
-                    callback_data=callbacks.build_student_edit_class(student_id),
+                    callback_data=callbacks.build_student_edit_class(
+                        vm.student_id,
+                    ),
                 )
             ])
-            if telegram_user_id is not None:
+            if vm.telegram_connected:
                 buttons.append([
                     InlineKeyboardButton(
                         text="📱 Настройки Telegram-ребёнка",
                         callback_data=callbacks.build_student_tg_show(
-                            student_id,
+                            vm.student_id,
                         ),
                     )
                 ])
@@ -1645,28 +1587,34 @@ class Keyboards:
                 InlineKeyboardButton(
                     text="👥 Права взрослых на кружки",
                     callback_data=callbacks.build_student_extra_permissions(
-                        student_id,
+                        vm.student_id,
                     ),
                 )
             ])
-        if telegram_user_id is None and is_family_admin:
+        if not vm.telegram_connected and is_family_admin:
             buttons.append([
                 InlineKeyboardButton(
                     text="📱 Привязать Telegram",
-                    callback_data=callbacks.build_student_claim(student_id),
+                    callback_data=callbacks.build_student_claim(
+                        vm.student_id,
+                    ),
                 )
             ])
             buttons.append([
                 InlineKeyboardButton(
                     text="🗑 Удалить ученика",
-                    callback_data=callbacks.build_student_delete(student_id),
+                    callback_data=callbacks.build_student_delete(
+                        vm.student_id,
+                    ),
                 )
             ])
-        if telegram_user_id is not None:
+        if vm.telegram_connected:
             buttons.append([
                 InlineKeyboardButton(
                     text="📱 Telegram-профиль подключён",
-                    callback_data=callbacks.build_student_show(student_id),
+                    callback_data=callbacks.build_student_show(
+                        vm.student_id,
+                    ),
                 )
             ])
         buttons.append([
@@ -1678,6 +1626,7 @@ class Keyboards:
         return InlineKeyboardMarkup(
             inline_keyboard=buttons,
         )
+
 
     @staticmethod
     def get_student_claim_invite_result_kb(

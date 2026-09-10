@@ -15,6 +15,8 @@ class GroupListDTO:
 class FamilyCreatedDTO:
     family_code: str
 
+
+
 @dataclass(frozen=True, slots=True)
 class SchoolDictionariesDTO:
     """Объединенный DTO для передачи справочников школы с хелперами чтения."""
@@ -49,41 +51,159 @@ class SchoolDictionariesDTO:
         """Helper-свойство: отдает готовый GroupListDTO для клавиатур."""
         return GroupListDTO(groups=self.groups)
 
+# ==============================================================
+# ViewModel
+# ==============================================================
 
 @dataclass(frozen=True, slots=True)
 class WatchTargetViewModel:
-    """Модель готовых данных для отображения отслеживаемого класса."""
-    target_id: str               # ID записи из БД для callback_data (id)
-    
-    # --- Основные текстовые поля ---
-    title: str                   # Пользовательское название (title) или дефолтное "Класс {class_name}"
-    class_name: str              # Расшифрованный class_id (например, "10 А")
-    group_name: str              # Расшифрованный group_id (например, "Весь класс" или "Английский")
-    
-    # --- Статусы (уже отформатированные для UI) ---
-    is_enabled_text: str         # "🟢 Активно" или "⚫ Пауза" (на основе is_enabled)
-    changes_notify_text: str     # "🔔 Уведомления об изменениях включены" (на основе receive_schedule_changes)
+    """
+    Модель готовых данных для экрана отслеживаемого класса.
+
+    Все NIKA ID расшифрованы билдером в сервисе.
+    Boolean-дубли статусных полей — для клавиатур-тумблеров
+    (клавиатура меняет текст кнопки в зависимости от состояния,
+    но НЕ расшифровывает ID).
+    """
+    target_id: int                    # для callback_data
+    title: str                        # "10 А" (пользовательское или дефолтное)
+    class_name: str                   # "10 А" (расшифрованный class_id)
+    group_name: str                   # "Весь класс" / "Английский"
+
+    # --- Статусы для отображения (готовые строки) ---
+    is_enabled_text: str              # "🟢 Активно" / "⚫ Пауза"
+    changes_notify_text: str          # "🔔 Включены" / "🔴 Выключены"
+    telegram_status: str              # "📱 Подключен" / "🧒 Без Telegram" (для совместимости)
+
+    # --- Boolean-флаги для клавиатур (текст кнопки-тумблера) ---
+    is_enabled: bool                  # для текста кнопки "Выключить/Включить"
+    receive_schedule_changes: bool    # для текста кнопки "Изменения: ВКЛ/ВЫКЛ"
+
+
 
 @dataclass(frozen=True, slots=True)
 class ExtraClassViewModel:
-    """Модель готовых данных для экрана кружков (дополнительных занятий)."""
-    class_id: int
-    title: str
-    time_start: str
-    time_end: str
-    day_of_week_text: str # "Понедельник"
-    student_name: str
-    class_name: str
-    group_name: str
+    """
+    Модель одного доп. занятия для списка кружков.
+
+    Day-of-week расшифрован билдером.
+    Location уже имеет fallback "Не указано".
+    Renderer экранирует title и location (пользовательский ввод).
+    """
+    id: int                     # для callback (delete/edit) и показа ID
+    day_of_week: int           # для сортировки (int comparison)
+    day_of_week_text: str      # "Понедельник" (pre-computed)
+    time_start: str            # "18:00"
+    time_end: str              # "19:30"
+    title: str                 # "Футбол" (raw, renderer экранирует)
+    location: str              # "Спорткомплекс" или "Не указано" (raw)
+    reminder_minutes: int      # 45 (renderer форматирует как "45мин")
+
+
 
 @dataclass(frozen=True, slots=True)
 class StudentProfileViewModel:
-    """Модель готовых данных для экрана профиля ученика"""
+    """
+    Модель готовых данных для экрана ученика.
+
+    Все NIKA ID расшифрованы в человекочитаемые имена.
+    Boolean-поля дублируют статусы для клавиатур
+    (клавиатура строит условные кнопки, рендерер — текст).
+    """
+    student_id: int              # для callback_data
+    name: str                    # "Лиза"
+    class_name: str             # "10 А" (расшифрованный class_id)
+    group_name: str             # "Весь класс" / "Английский"
+
+    # --- Статусы для отображения (готовые строки) ---
+    telegram_status: str        # "📱 Подключен" / "🧒 Без Telegram"
+
+    # --- Boolean-флаги для клавиатур (условные кнопки) ---
+    telegram_connected: bool     # для кнопки "📱 Настройки Telegram-ребёнка"
+    is_active: bool             # для иконки в списке
+
+
+@dataclass(frozen=True, slots=True)
+class FamilyMemberViewModel:
+    """
+    Модель участника семьи для списка состава.
+
+    Сортировка уже выполнена билдером:
+    текущий пользователь первым, затем parent > child > observer.
+    """
+    user_id: int
+    name: str                   # "Лиза"
+    role: str                   # "parent" / "child" / "observer" (для логики)
+    role_display: str           # "👨‍👩‍👧 Родитель" / "👶 Ребёнок" / "👁 Наблюдатель"
+    class_name: str            # "10 А" или "— класс не выбран —" (для ребёнка)
+    is_current_user: bool       # для маркера "<i>(Вы)</i>"
+
+@dataclass(frozen=True, slots=True)
+class ScheduleTargetViewModel:
+    """
+    Модель выбора цели Schedule Hub.
+
+    Иконка и все расшифровки — pre-computed билдером.
+    Keyboard строит кнопки из полей, ничего не декодирует.
+    """
+    kind: str                   # "student" | "watch" (для callback_data)
+    target_id: int              # для callback_data
+    title: str                  # имя ребёнка / название класса
+    class_name: str             # "10 А" (расшифрованный class_id)
+    group_name: str             # "Весь класс" / "Английский"
+    icon: str                   # "📱" / "🧒" / "🎓" (pre-computed)
+    telegram_connected: bool    # для иконки (boolean-дубль)
+
+@dataclass(frozen=True, slots=True)
+class StudentTelegramSettingsViewModel:
+    """
+    Модель экрана личных Telegram-настроек ребёнка,
+    открытого family admin.
+    """
     student_id: int
-    name: str
-    class_name: str
-    group_name: str
-    telegram_status: str # "📱 Подключен" или "🧒 Без Telegram"
+    student_name: str
+    class_name: str             # "10 А"
+    group_name: str              # "Весь класс"
+    telegram_status: str        # "📱 Telegram подключён"
+
+    # --- Boolean-настройки ---
+    is_notifications_enabled: bool
+    receive_schedule_changes: bool
+    receive_extra_class_reminders: bool
+    can_manage_own_extra_classes: bool
+    child_notification_settings_locked: bool
+
+    # --- Для отображения (pre-formatted) ---
+    morning_summary_time: str    # "07:00" или "ВЫКЛ"
+    pre_lesson_offset_minutes: int
+    pre_lesson_text: str         # "10 мин 🟢" или "ВЫКЛ 🔴"
+    lock_text: str               # "ВКЛ 🔒" или "ВЫКЛ 🔓"
+
+
+@dataclass(frozen=True, slots=True)
+class ParentStudentNotificationSettingsViewModel:
+    """
+    Модель экрана личных подписок взрослого на ученика.
+    """
+    student_id: int
+    student_name: str
+    class_name: str             # "10 А"
+    group_name: str              # "Весь класс"
+    telegram_status: str        # "📱 Telegram подключён"
+    telegram_connected: bool
+
+    # --- Подписки ---
+    receive_morning_summary: bool
+    receive_pre_lesson_reminders: bool
+    receive_schedule_changes: bool
+    receive_extra_class_reminders: bool
+
+    # --- Права ---
+    can_manage_extra_classes: bool
+    manage_status_text: str     # "✅ Можно управлять" / "👁 Только просмотр"
+
+
+#==============================
         
 @dataclass
 class FamilyInviteDTO:

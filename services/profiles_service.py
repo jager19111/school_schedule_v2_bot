@@ -7,7 +7,9 @@ from core.repository.profile_repository import ProfileRepository
 from core.models.dto import (
     UserProfileDTO,
     FamilyMemberDTO,ParentStudentNotificationSettingsDTO, AdultStudentExtraClassesPermissionDTO,
-    ProfileResetImpactDTO, FamilyInviteDTO,StudentTelegramSettingsDTO,
+    ProfileResetImpactDTO, FamilyInviteDTO,StudentTelegramSettingsDTO, FamilyMemberViewModel,
+    SchoolDictionariesDTO, StudentTelegramSettingsViewModel, ParentStudentNotificationSettingsViewModel,
+    StudentTelegramSettingsDTO, ParentStudentNotificationSettingsDTO,
 )
 
 logger = logging.getLogger(__name__)
@@ -890,3 +892,166 @@ class ProfileService:
             student_id=student_id,
             locked=locked,
         )
+        
+    # ==========================================================
+    # ЭТАП 5: ViewModel builders
+    # ==========================================================
+
+    # Приоритет ролей для сортировки списка семьи.
+    _ROLE_PRIORITY = {
+        "parent": 1,
+        "child": 2,
+        "observer": 3,
+    }
+
+    # Отображение ролей для списка семьи.
+    _ROLE_DISPLAY = {
+        "parent": "👨‍👩‍👧 Родитель",
+        "child": "👶 Ребёнок",
+        "observer": "👁 Наблюдатель",
+    }
+
+    @staticmethod
+    def build_family_member_view_models(
+        members: List[FamilyMemberDTO],
+        current_user_id: int,
+        dicts_dto: SchoolDictionariesDTO,
+    ) -> List[FamilyMemberViewModel]:
+        """
+        Строит ViewModel для списка состава семьи.
+
+        Сортировка: текущий пользователь первым,
+        затем parent > child > observer.
+        Классы детей расшифрованы через SchoolDictionariesDTO.
+        """
+        view_models = []
+        for member in members:
+            # Класс — только для ребёнка
+            if member.role == "child" and member.class_id:
+                class_name = dicts_dto.get_readable_class(
+                    member.class_id,
+                )
+            elif member.role == "child":
+                class_name = "— класс не выбран —"
+            else:
+                class_name = ""
+
+            view_models.append(
+                FamilyMemberViewModel(
+                    user_id=member.user_id,
+                    name=member.name,
+                    role=member.role,
+                    role_display=ProfileService._ROLE_DISPLAY.get(
+                        member.role,
+                        member.role,
+                    ),
+                    class_name=class_name,
+                    is_current_user=(
+                        member.user_id == current_user_id
+                    ),
+                )
+            )
+
+        # Сортировка: текущий пользователь → приоритет роли
+        view_models.sort(
+            key=lambda vm: (
+                0 if vm.is_current_user else 1,
+                ProfileService._ROLE_PRIORITY.get(vm.role, 4),
+            )
+        )
+
+        return view_models
+
+
+    @staticmethod
+    def build_student_telegram_settings_view_model(
+        dto: StudentTelegramSettingsDTO,
+        dicts_dto: SchoolDictionariesDTO,
+    ) -> StudentTelegramSettingsViewModel:
+        """
+        Строит ViewModel для экрана Telegram-настроек ребёнка.
+        """
+        return StudentTelegramSettingsViewModel(
+            student_id=dto.student_id,
+            student_name=dto.student_name,
+            class_name=dicts_dto.get_readable_class(dto.class_id),
+            group_name=dicts_dto.get_readable_group(dto.group_id),
+            telegram_status="📱 Telegram подключён",
+
+            is_notifications_enabled=dto.is_notifications_enabled,
+            receive_schedule_changes=dto.receive_schedule_changes,
+            receive_extra_class_reminders=(
+                dto.receive_extra_class_reminders
+            ),
+            can_manage_own_extra_classes=(
+                dto.can_manage_own_extra_classes
+            ),
+            child_notification_settings_locked=(
+                dto.child_notification_settings_locked
+            ),
+
+            morning_summary_time=(
+                dto.morning_summary_time
+                if dto.morning_summary_time
+                else "ВЫКЛ"
+            ),
+            pre_lesson_offset_minutes=(
+                dto.pre_lesson_offset_minutes
+            ),
+            pre_lesson_text=(
+                f"{dto.pre_lesson_offset_minutes} мин 🟢"
+                if dto.pre_lesson_offset_minutes > 0
+                else "ВЫКЛ 🔴"
+            ),
+            lock_text=(
+                "ВКЛ 🔒"
+                if dto.child_notification_settings_locked
+                else "ВЫКЛ 🔓"
+            ),
+        )
+
+    @staticmethod
+    def build_parent_student_notification_view_model(
+        dto: ParentStudentNotificationSettingsDTO,
+        dicts_dto: SchoolDictionariesDTO,
+    ) -> ParentStudentNotificationSettingsViewModel:
+        """
+        Строит ViewModel для экрана подписок взрослого.
+        """
+        telegram_connected = dto.telegram_user_id is not None
+
+        return ParentStudentNotificationSettingsViewModel(
+            student_id=dto.student_id,
+            student_name=dto.student_name,
+            class_name=dicts_dto.get_readable_class(
+                dto.student_class_id,
+            ),
+            group_name=dicts_dto.get_readable_group(
+                dto.student_group_id,
+            ),
+            telegram_status=(
+                "📱 <b>Telegram подключён</b>"
+                if telegram_connected
+                else "🧒 <b>Telegram пока не подключён</b>"
+            ),
+            telegram_connected=telegram_connected,
+
+            receive_morning_summary=dto.receive_morning_summary,
+            receive_pre_lesson_reminders=(
+                dto.receive_pre_lesson_reminders
+            ),
+            receive_schedule_changes=dto.receive_schedule_changes,
+            receive_extra_class_reminders=(
+                dto.receive_extra_class_reminders
+            ),
+
+            can_manage_extra_classes=(
+                dto.can_manage_extra_classes
+            ),
+            manage_status_text=(
+                "✅ Можно управлять"
+                if dto.can_manage_extra_classes
+                else "👁 Только просмотр"
+            ),
+        )
+
