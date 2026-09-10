@@ -84,7 +84,8 @@ from bot.handlers import (
     search,
     schedule_teacher,
     help,
-    fallback
+    fallback,
+    debug_notifications
 )
 
 logging.basicConfig(
@@ -364,6 +365,7 @@ async def main():
         dp.include_router(extra_classes.router)
         dp.include_router(admin.router)
         dp.include_router(search.router)
+        dp.include_router(debug_notifications.router)   # после admin, до fallback
         # Catch-all: любой неопознанный коллбэк получает тихий toast
         # вместо вечного спиннера. Должен быть ПОСЛЕДНИМ роутером.
         dp.include_router(fallback.router)

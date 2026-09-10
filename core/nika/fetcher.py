@@ -12,14 +12,14 @@
 #
 # 2. (Задача 2.2) Устаревший fetch() (Compatibility wrapper) удалён.
 #
-# 3. НОВОЕ: TLS-лестница strict -> pin -> off.
+# 3. TLS-лестница strict -> pin (fail-closed).
 #
 #    Проблема "ssl=True, а на фолбеке ssl=False": чистый фолбек на
 #    незащищённое соединение — это security-даунгрейд: MITM-атака с
 #    подменённым сертификатом неотличима от "протухшего" сертификата,
 #    и бот сам бы переключался на незащищённый канал.
 #
-#    Решение — три уровня, каждый запрос начинает с САМОГО строгого:
+#    Решение — два уровня (fail-closed): strict, затем pin.
 #
 #    strict: ssl=True — обычная CA-верификация. Работает, если
 #            сертификат школы подписан доверенным CA (Let's Encrypt
@@ -29,10 +29,8 @@
 #            NIKA_TLS_FINGERPRINT_SHA256. Работает для самоподписанных
 #            сертификатов и защищает от подмены ЛЮБЫМ другим
 #            сертификатом, включая валидный CA-сертификат атакующего.
-#    off:    ssl=False — последний рубеж, только если не прошли ни
-#            CA-верификацию, ни пин (сертификат школы сменился).
-#            ВАЖНО: сопровождается ГРОМКИМ warning в лог и означает,
-#            что NIKA_TLS_FINGERPRINT_SHA256 пора обновить.
+#    fail-closed: при провале strict и pin fetch падает; кеш
+#            расписания сохраняется, ошибка видна в /source_status.
 #
 #    Свойства лестницы:
 #    - каждый запрос стартует со strict: когда школа починит/обновит
@@ -102,7 +100,6 @@ class ScheduleFetcher:
 
     SSL_MODE_STRICT = "strict"
     SSL_MODE_PIN = "pin"
-    SSL_MODE_OFF = "off"
 
     def __init__(
         self,
@@ -135,7 +132,9 @@ class ScheduleFetcher:
 
         self._ssl_fingerprint = self._build_fingerprint(tls_fingerprint_sha256)
 
-        # Лестница SSL-режимов от строгого к слабому.
+        # Лестница SSL-режимов: off-ступень УДАЛЕНА (fail-closed).
+        # При провале всех ступеней fetch падает; кеш расписания
+        # сохраняется, ошибка видна в /source_status.
         self._ssl_ladder: List[Tuple[str, Any]] = [
             (self.SSL_MODE_STRICT, True),
         ]
@@ -143,9 +142,6 @@ class ScheduleFetcher:
             self._ssl_ladder.append(
                 (self.SSL_MODE_PIN, self._ssl_fingerprint),
             )
-        self._ssl_ladder.append(
-            (self.SSL_MODE_OFF, False),
-        )
 #         # Состояние TLS-деградации для админ-алертов:
 #         # True = последний успешный fetch шёл в обход проверки.
         self._ssl_degraded = False
@@ -196,7 +192,7 @@ class ScheduleFetcher:
         Пока CA-верификация проходит, пин никогда не выполняется
         (лестница завершается на strict). Эта проверка выявляет
         устаревший отпечаток ЗАРАНЕЕ — до того, как strict упадёт
-        и бот уедет в off с ложным "MITM".
+        и fetch упадёт с ложным "MITM".
 
         Предупреждение выводится ОДИН раз до восстановления
         совпадения (флаг _pin_stale_warned).
@@ -327,11 +323,6 @@ class ScheduleFetcher:
                 ) as response:
                     response.raise_for_status()
 
-                    if mode_name != self.SSL_MODE_OFF:
-                        # Успех в защищённом режиме снимает флаг
-                        # деградации (сертификат починили/обновили пин).
-                        self._ssl_degraded = False
-
                     # Freshness-проверка: сверяем фактический
                     # сертификат с пином, пока strict работает.
                     if (
@@ -346,41 +337,28 @@ class ScheduleFetcher:
 
 
             except (
-                aiohttp.ClientConnectorSSLError,
+                aiohttp.ClientSSLError,
                 ServerFingerprintMismatch,
             ) as exc:
                 if index == last_index:
-                    raise
-
-                next_mode_name = self._ssl_ladder[index + 1][0]
-
-                if next_mode_name == self.SSL_MODE_PIN:
-                    # Роутинная ситуация, если школа использует
-                    # самоподписанный сертификат: CA-проверка не
-                    # проходит, но пин подтверждает подлинность.
-                    logger.info(
-                        "CA verification failed (%s). "
-                        "Retrying with pinned certificate.",
-                        exc,
-                    )
-                    #
-                else:
-                    # Деградация: дальше работаем без TLS-проверки.
-                    self._ssl_degraded = True
-
-                    # Попали в off: не прошли ни CA, ни пин.
-                    # Либо школа сменила сертификат (обнови
-                    # NIKA_TLS_FINGERPRINT_SHA256), либо это
-                    # потенциальный MITM — внимание обязательно.
+                    # Fail-closed: ступеней ниже нет. Кеш сохраняется,
+                    # ошибка — в /source_status.
                     logger.warning(
-                        "TLS verification FAILED on strict mode (%s). "
-                        "Certificate does not match pin. "
-                        "Falling back to UNVERIFIED connection (ssl=False): "
-                        "MITM-защита отключена. "
-                        "Скорее всего школа сменила сертификат — обновите "
+                        "TLS verification failed on ALL rungs: %s. "
+                        "Schedule fetch aborted — serving cached schedule. "
+                        "Если школа сменила сертификат, обновите "
                         "NIKA_TLS_FINGERPRINT_SHA256 в .env.",
                         exc,
                     )
+                    raise
+
+                # Единственный переход лестницы: strict -> pin.
+                # CA не доверяет, но пин подтверждает подлинность.
+                logger.info(
+                    "CA verification failed (%s). "
+                    "Retrying with pinned certificate.",
+                    exc,
+                )
                 continue
 
         # Недостижимо: цикл либо вернёт текст, либо пробросит исключение.

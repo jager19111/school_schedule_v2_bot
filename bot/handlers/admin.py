@@ -199,7 +199,7 @@ async def send_test_button(message: Message):
         inline_keyboard=[[
             InlineKeyboardButton(
                 text="Тест смены класса",
-                callback_data="settings:main" # Меняйте это значение на нужное
+                callback_data="" # Меняйте это значение на нужное
             )
         ]]
     )

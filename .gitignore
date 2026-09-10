@@ -40,7 +40,6 @@ Thumbs.db
 promt/
 *.sh
 backups/
-tests/
 
 # Repomix outputs
 repomix-output.txt
