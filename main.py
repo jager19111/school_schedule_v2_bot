@@ -74,6 +74,7 @@ from services.help_service import HelpService
 
 from bot.utils.ui_renderer import UIRenderer
 
+from bot.middlewares.antiflood import AntiFloodMiddleware
 from bot.middlewares.error_middleware import GlobalErrorMiddleware
 from bot.handlers import (
     registration,
@@ -266,7 +267,13 @@ async def main():
     # больше не оставляет пользователя без ответа и не роняет
     # обработку апдейта. Ожидаемые TelegramBadRequest остаются
     # на локальных _safe_edit_* как раньше.
-    dp.update.outer_middleware(GlobalErrorMiddleware())
+    # Anti-flood: ОДИН экземпляр — ДВЕ точки использования:
+    # 1) цепочка middleware (троттлит события),
+    # 2) /stats (читает счётчики через workflow_data).
+    antiflood_middleware = AntiFloodMiddleware(
+        admin_ids=set(config.ADMIN_IDS),
+    )
+    dp.update.outer_middleware(antiflood_middleware)
     
     # 2. Инициализация базы данных
     database = Database(config.DB_PATH)
@@ -389,6 +396,7 @@ async def main():
             student_repo=student_repo,
             db_path=config.DB_PATH,
             notification_service=notification_service, # Для теста из админ хендлера
+            antiflood=antiflood_middleware,
             config=config
         )
 

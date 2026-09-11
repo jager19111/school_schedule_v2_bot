@@ -7,18 +7,29 @@
 #    в отличие от message.answer(), который эти слои обходит.
 #    Тестирует: лимиты Telegram (429), дросселирование, идемпотентность
 #    на рестарте (ключи стабильны в течение дня).
-#
-
+# /stats показывает статистику
+# DEBUG-команды для быстрой проверки UI уведомлений.
+#/debug_ui            — всё сразу
+#/debug_ui morning    — утренние сводки: вид родителя, вид ребёнка,
+#/debug_ui change     — замена (родитель), отмена (ребёнок),
+#                        два ребёнка в одном сообщении, день без уроков
+#                        замена по watch-target, замена у учителя
+#/debug_ui lesson     — начало урока (ребёнок/родитель), доп. занятие
+# /source_status - показывает статус актуальности кеша в  
 import logging
 
 from aiogram import Router, F
 from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery
+from datetime import datetime
 
 from bot.utils.ui_renderer import UIRenderer
 from services.admin_service import AdminService
 from services.notifications_service import NotificationService
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+
+
+from bot.middlewares.antiflood import AntiFloodMiddleware, AntiFloodStatsDTO
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -60,27 +71,14 @@ async def _require_admin(
 async def cmd_stats(
     message: Message,
     admin_service: AdminService,
+    antiflood: AntiFloodMiddleware,
 ) -> None:
-    """
-    Общая статистика пользователей.
-    """
-    if not await _require_admin(
-        message=message,
-        admin_service=admin_service,
-    ):
+    if not await _require_admin(message=message, admin_service=admin_service):
         return
-
     dto = await admin_service.get_statistics()
-
-    text = UIRenderer.render_admin_stats(
-        dto,
-    )
-
-    await message.answer(
-        text,
-        parse_mode="HTML",
-    )
-
+    text = UIRenderer.render_admin_stats(dto)
+    text += "\n\n" + _render_antiflood_section(antiflood.stats_snapshot())
+    await message.answer(text, parse_mode="HTML")
 
 @router.message(Command("source_status"))
 async def cmd_source_status(
@@ -191,6 +189,28 @@ async def cmd_stress(
         target_chat_id,
         result,
     )
+
+def _render_antiflood_section(dto: AntiFloodStatsDTO) -> str:
+    lines = ["🛡 <b>Anti-flood</b>"]
+    lines.append(f"Пропущено событий: {dto.allowed_total}")
+    lines.append(f"Отсеяно троттлингом: {dto.throttled_total}")
+    if dto.throttled_total:
+        total = dto.throttled_total + dto.allowed_total
+        ratio = dto.throttled_total / max(1, total) * 100
+        lines.append(f"Доля отсева: {ratio:.1f}%")
+        if dto.last_throttled_at:
+            stamp = datetime.fromtimestamp(dto.last_throttled_at).strftime(
+                "%d.%m %H:%M:%S",
+            )
+            lines.append(f"Последний отсев: {stamp}")
+        if dto.throttled_by_user:
+            lines.append("Топ нарушителей:")
+            for user_id, count in dto.throttled_by_user.items():
+                lines.append(f"  • <code>{user_id}</code>: {count}")
+    else:
+        lines.append("Ни одного срабатывания — спама не было.")
+    lines.append(f"Активных бакетов: {dto.tracked_users}")
+    return "\n".join(lines)
 
 @router.message(Command("test_btn"))
 async def send_test_button(message: Message):

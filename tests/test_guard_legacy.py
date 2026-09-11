@@ -104,3 +104,32 @@ def test_handler_modules_importable():
         except Exception as exc:  # noqa: BLE001 — тесту нужен любой сбой импорта
             problems.append(f"{module_name}: {exc!r}")
     assert not problems, "Модули не импортируются:\n" + "\n".join(problems)
+
+def test_antiflood_middleware_is_wired():
+    """Anti-flood обязан быть зарегистрирован в main.py (не закомментирован).
+
+    Ловит состояние «класс есть, тесты зелёные, а в main.py строка
+    закомментирована» — защита незаметно выключена.
+    """
+    assert MAIN_PY.exists(), "main.py не найден"
+    source = MAIN_PY.read_text(encoding="utf-8")
+    assert "AntiFloodMiddleware" in source, (
+        "AntiFloodMiddleware не найден в main.py — anti-flood не подключён"
+    )
+    lines = source.splitlines()
+    wired = False
+    for i, line in enumerate(lines):
+        if line.strip().startswith("#"):
+            continue
+        if "AntiFloodMiddleware(" in line:
+            window = "\n".join(
+                l for l in lines[max(0, i - 5):i + 1]
+                if not l.strip().startswith("#")
+            )
+            if "outer_middleware" in window:
+                wired = True
+                break
+    assert wired, (
+        "AntiFloodMiddleware упомянут в main.py, но не зарегистрирован "
+        "через dp.update.outer_middleware — закомментирован или удалён?"
+    )
