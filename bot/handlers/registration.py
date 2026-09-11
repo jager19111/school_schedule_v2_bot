@@ -38,7 +38,6 @@ from bot.callbacks import (
     RoleCD,
     TeacherRegistrationCD,
 )
-from core.models.dto import ClassListDTO, GroupListDTO, FamilyCreatedDTO
 from  bot.utils.codes import normalize_short_code
 from bot.utils.fsm_guard import validate_fsm_session
 logger = logging.getLogger(__name__)
@@ -679,14 +678,10 @@ async def process_family_create(
     family_code = await profile_service.create_family_and_link(
         admin_user_id=user_id,
     )
-    dto = FamilyCreatedDTO(
-        family_code=family_code,
-    )
     user_dto = await profile_service.get_user_profile_dto(
         user_id,
     )
     text = UIRenderer.render_family_created(
-        dto,
         user_dto.name,
     )
     await callback.message.edit_text(

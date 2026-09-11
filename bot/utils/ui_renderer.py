@@ -27,7 +27,7 @@ from datetime import datetime, timedelta, timezone, date
 from typing import Callable, Optional
 
 from services.help_service import HelpPageDTO
-from core.models.dto import (ClassListDTO, FamilyCreatedDTO, AdminStatsDTO, DayScheduleDTO, ExtraClassListDTO,
+from core.models.dto import (ClassListDTO, AdminStatsDTO, DayScheduleDTO, ExtraClassListDTO,
                              WeekSummaryDTO, FullWeekScheduleDTO, UserProfileDTO, FamilyMemberDTO,
                              MorningSummaryDTO, ChangeReminderDTO, LessonReminderDTO, ProfileResetImpactDTO, FamilyInviteDTO, 
                             ScheduleWatchTargetDTO, StudentProfileDTO, ParentStudentNotificationSettingsDTO,
@@ -263,7 +263,6 @@ class UIRenderer:
 
     @staticmethod
     def render_family_created(
-        dto: FamilyCreatedDTO,
         name: str | None,
     ) -> str:
         additional_block = (

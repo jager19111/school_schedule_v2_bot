@@ -11,12 +11,6 @@ class ClassListDTO:
 class GroupListDTO:
     groups: Dict[str, str]  # id -> name
 
-@dataclass
-class FamilyCreatedDTO:
-    family_code: str
-
-
-
 @dataclass(frozen=True, slots=True)
 class SchoolDictionariesDTO:
     """Объединенный DTO для передачи справочников школы с хелперами чтения."""
