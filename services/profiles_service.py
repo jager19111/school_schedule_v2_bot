@@ -1,6 +1,6 @@
 import logging
 import aiosqlite
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Tuple
 import time
 
 from core.repository.profile_repository import ProfileRepository
@@ -575,29 +575,51 @@ class ProfileService:
     async def reset_user_profile(
         self,
         user_id: int,
-    ) -> bool:
+    ) -> Tuple[bool, Optional[int]]:
         """
-        Выполняет подтверждённую перерегистрацию пользователя.
+        Сброс/выход пользователя.
 
-        Family admin расформировывает всю семью.
-        Обычный участник выходит только сам.
+        Администратор семьи:
+        - есть второй родитель -> полномочия автоматически переходят
+          ему, админ выходит как обычный пользователь (семья живёт);
+        - второго родителя нет -> семья расформировывается.
+
+        Возвращает (success, new_admin_id): new_admin_id задан только
+        при авто-передаче — хендлер шлёт по нему уведомление.
         """
-        impact = await self.get_profile_reset_impact(
-            user_id=user_id,
-        )
-
-        if impact is None:
-            return False
-
-        if impact.is_family_admin:
-            return await self.repo.disband_family_by_admin(
-                admin_user_id=user_id,
+        # Используем метод сервиса, возвращающий DTO
+        impact = await self.get_profile_reset_impact(user_id)
+        
+        if impact is not None and impact.is_family_admin:
+            family_id = impact.family_id
+            
+            successor_id = await self.repo.find_family_admin_successor(
+                family_id=family_id,
+                excluding_user_id=user_id,
             )
-
-        return await self.repo.reset_non_admin_user(
-            user_id=user_id,
-        )
-
+            
+            if successor_id is not None:
+                transferred = await self.repo.transfer_family_admin(
+                    from_user_id=user_id,
+                    to_user_id=successor_id,
+                    family_id=family_id,
+                )
+                if transferred:
+                    reset_ok = await self.repo.reset_non_admin_user(user_id=user_id)
+                    return reset_ok, successor_id
+                    
+            # Преемника нет (или передача не удалась) — расформировка.
+            # ИСПРАВЛЕНИЕ: строго передаём параметр по имени admin_user_id=
+            disbanded = await self.repo.disband_family_by_admin(
+                admin_user_id=user_id
+            )
+            return disbanded, None
+            
+        # Для обычных пользователей (или если impact == None)
+        reset_ok = await self.repo.reset_non_admin_user(user_id=user_id)
+        return reset_ok, None
+    
+    
     # метод получения состава семьи
     async def get_family_members(self, family_id: int) -> list[FamilyMemberDTO]:
         """Возвращает список всех участников семьи."""
@@ -1096,7 +1118,16 @@ class ProfileService:
             family_id=actor_dto.family_id,
         )
 
-
+    async def get_family_admin_successor(
+        self,
+        family_id: int,
+        excluding_user_id: int,
+    ) -> Optional[int]:
+        """Кандидат на авто-наследование полномочий (или None)."""
+        return await self.repo.find_family_admin_successor(
+            family_id=family_id,
+            excluding_user_id=excluding_user_id,
+        )
 
 
 

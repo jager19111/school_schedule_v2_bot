@@ -24,6 +24,7 @@
 #student_tg:lock:
 
 import logging
+import contextlib
 from urllib.parse import quote
 from aiogram import Router, F, Bot
 from aiogram.types import Message, CallbackQuery
@@ -182,8 +183,10 @@ async def process_restart(
 
     Никакие данные здесь не удаляются.
     """
+    # Определяем user_id один раз для всего метода
+    user_id = callback.from_user.id
     impact = await profile_service.get_profile_reset_impact(
-        user_id=callback.from_user.id,
+        user_id=user_id,
     )
 
     if impact is None:
@@ -193,9 +196,25 @@ async def process_restart(
             show_alert=True,
         )
         return
-
+    
+    successor_name = None
+# Обращаемся к impact через точку, так как это DTO, а не словарь
+    if impact.is_family_admin and impact.family_id is not None:
+        successor_id = await profile_service.get_family_admin_successor(
+            family_id=impact.family_id,
+            excluding_user_id=user_id,
+        )
+        if successor_id is not None:
+            successor_dto = await profile_service.get_user_profile_dto(
+                successor_id,
+            )
+            successor_name = (
+                successor_dto.name if successor_dto and successor_dto.name
+                else "другому родителю"
+            )
+            
     text = UIRenderer.render_profile_reset_confirmation(
-        impact,
+        impact, successor_name=successor_name
     )
 
     keyboard = Keyboards.get_profile_reset_confirmation_kb()
@@ -213,6 +232,7 @@ async def confirm_restart(
     callback: CallbackQuery,
     state: FSMContext,
     profile_service: ProfileService,
+    bot: Bot,  
 ) -> None:
     """
     Выполняет перерегистрацию только после явного подтверждения.
@@ -220,10 +240,10 @@ async def confirm_restart(
     user_id = callback.from_user.id
 
     try:
-        success = await profile_service.reset_user_profile(
+        success, new_admin_id = await profile_service.reset_user_profile(
             user_id=user_id,
         )
-
+        
     except ValueError as exc:
         logger.warning(
             "Profile reset rejected: user_id=%s, error=%s",
@@ -259,6 +279,18 @@ async def confirm_restart(
             show_alert=True,
         )
         return
+    
+    # Уведомление новому администратору при авто-наследовании.
+    if new_admin_id is not None:
+        with contextlib.suppress(TelegramBadRequest):
+            await bot.send_message(
+                new_admin_id,
+                "👑 <b>Администратор семьи вышел</b>\n\n"
+                "Управление семьей автоматически перешло к вам.\n"
+                "Участники и приглашения: ⚙️ Настройки → Семья.",
+                parse_mode="HTML",
+            )
+
 
     await state.clear()
 

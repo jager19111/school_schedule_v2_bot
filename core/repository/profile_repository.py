@@ -2072,3 +2072,28 @@ class ProfileRepository(BaseRepository):
             (to_user_id, family_id, from_user_id),
         )
         return changed == 1
+
+    async def find_family_admin_successor(
+        self,
+        family_id: int,
+        excluding_user_id: int,
+    ) -> Optional[int]:
+        """
+        Преемник полномочий: первый другой родитель семьи.
+
+        Observer и child не наследуют никогда — фильтр role = 'parent'.
+        None — преемника нет, семья расформировывается.
+        """
+        row = await self._fetch_one(
+            """
+            SELECT user_id
+            FROM users
+            WHERE family_id = ?
+              AND role = 'parent'
+              AND user_id != ?
+            ORDER BY user_id
+            LIMIT 1
+            """,
+            (family_id, excluding_user_id),
+        )
+        return int(row["user_id"]) if row else None
