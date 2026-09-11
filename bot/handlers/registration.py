@@ -39,7 +39,7 @@ from bot.callbacks import (
     TeacherRegistrationCD,
 )
 from core.models.dto import ClassListDTO, GroupListDTO, FamilyCreatedDTO
-
+from  bot.utils.codes import normalize_short_code
 from bot.utils.fsm_guard import validate_fsm_session
 logger = logging.getLogger(__name__)
 router = Router()
@@ -743,7 +743,6 @@ async def process_family_skip_btn(
     await callback.answer()
 
 
-# LEGACY_FALLBACK, оставить
 @router.message(RegistrationStates.waiting_for_family_code)
 async def process_family_code_input(
     message: Message,
@@ -751,39 +750,86 @@ async def process_family_code_input(
     profile_service: ProfileService,
     schedule_service: ScheduleService,
 ) -> None:
-    code = message.text.strip().upper()
+    """
+    Вход в семью по КОРОТКОМУ КОДУ приглашения.
+
+    Роль зашита в приглашение админом при создании — входящий её
+    не выбирает (главное отличие от легаси family_code).
+    Варианты:
+    - код не найден/истёк/отозван/исчерпан -> отказ;
+    - роль кода != роль входящего -> отказ с подсказкой;
+    - child -> выбор класса/группы, consume в process_group
+      (тот же deep-link поток по invite token из FSM);
+    - parent/observer -> consume сразу, главное меню.
+    """
+
+    code = normalize_short_code(message.text)
     data = await state.get_data()
     role = data.get("role", "parent")
     user_id = message.from_user.id
-    success = await profile_service.link_child_to_parent(
-        user_id=user_id,
-        family_code=code,
-        role=role,
-    )
-    if not success:
+
+    invite = await profile_service.get_valid_family_invite_by_code(code)
+    if invite is None:
         await message.answer(
-            UIRenderer.render_error_join(),
-            parse_mode="HTML",
+            "❌ Код не найден, истёк или уже использован.\n\n"
+            "Попросите у администратора семьи свежий код приглашения."
         )
         return
-    # Получаем DTO для имени
-    user_dto = await profile_service.get_user_profile_dto(user_id)
-    user_name = getattr(user_dto, "name", "Пользователь")
-    if role == "child":
-        text_success = UIRenderer.render_success_join(name=user_dto.name,role=role,)
-        await message.answer(text_success, parse_mode="HTML")
-        # 1. Запрашиваем справочники школы единым запросом через ScheduleService
+
+    invite_role = invite["intended_role"]
+    if invite_role != role:
+        role_titles = {
+            "child": "для ребёнка",
+            "parent": "для родителя",
+            "observer": "для наблюдателя",
+        }
+        await message.answer(
+            "❌ Этот код — "
+            + role_titles.get(invite_role, "другой роли") + ".\n\n"
+            "Попросите у администратора семьи код "
+            + role_titles.get(role, "нужной роли") + "."
+        )
+        return
+
+    if invite_role == "child":
+        # Тот же поток, что и deep-link: токен в FSM, consume в process_group.
+        # Имя берём из профиля (сохранено на шаге ввода имени) — process_group
+        # требует pending_invite_name для consume.
+        user_dto = await profile_service.get_user_profile_dto(user_id)
+        await state.update_data(
+            family_invite_token=invite["token"],
+            invited_role="child",
+            family_invite_actor_user_id=user_id,
+            pending_invite_name=user_dto.name or message.from_user.first_name or "Ребёнок",
+        )
         dicts_dto = await schedule_service.get_school_dictionaries()
-        # 2. Рендерим выбор класса с использованием as_class_list
         text = UIRenderer.render_class_selection(dicts_dto.as_class_list)
         kb = Keyboards.get_class_selection(dicts_dto.as_class_list)
         await message.answer(text, reply_markup=kb, parse_mode="HTML")
         await state.set_state(RegistrationStates.waiting_for_class)
-    else:
-        text = UIRenderer.render_success_join(name=user_dto.name,role=role,)
-        await message.answer(text, parse_mode="HTML")
-        await _show_main_menu(message)
+        return
+
+    consumed_role = await profile_service.consume_family_invite(
+        token=invite["token"],
+        user_id=user_id,
+        name=data.get("pending_invite_name")
+        or message.from_user.first_name
+        or "Пользователь",
+    )
+    if consumed_role is None:
         await state.clear()
+        await message.answer(
+            "❌ Приглашение уже использовано или истёк срок. "
+            "Попросите у администратора семьи новый код."
+        )
+        return
+    user_dto = await profile_service.get_user_profile_dto(user_id)
+    await state.clear()
+    await message.answer(
+        UIRenderer.render_success_join(name=user_dto.name, role=consumed_role),
+        parse_mode="HTML",
+    )
+    await _show_main_menu(message)
 
 
 @router.callback_query(

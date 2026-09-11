@@ -32,6 +32,9 @@
 from __future__ import annotations
 
 import secrets
+import sqlite3
+
+from bot.utils.codes import generate_short_code
 from datetime import timedelta
 
 import aiosqlite
@@ -333,6 +336,9 @@ class ProfileRepository(BaseRepository):
             return None
 
         token = secrets.token_urlsafe(24)
+        # Короткий код — печатаемая форма приглашения («продиктовать
+        # ребёнку»). Ретрай при коллизии UNIQUE — в INSERT ниже.
+        short_code = generate_short_code()
 
         # Time Governance: expiry считается от TimeService,
         # а не от системных часов напрямую.
@@ -345,37 +351,53 @@ class ProfileRepository(BaseRepository):
 
         async with self._write_lock():
             async with self._connection() as db:
-                cursor = await db.execute(
-                    """
-                    INSERT INTO family_invites (
-                        token,
-                        family_id,
-                        created_by_user_id,
-                        intended_role,
-                        expires_at,
-                        max_uses,
-                        created_at
-                    )
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        token,
-                        family_id,
-                        created_by_user_id,
-                        intended_role,
-                        expires_at_str,
-                        max_uses,
-                        now_utc,
-                    ),
-                )
-                await db.commit()
-                invite_id = cursor.lastrowid
+                invite_id = None
+                for _attempt in range(5):
+                    try:
+                        cursor = await db.execute(
+                            """
+                            INSERT INTO family_invites (
+                                token,
+                                short_code,
+                                family_id,
+                                created_by_user_id,
+                                intended_role,
+                                expires_at,
+                                max_uses,
+                                created_at
+                            )
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                token,
+                                short_code,
+                                family_id,
+                                created_by_user_id,
+                                intended_role,
+                                expires_at_str,
+                                max_uses,
+                                now_utc,
+                            ),
+                        )
+                        await db.commit()
+                        invite_id = cursor.lastrowid
+                        break
+                    except sqlite3.IntegrityError as exc:
+                        # Коллизия UNIQUE(short_code) на пространстве 31^6:
+                        # ретрай с новым кодом (проверено на реальном SQLite).
+                        # Коллизия token — отдельная ошибка, пробрасывается.
+                        if ("short_code" in str(exc)) and (_attempt < 4):
+                            await db.rollback()
+                            short_code = generate_short_code()
+                            continue
+                        raise
 
         return await self._fetch_one(
             """
             SELECT
                 id,
                 token,
+                short_code,
                 family_id,
                 intended_role,
                 expires_at,
@@ -387,6 +409,46 @@ class ProfileRepository(BaseRepository):
             WHERE id = ?
             """,
             (invite_id,),
+        )
+
+    async def get_valid_family_invite_by_code(
+        self,
+        short_code: str,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Активное приглашение по короткому коду (печатаемая форма).
+
+        Зеркало get_valid_family_invite: не отозван, не истёк,
+        есть использования, семья существует. Роль зашита админом
+        при создании; входящий её не выбирает.
+        """
+        now_utc = self._now_utc_str()
+        return await self._fetch_one(
+            """
+            SELECT
+                invite.id,
+                invite.token,
+                invite.short_code,
+                invite.family_id,
+                invite.intended_role,
+                invite.expires_at,
+                invite.max_uses,
+                invite.uses_count,
+                invite.is_revoked,
+                family.family_code,
+                family.admin_user_id
+            FROM family_invites AS invite
+            JOIN families AS family
+              ON family.id = invite.family_id
+            WHERE invite.short_code = ?
+              AND invite.is_revoked = 0
+              AND invite.expires_at > ?
+              AND invite.uses_count < invite.max_uses
+            """,
+            (
+                short_code,
+                now_utc,
+            ),
         )
 
     async def get_valid_family_invite(
@@ -830,14 +892,6 @@ class ProfileRepository(BaseRepository):
                     raise
         return family_code
 
-    # legacy метод, который создаёт семью и привязывает пользователя. Для обратной совместимости оставлен
-    async def get_family_by_code(self, family_code: str) -> Optional[Dict[str, Any]]:
-        """Возвращает семью по коду."""
-        return await self._fetch_one(
-            "SELECT id, family_code, admin_user_id FROM families WHERE family_code = ?",
-            (family_code,),
-        )
-
     # Рабочий core method, оставить
     async def link_user_to_family(
         self,
@@ -927,15 +981,6 @@ class ProfileRepository(BaseRepository):
             """,
             (name, self._now_utc_str(), user_id),
         )
-
-    # для переключения флагов (toggles) и получения family_code по ID,
-    # чтобы изолировать SQL от хендлеров.
-    async def get_family_code_by_id(self, family_id: int) -> str | None:
-        row = await self._fetch_one(
-            "SELECT family_code FROM families WHERE id = ?",
-            (family_id,),
-        )
-        return row["family_code"] if row else None
 
     async def toggle_boolean_flag(
         self,

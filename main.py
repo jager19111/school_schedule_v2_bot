@@ -71,15 +71,22 @@ from services.admin_service import AdminService
 from services.watch_targets_service import WatchTargetsService
 from services.students_service import StudentsService
 from services.help_service import HelpService
+from database.migrations import apply_migrations
 
 from bot.utils.ui_renderer import UIRenderer
 
 from bot.middlewares.antiflood import AntiFloodMiddleware
 from bot.middlewares.error_middleware import GlobalErrorMiddleware
 from bot.handlers import (
+    settings, 
+    settings_family, 
+    settings_students, 
+    settings_notifications, 
+    settings_watch
+)
+from bot.handlers import (
     registration,
     schedule_child,
-    settings,
     extra_classes,
     admin,
     search,
@@ -278,7 +285,9 @@ async def main():
     # 2. Инициализация базы данных
     database = Database(config.DB_PATH)
     await database.init_db()
-
+    applied = await apply_migrations(config.DB_PATH)   # <-- добавить
+    if applied:
+        logger.info("DB migrations applied: %s", applied)
     # ==============================================================
     # Задача 1.1: единое shared-подключение на весь жизненный цикл.
     # Все PRAGMA (foreign_keys, busy_timeout, WAL, synchronous)
@@ -369,6 +378,11 @@ async def main():
         dp.include_router(schedule_child.router)
 
         dp.include_router(settings.router)
+        dp.include_router(settings_family.router)
+        dp.include_router(settings_students.router)
+        dp.include_router(settings_notifications.router)
+        dp.include_router(settings_watch.router)
+        
         dp.include_router(extra_classes.router)
         dp.include_router(admin.router)
         dp.include_router(search.router)

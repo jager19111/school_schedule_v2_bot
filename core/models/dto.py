@@ -222,6 +222,7 @@ class FamilyInviteDTO:
     uses_count: int = 0
     is_revoked: bool = False
 
+    short_code: Optional[str] = None
     created_at: Optional[str] = None
     used_by_user_id: Optional[int] = None
     used_at: Optional[str] = None

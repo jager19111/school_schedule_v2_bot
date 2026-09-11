@@ -218,6 +218,7 @@ class ProfileService:
             intended_role=row["intended_role"],
             expires_at=row["expires_at"],
             max_uses=row["max_uses"],
+            short_code=row["short_code"],
         )
         
     async def get_valid_family_invite(
@@ -359,26 +360,15 @@ class ProfileService:
             invite_id=invite_id,
             family_id=family_id,
             admin_user_id=admin_user_id,
-        )
-                                
-# Переименовать позже в join_family_by_code()        
-    async def link_child_to_parent(self, user_id: int, family_code: str, role: str = "child") -> bool:
-        """
-        LEGACY_FALLBACK.
+        )                            
 
-        Ручное присоединение пользователя к семье по family_code.
-        Оставлено для обратной совместимости и аварийного сценария.
-        Основной путь подключения: role-specific deep-link invite.
-
-        В будущем переименовать в join_family_by_code().
-        """
-        family = await self.repo.get_family_by_code(family_code)
-        if not family:
-            return False
-
-        await self.repo.link_user_to_family(user_id=user_id, family_id=family["id"], role=role)
-        return True
-
+    async def get_valid_family_invite_by_code(
+        self,
+        short_code: str,
+    ) -> Optional[Dict[str, Any]]:
+        """Активное приглашение по короткому коду (печатаемая форма)."""
+        return await self.repo.get_valid_family_invite_by_code(short_code)
+    
     # ========== КЛАСС/ГРУППА ==========
 
     async def set_child_class_and_group(self, user_id: int, class_id: str, group_id: str) -> None:
@@ -536,10 +526,6 @@ class ProfileService:
         )
 
         return True
-                                
-# для переключения флагов (toggles) и получения family_code по ID, чтобы изолировать SQL от хендлеров.
-    async def get_family_code(self, family_id: int) -> str | None:
-        return await self.repo.get_family_code_by_id(family_id)
 
     async def get_profile_reset_impact(
         self,

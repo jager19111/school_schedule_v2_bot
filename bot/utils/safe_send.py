@@ -44,6 +44,9 @@ from typing import Optional
 
 from aiogram import Bot
 from aiogram.types import InlineKeyboardMarkup, Message
+from aiogram.types import Message, CallbackQuery
+from aiogram.exceptions import TelegramBadRequest
+
 
 logger = logging.getLogger(__name__)
 
@@ -227,3 +230,59 @@ async def send_or_edit_long(
     )
 
     return len(messages) > 0
+
+async def _safe_edit_text(
+    message: Message,
+    text: str,
+    *,
+    reply_markup=None,
+    parse_mode: str = "HTML",
+) -> bool:
+    """
+    Безопасно обновляет inline-сообщение.
+
+    Telegram выбрасывает TelegramBadRequest, например если:
+    - новый текст и keyboard не отличаются от текущих;
+    - сообщение нельзя изменить;
+    - callback пришёл по старому/удалённому сообщению.
+
+    Ошибка логируется, но не прерывает handler.
+    Другие ошибки намеренно не подавляются.
+    """
+    try:
+        await message.edit_text(
+            text,
+            reply_markup=reply_markup,
+            parse_mode=parse_mode,
+        )
+        return True
+    except TelegramBadRequest as exc:
+        logger.debug(
+            "Telegram edit_text skipped: %s",
+            exc,
+        )
+        return False
+
+
+async def _safe_callback_answer(
+    callback: CallbackQuery,
+    text: str | None = None,
+    *,
+    show_alert: bool = False,
+) -> None:
+    """
+    Безопасно закрывает Telegram callback spinner.
+
+    Не допускает, чтобы вторичный TelegramBadRequest ломал рабочую
+    бизнес-операцию после успешного изменения БД.
+    """
+    try:
+        await callback.answer(
+            text=text,
+            show_alert=show_alert,
+        )
+    except TelegramBadRequest as exc:
+        logger.debug(
+            "Telegram callback answer skipped: %s",
+            exc,
+        )

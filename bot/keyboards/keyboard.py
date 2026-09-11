@@ -118,7 +118,7 @@ class Keyboards:
         """Настройки родителя."""
         summary_time = user_dto.morning_summary_time if user_dto.morning_summary_time else 'ВЫКЛ'
         changes_status = 'ВКЛ 🟢' if user_dto.is_notifications_enabled else 'ВЫКЛ 🔴'
-        return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text='👨\u200d👩\u200d👧 Управление семьей', callback_data=callbacks.SETTINGS_FAMILY)], [InlineKeyboardButton(text=f'⏰ Время моей утренней сводки: {summary_time}', callback_data=callbacks.SETTINGS_MY_SUMMARY_TIME)], [InlineKeyboardButton(text=f'🔔 Мои уведомления об изменениях: {changes_status}', callback_data=callbacks.SETTINGS_MY_NOTIFICATIONS)], [InlineKeyboardButton(text='🔄 Перерегистрироваться / Выйти', callback_data=callbacks.AUTH_RESTART)]])
+        return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text='👨\u200d👩\u200d👧 Семья', callback_data=callbacks.SETTINGS_FAMILY)], [InlineKeyboardButton(text=f'⏰ Время моей утренней сводки: {summary_time}', callback_data=callbacks.SETTINGS_MY_SUMMARY_TIME)], [InlineKeyboardButton(text=f'🔔 Мои уведомления об изменениях: {changes_status}', callback_data=callbacks.SETTINGS_MY_NOTIFICATIONS)], [InlineKeyboardButton(text='🔄 Перерегистрироваться / Выйти', callback_data=callbacks.AUTH_RESTART)]])
 
     @staticmethod
     def get_settings_main_kb(user_dto: UserProfileDTO) -> InlineKeyboardMarkup:
@@ -129,7 +129,7 @@ class Keyboards:
         if user_dto.role == 'teacher':
             buttons.append([InlineKeyboardButton(text='👨\u200d🏫 Сменить профиль учителя', callback_data=callbacks.SETTINGS_CHANGE_TEACHER)])
         if user_dto.role in ('parent', 'observer'):
-            buttons.append([InlineKeyboardButton(text='👨\u200d👩\u200d👧 Управление семьей', callback_data=callbacks.SETTINGS_FAMILY)])
+            buttons.append([InlineKeyboardButton(text='👨\u200d👩\u200d👧 Семья', callback_data=callbacks.SETTINGS_FAMILY)])
             buttons.append([InlineKeyboardButton(text='🎓 Мои отслеживаемые классы', callback_data=callbacks.WATCH_MENU)])
             buttons.append([InlineKeyboardButton(text='🔔 Уведомления по детям', callback_data=callbacks.SETTINGS_CHILDREN_NOTIFICATIONS)])
         buttons.append([InlineKeyboardButton(text='🔔 Мои уведомления', callback_data=callbacks.SETTINGS_NOTIFICATIONS)])
