@@ -56,6 +56,7 @@ AUTH_RESTART_CONFIRM = "arc"
 FAMILY_STUDENTS = "fstu"
 FAMILY_INVITE_MENU = "fim"
 FAMILY_INVITES = "fia"
+FAMILY_TRANSFER = "fta"
 
 # Допзанятия
 EXTRA_STUDENTS = "xs"
@@ -121,7 +122,15 @@ class HelpCD(CallbackData, prefix="hp"):
 class FamilyInviteRoleCD(CallbackData, prefix="fir"):
     role: str
 
+class FamilyTransferTargetCD(CallbackData, prefix="ftt"):
+    """Выбор получателя полномочий (user_id другого родителя семьи)."""
+    user_id: int
 
+
+class FamilyTransferConfirmCD(CallbackData, prefix="ftc"):
+    """Подтверждение передачи полномочий пользователю user_id."""
+    user_id: int
+    
 class FamilyInviteDetailsCD(CallbackData, prefix="fiv"):
     invite_id: int
 

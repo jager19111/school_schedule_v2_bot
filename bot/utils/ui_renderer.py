@@ -23,6 +23,7 @@
 # СКЛЕЙКА: содержимое ЧАСТИ 2 дописать в конец этого файла.
 
 from html import escape
+from typing import List
 from datetime import datetime, timedelta, timezone, date
 from typing import Callable, Optional
 
@@ -1104,6 +1105,75 @@ class UIRenderer:
             "После отзыва ссылка больше не позволит "
             "присоединиться к семье."
         )
+        
+    @staticmethod
+    def render_family_transfer_select(
+        candidates: List[FamilyMemberDTO],
+    ) -> str:
+        """
+        Экран выбора получателя полномочий.
+        """
+        lines = [
+            "👑 <b>Передача полномочий</b>",
+            "",
+            "Выберите, кому передать управление семьёй.",
+            "Вы останетесь в семье как обычный родитель.",
+            "",
+            "<b>Родители семьи:</b>",
+        ]
+        for candidate in candidates:
+            lines.append(
+                f"• {UIRenderer.escape_html(candidate.name, fallback='Пользователь')}"
+            )
+        lines.append("")
+        lines.append("⚠️ Передача вступает в силу сразу после подтверждения.")
+        return "\n".join(lines)
+
+    @staticmethod
+    def render_family_transfer_done(
+        target_name: str,
+    ) -> str:
+        """
+        Экран успешной передачи полномочий.
+        """
+        safe_name = UIRenderer.escape_html(target_name, fallback="Пользователь")
+        return "\n".join(
+            [
+                "✅ <b>Полномочия переданы</b>",
+                "",
+                f"Управление семьёй теперь у <b>{safe_name}</b>.",
+                "Вы остаётесь в семье как обычный родитель.",
+            ]
+        )
+        
+    @staticmethod
+    def render_family_transfer_confirmation(
+        target_name: str,
+    ) -> str:
+        """
+        Экран подтверждения передачи полномочий.
+        """
+        safe_name = UIRenderer.escape_html(target_name, fallback="Пользователь")
+        return (
+            "⚠️ <b>Подтверждение передачи</b>",
+            "",
+            f"Управление семьёй перейдёт к <b>{safe_name}</b>.",
+            "",
+            "Новый администратор сможет приглашать участников",
+            "и отзывать приглашения. Вы останетесь в семье",
+            "как обычный родитель.",
+        ) and "\n".join(
+            [
+                "⚠️ <b>Подтверждение передачи</b>",
+                "",
+                f"Управление семьёй перейдёт к <b>{safe_name}</b>.",
+                "",
+                "Новый администратор сможет приглашать участников",
+                "и отзывать приглашения. Вы останетесь в семье",
+                "как обычный родитель.",
+            ]
+        )
+        
     #-----------------                                           
     @staticmethod
     def render_class_selection(dto: ClassListDTO) -> str:

@@ -40,7 +40,7 @@ from datetime import timedelta
 import aiosqlite
 import logging
 import uuid
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Tuple
 
 from core.repository.base_repository import BaseRepository
 
@@ -2042,3 +2042,33 @@ class ProfileRepository(BaseRepository):
             (telegram_user_id,),
         )
         return bool(row and row["locked"])
+
+    # ---------------------------------------------------------
+    # ADMIN TRANSFER / SUCCESSION
+    # ---------------------------------------------------------
+
+    async def transfer_family_admin(
+        self,
+        from_user_id: int,
+        to_user_id: int,
+        family_id: int,
+    ) -> bool:
+        """
+        Передача полномочий администратора семьи.
+
+        WHERE admin_user_id = ? гарантирует, что передачу инициирует
+        только текущий админ: после передачи повторный вызов тем же
+        пользователем молча вернёт False (rowcount = 0).
+        Права, приглашения и настройки детей читаются через
+        families.admin_user_id, поэтому остальные слои менять не нужно.
+        """
+        changed = await self._execute(
+            """
+            UPDATE families
+            SET admin_user_id = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+              AND admin_user_id = ?
+            """,
+            (to_user_id, family_id, from_user_id),
+        )
+        return changed == 1

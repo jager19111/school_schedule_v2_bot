@@ -1041,3 +1041,62 @@ class ProfileService:
             ),
         )
 
+    # ---------------------------------------------------------
+    # ADMIN TRANSFER / SUCCESSION
+    # ---------------------------------------------------------
+    async def get_family_transfer_candidates(
+        self,
+        family_id: int,
+        exclude_user_id: int,
+    ) -> List[FamilyMemberDTO]:
+        """
+        Кандидаты на передачу полномочий: родители семьи,
+        кроме текущего пользователя. Observer и child
+        полномочия получать не могут.
+        """
+        members = await self.get_family_members(family_id)
+        return [
+            member
+            for member in members
+            if member.role == "parent"
+            and member.user_id != exclude_user_id
+        ]
+
+    async def transfer_family_admin(
+        self,
+        from_user_id: int,
+        to_user_id: int,
+    ) -> bool:
+        """
+        Ручная передача полномочий администратора семьи.
+
+        Отправитель — текущий админ, получатель — родитель той же
+        семьи (user_id из callback не является источником доверия:
+        всё перепроверяется здесь). После передачи бывший админ
+        остаётся в семье как обычный родитель.
+        """
+        actor_dto = await self.get_user_profile_dto(from_user_id)
+        if actor_dto is None or actor_dto.family_id is None:
+            return False
+        if not await self.is_family_admin(
+            user_id=from_user_id,
+            family_id=actor_dto.family_id,
+        ):
+            return False
+        target_dto = await self.get_user_profile_dto(to_user_id)
+        if (
+            target_dto is None
+            or target_dto.family_id != actor_dto.family_id
+            or target_dto.role != "parent"
+        ):
+            return False
+        return await self.repo.transfer_family_admin(
+            from_user_id=from_user_id,
+            to_user_id=to_user_id,
+            family_id=actor_dto.family_id,
+        )
+
+
+
+
+

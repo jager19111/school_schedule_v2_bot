@@ -5,6 +5,7 @@
 # callbacks.XxxCD(...).pack(). Legacy build_*/parse_* не используются.
 # Этот файл сгенерирован из актуального keyboard.py с AST-проверкой.
 
+from typing import List
 from datetime import datetime, timedelta, timezone, date
 from bot import callbacks
 from services.help_service import HelpLinksDTO
@@ -375,6 +376,7 @@ class Keyboards:
         if is_family_admin:
             buttons.append([InlineKeyboardButton(text='📨 Пригласить участника', callback_data=callbacks.FAMILY_INVITE_MENU)])
             buttons.append([InlineKeyboardButton(text='📬 Активные приглашения', callback_data=callbacks.FAMILY_INVITES)])
+            buttons.append([InlineKeyboardButton(text="👑 Передать полномочия", callback_data=callbacks.FAMILY_TRANSFER)])
         buttons.append([InlineKeyboardButton(text='⬅️ Назад к настройкам', callback_data=callbacks.SETTINGS_MAIN)])
         return InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -445,6 +447,60 @@ class Keyboards:
         """
         return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text='👶 Ребёнка с Telegram', callback_data=callbacks.FamilyInviteRoleCD(role='child').pack())], [InlineKeyboardButton(text='👨\u200d👩\u200d👧 Родителя', callback_data=callbacks.FamilyInviteRoleCD(role='parent').pack())], [InlineKeyboardButton(text='👁 Наблюдателя', callback_data=callbacks.FamilyInviteRoleCD(role='observer').pack())], [InlineKeyboardButton(text='⬅️ Назад к семье', callback_data=callbacks.SETTINGS_FAMILY)]])
 
+    @staticmethod
+    def get_family_transfer_select_kb(
+        candidates: List[FamilyMemberDTO],
+    ) -> InlineKeyboardMarkup:
+        """
+        Выбор получателя полномочий: другие родители семьи.
+        """
+        buttons = [
+            [
+                InlineKeyboardButton(
+                    text=f"👤 {candidate.name}",
+                    callback_data=callbacks.FamilyTransferTargetCD(
+                        user_id=candidate.user_id,
+                    ).pack(),
+                ),
+            ]
+            for candidate in candidates
+        ]
+        buttons.append(
+            [
+                InlineKeyboardButton(
+                    text="⬅️ Назад к семье",
+                    callback_data=callbacks.SETTINGS_FAMILY,
+                ),
+            ],
+        )
+        return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+    @staticmethod
+    def get_family_transfer_confirm_kb(
+        target_user_id: int,
+    ) -> InlineKeyboardMarkup:
+        """
+        Подтверждение передачи полномочий.
+        """
+        return InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="✅ Передать полномочия",
+                        callback_data=callbacks.FamilyTransferConfirmCD(
+                            user_id=target_user_id,
+                        ).pack(),
+                    ),
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="◀️ Назад",
+                        callback_data=callbacks.FAMILY_TRANSFER,
+                    ),
+                ],
+            ],
+        )
+        
     @staticmethod
     def get_family_invite_result_kb(share_link: str, deep_link: str) -> InlineKeyboardMarkup:
         """

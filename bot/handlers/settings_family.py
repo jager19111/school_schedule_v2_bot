@@ -13,6 +13,8 @@ from bot.callbacks import (
     FamilyInviteRevokeCD,
     FamilyInviteRevokeConfirmCD,
     FamilyInviteRoleCD,
+    FamilyTransferConfirmCD,  
+    FamilyTransferTargetCD,   
 )
 from bot.utils.ui_renderer import UIRenderer
 from bot.keyboards.keyboard import Keyboards
@@ -32,6 +34,10 @@ router = Router()
 #4. family:invite_revoke:
 #5. family:invite:
 #6. family:invites
+#7. family:transfer          (fta — выбор получателя)
+#8. family:transfer_target   (ftt:<id> — подтверждение)
+#9. family:transfer_confirm  (ftc:<id> — выполнение)
+
 @router.callback_query(F.data == callbacks.FAMILY_INVITE_MENU)
 async def show_family_invite_menu(
     callback: CallbackQuery,
@@ -490,3 +496,199 @@ async def show_family_management(
     with contextlib.suppress(TelegramBadRequest):
         await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
     await callback.answer()
+    
+    
+# ================= 4. ПЕРЕДАЧА ПОЛНОМОЧИЙ =================
+
+
+@router.callback_query(F.data == callbacks.FAMILY_TRANSFER)
+async def show_family_transfer_menu(
+    callback: CallbackQuery,
+    profile_service: ProfileService,
+) -> None:
+    """
+    Шаг 1: выбор получателя полномочий среди родителей семьи.
+    """
+    user_dto = await profile_service.get_user_profile_dto(
+        callback.from_user.id,
+    )
+
+
+    if not user_dto.family_id:
+        await _safe_callback_answer(
+            callback,
+            "Вы не состоите в семье.",
+            show_alert=True,
+        )
+        return
+
+
+    if not await profile_service.is_family_admin(
+        user_id=callback.from_user.id,
+        family_id=user_dto.family_id,
+    ):
+        await _safe_callback_answer(
+            callback,
+            "Только администратор семьи может передать полномочия.",
+            show_alert=True,
+        )
+        return
+
+
+    candidates = await profile_service.get_family_transfer_candidates(
+        family_id=user_dto.family_id,
+        exclude_user_id=callback.from_user.id,
+    )
+
+
+    if not candidates:
+        await _safe_callback_answer(
+            callback,
+            "В семье нет других родителей, которым можно передать полномочия.",
+            show_alert=True,
+        )
+        return
+
+
+    text = UIRenderer.render_family_transfer_select(candidates)
+    keyboard = Keyboards.get_family_transfer_select_kb(candidates)
+
+
+    await _safe_edit_text(
+        callback.message,
+        text,
+        reply_markup=keyboard,
+    )
+
+
+    await _safe_callback_answer(callback)
+
+
+@router.callback_query(FamilyTransferTargetCD.filter())
+async def show_family_transfer_confirmation(
+    callback: CallbackQuery,
+    callback_data: FamilyTransferTargetCD,
+    profile_service: ProfileService,
+) -> None:
+    """
+    Шаг 2: подтверждение передачи выбранному родителю.
+    """
+    target_user_id = callback_data.user_id
+
+
+    user_dto = await profile_service.get_user_profile_dto(
+        callback.from_user.id,
+    )
+
+
+    if not user_dto.family_id:
+        await _safe_callback_answer(
+            callback,
+            "Вы не состоите в семье.",
+            show_alert=True,
+        )
+        return
+
+
+    # Кандидаты переполучаются заново: callback payload — не источник доверия.
+    candidates = await profile_service.get_family_transfer_candidates(
+        family_id=user_dto.family_id,
+        exclude_user_id=callback.from_user.id,
+    )
+    target = next(
+        (c for c in candidates if c.user_id == target_user_id),
+        None,
+    )
+
+
+    if target is None:
+        await _safe_callback_answer(
+            callback,
+            "Этот пользователь больше не может получить полномочия.",
+            show_alert=True,
+        )
+        return
+
+
+    text = UIRenderer.render_family_transfer_confirmation(target.name)
+    keyboard = Keyboards.get_family_transfer_confirm_kb(target.user_id)
+
+
+    await _safe_edit_text(
+        callback.message,
+        text,
+        reply_markup=keyboard,
+    )
+
+
+    await _safe_callback_answer(callback)
+
+
+@router.callback_query(FamilyTransferConfirmCD.filter())
+async def execute_family_transfer(
+    callback: CallbackQuery,
+    callback_data: FamilyTransferConfirmCD,
+    bot: Bot,
+    profile_service: ProfileService,
+) -> None:
+    """
+    Шаг 3: выполнение передачи. Вся валидация — в сервисе.
+    """
+    target_user_id = callback_data.user_id
+
+
+    transferred = await profile_service.transfer_family_admin(
+        from_user_id=callback.from_user.id,
+        to_user_id=target_user_id,
+    )
+
+
+    if not transferred:
+        await _safe_callback_answer(
+            callback,
+            "Не удалось передать полномочия: вы не администратор "
+            "или получатель больше не является родителем вашей семьи.",
+            show_alert=True,
+        )
+        return
+
+
+    # Имя получателя для экранов (DTO до передачи уже не содержит изменений ролей).
+    target_dto = await profile_service.get_user_profile_dto(target_user_id)
+    target_name = target_dto.name if target_dto and target_dto.name else "Пользователь"
+
+
+    # Уведомление новому администратору.
+    with contextlib.suppress(TelegramBadRequest):
+        await bot.send_message(
+            target_user_id,
+            "👑 <b>Вам передали управление семьёй</b>\n\n"
+            "Теперь вы можете приглашать участников и отзывать приглашения:\n"
+            "⚙️ Настройки → Семья.",
+            parse_mode="HTML",
+        )
+
+
+    actor_dto = await profile_service.get_user_profile_dto(
+        callback.from_user.id,
+    )
+
+
+    text = UIRenderer.render_family_transfer_done(target_name)
+    keyboard = Keyboards.get_family_management_kb(
+        current_role=actor_dto.role if actor_dto else "parent",
+        is_family_admin=False,
+    )
+
+
+    await _safe_edit_text(
+        callback.message,
+        text,
+        reply_markup=keyboard,
+    )
+
+
+    await _safe_callback_answer(
+        callback,
+        "Полномочия переданы.",
+    )
