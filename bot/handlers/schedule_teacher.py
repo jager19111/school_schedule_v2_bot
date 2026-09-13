@@ -105,8 +105,15 @@ async def _render_teacher_day(
         f"👤 {UIRenderer.escape_html(teacher_name)}\n\n"
         f"{text}"
     )
+    has_changes = any(
+        l.is_exchange or l.is_cancelled
+        for l in day_dto.lessons
+    )
+        
     keyboard = Keyboards.get_teacher_schedule_day_kb(
         current_date_iso=date_iso,
+        teacher_id=teacher_id,
+        has_changes=has_changes,  # ← ПЕРЕДАЁМ
     )
     return text, keyboard
 

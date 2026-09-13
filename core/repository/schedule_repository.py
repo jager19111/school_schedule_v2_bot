@@ -1,55 +1,56 @@
 # core/repository/schedule_repository.py
-## РЕШЁННЫЕ ПРОБЛЕМЫ:
 #
-# 1. Bulk Inserts (Задача 1.2): в _apply_new_nika_version цикл
-#    "for lesson in lessons: await db.execute(...)" заменён на
-#    подготовку списка кортежей + ОДИН db.executemany(...).
-#    Раньше смена ревизии NIKA означала до ~20-30 тыс. одиночных
-#    round-trip'ов к SQLite-потоку (21 день x все классы x до 14
-#    уроков x подгруппы). executemany с одним подготовленным
-#    UPSERT-запросом выполняет это на порядки быстрее.
+# ЭТАП 3 (фундамент → репозиторий): синхронизация с расширенным
+# LessonInstance (class_name, original_*, is_methodological,
+# original_group_*) и хранение расписания УЧИТЕЛЕЙ.
 #
-# 2. Strict Time Governance (Задача 1.3): ВСЕ вхождения
-#    CURRENT_TIMESTAMP (touch_nika_checked_at, record_nika_refresh_error,
-#    _update_revision_only, _apply_new_nika_version) заменены на
-#    плейсхолдеры ? со значением now_utc_str из TimeService.
-#    Конструкция "CASE WHEN ? = 1 THEN CURRENT_TIMESTAMP ELSE ..."
-#    переписана на "CASE WHEN ? = 1 THEN ? ELSE ...".
+# РЕШЁННЫЕ ПРОБЛЕМЫ (наследие Этапов 1-2 сохранено):
 #
-# 3. Транзакции: ручные BEGIN/commit/rollback заменены на
-#    self.transaction() из BaseRepository — транзакция теперь
-#    защищена общим lock'ом shared-соединения и не может быть
-#    нарушена параллельной корутиной.
+# 1. Bulk Inserts (Задача 1.2): executemany с одним UPSERT.
 #
-# 4. I/O (Задача 1.1): репозиторий получает shared-соединение
-#    через db_path=aiosqlite.Connection (см. BaseRepository).
-#    Имя параметра сохранено для совместимости с main.py.
-
-# ЭТАП 2. ИЗМЕНЕНИЕ (Задача 2.1): конструктор принимает http_session —
-# персистентную aiohttp.ClientSession из main.py — и пробрасывает её
-# в ScheduleFetcher. Раньше фетчер создавал сессию на каждый вызов
-# probe() (каждые 5 минут — новый TCP+TLS-сокет, при прокси — ещё и
-# CONNECT), теперь соединение живёт в keep-alive пуле весь цикл бота.
+# 2. Strict Time Governance (Задача 1.3): все временные метки —
+#    плейсхолдеры ? со значением now_utc из TimeService.
 #
-# Прочие комментарии Этапа 1 сохранены:
-# - Bulk Inserts (executemany, Задача 1.2);
-# - Strict Time Governance (Задача 1.3);
-# - транзакции через self.transaction() c общим write-lock;
-# - shared-соединение SQLite через db_path=aiosqlite.Connection.
+# 3. Транзакции через self.transaction() с общим write-lock.
 #
-# Проверка Задачи 2.2: во всём файле используется только связка
-# source = await self.fetcher.probe() и
-# js_content = await self.fetcher.fetch_js_content(source).
-# Вызовов удалённого fetch() нет.
+# 4. Shared-соединение SQLite (db_path = aiosqlite.Connection).
+#
+# НОВОЕ ЭТАПА 3:
+#
+# 5. Origin-разделение: расписание классов и учителей пишется в
+#    одну таблицу schedule_cache с колонкой origin ('class'/'teacher').
+#    Запросы по классу фильтруют origin='class', по учителю —
+#    origin='teacher'. Без этого class- и teacher-уроки одного слота
+#    дублировались бы в выдаче.
+#
+# 6. Коллизия ID устранена НА УРОВНЕ НОРМАЛИЗАТОРА: учительский
+#    lesson_id получает префикс T{teacher_id}_ (см. патч normalizer).
+#    Это обязательное условие: формат ID классов и учителей совпадал,
+#    и ON CONFLICT(id) молча перезаписывал бы class-уроки teacher-уроками.
+#
+# 7. Сохраняются ВСЕ поля «было → стало»: original_subject_*,
+#    original_teacher_*, original_room_*, original_class_*,
+#    original_group_*, а также class_name, weekday, is_methodological.
+#
+# 8. groups_raw / subjects_raw / rooms_raw в БД НЕ хранятся:
+#    параллельные подгруппы восстанавливаются группировкой строк по
+#    (date, lesson_num, origin) на уровне сервиса/рендерера. Это
+#    избавляет от JSON-блобов в кэше.
+#
+# 9. Методические часы (M) теперь попадают в кэш через
+#    build_teacher_lessons() и видны в расписании учителя.
 
 from __future__ import annotations
+
 
 import datetime
 import logging
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
+
 import aiohttp
+
 
 from core.models.domain import LessonInstance
 from core.nika.fetcher import (
@@ -60,7 +61,80 @@ from core.nika.normalizer import NikaNormalizer
 from core.repository.base_repository import BaseRepository
 from services.time_service import TimeService
 
+
 logger = logging.getLogger(__name__)
+
+
+# Единый UPSERT: 32 колонки, включая origin и все original_* (Этап 3).
+_SCHEDULE_UPSERT_SQL = """
+    INSERT INTO schedule_cache (
+        id,
+        date,
+        period_id,
+        class_id,
+        origin,
+        class_name,
+        weekday,
+        lesson_num,
+        group_id,
+        group_name,
+        subject_id,
+        subject_name,
+        teacher_id,
+        teacher_name,
+        room_id,
+        room_name,
+        original_subject_id,
+        original_subject_name,
+        original_teacher_id,
+        original_teacher_name,
+        original_room_id,
+        original_room_name,
+        original_class_id,
+        original_class_name,
+        original_group_id,
+        original_group_name,
+        start_time,
+        end_time,
+        is_exchange,
+        is_cancelled,
+        is_methodological,
+        created_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+        date = excluded.date,
+        period_id = excluded.period_id,
+        class_id = excluded.class_id,
+        origin = excluded.origin,
+        class_name = excluded.class_name,
+        weekday = excluded.weekday,
+        lesson_num = excluded.lesson_num,
+        group_id = excluded.group_id,
+        group_name = excluded.group_name,
+        subject_id = excluded.subject_id,
+        subject_name = excluded.subject_name,
+        teacher_id = excluded.teacher_id,
+        teacher_name = excluded.teacher_name,
+        room_id = excluded.room_id,
+        room_name = excluded.room_name,
+        original_subject_id = excluded.original_subject_id,
+        original_subject_name = excluded.original_subject_name,
+        original_teacher_id = excluded.original_teacher_id,
+        original_teacher_name = excluded.original_teacher_name,
+        original_room_id = excluded.original_room_id,
+        original_room_name = excluded.original_room_name,
+        original_class_id = excluded.original_class_id,
+        original_class_name = excluded.original_class_name,
+        original_group_id = excluded.original_group_id,
+        original_group_name = excluded.original_group_name,
+        start_time = excluded.start_time,
+        end_time = excluded.end_time,
+        is_exchange = excluded.is_exchange,
+        is_cancelled = excluded.is_cancelled,
+        is_methodological = excluded.is_methodological,
+        created_at = excluded.created_at
+"""
 
 
 @dataclass(frozen=True)
@@ -75,53 +149,10 @@ class ScheduleRefreshResult:
     reason: str = ""
 
 
-# Один подготовленный UPSERT для массовой вставки кэша уроков (Задача 1.2).
-_SCHEDULE_UPSERT_SQL = """
-    INSERT INTO schedule_cache (
-        id,
-        date,
-        period_id,
-        class_id,
-        lesson_num,
-        group_id,
-        group_name,
-        subject_id,
-        subject_name,
-        teacher_id,
-        teacher_name,
-        room_id,
-        room_name,
-        start_time,
-        end_time,
-        is_exchange,
-        is_cancelled,
-        created_at
-    )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT(id) DO UPDATE SET
-        date = excluded.date,
-        period_id = excluded.period_id,
-        class_id = excluded.class_id,
-        lesson_num = excluded.lesson_num,
-        group_id = excluded.group_id,
-        group_name = excluded.group_name,
-        subject_id = excluded.subject_id,
-        subject_name = excluded.subject_name,
-        teacher_id = excluded.teacher_id,
-        teacher_name = excluded.teacher_name,
-        room_id = excluded.room_id,
-        room_name = excluded.room_name,
-        start_time = excluded.start_time,
-        end_time = excluded.end_time,
-        is_exchange = excluded.is_exchange,
-        is_cancelled = excluded.is_cancelled,
-        created_at = excluded.created_at
-"""
-
-
 class ScheduleRepository(BaseRepository):
     """
     Репозиторий школьного расписания.
+
 
     Основные правила:
     - HTML schedule.html проверяется часто;
@@ -129,8 +160,10 @@ class ScheduleRepository(BaseRepository):
     - schedule_cache пересобирается только при semantic change NIKA
       или при расширении rolling coverage;
     - raw_nika_cache хранит только одну актуальную версию;
-    - schedule_cache хранит ограниченный горизонт дат.
+    - schedule_cache хранит ограниченный горизонт дат;
+    - class- и teacher-уроки живут в одной таблице, разделены origin.
     """
+
 
     def __init__(
         self,
@@ -143,9 +176,6 @@ class ScheduleRepository(BaseRepository):
         nika_base_url: str = "https://lyceum.nstu.ru/rasp",
         history_days: int = 7,
     ) -> None:
-        # db_path: str (legacy/тесты) ИЛИ aiosqlite.Connection (основной
-        # режим — shared-соединение из main.py, Задача 1.1).
-        # http_session: персистентная HTTP-сессия из main.py (Задача 2.1).
         super().__init__(
             db_path=db_path,
             time_service=time_service,
@@ -158,6 +188,7 @@ class ScheduleRepository(BaseRepository):
         )
         self.history_days = history_days
 
+
     def is_ssl_degraded(self) -> bool:
         """
         True, если NIKA-фетчер работает в обход TLS-проверки.
@@ -166,14 +197,117 @@ class ScheduleRepository(BaseRepository):
         Состояние обновляется фетчером при каждой попытке запроса.
         """
         return self.fetcher.ssl_degraded
-    
+
+
+    # ==========================================================
+    # Row <-> LessonInstance mapping (Этап 3)
+    # ==========================================================
+
+
+    @staticmethod
+    def _lesson_to_row(
+        lesson: LessonInstance,
+        origin: str,
+        now_utc: str,
+    ) -> tuple:
+        """
+        LessonInstance → кортеж для executemany (32 значения).
+
+        origin: 'class' | 'teacher'. Сам LessonInstance про origin не
+        знает — это характеристика источника записи, а не урока.
+        """
+        return (
+            lesson.id,
+            lesson.date,
+            lesson.period_id,
+            lesson.class_id,
+            origin,
+            lesson.class_name,
+            lesson.weekday,
+            lesson.lesson_num,
+            lesson.group_id,
+            lesson.group_name,
+            lesson.subject_id,
+            lesson.subject_name,
+            lesson.teacher_id,
+            lesson.teacher_name,
+            lesson.room_id,
+            lesson.room_name,
+            lesson.original_subject_id,
+            lesson.original_subject_name,
+            lesson.original_teacher_id,
+            lesson.original_teacher_name,
+            lesson.original_room_id,
+            lesson.original_room_name,
+            lesson.original_class_id,
+            lesson.original_class_name,
+            lesson.original_group_id,
+            lesson.original_group_name,
+            lesson.start_time,
+            lesson.end_time,
+            int(lesson.is_exchange),
+            int(lesson.is_cancelled),
+            int(lesson.is_methodological),
+            now_utc,
+        )
+
+
+    @staticmethod
+    def _row_to_lesson(row: Dict[str, Any]) -> LessonInstance:
+        """
+        Строка schedule_cache → LessonInstance (DTO для сервиса/рендерера).
+
+        weekday восстанавливается из даты, если колонка пуста
+        (строки, оставшиеся до применения миграции).
+        """
+        weekday = row.get("weekday")
+        if not weekday:
+            weekday = datetime.date.fromisoformat(
+                row["date"]
+            ).isoweekday()
+
+        return LessonInstance(
+            id=row["id"],
+            period_id=row["period_id"],
+            class_id=row["class_id"],
+            class_name=row.get("class_name"),
+            date=row["date"],
+            weekday=weekday,
+            lesson_num=row["lesson_num"],
+            start_time=row["start_time"],
+            end_time=row["end_time"],
+            subject_id=row.get("subject_id"),
+            subject_name=row.get("subject_name"),
+            teacher_id=row.get("teacher_id"),
+            teacher_name=row.get("teacher_name"),
+            room_id=row.get("room_id"),
+            room_name=row.get("room_name"),
+            original_subject_id=row.get("original_subject_id"),
+            original_subject_name=row.get("original_subject_name"),
+            original_teacher_id=row.get("original_teacher_id"),
+            original_teacher_name=row.get("original_teacher_name"),
+            original_room_id=row.get("original_room_id"),
+            original_room_name=row.get("original_room_name"),
+            original_class_id=row.get("original_class_id"),
+            original_class_name=row.get("original_class_name"),
+            original_group_id=row.get("original_group_id"),
+            original_group_name=row.get("original_group_name"),
+            group_id=row.get("group_id") or "ALL",
+            group_name=row.get("group_name") or "Весь класс",
+            is_exchange=bool(row.get("is_exchange")),
+            is_cancelled=bool(row.get("is_cancelled")),
+            is_methodological=bool(row.get("is_methodological")),
+        )
+
+
+    # ==========================================================
+    # NIKA source state
+    # ==========================================================
+
 
     async def get_nika_source_state(
         self,
     ) -> Optional[Dict[str, Any]]:
-        """
-        Возвращает единственную строку состояния актуального NIKA source.
-        """
         return await self._fetch_one(
             """
             SELECT
@@ -194,12 +328,10 @@ class ScheduleRepository(BaseRepository):
             """
         )
 
+
     async def get_cached_raw_nika(
         self,
     ) -> Optional[Dict[str, Any]]:
-        """
-        Возвращает текущий singleton raw NIKA cache.
-        """
         return await self._fetch_one(
             """
             SELECT
@@ -212,6 +344,7 @@ class ScheduleRepository(BaseRepository):
             WHERE id = 1
             """
         )
+
 
     async def touch_nika_checked_at(
         self,
@@ -231,6 +364,7 @@ class ScheduleRepository(BaseRepository):
             """,
             (now_utc,),
         )
+
 
     async def record_nika_refresh_error(
         self,
@@ -272,6 +406,7 @@ class ScheduleRepository(BaseRepository):
                 normalized_error,
             )
 
+
     async def clear_nika_refresh_error(
         self,
     ) -> None:
@@ -287,6 +422,7 @@ class ScheduleRepository(BaseRepository):
             """
         )
 
+
     async def get_nika_health_status(
         self,
     ) -> Dict[str, Any]:
@@ -301,6 +437,7 @@ class ScheduleRepository(BaseRepository):
         today_iso = self.time_service.get_now_base().date().isoformat()
         state = await self.get_nika_source_state()
 
+
         cache_info = await self._fetch_one(
             """
             SELECT
@@ -311,11 +448,13 @@ class ScheduleRepository(BaseRepository):
             """
         )
 
+
         lesson_count = int(
             cache_info["lesson_count"]
             if cache_info
             else 0
         )
+
 
         first_date = (
             cache_info.get("first_date")
@@ -327,6 +466,7 @@ class ScheduleRepository(BaseRepository):
             if cache_info
             else None
         )
+
 
         if state is None:
             return {
@@ -350,6 +490,7 @@ class ScheduleRepository(BaseRepository):
                 "last_error_at": None,
             }
 
+
         if state.get("last_error"):
             status = (
                 "source_error_cache_available"
@@ -361,20 +502,24 @@ class ScheduleRepository(BaseRepository):
         else:
             status = "healthy"
 
+
         coverage_end_date = (
             state.get("coverage_end_date")
             or last_date
         )
+
 
         coverage_is_current = bool(
             coverage_end_date
             and coverage_end_date >= today_iso
         )
 
+
         coverage_has_future = bool(
             coverage_end_date
             and coverage_end_date > today_iso
         )
+
 
         return {
             "status": status,
@@ -396,6 +541,7 @@ class ScheduleRepository(BaseRepository):
             "last_error_at": state.get("last_error_at"),
         }
 
+
     @staticmethod
     def _coverage_needs_refresh(
         state: Optional[Dict[str, Any]],
@@ -412,17 +558,21 @@ class ScheduleRepository(BaseRepository):
         if state is None:
             return True
 
+
         expected_start = min(target_dates).isoformat()
         expected_end = max(target_dates).isoformat()
+
 
         return (
             state.get("coverage_start_date") != expected_start
             or state.get("coverage_end_date") != expected_end
         )
 
+
     # ==========================================================
     # Public metadata / schedule reads
     # ==========================================================
+
 
     async def get_metadata(
         self,
@@ -431,6 +581,7 @@ class ScheduleRepository(BaseRepository):
         Строит metadata из текущего singleton raw NIKA cache.
         """
         raw = await self.get_cached_raw_nika()
+
 
         if not raw or not raw.get("content"):
             logger.warning(
@@ -442,6 +593,7 @@ class ScheduleRepository(BaseRepository):
                 "teachers": {},
             }
 
+
         try:
             nika_data = self.fetcher._extract_json_from_js(
                 raw["content"],
@@ -450,6 +602,7 @@ class ScheduleRepository(BaseRepository):
                 nika_data,
             )
             classes, teachers, _, _ = normalizer.build_metadata()
+
 
             return {
                 "classes": classes,
@@ -477,13 +630,14 @@ class ScheduleRepository(BaseRepository):
                 "teachers": {},
             }
 
+
     async def get_lessons_for_class(
         self,
         class_id: str,
         date_iso: str,
     ) -> List[Dict[str, Any]]:
         """
-        Возвращает расписание класса на конкретную дату.
+        Расписание класса на дату (только class-origin строки).
         """
         return await self._fetch_all(
             """
@@ -491,10 +645,12 @@ class ScheduleRepository(BaseRepository):
             FROM schedule_cache
             WHERE class_id = ?
               AND date = ?
+              AND origin = 'class'
             ORDER BY lesson_num, start_time, id
             """,
             (class_id, date_iso),
         )
+
 
     async def get_lessons_for_teacher(
         self,
@@ -502,22 +658,78 @@ class ScheduleRepository(BaseRepository):
         date_iso: str,
     ) -> List[Dict[str, Any]]:
         """
-        Возвращает расписание учителя на конкретную дату.
+        Расписание учителя на дату (только teacher-origin строки:
+        включает методические часы и TEACH_EXCHANGE).
         """
+        logger.info(f"Тест SQL: teacher={teacher_id} date={date_iso}")  # ← ДОБАВИТЬ
         return await self._fetch_all(
             """
             SELECT *
             FROM schedule_cache
             WHERE teacher_id = ?
               AND date = ?
+              AND origin = 'teacher'
             ORDER BY start_time, lesson_num, id
             """,
             (teacher_id, date_iso),
         )
 
+
+    async def get_lesson_instances_for_class(
+        self,
+        class_id: str,
+        date_iso: str,
+    ) -> List[LessonInstance]:
+        """
+        Типизированный вариант get_lessons_for_class: строки → DTO.
+        Сервис и рендерер работают с LessonInstance, а не со словарями.
+        """
+        rows = await self.get_lessons_for_class(class_id, date_iso)
+        return [self._row_to_lesson(r) for r in rows]
+
+
+    async def get_lesson_instances_for_teacher(
+        self,
+        teacher_id: str,
+        date_iso: str,
+    ) -> List[LessonInstance]:
+        """
+        Типизированный вариант get_lessons_for_teacher: строки → DTO.
+        """
+        logger.info(f"Тест Repo: teacher={teacher_id} date={date_iso}")  # ← ДОБАВИТЬ
+        rows = await self.get_lessons_for_teacher(teacher_id, date_iso)
+        return [self._row_to_lesson(r) for r in rows]
+
+
+
+    async def get_day_change_count(
+        self,
+        date_iso: str,
+        origin: str = "class",
+    ) -> int:
+        """
+        Количество изменённых/отменённых уроков за дату.
+
+        Используется для быстрой проверки «есть ли смысл показывать
+        кнопку изменений» без выгрузки всего дня.
+        """
+        row = await self._fetch_one(
+            """
+            SELECT COUNT(*) AS cnt
+            FROM schedule_cache
+            WHERE date = ?
+              AND origin = ?
+              AND (is_exchange = 1 OR is_cancelled = 1)
+            """,
+            (date_iso, origin),
+        )
+        return int(row["cnt"]) if row else 0
+
+
     # ==========================================================
     # NIKA source updates
     # ==========================================================
+
 
     async def refresh_if_changed(
         self,
@@ -525,6 +737,7 @@ class ScheduleRepository(BaseRepository):
     ) -> ScheduleRefreshResult:
         """
         Проверяет NIKA и обновляет расписание только при реальной причине.
+
 
         Возможные результаты:
         - same_filename:
@@ -545,9 +758,12 @@ class ScheduleRepository(BaseRepository):
                 reason="empty_target_dates",
             )
 
+
         source = await self.fetcher.probe()
 
+
         state = await self.get_nika_source_state()
+
 
         coverage_changed = self._coverage_needs_refresh(
             state,
@@ -593,9 +809,11 @@ class ScheduleRepository(BaseRepository):
             source,
         )
 
+
         nika_data = self.fetcher._extract_json_from_js(
             js_content,
         )
+
 
         raw_sha256 = self.fetcher.calculate_raw_sha256(
             js_content,
@@ -603,6 +821,7 @@ class ScheduleRepository(BaseRepository):
         semantic_sha256 = self.fetcher.calculate_semantic_sha256(
             nika_data,
         )
+
 
         export_date = nika_data.get("EXPORT_DATE")
         export_time = nika_data.get("EXPORT_TIME")
@@ -648,6 +867,7 @@ class ScheduleRepository(BaseRepository):
             ),
         )
 
+
     async def _refresh_from_cached_raw(
         self,
         *,
@@ -664,6 +884,7 @@ class ScheduleRepository(BaseRepository):
         nika_data = self.fetcher._extract_json_from_js(
             raw_content,
         )
+
 
         return await self._apply_new_nika_version(
             source=NikaSourceDescriptor(
@@ -682,6 +903,7 @@ class ScheduleRepository(BaseRepository):
             reason="coverage_extended",
         )
 
+
     async def _update_revision_only(
         self,
         *,
@@ -695,12 +917,9 @@ class ScheduleRepository(BaseRepository):
         """
         Обновляет revision metadata и singleton raw NIKA cache.
         schedule_cache не трогается: semantic hash не изменился.
-
-        Задача 1.3: все CURRENT_TIMESTAMP заменены на параметр now_utc.
-        Транзакция выполняется через self.transaction() — с защитой
-        общего lock'а shared-соединения.
         """
         now_utc = self._now_utc_str()
+
 
         async with self.transaction() as db:
             await db.execute(
@@ -722,6 +941,7 @@ class ScheduleRepository(BaseRepository):
                     js_content,
                 ),
             )
+
 
             await db.execute(
                 """
@@ -783,6 +1003,7 @@ class ScheduleRepository(BaseRepository):
                 ),
             )
 
+
     async def _apply_new_nika_version(
         self,
         *,
@@ -805,17 +1026,23 @@ class ScheduleRepository(BaseRepository):
         - schedule_cache (очистка окна + массовый UPSERT);
         - очистка history window.
 
-        Задача 1.2: вставка уроков — ONE executemany вместо цикла
-        одиночных execute. Задача 1.3: все CURRENT_TIMESTAMP
-        заменены на now_utc, включая "CASE WHEN ? = 1 THEN ? ELSE ...".
+        Этап 3: строятся ОБА набора — build_class_lessons() и
+        build_teacher_lessons() (методические часы, TEACH_EXCHANGE).
+        Учительские ID обязаны иметь префикс T{teacher_id}_ (патч
+        normalizer), иначе они коллидируют с классовыми.
         """
         normalizer = NikaNormalizer(
             nika_data,
         )
 
-        lessons: List[LessonInstance] = normalizer.build_class_lessons(
-            target_dates,
+
+        class_lessons: List[LessonInstance] = (
+            normalizer.build_class_lessons(target_dates)
         )
+        teacher_lessons: List[LessonInstance] = (
+            normalizer.build_teacher_lessons(target_dates)
+        )
+
 
         target_date_values = sorted(
             {
@@ -823,6 +1050,7 @@ class ScheduleRepository(BaseRepository):
                 for target_date in target_dates
             }
         )
+
 
         if not target_date_values:
             return ScheduleRefreshResult(
@@ -833,8 +1061,10 @@ class ScheduleRepository(BaseRepository):
                 reason="empty_target_dates",
             )
 
+
         coverage_start_date = target_date_values[0]
         coverage_end_date = target_date_values[-1]
+
 
         history_cutoff = (
             datetime.date.fromisoformat(
@@ -843,39 +1073,25 @@ class ScheduleRepository(BaseRepository):
             - datetime.timedelta(days=self.history_days)
         ).isoformat()
 
+
         placeholders = ",".join(
             "?"
             for _ in target_date_values
         )
 
-        # Единый таймстемп снапшота: создаётся ОДИН раз вне транзакции,
-        # чтобы все строки батча получили идентичное created_at.
+
+        # Единый таймстемп снапшота для всех строк батча.
         now_utc = self._now_utc_str()
 
-        # Задача 1.2: готовим параметры всех уроков как список кортежей.
+
         lesson_rows = [
-            (
-                lesson.id,
-                lesson.date,
-                lesson.period_id,
-                lesson.class_id,
-                lesson.lesson_num,
-                lesson.group_id,
-                lesson.group_name,
-                lesson.subject_id,
-                lesson.subject_name,
-                lesson.teacher_id,
-                lesson.teacher_name,
-                lesson.room_id,
-                lesson.room_name,
-                lesson.start_time,
-                lesson.end_time,
-                int(lesson.is_exchange),
-                int(lesson.is_cancelled),
-                now_utc,
-            )
-            for lesson in lessons
+            self._lesson_to_row(lesson, "class", now_utc)
+            for lesson in class_lessons
+        ] + [
+            self._lesson_to_row(lesson, "teacher", now_utc)
+            for lesson in teacher_lessons
         ]
+
 
         async with self.transaction() as db:
             await db.execute(
@@ -898,6 +1114,7 @@ class ScheduleRepository(BaseRepository):
                 ),
             )
 
+
             await db.execute(
                 f"""
                 DELETE FROM schedule_cache
@@ -905,6 +1122,7 @@ class ScheduleRepository(BaseRepository):
                 """,
                 tuple(target_date_values),
             )
+
 
             await db.execute(
                 """
@@ -914,13 +1132,13 @@ class ScheduleRepository(BaseRepository):
                 (history_cutoff,),
             )
 
-            # Массовый UPSERT (Задача 1.2): один подготовленный запрос,
-            # executemany, всё внутри той же транзакции — атомарно.
+
             if lesson_rows:
                 await db.executemany(
                     _SCHEDULE_UPSERT_SQL,
                     lesson_rows,
                 )
+
 
             await db.execute(
                 """
@@ -990,22 +1208,27 @@ class ScheduleRepository(BaseRepository):
         except Exception:
             logger.debug("PRAGMA optimize after snapshot failed.")
 
+
         logger.info(
             "NIKA snapshot applied: source_changed=%s, "
-            "schedule_changed=%s, lessons=%d, "
+            "schedule_changed=%s, lessons=%d "
+            "(class=%d, teacher=%d), "
             "coverage=%s..%s, revision=%s",
             source_changed,
             schedule_changed,
-            len(lessons),
+            len(lesson_rows),
+            len(class_lessons),
+            len(teacher_lessons),
             coverage_start_date,
             coverage_end_date,
             source.js_filename,
         )
 
+
         return ScheduleRefreshResult(
             source_changed=source_changed,
             schedule_changed=schedule_changed,
             js_filename=source.js_filename,
-            lesson_count=len(lessons),
+            lesson_count=len(lesson_rows),
             reason=reason,
         )

@@ -146,28 +146,61 @@ async def show_class_schedule(callback: CallbackQuery, callback_data: SearchClas
     class_name = cls_obj.name if hasattr(cls_obj, 'name') else "Класс"
     text, _ = UIRenderer.render_child_day_schedule(day_dto)
     text = f"🎓 <b>Расписание: {class_name}</b>\n" + text
+    has_changes = any(
+        l.is_exchange or l.is_cancelled
+        for l in day_dto.lessons
+    )
     date_obj = TimeService.date_from_iso(date_iso)
     monday = date_obj - timedelta(days=date_obj.isoweekday() - 1)
-    kb = Keyboards.get_search_days_kb(class_id, False, monday.isoformat())
+    kb = Keyboards.get_search_days_kb(
+        target_id=class_id,
+        is_teacher=False,
+        week_start_iso=monday.isoformat(),
+        is_full=False,
+        has_changes=has_changes,  # ← ПЕРЕДАЁМ
+        date_iso=date_iso,
+    )
     await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
     await callback.answer()
 
 
 @router.callback_query(SearchTeacherDayCD.filter())
-async def show_teacher_schedule(callback: CallbackQuery, callback_data: SearchTeacherDayCD, schedule_service: ScheduleService, schedule_repo: ScheduleRepository):
-    teacher_id, date_iso = callback_data.teacher_id, callback_data.date_iso
+async def show_teacher_schedule(
+    callback: CallbackQuery, 
+    callback_data: SearchTeacherDayCD, 
+    schedule_service: ScheduleService,
+) -> None:
+    teacher_id = callback_data.teacher_id
+    date_iso = callback_data.date_iso
+    
+    # 1. Запрашиваем расписание
     day_dto = await schedule_service.get_daily_schedule_for_teacher(teacher_id, date_iso)
-    metadata = await schedule_repo.get_metadata()
-    tch_obj = metadata.get('teachers', {}).get(teacher_id)
-    teacher_name = tch_obj.name if hasattr(tch_obj, 'name') else "Преподаватель"
+    
+    # 2. Получаем имя учителя через сервис (без прямого обращения к сырому репо)
+    teachers_dto = await schedule_service.get_teachers_list()
+    teacher_name = teachers_dto.teachers.get(teacher_id, "Преподаватель")
+    
+    # 3. Используем новый универсальный рендер с заголовком
     text, _ = UIRenderer.render_child_day_schedule(day_dto)
     text = f"👨‍🏫 <b>Расписание: {teacher_name}</b>\n" + text
+    
+    has_changes = any(l.is_exchange or l.is_cancelled for l in day_dto.lessons)
+    
     date_obj = TimeService.date_from_iso(date_iso)
     monday = date_obj - timedelta(days=date_obj.isoweekday() - 1)
-    kb = Keyboards.get_search_days_kb(teacher_id, True, monday.isoformat())
+    
+    # 4. ИСПРАВЛЕННЫЙ ВЫЗОВ: передаем teacher_id в параметр target_id
+    kb = Keyboards.get_search_days_kb(
+        target_id=teacher_id,
+        is_teacher=True,
+        week_start_iso=monday.isoformat(),
+        is_full=False,
+        has_changes=has_changes,
+        date_iso=date_iso,
+    )
+    
     await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
     await callback.answer()
-
 
 # === ПОЛНАЯ НЕДЕЛЯ ===
 

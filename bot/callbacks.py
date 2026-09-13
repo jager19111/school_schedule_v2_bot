@@ -398,3 +398,25 @@ class SearchClassFullWeekCD(CallbackData, prefix="qcf"):
 class SearchTeacherFullWeekCD(CallbackData, prefix="qtf"):
     teacher_id: str
     week_start_iso: str
+
+# ==============================================================
+# Schedule
+# ==============================================================
+
+class DayChangesCD(CallbackData, prefix="dcs"):
+    """
+    Callback data для кнопки «🔄 Изменения」.
+
+    target_kind: "student" | "watch" | "class" | "teacher"
+    target_id: int | str — ID цели (student_id, watch_target_id, teacher_id)
+    class_id: str — ID класса (для teacher — None)
+    group_id: str — ID группы (для teacher — "ALL")
+    date_iso: str — дата в формате YYYY-MM-DD
+    origin: "class" | "teacher" — источник расписания
+    """
+    target_kind: str
+    target_id: int | str
+    class_id: str
+    group_id: str
+    date_iso: str
+    origin: str  # "class" | "teacher"

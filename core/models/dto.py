@@ -1,15 +1,51 @@
-# bot/core/dto.py
-from dataclasses import dataclass
-from typing import Dict, Optional, Any, List
+# bot/core/models/dto.py
+#
+# ЭТАП 3 (DTO): добавлены поля для original_*, group_changed,
+# day_permutation, детализации изменений и расширенной информации
+# в уведомлениях о заменах.
+#
+# ИЗМЕНЕНИЯ:
+#
+# 1. LessonDTO: добавлены original_*, group_name, group_changed,
+#    day_permutation, class_name, teacher_name, is_methodological.
+#    Это минимальный DTO для рендерера одного урока.
+#
+# 2. DayScheduleDTO: lessons теперь List[LessonDTO] (строгая типизация),
+#    добавлено has_permutation: bool (флаг всего дня).
+#
+# 3. DayChangesDetailDTO: новый DTO для детализации «было → стало」.
+#    Используется сервисом (get_day_changes_detail) и рендерером
+#    изменений (render_changes_detail).
+#
+# 4. ChangeReminderDTO: расширен для уведомлений о заменах —
+#    добавлены original_subject_name, new_subject_name,
+#    original_room_name, new_room_name, group_changed.
+#    Это позволяет показать в уведомлении «Математика → Ин.яз (204→318)
+#    или «Группа 1 → Группа 2」.
+#
+# 5. MorningLessonDTO: добавлены original_*, group_changed,
+#    day_permutation для утренней сводки с заменами.
+#
+# 6. MorningSummaryDTO: добавлено has_permutation: bool.
+
 from dataclasses import dataclass, field
+from typing import Dict, Optional, Any, List, Literal, Union
+
+
+# ==========================================================
+# Справочники
+# ==========================================================
+
 
 @dataclass
 class ClassListDTO:
     classes: Dict[str, str]  # id -> name
 
+
 @dataclass
 class GroupListDTO:
     groups: Dict[str, str]  # id -> name
+
 
 @dataclass(frozen=True, slots=True)
 class SchoolDictionariesDTO:
@@ -40,14 +76,17 @@ class SchoolDictionariesDTO:
     def as_class_list(self) -> ClassListDTO:
         """Helper-свойство: отдает готовый ClassListDTO для клавиатур."""
         return ClassListDTO(classes=self.classes)
+
     @property
     def as_group_list(self) -> GroupListDTO:
         """Helper-свойство: отдает готовый GroupListDTO для клавиатур."""
         return GroupListDTO(groups=self.groups)
 
-# ==============================================================
-# ViewModel
-# ==============================================================
+
+# ==========================================================
+# ViewModel (без изменений, оставлены для совместимости)
+# ==========================================================
+
 
 @dataclass(frozen=True, slots=True)
 class WatchTargetViewModel:
@@ -67,12 +106,11 @@ class WatchTargetViewModel:
     # --- Статусы для отображения (готовые строки) ---
     is_enabled_text: str              # "🟢 Активно" / "⚫ Пауза"
     changes_notify_text: str          # "🔔 Включены" / "🔴 Выключены"
-    telegram_status: str              # "📱 Подключен" / "🧒 Без Telegram" (для совместимости)
+    telegram_status: str              # "📱 Подключен" / "🧒 Без Telegram"
 
     # --- Boolean-флаги для клавиатур (текст кнопки-тумблера) ---
     is_enabled: bool                  # для текста кнопки "Выключить/Включить"
     receive_schedule_changes: bool    # для текста кнопки "Изменения: ВКЛ/ВЫКЛ"
-
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,7 +130,6 @@ class ExtraClassViewModel:
     title: str                 # "Футбол" (raw, renderer экранирует)
     location: str              # "Спорткомплекс" или "Не указано" (raw)
     reminder_minutes: int      # 45 (renderer форматирует как "45мин")
-
 
 
 @dataclass(frozen=True, slots=True)
@@ -132,6 +169,7 @@ class FamilyMemberViewModel:
     class_name: str            # "10 А" или "— класс не выбран —" (для ребёнка)
     is_current_user: bool       # для маркера "<i>(Вы)</i>"
 
+
 @dataclass(frozen=True, slots=True)
 class ScheduleTargetViewModel:
     """
@@ -147,6 +185,7 @@ class ScheduleTargetViewModel:
     group_name: str             # "Весь класс" / "Английский"
     icon: str                   # "📱" / "🧒" / "🎓" (pre-computed)
     telegram_connected: bool    # для иконки (boolean-дубль)
+
 
 @dataclass(frozen=True, slots=True)
 class StudentTelegramSettingsViewModel:
@@ -197,29 +236,29 @@ class ParentStudentNotificationSettingsViewModel:
     manage_status_text: str     # "✅ Можно управлять" / "👁 Только просмотр"
 
 
-#==============================
-        
+# ==========================================================
+# Domain DTO (без изменений, оставлены для совместимости)
+# ==========================================================
+
+
 @dataclass
 class FamilyInviteDTO:
     """
     Role-specific invite в семью.
     """
     id: int
-
     token: str
     family_id: int
     intended_role: str
-
     expires_at: str
-
     max_uses: int = 1
     uses_count: int = 0
     is_revoked: bool = False
-
     short_code: Optional[str] = None
     created_at: Optional[str] = None
     used_by_user_id: Optional[int] = None
     used_at: Optional[str] = None
+
 
 @dataclass
 class ScheduleWatchTargetDTO:
@@ -229,18 +268,15 @@ class ScheduleWatchTargetDTO:
     Не связан с профилем ребёнка и не требует family_id.
     """
     id: int
-
     owner_user_id: int
-
     class_id: str
     group_id: str
-
     title: Optional[str] = None
     is_enabled: bool = True
     receive_schedule_changes: bool = True
-
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
+
 
 @dataclass
 class ScheduleViewTargetDTO:
@@ -252,16 +288,13 @@ class ScheduleViewTargetDTO:
     - watch: schedule_watch_targets.
     """
     kind: str
-
     target_id: int
-
     class_id: str
     group_id: str
-
     title: str
-
     telegram_user_id: Optional[int] = None
     is_enabled: bool = True
+
 
 @dataclass
 class StudentProfileDTO:
@@ -277,18 +310,15 @@ class StudentProfileDTO:
     - Telegram user_id, если ребёнок подключён к bot.
     """
     id: int
-
     family_id: int | None
-
     name: str
     class_id: str
     group_id: str
-
     telegram_user_id: int | None = None
     is_active: bool = True
-
     created_at: str | None = None
     updated_at: str | None = None
+
 
 @dataclass
 class StudentClaimInviteDTO:
@@ -297,26 +327,20 @@ class StudentClaimInviteDTO:
     к существующему virtual student profile.
     """
     id: int
-
     token: str
-
     student_id: int
     family_id: int
-
     created_by_user_id: int
-
     expires_at: str
-
     is_revoked: bool = False
-
     used_by_user_id: int | None = None
     created_at: str | None = None
     used_at: str | None = None
-
     student_name: str | None = None
     student_class_id: str | None = None
     student_group_id: str | None = None
-    
+
+
 @dataclass
 class StudentAccessDTO:
     """
@@ -324,18 +348,18 @@ class StudentAccessDTO:
     """
     adult_user_id: int
     student_id: int
-
     can_view: bool
     can_manage_extra_classes: bool
     is_family_admin: bool
-                    
+
+
 @dataclass
 class ActionResponseDTO:
-    """ DTO для ответа на действие (например, создание семьи, обновление профиля и т.п.). 
-    """
+    """ DTO для ответа на действие (например, создание семьи, обновление профиля и т.п.). """
     success: bool
     error_code: Optional[str] = None
     data: Optional[Any] = None
+
 
 @dataclass
 class ProfileResetImpactDTO:
@@ -348,25 +372,22 @@ class ProfileResetImpactDTO:
     role: Optional[str]
     family_id: Optional[int]
     is_family_admin: bool
-
     family_members_count: int = 0
     children_count: int = 0
     extra_classes_count: int = 0
-    
+
+
 @dataclass
 class UserProfileDTO:
     """DTO личного профиля пользователя."""
-
     user_id: int
     role: Optional[str]
     is_fully_registered: bool
-
     name: Optional[str] = None
     family_id: Optional[int] = None
     class_id: Optional[str] = None
     group_id: Optional[str] = None
     teacher_id: Optional[str] = None
-
     morning_summary_time: Optional[str] = None
     pre_lesson_offset_minutes: int = 10
     receive_schedule_changes: bool = True
@@ -376,12 +397,13 @@ class UserProfileDTO:
     is_notifications_enabled: bool = True
     global_extra_reminder: int = 30
 
-    
+
 @dataclass
 class AdminStatsDTO:
     """ DTO для статистики по пользователям. """
     total_users: int
     role_distribution: Dict[str, int]
+
 
 @dataclass
 class NikaSourceHealthDTO:
@@ -392,30 +414,33 @@ class NikaSourceHealthDTO:
     она показывает только уже сохранённый state.
     """
     status: str
-
     lesson_count: int = 0
-
     today_date: str | None = None
-
     coverage_start_date: str | None = None
     coverage_end_date: str | None = None
-
     coverage_is_current: bool = False
     coverage_has_future: bool = False
-
     js_filename: str | None = None
     export_date: str | None = None
     export_time: str | None = None
-
     last_checked_at: str | None = None
     last_changed_at: str | None = None
-
     last_error: str | None = None
     last_error_at: str | None = None
-        
+
+
+# ==========================================================
+# Lesson DTO (Этап 3: расширен для original_*, group_changed, permutation)
+# ==========================================================
+
+
 @dataclass
 class LessonDTO:
-    """ DTO для одного урока. 
+    """
+    DTO для одного урока (рендерер + уведомления).
+
+    Этап 3: добавлены original_*, group_changed, day_permutation,
+    class_name, teacher_name, is_methodological.
     """
     lesson_num: int
     start_time: str
@@ -425,16 +450,72 @@ class LessonDTO:
     is_cancelled: bool
     is_exchange: bool
 
-# Возможно не нужно
+    period_id: Optional[str] = None 
+    group_id: Optional[str] = None  # ← НОВОЕ ПОЛЕ
+    group_name: Optional[str] = None
+    class_id: Optional[str] = None  # ← ДОБАВЛЕНО для consistency
+    class_name: Optional[str] = None
+    teacher_id: Optional[str] = None  # ← ДОБАВЛЕНО для consistency
+    teacher_name: Optional[str] = None
+    is_methodological: bool = False
+
+    original_subject_name: Optional[str] = None
+    original_subject_id: Optional[str] = None  # ← ДОБАВЛЕНО
+    original_teacher_name: Optional[str] = None
+    original_teacher_id: Optional[str] = None  # ← ДОБАВЛЕНО
+    original_room_name: Optional[str] = None
+    original_room_id: Optional[str] = None  # ← ДОБАВЛЕНО
+    original_group_name: Optional[str] = None
+    original_group_id: Optional[str] = None  # ← ДОБАВЛЕНО
+
+    # Флаги для UI
+    group_changed: bool = False          # группа изменилась при замене
+    day_permutation: bool = False        # день — перестановка (🔁)
+    display_num: Optional[str] = None  #  номер урока 2 смены
+
+
+# ==========================================================
+# DayScheduleDTO (Union: LessonDTO | Dict)
+# ==========================================================
+
+
 @dataclass
 class DayScheduleDTO:
     """
     DTO для расписания на один день.
-    """
-    date_iso: str  # YYYY-MM-DD
-    lessons: List[Dict[str, Any]] = field(default_factory=list)
 
-# для недельной сводки
+    lessons: List[Union[LessonDTO, Dict]] — school lessons (LessonDTO)
+    + extra lessons (Dict из extra_classes). Extra lessons имеют
+    is_extra=True, что позволяет рендереру отличать их.
+    """
+    date_iso: str
+    lessons: List[Union[LessonDTO, Dict[str, Any]]] = field(default_factory=list)
+    has_permutation: bool = False
+
+
+# ==========================================================
+# DayChangesDetailDTO (только LessonDTO)
+# ==========================================================
+
+
+@dataclass
+class DayChangesDetailDTO:
+    """
+    Детализация изменений «было → стало」на день.
+
+    lessons: List[LessonDTO] — только school lessons с
+    is_exchange/is_cancelled (extra lessons не имеют замен).
+    """
+    date_iso: str
+    origin: Literal["class", "teacher"]
+    lessons: List[LessonDTO] = field(default_factory=list)
+
+
+
+# ==========================================================
+# Недельные DTO (без изменений, оставлены для совместимости)
+# ==========================================================
+
 
 @dataclass
 class DaySummaryDTO:
@@ -444,18 +525,195 @@ class DaySummaryDTO:
     extra_count: int
     exchange_count: int
 
+
 @dataclass
 class WeekSummaryDTO:
     """ DTO для сводки по неделе. """
     week_start_iso: str
     days: List[DaySummaryDTO]
 
+
 @dataclass
 class FullWeekScheduleDTO:
     """ DTO для полного расписания на неделю. """
     week_start_iso: str
     days: List['DayScheduleDTO']
-    
+
+
+# ==========================================================
+# Notification DTO (Этап 3: расширен для original_*, group_changed)
+# ==========================================================
+
+
+@dataclass
+class LessonReminderDTO:
+    """
+    Напоминание об уроке или дополнительном занятии.
+
+    child_name заполняется только для взрослого получателя.
+    Для ребёнка оно остаётся None, потому что сообщение относится к нему самому.
+    """
+    subject_name: str
+    start_time: str
+    room_name: str
+    is_extra: bool = False
+    child_name: Optional[str] = None
+
+
+@dataclass
+class ChangeReminderDTO:
+    """
+    Уведомление о замене или отмене урока.
+
+    Этап 3: добавлены original_*, new_* для детализации
+    «Математика → Ин.яз (204→318)」или «Группа 1 → Группа 2」.
+
+    child_name задан только для взрослого получателя.
+    Для ребёнка остаётся None.
+    """
+    date: str
+    lesson_num: int
+    subject_name: str
+    is_cancelled: bool
+
+    # NEW Этап 3:
+    original_subject_name: Optional[str] = None
+    new_subject_name: Optional[str] = None
+    original_room_name: Optional[str] = None
+    new_room_name: Optional[str] = None
+    original_group_name: Optional[str] = None
+    new_group_name: Optional[str] = None
+    group_changed: bool = False
+
+    child_name: Optional[str] = None
+    watch_target_title: Optional[str] = None
+
+
+@dataclass
+class MorningLessonDTO:
+    """
+    Урок для утренней сводки.
+
+    Этап 3: добавлены original_*, group_changed, day_permutation.
+    """
+    lesson_num: Optional[int]
+    start_time: str
+    end_time: str
+    subject_name: str
+    room_name: str
+    is_cancelled: bool
+    is_exchange: bool
+    is_extra: bool = False
+    group_name: Optional[str] = None
+
+    # NEW Этап 3:
+    original_subject_name: Optional[str] = None
+    original_room_name: Optional[str] = None
+    group_changed: bool = False
+    day_permutation: bool = False
+
+
+@dataclass
+class MorningSummaryDTO:
+    """
+    Утренняя сводка расписания одного ребёнка.
+
+    Этап 3: добавлено has_permutation: bool.
+
+    Для ребёнка-получателя child_name остаётся None.
+    Для взрослого получателя child_name содержит имя ребёнка.
+    """
+    date_iso: str
+    lessons: List[MorningLessonDTO]
+    child_name: Optional[str] = None
+    class_id: Optional[str] = None
+    has_permutation: bool = False
+
+
+# ==========================================================
+# Доп. занятия (без изменений, оставлены для совместимости)
+# ==========================================================
+
+
+@dataclass
+class ExtraClassDTO:
+    id: int
+    family_id: int | None
+    student_id: int
+    day_of_week: int
+    time_start: str
+    time_end: str
+    title: str
+    location: str | None
+    reminder_minutes: int
+    created_at: str | None = None
+    updated_at: str | None = None
+
+
+@dataclass
+class ExtraClassItemDTO:
+    """ DTO для одного доп. занятия ребёнка. """
+    id: int
+    day_of_week: int
+    time_start: str
+    time_end: str
+    title: str
+    location: Optional[str]
+    reminder_minutes: int
+
+
+@dataclass
+class ExtraClassListDTO:
+    """ DTO для списка доп. занятий ребёнка. """
+    items: List[ExtraClassItemDTO]
+
+
+@dataclass
+class TeacherListDTO:
+    """ DTO для списка учителей. """
+    teachers: Dict[str, str]  # id -> name
+
+
+@dataclass
+class FamilyMemberDTO:
+    """ DTO для одного члена семьи. """
+    user_id: int
+    name: str
+    role: str
+    class_id: Optional[str] = None
+
+
+@dataclass
+class ExtraClassesAccessDTO:
+    """
+    Права инициатора на дополнительные занятия конкретного student profile.
+
+    can_view:
+    Инициатор может видеть занятия ученика.
+
+    can_manage:
+    Инициатор может создавать, изменять и удалять занятия ученика.
+    """
+    actor_user_id: int
+    target_student_id: int
+    can_view: bool
+    can_manage: bool
+
+
+@dataclass
+class AdultStudentExtraClassesPermissionDTO:
+    """
+    Право взрослого управлять дополнительными занятиями
+    конкретного student profile.
+
+    Family admin не обязан присутствовать в этом списке,
+    потому что его право является implicit и всегда равно True.
+    """
+    adult_user_id: int
+    adult_name: str
+    adult_role: str
+    student_id: int
+    can_manage_extra_classes: bool
 
 
 @dataclass
@@ -473,18 +731,16 @@ class ParentStudentNotificationSettingsDTO:
     """
     parent_user_id: int
     student_id: int
-
     student_name: str
     student_class_id: str
     student_group_id: str
     telegram_user_id: int | None = None
-
     receive_morning_summary: bool = True
     receive_pre_lesson_reminders: bool = True
     receive_schedule_changes: bool = True
     receive_extra_class_reminders: bool = True
-
     can_manage_extra_classes: bool = False
+
 
 @dataclass
 class StudentTelegramSettingsDTO:
@@ -499,168 +755,13 @@ class StudentTelegramSettingsDTO:
     """
     student_id: int
     telegram_user_id: int
-
     student_name: str
     class_id: str
     group_id: str
-
     is_notifications_enabled: bool = True
-
     morning_summary_time: str | None = None
     pre_lesson_offset_minutes: int = 10
-
     receive_schedule_changes: bool = True
     receive_extra_class_reminders: bool = True
-
     can_manage_own_extra_classes: bool = True
-
     child_notification_settings_locked: bool = False
-            
-
-# Доп задания
-
-@dataclass
-class ExtraClassDTO:
-    id: int
-
-    family_id: int | None
-    student_id: int
-
-    day_of_week: int
-    time_start: str
-    time_end: str
-    title: str
-    location: str | None
-    reminder_minutes: int
-
-    created_at: str | None = None
-    updated_at: str | None = None
-    
-@dataclass
-class ExtraClassItemDTO:
-    """ 
-    DTO для одного доп. занятия ребёнка.
-    """
-    id: int
-    day_of_week: int
-    time_start: str
-    time_end: str
-    title: str
-    location: Optional[str]
-    reminder_minutes: int  # <-- НОВОЕ ПОЛЕ
-
-@dataclass
-class ExtraClassListDTO:
-    """ DTO для списка доп. занятий ребёнка.
-    """
-    items: List[ExtraClassItemDTO]
-    
-    
-@dataclass
-class TeacherListDTO:
-    """
-    DTO для списка учителей.
-    """
-    teachers: Dict[str, str]  # id -> name
-    
-@dataclass
-class FamilyMemberDTO:
-    """ DTO для одного члена семьи. 
-    """
-    user_id: int
-    name: str
-    role: str
-    class_id: Optional[str] = None
-
-@dataclass
-class ExtraClassesAccessDTO:
-    """
-    Права инициатора на дополнительные занятия конкретного student profile.
-
-    can_view:
-    Инициатор может видеть занятия ученика.
-
-    can_manage:
-    Инициатор может создавать, изменять и удалять занятия ученика.
-    """
-    actor_user_id: int
-    target_student_id: int
-
-    can_view: bool
-    can_manage: bool
-
-
-@dataclass
-class AdultStudentExtraClassesPermissionDTO:
-    """
-    Право взрослого управлять дополнительными занятиями
-    конкретного student profile.
-
-    Family admin не обязан присутствовать в этом списке,
-    потому что его право является implicit и всегда равно True.
-    """
-    adult_user_id: int
-    adult_name: str
-    adult_role: str
-
-    student_id: int
-
-    can_manage_extra_classes: bool
-                
-# Уведомления
-
-@dataclass
-class LessonReminderDTO:
-    """
-    Напоминание об уроке или дополнительном занятии.
-
-    child_name заполняется только для взрослого получателя.
-    Для ребёнка оно остаётся None, потому что сообщение относится к нему самому.
-    """
-    subject_name: str
-    start_time: str
-    room_name: str
-    is_extra: bool = False
-    child_name: Optional[str] = None
-    
-
-@dataclass
-class ChangeReminderDTO:
-    """
-    Уведомление о замене или отмене урока.
-
-    child_name задан только для взрослого получателя.
-    Для ребёнка остаётся None.
-    """
-    date: str
-    lesson_num: int
-    subject_name: str
-    is_cancelled: bool
-    child_name: Optional[str] = None
-    watch_target_title: Optional[str] = None
-
-@dataclass
-class MorningLessonDTO:
-    lesson_num: Optional[int]
-    start_time: str
-    end_time: str
-    subject_name: str
-    room_name: str
-    is_cancelled: bool
-    is_exchange: bool
-    is_extra: bool = False
-    group_name: Optional[str] = None
-
-@dataclass
-class MorningSummaryDTO:
-    """
-    Утренняя сводка расписания одного ребёнка.
-
-    Для ребёнка-получателя child_name остаётся None.
-    Для взрослого получателя child_name содержит имя ребёнка.
-    """
-    date_iso: str
-    lessons: List[MorningLessonDTO]
-    child_name: Optional[str] = None
-    class_id: Optional[str] = None
-    

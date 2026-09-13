@@ -1,4 +1,4 @@
-# database/db.py — СХЕМА v4
+# database/db.py — СХЕМА v5
 #
 # ЧТО НОВОГО В v4:
 #
@@ -26,7 +26,7 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 
 class Database:
@@ -125,29 +125,6 @@ class Database:
                     FOREIGN KEY (family_id) REFERENCES families(id)
                 )
             """)
-
-            # ==========================================================
-            # МИГРАЦИЯ v4: notifications_blocked для существующих БД.
-            # CREATE TABLE IF NOT EXISTS не трогает уже созданные таблицы,
-            # поэтому колонку добавляем вручную, если её нет.
-            # ==========================================================
-            info_cursor = await db.execute("PRAGMA table_info(users)")
-            existing_columns = {
-                row[1]
-                for row in await info_cursor.fetchall()
-            }
-            if "notifications_blocked" not in existing_columns:
-                await db.execute(
-                    """
-                    ALTER TABLE users
-                    ADD COLUMN notifications_blocked INTEGER NOT NULL
-                        DEFAULT 0
-                        CHECK (notifications_blocked IN (0, 1))
-                    """
-                )
-                logger.info(
-                    "Migration v4: column users.notifications_blocked added."
-                )
 
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS student_profiles (
@@ -381,6 +358,7 @@ class Database:
                     date TEXT NOT NULL,
                     period_id TEXT NOT NULL,
                     class_id TEXT NOT NULL,
+                    class_name TEXT,
                     lesson_num INTEGER NOT NULL,
                     group_id TEXT NOT NULL,
                     group_name TEXT,
@@ -390,12 +368,26 @@ class Database:
                     teacher_name TEXT,
                     room_id TEXT,
                     room_name TEXT,
+                    original_subject_id TEXT,
+                    original_subject_name TEXT,
+                    original_teacher_id TEXT,
+                    original_teacher_name TEXT,
+                    original_room_id TEXT,
+                    original_room_name TEXT,
+                    original_class_id TEXT,
+                    original_class_name TEXT,
+                    original_group_id TEXT,
+                    original_group_name TEXT,
                     start_time TEXT,
                     end_time TEXT,
+                    origin TEXT NOT NULL DEFAULT 'class',
+                    weekday INTEGER,
                     is_exchange INTEGER NOT NULL DEFAULT 0
                         CHECK (is_exchange IN (0, 1)),
                     is_cancelled INTEGER NOT NULL DEFAULT 0
                         CHECK (is_cancelled IN (0, 1)),
+                    is_methodological INTEGER NOT NULL DEFAULT 0
+                        CHECK (is_methodological IN (0, 1)),
                     created_at TEXT NOT NULL
                 )
             """)
@@ -440,22 +432,36 @@ class Database:
                 CREATE INDEX IF NOT EXISTS idx_notification_delivery_log_date
                 ON notification_delivery_log(notification_date)
             """)
+            
+            # Обновленные индексы с учетом origin
             await db.execute("""
-                CREATE INDEX IF NOT EXISTS idx_schedule_date_class
-                ON schedule_cache(date, class_id)
+                CREATE INDEX IF NOT EXISTS idx_schedule_class_day_origin
+                ON schedule_cache(date, class_id, origin)
             """)
             await db.execute("""
-                CREATE INDEX IF NOT EXISTS idx_schedule_date_teacher
-                ON schedule_cache(date, teacher_id)
+                CREATE INDEX IF NOT EXISTS idx_schedule_teacher_day_origin
+                ON schedule_cache(date, teacher_id, origin)
             """)
-
-            # Частичный индекс под get_pending_changes (RAM-бомба).
+            
+            # Индекс для оптимизации поиска свободных кабинетов
+            await db.execute("""
+                CREATE INDEX IF NOT EXISTS idx_schedule_date_room
+                ON schedule_cache(date, room_id)
+            """)
+            
+            # Индекс для поиска по оригинальной группе
+            await db.execute("""
+                CREATE INDEX IF NOT EXISTS idx_schedule_original_group
+                ON schedule_cache(original_group_id)
+                WHERE original_group_id IS NOT NULL
+            """)
+            
+            # Обновленный частичный индекс под get_pending_changes
             await db.execute("""
                 CREATE INDEX IF NOT EXISTS idx_schedule_pending_changes
                 ON schedule_cache(date, class_id)
-                WHERE is_exchange = 1 OR is_cancelled = 1
+                WHERE (is_exchange = 1 OR is_cancelled = 1) AND origin = 'class'
             """)
-
             await db.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
 
             await db.commit()

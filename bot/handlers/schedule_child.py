@@ -20,7 +20,7 @@ from bot.callbacks import (
     ScheduleFullWeekCD,
     ScheduleTargetCD,
     ScheduleWatchCD,
-    ScheduleWeekCD,
+    ScheduleWeekCD, DayChangesCD
 )
 from bot.keyboards.keyboard import Keyboards
 from bot.utils.ui_renderer import UIRenderer
@@ -264,7 +264,13 @@ async def _render_day(
             f"👤 {UIRenderer.escape_html(target.title)}\n\n"
             f"{text}"
         )
-
+    # ← НОВОЕ: определяем, есть ли изменения
+    has_changes = any(
+        UIRenderer._get_field(l, "is_exchange", False)
+        or UIRenderer._get_field(l, "is_cancelled", False)
+        for l in day_dto.lessons
+    )
+    
     available_targets = await _get_schedule_targets(
         actor_user_id=actor_user_id,
         profile_service=profile_service,
@@ -274,6 +280,12 @@ async def _render_day(
     keyboard = Keyboards.get_schedule_day_kb(
         current_date_iso=date_iso,
         show_target_switch=len(available_targets) > 1,
+        has_changes=has_changes,  # ← ПЕРЕДАЁМ
+        target_kind=target.kind,
+        target_id=target.target_id,
+        class_id=target.class_id,
+        group_id=target.group_id,
+        origin="class",
     )
     return text, keyboard
 
@@ -922,3 +934,46 @@ async def show_full_schedule_week(
 
     await callback.answer()
 
+# ==========================================================
+# ХЕНДЛЕР «🔄 ИЗМЕНЕНИЯ」
+# ==========================================================
+
+
+@router.callback_query(DayChangesCD.filter())
+async def show_day_changes(
+    callback: CallbackQuery,
+    callback_data: DayChangesCD,
+    schedule_service: ScheduleService,
+) -> None:
+    """
+    Показывает детали изменений «было → стало» на день.
+    """
+    try:
+        detail = await schedule_service.get_day_changes_detail(
+            class_id=(
+                callback_data.class_id
+                if callback_data.origin == "class"
+                else None
+            ),
+            teacher_id=(
+                callback_data.target_id
+                if callback_data.origin == "teacher"
+                else None
+            ),
+            date_iso=callback_data.date_iso,
+            origin=callback_data.origin,  # "class" | "teacher"
+        )
+
+        text, _ = UIRenderer.render_day_changes_detail(detail)
+
+        # Делегируем создание клавиатуры слою Keyboards
+        kb = Keyboards.get_day_changes_back_kb(callback_data)
+
+        # Используем edit_text для бесшовного обновления экрана
+        await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+        await callback.answer()
+
+    except Exception as e:
+        logger.exception("Error showing day changes: %s", e)
+        # Если произошла ошибка, выводим всплывающее окно (alert), не ломая текущее расписание
+        await callback.answer("❌ Не удалось загрузить изменения. Попробуйте позже.", show_alert=True)

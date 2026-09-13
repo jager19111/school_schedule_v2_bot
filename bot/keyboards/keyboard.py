@@ -233,15 +233,55 @@ class Keyboards:
         return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text='🔕 Выключить сводку', callback_data=callbacks.StudentTelegramSummaryOffCD(student_id=student_id).pack())], [InlineKeyboardButton(text='⬅️ Отмена', callback_data=callbacks.StudentTelegramSettingsCD(student_id=student_id).pack())]])
 
     @staticmethod
-    def get_schedule_day_kb(current_date_iso: str, *, show_target_switch: bool) -> InlineKeyboardMarkup:
+    def get_schedule_day_kb(
+        current_date_iso: str, 
+        *, 
+        show_target_switch: bool = False,
+        has_changes: bool = False,
+        target_kind: str | None = None,
+        target_id: int | str | None = None,
+        class_id: str | None = None,
+        group_id: str | None = None,
+        origin: str = "class"
+    ) -> InlineKeyboardMarkup:
         """Навигация дневного расписания в Schedule Hub."""
         current_date = datetime.fromisoformat(current_date_iso).date()
         previous_date = (current_date - timedelta(days=1)).isoformat()
         next_date = (current_date + timedelta(days=1)).isoformat()
         week_start_iso = Keyboards._week_start_for_date(current_date_iso)
-        buttons = [[InlineKeyboardButton(text='⬅️ Предыдущий', callback_data=callbacks.ScheduleDayCD(date_iso=previous_date).pack()), InlineKeyboardButton(text='Следующий ➡️', callback_data=callbacks.ScheduleDayCD(date_iso=next_date).pack())], [InlineKeyboardButton(text='📆 Показать неделю', callback_data=callbacks.ScheduleWeekCD(week_start_iso=week_start_iso).pack())]]
+        
+        buttons = [
+            [
+                InlineKeyboardButton(text='⬅️ Предыдущий', callback_data=callbacks.ScheduleDayCD(date_iso=previous_date).pack()), 
+                InlineKeyboardButton(text='Следующий ➡️', callback_data=callbacks.ScheduleDayCD(date_iso=next_date).pack())
+            ], 
+            [
+                InlineKeyboardButton(text='📆 Показать неделю', callback_data=callbacks.ScheduleWeekCD(week_start_iso=week_start_iso).pack())
+            ]
+        ]
+        
+        # ДОБАВЛЕННЫЙ БЛОК: Кнопка «Изменения» (если есть замены/отмены)
+        if has_changes and target_kind and target_id and class_id:
+            buttons.append([
+                InlineKeyboardButton(
+                    text="🔄 Изменения",
+                    callback_data=callbacks.DayChangesCD(
+                        target_kind=target_kind,
+                        target_id=target_id,
+                        class_id=class_id,
+                        group_id=group_id or "ALL",
+                        date_iso=current_date_iso,
+                        origin=origin,
+                    ).pack(),
+                )
+            ])
+            
+        # Кнопка смены цели (всегда в самом низу)
         if show_target_switch:
-            buttons.append([InlineKeyboardButton(text='🎯 Сменить цель', callback_data=callbacks.SCHEDULE_TARGETS)])
+            buttons.append([
+                InlineKeyboardButton(text='🎯 Сменить цель', callback_data=callbacks.SCHEDULE_TARGETS)
+            ])
+            
         return InlineKeyboardMarkup(inline_keyboard=buttons)
 
     @staticmethod
@@ -288,20 +328,54 @@ class Keyboards:
         return InlineKeyboardMarkup(inline_keyboard=buttons)
 
     @staticmethod
-    def get_search_days_kb(target_id: str, is_teacher: bool, week_start_iso: str, is_full: bool=False) -> InlineKeyboardMarkup:
+    def get_search_days_kb(
+        target_id: str, 
+        is_teacher: bool, 
+        week_start_iso: str, 
+        is_full: bool = False,
+        *,
+        has_changes: bool = False,
+        date_iso: str | None = None
+    ) -> InlineKeyboardMarkup:
         start_date = datetime.fromisoformat(week_start_iso).date()
         days = []
         for i in range(6):
             day_date_obj = start_date + timedelta(days=i)
             day_date_iso = day_date_obj.isoformat()
             day_name = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'][i]
-            btn_text = f'{day_name} {day_date_obj.strftime('%d.%m')}'
+            btn_text = f"{day_name} {day_date_obj.strftime('%d.%m')}"
+            
             if is_teacher:
                 day_cb = callbacks.SearchTeacherDayCD(teacher_id=target_id, date_iso=day_date_iso).pack()
             else:
                 day_cb = callbacks.SearchClassDayCD(class_id=target_id, date_iso=day_date_iso).pack()
             days.append(InlineKeyboardButton(text=btn_text, callback_data=day_cb))
+            
         buttons = [days[0:3], days[3:6]]
+        
+        # --- ДОБАВЛЕННЫЙ БЛОК: Кнопка «Изменения» ---
+        if has_changes and date_iso:
+            if is_teacher:
+                chg_cb = callbacks.DayChangesCD(
+                    target_kind="teacher",
+                    target_id=target_id,
+                    class_id="",
+                    group_id="ALL",
+                    date_iso=date_iso,
+                    origin="teacher",
+                ).pack()
+            else:
+                chg_cb = callbacks.DayChangesCD(
+                    target_kind="class",
+                    target_id=target_id,
+                    class_id=target_id,
+                    group_id="ALL",
+                    date_iso=date_iso,
+                    origin="class",
+                ).pack()
+            buttons.append([InlineKeyboardButton(text="🔄 Изменения", callback_data=chg_cb)])
+        # ---------------------------------------------
+        
         if not is_full:
             if is_teacher:
                 fw_cb = callbacks.SearchTeacherFullWeekCD(teacher_id=target_id, week_start_iso=week_start_iso).pack()
@@ -314,17 +388,22 @@ class Keyboards:
             else:
                 w_cb = callbacks.SearchClassWeekCD(class_id=target_id, week_start_iso=week_start_iso).pack()
             buttons.append([InlineKeyboardButton(text='🗓 По дням', callback_data=w_cb)])
+            
         prev_week = (start_date - timedelta(days=7)).isoformat()
         next_week = (start_date + timedelta(days=7)).isoformat()
+        
         if is_teacher:
             prev_cb = callbacks.SearchTeacherWeekCD(teacher_id=target_id, week_start_iso=prev_week).pack()
             next_cb = callbacks.SearchTeacherWeekCD(teacher_id=target_id, week_start_iso=next_week).pack()
         else:
             prev_cb = callbacks.SearchClassWeekCD(class_id=target_id, week_start_iso=prev_week).pack()
             next_cb = callbacks.SearchClassWeekCD(class_id=target_id, week_start_iso=next_week).pack()
+            
         buttons.append([InlineKeyboardButton(text='⬅️ Пред. нед', callback_data=prev_cb), InlineKeyboardButton(text='След. нед ➡️', callback_data=next_cb)])
+        
         back_cb = callbacks.SEARCH_TEACHERS if is_teacher else callbacks.SEARCH_CLASSES
         buttons.append([InlineKeyboardButton(text='⬅️ Назад к списку', callback_data=back_cb)])
+        
         return InlineKeyboardMarkup(inline_keyboard=buttons)
 
     @staticmethod
@@ -787,13 +866,50 @@ class Keyboards:
         return InlineKeyboardMarkup(inline_keyboard=buttons)
 
     @staticmethod
-    def get_teacher_schedule_day_kb(*, current_date_iso: str) -> InlineKeyboardMarkup:
+    def get_teacher_schedule_day_kb(
+        *, 
+        current_date_iso: str, 
+        teacher_id: str, 
+        has_changes: bool = False
+    ) -> InlineKeyboardMarkup:
         current_date = datetime.fromisoformat(current_date_iso).date()
         previous_date = (current_date - timedelta(days=1)).isoformat()
         next_date = (current_date + timedelta(days=1)).isoformat()
         week_start = (current_date - timedelta(days=current_date.isoweekday() - 1)).isoformat()
-        return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text='⬅️ Предыдущий', callback_data=callbacks.TeacherScheduleDayCD(date_iso=previous_date).pack()), InlineKeyboardButton(text='Следующий ➡️', callback_data=callbacks.TeacherScheduleDayCD(date_iso=next_date).pack())], [InlineKeyboardButton(text='📆 Показать неделю', callback_data=callbacks.TeacherScheduleWeekCD(week_start_iso=week_start).pack())], [InlineKeyboardButton(text='📅 К ближайшему дню', callback_data=callbacks.TEACHER_SCHEDULE_SMART_DAY)], [InlineKeyboardButton(text='⚙️ Настройки', callback_data=callbacks.SETTINGS_MAIN)]])
-
+        
+        buttons = [
+            [
+                InlineKeyboardButton(text='⬅️ Предыдущий', callback_data=callbacks.TeacherScheduleDayCD(date_iso=previous_date).pack()), 
+                InlineKeyboardButton(text='Следующий ➡️', callback_data=callbacks.TeacherScheduleDayCD(date_iso=next_date).pack())
+            ], 
+            [
+                InlineKeyboardButton(text='📆 Показать неделю', callback_data=callbacks.TeacherScheduleWeekCD(week_start_iso=week_start).pack())
+            ]
+        ]
+        
+        # --- ДОБАВЛЕННЫЙ БЛОК: Кнопка «Изменения» ---
+        if has_changes:
+            buttons.append([
+                InlineKeyboardButton(
+                    text="🔄 Изменения", 
+                    callback_data=callbacks.DayChangesCD(
+                        target_kind="teacher",
+                        target_id=teacher_id,
+                        class_id="",
+                        group_id="ALL",
+                        date_iso=current_date_iso,
+                        origin="teacher"
+                    ).pack()
+                )
+            ])
+        # ---------------------------------------------
+            
+        buttons.extend([
+            [InlineKeyboardButton(text='📅 К ближайшему дню', callback_data=callbacks.TEACHER_SCHEDULE_SMART_DAY)], 
+            [InlineKeyboardButton(text='⚙️ Настройки', callback_data=callbacks.SETTINGS_MAIN)]
+        ])
+        
+        return InlineKeyboardMarkup(inline_keyboard=buttons)
     @staticmethod
     def get_teacher_schedule_week_kb(*, week_start_iso: str, is_full: bool=False) -> InlineKeyboardMarkup:
         week_start = datetime.fromisoformat(week_start_iso).date()
@@ -828,3 +944,28 @@ class Keyboards:
             buttons.append(row)
         buttons.append([InlineKeyboardButton(text='⬅️ К настройкам', callback_data=callbacks.SETTINGS_MAIN)])
         return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+    @staticmethod
+    def get_day_changes_back_kb(changes_data: 'callbacks.DayChangesCD') -> InlineKeyboardMarkup:
+        """
+        Формирует кнопку возврата из просмотра изменений обратно в расписание.
+        Умно маршрутизирует возврат в зависимости от источника запроса.
+        """
+        if changes_data.target_kind == "teacher":
+            # Возврат в личное расписание учителя
+            back_cb = callbacks.TeacherScheduleDayCD(date_iso=changes_data.date_iso).pack()
+            
+        elif changes_data.target_kind == "class":
+            # Возврат в поиск по школе (конкретный класс)
+            back_cb = callbacks.SearchClassDayCD(
+                class_id=changes_data.class_id, 
+                date_iso=changes_data.date_iso
+            ).pack()
+            
+        else:
+            # "student" или "watch" — возврат в основной Schedule Hub
+            back_cb = callbacks.ScheduleDayCD(date_iso=changes_data.date_iso).pack()
+
+        return InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="◀️ Назад к расписанию", callback_data=back_cb)]
+        ])
