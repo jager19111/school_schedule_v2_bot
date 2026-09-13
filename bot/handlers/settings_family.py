@@ -265,9 +265,7 @@ async def revoke_family_invite(
         "Приглашение отозвано.",
     )
     
-@router.callback_query(
-    FamilyInviteRevokeCD.filter()
-)         
+@router.callback_query(FamilyInviteRevokeCD.filter())         
 async def confirm_family_invite_revoke(
     callback: CallbackQuery,
     callback_data: FamilyInviteRevokeCD,

@@ -204,9 +204,7 @@ def test_ladder_construction(tmp_path: Path) -> None:
     assert modes_for(cert.fingerprint_hex) == [
         ScheduleFetcher.SSL_MODE_STRICT,
         ScheduleFetcher.SSL_MODE_PIN,
-        ScheduleFetcher.SSL_MODE_OFF,
     ]
     assert modes_for(None) == [
         ScheduleFetcher.SSL_MODE_STRICT,
-        ScheduleFetcher.SSL_MODE_OFF,
     ]

@@ -16,7 +16,6 @@
 # `:` зарезервирован aiogram как разделитель и НИКОГДА не содержится
 # внутри prefix.
 
-from __future__ import annotations
 
 from aiogram.filters.callback_data import CallbackData
 
@@ -135,11 +134,11 @@ class FamilyInviteDetailsCD(CallbackData, prefix="fiv"):
     invite_id: int
 
 
-class FamilyInviteRevokeCD(CallbackData, prefix="fr"):
+class FamilyInviteRevokeCD(CallbackData, prefix="f_rev"):
     invite_id: int
 
 
-class FamilyInviteRevokeConfirmCD(CallbackData, prefix="frc"):
+class FamilyInviteRevokeConfirmCD(CallbackData, prefix="f_cfm"):
     invite_id: int
 
 
