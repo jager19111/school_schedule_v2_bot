@@ -7,12 +7,49 @@
 
 import json
 import re
-from datetime import datetime, timedelta
+import urllib.request
+import ssl
 from collections import defaultdict
-from pathlib import Path
 
-# === КОНФИГ ===
-NIKA_FILE = 'nika_data_01092026_105439.txt'
+BASE_URL = "https://lyceum.nstu.ru/rasp"
+
+def fetch_nika_from_web():
+    """Самостоятельно находит и скачивает свежий дамп расписания с сайта."""
+    
+    # Отключаем строгую проверку SSL (для обхода частых проблем с сертификатами лицея)
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) SchoolParser/Test'}
+
+    # 1. Загружаем HTML-страницу расписания
+    print(f"🌐 Запрашиваем {BASE_URL}/schedule.html...")
+    req = urllib.request.Request(f"{BASE_URL}/schedule.html", headers=headers)
+    with urllib.request.urlopen(req, context=ctx) as response:
+        html = response.read().decode('utf-8')
+
+    # 2. Ищем в HTML ссылку на актуальный файл nika_data_*.js
+    match = re.search(r'src=["\']([^"\']*nika_data_[^"\']+\.js)["\']', html)
+    if not match:
+        raise ValueError("Не удалось найти ссылку на nika_data_*.js на странице!")
+    
+    js_filename = match.group(1).split('/')[-1]
+    js_url = f"{BASE_URL}/{js_filename}"
+    print(f"🔗 Найден свежий дамп: {js_filename}")
+    
+    # 3. Скачиваем сам JS-файл
+    print(f"📥 Скачиваем данные ({js_url})...")
+    req_js = urllib.request.Request(js_url, headers=headers)
+    with urllib.request.urlopen(req_js, context=ctx) as response:
+        content = response.read().decode('utf-8')
+
+    # 4. Вырезаем чистый JSON из JS-кода
+    json_match = re.search(r'var\s+NIKA\s*=\s*(\{.*\});', content, re.DOTALL)
+    if not json_match:
+        raise ValueError("Не удалось извлечь JSON из скачанного файла!")
+        
+    return json.loads(json_match.group(1))
 
 def load_nika(filepath):
     """Загружает NIKA из JS-файла"""
@@ -170,58 +207,50 @@ def print_teacher_schedule(schedule, teachers):
 
 def main():
     print("="*70)
-    print("📚 МИНИМАЛЬНЫЙ РАБОЧИЙ ПАРСЕР РАСПИСАНИЯ УЧИТЕЛЕЙ")
+    print("📚 ОНЛАЙН ПАРСЕР РАСПИСАНИЯ (САМ СКАЧИВАЕТ С САЙТА)")
     print("="*70)
     
-    # Проверяем файл
-    nika_path = Path(NIKA_FILE)
-    if not nika_path.exists():
-        print(f"\n❌ Файл {NIKA_FILE} не найден в {Path.cwd()}")
-        return
-    
-    # Загружаем
-    print(f"\n📥 Загрузка {NIKA_FILE}...")
-    nika = load_nika(NIKA_FILE)
-    print(f"✅ NIKA загружен")
-    
-    # Получаем расписание
-    print("\n⚙️  Построение расписания...")
-    teachers = nika.get('TEACHERS', {})
-    schedule = get_teacher_week_schedule(nika)
-    
-    # Статистика
-    teachers_with_lessons = sum(1 for t in schedule.values() if t['lessons'])
-    total_lessons = sum(len(t['lessons']) for t in schedule.values())
-    
-    print(f"\n📊 Статистика:")
-    print(f"   Всего учителей: {len(teachers)}")
-    print(f"   Учителей с уроками: {teachers_with_lessons}")
-    print(f"   Всего уроков: {total_lessons}")
-    
-    # Выводим расписание для первых 5 учителей
-    print_teacher_schedule(
-        {k: v for k, v in list(schedule.items())[:5]},
-        teachers
-    )
-    
-    # Пример: расписание конкретного учителя
-    print("\n\n" + "="*70)
-    print("🔍 ПРИМЕР: Расписание первого учителя с уроками")
-    print("="*70)
-    
-    for tid, data in schedule.items():
-        if data['lessons']:
-            print(f"\n👨‍🏫 {data['name']} ({tid}):")
-            for lesson in data['lessons'][:10]:  # первые 10 уроков
-                day_names = ["", "Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
-                group_info = f" (группа {lesson['group']})" if lesson.get('group') else ""
-                print(f"  {day_names[lesson['day']]}, урок {lesson['lesson_num']:2d}: "
-                      f"{lesson['subject']} в {lesson['class']} ({lesson['room']}){group_info}")
-            break
-    
-    print("\n" + "="*70)
-    print("✅ ГОТОВО")
-    print("="*70)
+    try:
+        # Вызываем загрузку с сайта вместо чтения локального файла
+        nika = fetch_nika_from_web()
+        print("✅ NIKA успешно загружен и расшифрован\n")
+        
+        print("⚙️  Построение расписания...")
+        teachers = nika.get('TEACHERS', {})
+        schedule = get_teacher_week_schedule(nika)
+        
+        # Статистика
+        teachers_with_lessons = sum(1 for t in schedule.values() if t['lessons'])
+        total_lessons = sum(len(t['lessons']) for t in schedule.values())
+        
+        print(f"\n📊 Статистика:")
+        print(f"   Всего учителей: {len(teachers)}")
+        print(f"   Учителей с уроками: {teachers_with_lessons}")
+        print(f"   Всего уроков: {total_lessons}")
+        
+        # Выводим расписание для первых 5 учителей
+        print_teacher_schedule(
+            {k: v for k, v in list(schedule.items())[:5]},
+            teachers
+        )
+        
+        # Пример: расписание конкретного учителя
+        print("\n\n" + "="*70)
+        print("🔍 ПРИМЕР: Расписание первого учителя с уроками")
+        print("="*70)
+        
+        for tid, data in schedule.items():
+            if data['lessons']:
+                print(f"\n👨‍🏫 {data['name']} ({tid}):")
+                for lesson in data['lessons'][:10]:
+                    day_names = ["", "Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
+                    group_info = f" (группа {lesson['group']})" if lesson.get('group') else ""
+                    print(f"  {day_names[lesson['day']]}, урок {lesson['lesson_num']:2d}: "
+                          f"{lesson['subject']} в {lesson['class']} ({lesson['room']}){group_info}")
+                break
+                
+    except Exception as e:
+        print(f"\n❌ Критическая ошибка: {e}")
 
 if __name__ == '__main__':
     main()

@@ -3,20 +3,54 @@
 """
 Симуляция типичных ошибок парсера расписания учителей
 Показывает, где именно может ломаться твоя логика
+(Адаптировано для автоматической загрузки данных с сайта)
 """
 
 import json
 import re
+import urllib.request
+import ssl
 from collections import defaultdict
-from pathlib import Path
 
-NIKA_FILE = 'nika_data_01092026_105439.txt'
+BASE_URL = "https://lyceum.nstu.ru/rasp"
+_CACHED_NIKA = None  # Глобальный кэш, чтобы не качать дамп 5 раз подряд
 
 def load_nika():
-    with open(NIKA_FILE, 'r', encoding='utf-8') as f:
-        content = f.read()
-    match = re.search(r'var\s+NIKA\s*=\s*(\{.*\});', content, re.DOTALL)
-    return json.loads(match.group(1)) if match else None
+    """Самостоятельно находит и скачивает свежий дамп расписания с сайта."""
+    global _CACHED_NIKA
+    if _CACHED_NIKA is not None:
+        return _CACHED_NIKA
+        
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) SchoolParser/Test'}
+
+    print(f"🌐 Запрашиваем {BASE_URL}/schedule.html...")
+    req = urllib.request.Request(f"{BASE_URL}/schedule.html", headers=headers)
+    with urllib.request.urlopen(req, context=ctx) as response:
+        html = response.read().decode('utf-8')
+
+    match = re.search(r'src=["\']([^"\']*nika_data_[^"\']+\.js)["\']', html)
+    if not match:
+        raise ValueError("Не удалось найти ссылку на nika_data_*.js на странице!")
+    
+    js_filename = match.group(1).split('/')[-1]
+    js_url = f"{BASE_URL}/{js_filename}"
+    print(f"🔗 Найден свежий дамп: {js_filename}")
+    
+    print(f"📥 Скачиваем данные ({js_url})...")
+    req_js = urllib.request.Request(js_url, headers=headers)
+    with urllib.request.urlopen(req_js, context=ctx) as response:
+        content = response.read().decode('utf-8')
+
+    json_match = re.search(r'var\s+NIKA\s*=\s*(\{.*\});', content, re.DOTALL)
+    if not json_match:
+        raise ValueError("Не удалось извлечь JSON из скачанного файла!")
+        
+    _CACHED_NIKA = json.loads(json_match.group(1))
+    return _CACHED_NIKA
 
 def test_scenario_1_wrong_key():
     """Сценарий 1: Ожидание TEACH_SCHEDULE вместо CLASS_SCHEDULE"""
@@ -179,27 +213,32 @@ def test_scenario_5_period_selection():
 
 def main():
     print("="*70)
-    print("🔬 СИМУЛЯЦИЯ ТИПИЧНЫХ ОШИБОК ПАРСЕРА")
+    print("🔬 СИМУЛЯЦИЯ ТИПИЧНЫХ ОШИБОК ПАРСЕРА (ОНЛАЙН)")
     print("="*70)
     
-    if not Path(NIKA_FILE).exists():
-        print(f"\n❌ Файл {NIKA_FILE} не найден!")
-        return
-    
-    test_scenario_1_wrong_key()
-    test_scenario_2_empty_teacher_arrays()
-    test_scenario_3_groups_handling()
-    test_scenario_4_lesson_key_parsing()
-    test_scenario_5_period_selection()
-    
-    print("\n" + "="*70)
-    print("✅ СИМУЛЯЦИЯ ЗАВЕРШЕНА")
-    print("="*70)
-    print("\n📋 Следующие шаги:")
-    print("   1. Запусти debug_nika_teachers.py для общей диагностики")
-    print("   2. Запусти test_teacher_schedule.py для построения расписания")
-    print("   3. Сравни вывод с тем, что ожидает твой парсер")
-    print("   4. Проверь PARSER_CHECKLIST.md")
+    try:
+        # Вызываем загрузку данных перед стартами сценариев
+        # Это закеширует NIKA в _CACHED_NIKA
+        load_nika()
+        print("\n✅ Данные успешно загружены и закешированы. Начинаем тесты...\n")
+        
+        test_scenario_1_wrong_key()
+        test_scenario_2_empty_teacher_arrays()
+        test_scenario_3_groups_handling()
+        test_scenario_4_lesson_key_parsing()
+        test_scenario_5_period_selection()
+        
+        print("\n" + "="*70)
+        print("✅ СИМУЛЯЦИЯ ЗАВЕРШЕНА")
+        print("="*70)
+        print("\n📋 Следующие шаги:")
+        print("   1. Запусти debug_nika_teachers.py для общей диагностики")
+        print("   2. Запусти test_teacher_schedule.py для построения расписания")
+        print("   3. Сравни вывод с тем, что ожидает твой парсер")
+        print("   4. Проверь PARSER_CHECKLIST.md")
+        
+    except Exception as e:
+        print(f"\n❌ Критическая ошибка: {e}")
 
 if __name__ == '__main__':
     main()
