@@ -599,24 +599,29 @@ class NotificationService:
                                 f"Группа {lesson_group_id}",
                             )
 
-                        lessons_dtos.append(
-                            MorningLessonDTO(
-                                lesson_num=lesson["lesson_num"],
-                                start_time=lesson["start_time"],
-                                end_time=lesson["end_time"],
-                                subject_name=lesson["subject_name"] or "—",
-                                room_name=lesson["room_name"] or "—",
-                                is_cancelled=bool(
-                                    lesson["is_cancelled"]
-                                ),
-                                is_exchange=bool(
-                                    lesson["is_exchange"]
-                                ),
-                                is_extra=False,
-                                group_name=group_name,
-                            )
-                        )
+                        lessons_dtos.append(MorningLessonDTO(
+                            lesson_num=lesson["lesson_num"],
+                            start_time=lesson["start_time"],
+                            end_time=lesson["end_time"],
+                            subject_name=lesson["subject_name"] or "—",
+                            room_name=lesson["room_name"] or "—",
+                            is_cancelled=bool(lesson["is_cancelled"]),
+                            is_exchange=bool(lesson["is_exchange"]),
+                            group_name=group_name,
 
+                            original_subject_name=(
+                                lesson.get("original_subject_name") or None
+                            ),
+                            original_room_name=(
+                                lesson.get("original_room_name") or None
+                            ),
+                            group_changed=(
+                                bool(lesson.get("original_group_id"))
+                                and lesson.get("original_group_id")
+                                != lesson.get("group_id")
+                            ),
+                            day_permutation=False,
+                        ))
                 raw_extras = await self.extra_classes_repo.get_extra_classes_for_student(
                     student_id=target_student_id,
                     day_of_week=weekday,
@@ -672,6 +677,10 @@ class NotificationService:
                         else None
                     ),
                     class_id=class_name,
+                    has_permutation=any(
+                        lesson.day_permutation 
+                        for lesson in lessons_dtos
+                    ),
                 )
 
                 summaries_by_recipient.setdefault(
@@ -846,6 +855,29 @@ class NotificationService:
                             if recipient["recipient_kind"] == "watch"
                             else None
                         ),
+                        original_subject_name=(
+                            change.get("original_subject_name") or None
+                        ),
+                        new_subject_name=(
+                            change.get("subject_name") or None
+                        ),
+                        original_room_name=(
+                            change.get("original_room_name") or None
+                        ),
+                        new_room_name=(
+                            change.get("room_name") or None
+                        ),
+                        original_group_name=(
+                            change.get("original_group_name") or None
+                        ),
+                        new_group_name=(
+                            change.get("group_name") or None
+                        ),
+                        group_changed=(
+                            bool(change.get("original_group_id"))
+                            and change.get("original_group_id")
+                            != change.get("group_id")
+                        ),
                     )
 
                     pending.append(
@@ -896,6 +928,29 @@ class NotificationService:
                             lesson_num=change["lesson_num"],
                             subject_name=change["subject_name"] or "—",
                             is_cancelled=bool(change["is_cancelled"]),
+                                original_subject_name=(
+                            change.get("original_subject_name") or None
+                            ),
+                            new_subject_name=(
+                                change.get("subject_name") or None
+                            ),
+                            original_room_name=(
+                                change.get("original_room_name") or None
+                            ),
+                            new_room_name=(
+                                change.get("room_name") or None
+                            ),
+                            original_group_name=(
+                                change.get("original_group_name") or None
+                            ),
+                            new_group_name=(
+                                change.get("group_name") or None
+                            ),
+                            group_changed=(
+                                bool(change.get("original_group_id"))
+                                and change.get("original_group_id")
+                                != change.get("group_id")
+                            ),
                             child_name=None,
                             watch_target_title=None,
                         )
@@ -1345,18 +1400,25 @@ class NotificationService:
                             lesson_num=lesson.get("lesson_num"),
                             start_time=lesson.get("start_time") or "—",
                             end_time=lesson.get("end_time") or "—",
-                            subject_name=(
-                                lesson.get("subject_name") or "—"
-                            ),
+                            subject_name=(lesson.get("subject_name") or "—"),
                             room_name=room_name,
-                            is_cancelled=bool(
-                                lesson.get("is_cancelled")
-                            ),
-                            is_exchange=bool(
-                                lesson.get("is_exchange")
-                            ),
+                            is_cancelled=bool(lesson.get("is_cancelled")),
+                            is_exchange=bool(lesson.get("is_exchange")),
                             is_extra=False,
                             group_name=None,
+                            # --- НОВЫЕ ПОЛЯ ---
+                            original_subject_name=(
+                                lesson.get("original_subject_name") or None
+                            ),
+                            original_room_name=(
+                                lesson.get("original_room_name") or None
+                            ),
+                            group_changed=(
+                                bool(lesson.get("original_group_id"))
+                                and lesson.get("original_group_id")
+                                != lesson.get("group_id")
+                            ),
+                            day_permutation=False,
                         )
                     )
 

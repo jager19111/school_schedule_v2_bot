@@ -132,43 +132,86 @@ class ScheduleService:
     # Детекция перестановок (🔁 vs 🔀)
     # ==========================================================
 
+    if False: # Проверить на корректность. Есть замечания к этому методу. Ниже приведен на замену другой. Разобраться какой лучше
+        @staticmethod
+        def _detect_day_permutation(lessons: List[LessonInstance]) -> bool:
+            """
+            True, если ВСЕ замены дня — перестановка уроков местами.
+
+            Алгоритм:
+            1. Отбираем все уроки с is_exchange=True и not is_cancelled.
+            2. Строим мультимножество (subject_id, room_id) для original_*
+            и для текущих значений.
+            3. Если мультимножества равны — предметы/кабинеты те же,
+            просто поменялись местами (🔁). Иначе — реальная замена (🔀).
+
+            Пустой список exchange-уроков → False (нечего детектить).
+            """
+            ex = [
+                l for l in lessons
+                if l.is_exchange and not l.is_cancelled
+            ]
+
+            if len(ex) < 2:
+                return False
+
+            orig = Counter(
+                (l.original_subject_id, l.original_room_id)
+                for l in ex
+                if l.original_subject_id and l.original_room_id
+            )
+            curr = Counter(
+                (l.subject_id, l.room_id)
+                for l in ex
+                if l.subject_id and l.room_id
+            )
+
+            return orig == curr
 
     @staticmethod
-    def _detect_day_permutation(lessons: List[LessonInstance]) -> bool:
+    def _detect_day_permutation(lessons: List['LessonInstance']) -> bool:
         """
-        True, если ВСЕ замены дня — перестановка уроков местами.
-
+        Определяет, являются ли изменения в расписании простой перестановкой (🔁).
+        
         Алгоритм:
-        1. Отбираем все уроки с is_exchange=True и not is_cancelled.
-        2. Строим мультимножество (subject_id, room_id) для original_*
-           и для текущих значений.
-        3. Если мультимножества равны — предметы/кабинеты те же,
-           просто поменялись местами (🔁). Иначе — реальная замена (🔀).
-
-        Пустой список exchange-уроков → False (нечего детектить).
+        Сравнивает мультимножества (Counter) 4D-сигнатур уроков.
+        Использует строгое обращение к атрибутам модели без getattr.
         """
-        ex = [
-            l for l in lessons
+        # 1. Отбираем только замены (напрямую читаем boolean-поля)
+        exchanges = [
+            l for l in lessons 
             if l.is_exchange and not l.is_cancelled
         ]
 
-        if len(ex) < 2:
+        if len(exchanges) < 2:
             return False
 
-        orig = Counter(
-            (l.original_subject_id, l.original_room_id)
-            for l in ex
-            if l.original_subject_id and l.original_room_id
+        # 2. Строим сигнатуру «Было». 
+        # Если кабинета или учителя нет, поле честно отдаст None. 
+        # Пустую группу нормализуем к "ALL" для страховки.
+        orig_counter = Counter(
+            (
+                l.original_subject_id,
+                l.original_room_id,
+                l.original_teacher_id,
+                l.original_group_id or "ALL"
+            )
+            for l in exchanges
         )
-        curr = Counter(
-            (l.subject_id, l.room_id)
-            for l in ex
-            if l.subject_id and l.room_id
+
+        # 3. Строим сигнатуру «Стало».
+        curr_counter = Counter(
+            (
+                l.subject_id,
+                l.room_id,
+                l.teacher_id,
+                l.group_id or "ALL"
+            )
+            for l in exchanges
         )
 
-        return orig == curr
-
-
+        return orig_counter == curr_counter
+    
     # ==========================================================
     # Детализация изменений (было → стало)
     # ==========================================================
@@ -233,6 +276,8 @@ class ScheduleService:
                 original_teacher_id=l.original_teacher_id,  # ← ЗАПОЛНЯЕМ
                 original_room_name=l.original_room_name,
                 original_room_id=l.original_room_id,  # ← ЗАПОЛНЯЕМ
+                original_class_id=l.original_class_id,
+                original_class_name=l.original_class_name,
                 original_group_name=l.original_group_name,
                 original_group_id=l.original_group_id,  # ← ЗАПОЛНЯЕМ
                 group_changed=(
@@ -320,6 +365,8 @@ class ScheduleService:
                 original_teacher_id=l.original_teacher_id,  # ← ЗАПОЛНЯЕМ
                 original_room_name=l.original_room_name,
                 original_room_id=l.original_room_id,  # ← ЗАПОЛНЯЕМ
+                original_class_id=l.original_class_id,
+                original_class_name=l.original_class_name,
                 original_group_name=l.original_group_name,
                 original_group_id=l.original_group_id,  # ← ЗАПОЛНЯЕМ
                 group_changed=(
@@ -571,6 +618,8 @@ class ScheduleService:
                 original_teacher_id=l.original_teacher_id,  # ← ЗАПОЛНЯЕМ
                 original_room_name=l.original_room_name,
                 original_room_id=l.original_room_id,  # ← ЗАПОЛНЯЕМ
+                original_class_id=l.original_class_id,
+                original_class_name=l.original_class_name,
                 original_group_name=l.original_group_name,
                 original_group_id=l.original_group_id,  # ← ЗАПОЛНЯЕМ
                 group_changed=False,
@@ -657,6 +706,8 @@ class ScheduleService:
                 original_teacher_id=l.original_teacher_id,  # ← ЗАПОЛНЯЕМ
                 original_room_name=l.original_room_name,
                 original_room_id=l.original_room_id,  # ← ЗАПОЛНЯЕМ
+                original_class_id=l.original_class_id,
+                original_class_name=l.original_class_name,
                 original_group_name=l.original_group_name,
                 original_group_id=l.original_group_id,  # ← ЗАПОЛНЯЕМ
                 group_changed=False,

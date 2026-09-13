@@ -179,7 +179,25 @@ class NotificationRepository(BaseRepository):
                 group_id,
                 teacher_id,
                 lesson_num,
+
+                subject_id,
                 subject_name,
+                room_id,
+                room_name,
+                teacher_name,
+
+                original_subject_id,
+                original_subject_name,
+                original_room_id,
+                original_room_name,
+                original_teacher_id,
+                original_teacher_name,
+                original_group_id,
+                original_group_name,
+                original_class_id,
+                original_class_name,
+
+                is_exchange,
                 is_cancelled
             FROM schedule_cache
             WHERE (is_exchange = 1 OR is_cancelled = 1)
@@ -199,7 +217,25 @@ class NotificationRepository(BaseRepository):
             group_id,
             teacher_id,
             lesson_num,
+
+            subject_id,
             subject_name,
+            room_id,
+            room_name,
+            teacher_name,
+
+            original_subject_id,
+            original_subject_name,
+            original_room_id,
+            original_room_name,
+            original_teacher_id,
+            original_teacher_name,
+            original_group_id,
+            original_group_name,
+            original_class_id,
+            original_class_name,
+
+            is_exchange,
             is_cancelled
         FROM schedule_cache
         WHERE (is_exchange = 1 OR is_cancelled = 1)

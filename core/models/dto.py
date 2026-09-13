@@ -467,7 +467,9 @@ class LessonDTO:
     original_room_id: Optional[str] = None  # ← ДОБАВЛЕНО
     original_group_name: Optional[str] = None
     original_group_id: Optional[str] = None  # ← ДОБАВЛЕНО
-
+    original_class_id: Optional[str] = None
+    original_class_name: Optional[str] = None
+    
     # Флаги для UI
     group_changed: bool = False          # группа изменилась при замене
     day_permutation: bool = False        # день — перестановка (🔁)

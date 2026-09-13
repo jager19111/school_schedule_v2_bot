@@ -61,8 +61,6 @@ class LessonInstance:
     original_teacher_name: Optional[str] = None
     original_room_id: Optional[str] = None
     original_room_name: Optional[str] = None
-    original_group_id: Optional[str] = None
-    original_group_name: Optional[str] = None
 
     # Оригинальный класс (если учителя переставили на другой класс)
     original_class_id: Optional[str] = None
