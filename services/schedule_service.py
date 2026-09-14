@@ -33,7 +33,7 @@
 #    но теперь явно помечается is_extra=True и не смешивается с
 #    school-уроками при детекции перестановок.
 
-from typing import List, Dict, Any, Optional, Literal, Union
+from typing import List, Dict, Any, Optional, Literal
 from datetime import timedelta
 from collections import Counter
 import logging
@@ -49,7 +49,7 @@ from core.models.dto import (
     ClassListDTO,
     GroupListDTO,
     TeacherListDTO,
-    SchoolDictionariesDTO,
+    SchoolDictionariesDTO, ExtraClassItemDTO, 
     DayChangesDetailDTO, LessonDTO
 )
 
@@ -290,8 +290,8 @@ class ScheduleService:
         """
         Возвращает расписание student profile на день.
 
-        lessons: List[Union[LessonDTO, Dict]] — school (LessonDTO)
-        + extra (Dict).
+        lessons: List[LessonDTO] — school (LessonDTO)
+        + extra.
         """
         # 1. School lessons (LessonInstance → LessonDTO)
         base_lessons: List[LessonInstance] = (
@@ -322,7 +322,7 @@ class ScheduleService:
             for l in filtered_base
         ]
 
-        # 5. Extra lessons (Dict)
+        # 5. Extra lessons
         extra_lessons: List[LessonDTO] = []
         if student_id is not None:
             date_obj = self.time_service.date_from_iso(date_iso)
@@ -336,7 +336,7 @@ class ScheduleService:
                 for row in extra_rows
             ]
 
-        # 6. Merge: LessonDTO + Dict
+        # 6. Merge: all items are LessonDTO
         combined: List[LessonDTO] = school_lessons + extra_lessons
 
         # 7. Сортировка
@@ -470,13 +470,6 @@ class ScheduleService:
             exchange_count = len(exchange_nums)
 
             extra_count = sum(1 for l in day_dto.lessons if l.is_extra)
-
-            # Доп. занятия не имеют номеров, их считаем напрямую
-            extra_count = sum(
-                1
-                for l in day_dto.lessons
-                if l.is_extra
-            )
 
             day_summaries.append(DaySummaryDTO(
                 date_iso=current_date_iso,
@@ -733,20 +726,17 @@ class ScheduleService:
 
     def _map_extra_to_lesson(
         self,
-        row: Dict[str, Any],
+        row: 'ExtraClassItemDTO', 
         date_iso: str,
     ) -> LessonDTO:
-        """
-        Доп. занятие (extra_classes) → LessonDTO с is_extra=True.
-        """
         return LessonDTO(
-            id=f"extra-{row['id']}",
+            id=f"extra-{row.id}",
             lesson_num=None,
             display_num="•",
-            start_time=row["time_start"],
-            end_time=row["time_end"],
-            subject_name=row["title"],
-            room_name=row.get("location") or "—",
+            start_time=row.time_start,
+            end_time=row.time_end,
+            subject_name=row.title,
+            room_name=row.location or "—",
             is_cancelled=False,
             is_exchange=False,
             is_extra=True,
