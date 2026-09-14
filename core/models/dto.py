@@ -4,32 +4,14 @@
 # day_permutation, детализации изменений и расширенной информации
 # в уведомлениях о заменах.
 #
-# ИЗМЕНЕНИЯ:
-#
-# 1. LessonDTO: добавлены original_*, group_name, group_changed,
-#    day_permutation, class_name, teacher_name, is_methodological.
-#    Это минимальный DTO для рендерера одного урока.
-#
-# 2. DayScheduleDTO: lessons теперь List[LessonDTO] (строгая типизация),
-#    добавлено has_permutation: bool (флаг всего дня).
-#
-# 3. DayChangesDetailDTO: новый DTO для детализации «было → стало」.
-#    Используется сервисом (get_day_changes_detail) и рендерером
-#    изменений (render_changes_detail).
-#
-# 4. ChangeReminderDTO: расширен для уведомлений о заменах —
-#    добавлены original_subject_name, new_subject_name,
-#    original_room_name, new_room_name, group_changed.
-#    Это позволяет показать в уведомлении «Математика → Ин.яз (204→318)
-#    или «Группа 1 → Группа 2」.
-#
-# 5. MorningLessonDTO: добавлены original_*, group_changed,
-#    day_permutation для утренней сводки с заменами.
-#
-# 6. MorningSummaryDTO: добавлено has_permutation: bool.
+# ИСПРАВЛЕНИЯ P0:
+# 1. Убран SchoolMetadata из DTO — перенесён в core.models.metadata.
+# 2. Убраны лишние Any в типах.
+# 3. Удалён противоречивый комментарий «Union: LessonDTO | Dict ».
+# 4. DayScheduleDTO.lessons строго типизирован как List[LessonDTO].
 
 from dataclasses import dataclass, field
-from typing import Dict, Optional, Any, List, Literal, Union
+from typing import Dict, Optional, List, Literal, Any
 
 
 # ==========================================================
@@ -439,7 +421,7 @@ class LessonDTO:
     """
     DTO одного элемента расписания: школьный урок ИЛИ доп. занятие.
 
-    Школьный урок: заполнено всё; при заменах original_* хранит «было».
+    Школьный урок: заполнено всё; при заменах original_* хранит «было ».
     Доп. занятие: is_extra=True, id="extra-N", lesson_num=None,
     display_num="•", все original_* остаются None.
     """
@@ -469,7 +451,7 @@ class LessonDTO:
     is_methodological: bool = False
     is_extra: bool = False
 
-    # --- «Было → стало» (только школьные уроки с заменами) ---
+    # --- «Было → стало » (только школьные уроки с заменами) ---
     original_subject_id: Optional[str] = None
     original_subject_name: Optional[str] = None
     original_teacher_id: Optional[str] = None
@@ -487,8 +469,9 @@ class LessonDTO:
     display_num: Optional[str] = None   # номер урока 2 смены ("2*"),
                                         # заполняется _enrich_display_numbers_dtos
 
+
 # ==========================================================
-# DayScheduleDTO (Union: LessonDTO | Dict)
+# DayScheduleDTO (строго типизирован)
 # ==========================================================
 
 
@@ -523,7 +506,6 @@ class DayChangesDetailDTO:
     lessons: List[LessonDTO] = field(default_factory=list)
 
 
-
 # ==========================================================
 # Недельные DTO (без изменений, оставлены для совместимости)
 # ==========================================================
@@ -549,7 +531,7 @@ class WeekSummaryDTO:
 class FullWeekScheduleDTO:
     """ DTO для полного расписания на неделю. """
     week_start_iso: str
-    days: List['DayScheduleDTO']
+    days: List[DayScheduleDTO]
 
 
 # ==========================================================
