@@ -54,7 +54,7 @@ class LessonInstance:
     # Имя класса (для расписания учителей)
     class_name: Optional[str] = None
     
-    # Поля для отображения «было → стало» при заменах и отменах
+    # Поля для отображения «было → стало」при заменах и отменах
     original_subject_id: Optional[str] = None
     original_subject_name: Optional[str] = None
     original_teacher_id: Optional[str] = None
@@ -79,7 +79,4 @@ class LessonInstance:
     # Флаг методического часа/дня (только для учителей)
     is_methodological: bool = False
     
-    # Сырые массивы из NIKA для агрегации (рендерер использует для «по группам」)
-    groups_raw: List[str] = field(default_factory=list)
-    subjects_raw: List[str] = field(default_factory=list)
-    rooms_raw: List[str] = field(default_factory=list)
+    # ИСПРАВЛЕНО: убраны groups_raw/subjects_raw/rooms_raw — мёртвый код
