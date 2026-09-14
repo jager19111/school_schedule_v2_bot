@@ -104,6 +104,27 @@ class NikaNormalizer:
             return None
         return value[0].strip(), value[1].strip()
 
+    @staticmethod
+    def _is_whole_class_lesson(raw_s: list, raw_g: list) -> bool:
+        """
+        Определяет, весь ли это класс или урок с группами.
+        
+        Критерии:
+        1. Нет массива g → точно весь класс
+        2. s[0] не пустой, s[1:] пустые → весь класс (даже если g есть)
+        3. s содержит несколько непустых предметов → урок с группами
+        """
+        if not raw_g:
+            return True  # Нет g → точно весь класс
+        
+        # Считаем непустые предметы
+        non_empty_subjects = sum(1 for s in raw_s if s and str(s).strip())
+        
+        if non_empty_subjects <= 1:
+            return True  # Только 1 предмет → весь класс
+        
+        return False  # Несколько предметов → урок с группами
+
     def _process_slot(
         self,
         slot_base: dict,
@@ -156,33 +177,56 @@ class NikaNormalizer:
         lesson_time = self._get_lesson_time(lesson_num)
         if lesson_time is None:
             return lessons
+        
         start_time, end_time = lesson_time
 
-        if is_full_cancel or is_methodological:
-            max_len = max(1, len(orig_s), len(orig_t_or_c), len(orig_g))
+
+        # P2 (финальная версия): ИСПРАВЛЕНО — логика max_len
+        #
+        # Определяем, весь ли это класс или урок с группами
+        is_whole_class = self._is_whole_class_lesson(raw_s, raw_g)
+        
+        if is_whole_class:
+            # Урок для всего класса → 1 LessonInstance
+            max_len = 1
+        elif is_full_cancel or is_methodological:
+            # Для отмен и методических часов используем оригинальные группы
+            max_len = max(len(orig_g), 1) if orig_g else 1
         else:
-            max_len = max(len(raw_s), len(raw_t_or_c), len(raw_r), len(raw_g))
+            # Урок с группами → разворачиваем по g
+            max_len = max(len(raw_g), len(raw_s), len(raw_t_or_c), len(raw_r))
+
 
         if max_len == 0:
             return lessons
 
+
         for idx in range(max_len):
             current_raw_s = raw_s[idx] if idx < len(raw_s) else None
             
-            is_pointwise_cancelled = (
-                current_raw_s == "F"
-                or (current_raw_s is not None and str(current_raw_s).strip() == "")
-            )
-            is_cancelled = is_full_cancel or is_pointwise_cancelled
+            # P2: Различаем отмену и отсутствие урока
+            is_full_cancel_pointwise = (current_raw_s == "F")
+            
+            # Если предмет пустой (но не "F") → пропускаем эту подгруппу
+            if current_raw_s is not None and str(current_raw_s).strip() == "" and not is_full_cancel_pointwise:
+                continue
+            
+            is_cancelled = is_full_cancel or is_full_cancel_pointwise
+
 
             clean_s = self._clean_val(current_raw_s) if not is_cancelled else None
             clean_t_c = self._clean_val(raw_t_or_c[idx]) if idx < len(raw_t_or_c) else None
             clean_r = self._clean_val(raw_r[idx]) if idx < len(raw_r) else None
             
+            # При полной отмене восстанавливаем оригинальную группу
             if is_full_cancel:
                 g_id = orig_g[idx] if idx < len(orig_g) else "ALL"
             else:
-                g_id = raw_g[idx] if idx < len(raw_g) else "ALL"
+                # P2: Если весь класс → "ALL", иначе → из массива g
+                if is_whole_class:
+                    g_id = "ALL"
+                else:
+                    g_id = raw_g[idx] if idx < len(raw_g) else "ALL"
                 
             clean_g = self._clean_val(g_id)
 

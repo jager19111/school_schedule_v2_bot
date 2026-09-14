@@ -1,19 +1,14 @@
 # services/schedule_service.py
-#
-# ИСПРАВЛЕНИЯ P0 (финальная версия после аудита):
-# 1. Добавлен .strip() для защиты от пробельных строк из NIKA
-# 2. Убрано избыточное обогащение group_name (уже есть из репозитория)
-# 3. Убраны groups_raw/subjects_raw/rooms_raw из DTO (не используются)
-
-from typing import List, Dict, Any, Optional, Literal
+from typing import List, Optional, Literal
 from datetime import timedelta, datetime, time
 from collections import Counter
 import logging
+
 from core.repository.schedule_repository import ScheduleRepository
 from core.repository.extra_classes_repository import ExtraClassesRepository
 from core.models.domain import LessonInstance
 from services.time_service import TimeService
-
+from core.mappers.lesson_mapper import LessonMapper
 
 from core.models.dto import (
     DayScheduleDTO,
@@ -29,7 +24,6 @@ from core.models.dto import (
     LessonDTO,
 )
 from core.models.metadata import SchoolMetadata
-
 
 logger = logging.getLogger(__name__)
 
@@ -52,14 +46,17 @@ class ScheduleService:
 
     @staticmethod
     def _parse_hhmm(value: str) -> time:
-        """Парсит "H:MM" или "HH:MM" в datetime.time."""
         hour, minute = map(int, value.split(":"))
         return time(hour, minute)
+
+    @staticmethod
+    def _sort_key(lesson: LessonDTO):
+        num = lesson.lesson_num if lesson.lesson_num is not None else 999
+        return (ScheduleService._parse_hhmm(lesson.start_time), num)
 
     # ==========================================================
     # Справочники (возвращают DTO)
     # ==========================================================
-
 
     async def get_school_dictionaries(self) -> SchoolDictionariesDTO:
         metadata = await self.schedule_repo.get_metadata()
@@ -80,54 +77,9 @@ class ScheduleService:
         metadata = await self.schedule_repo.get_metadata()
         teachers = {str(k): str(getattr(v, 'name', v)) for k, v in metadata.teachers.items()}
         return TeacherListDTO(teachers=teachers)
-    
-    @staticmethod
-    def _lesson_to_dto(
-        lesson: LessonInstance,
-        *,
-        day_permutation: bool = False,
-    ) -> LessonDTO:
-        return LessonDTO(
-            id=lesson.id,
-            lesson_num=lesson.lesson_num,
-            start_time=lesson.start_time,
-            end_time=lesson.end_time,
-            subject_name=(lesson.subject_name or "").strip(),
-            room_name=(lesson.room_name or "").strip(),
-            is_cancelled=lesson.is_cancelled,
-            is_exchange=lesson.is_exchange,
-            is_extra=False,
-            date_iso=lesson.date,
-            
-            period_id=lesson.period_id,
-            group_id=lesson.group_id,
-            group_name=(lesson.group_name or "").strip(),
-            class_id=lesson.class_id,
-            class_name=lesson.class_name,
-            teacher_id=lesson.teacher_id,
-            teacher_name=(lesson.teacher_name or "").strip(),
-            is_methodological=lesson.is_methodological,
 
-            original_subject_id=lesson.original_subject_id,
-            original_subject_name=(lesson.original_subject_name or "").strip() if lesson.original_subject_name else None,
-            original_teacher_id=lesson.original_teacher_id,
-            original_teacher_name=(lesson.original_teacher_name or "").strip() if lesson.original_teacher_name else None,
-            original_room_id=lesson.original_room_id,
-            original_room_name=(lesson.original_room_name or "").strip() if lesson.original_room_name else None,
-            original_group_id=lesson.original_group_id,
-            original_group_name=lesson.original_group_name,
-            original_class_id=lesson.original_class_id,
-            original_class_name=lesson.original_class_name,
-
-            group_changed=(
-                lesson.is_exchange
-                and lesson.original_group_id is not None
-                and lesson.original_group_id != lesson.group_id
-            ),
-            day_permutation=day_permutation,
-        )
     # ==========================================================
-    # Детекция перестановок (🔁 vs 🔀)
+    # Детекция перестановок
     # ==========================================================
 
     @staticmethod
@@ -148,9 +100,6 @@ class ScheduleService:
         if len(exchanges) < 2:
             return False
 
-        # 2. Строим сигнатуру «Было ». 
-        # Если кабинета или учителя нет, поле честно отдаст None. 
-        # Пустую группу нормализуем к "ALL" для страховки.
         orig_counter = Counter(
             (
                 l.original_subject_id,
@@ -161,7 +110,6 @@ class ScheduleService:
             for l in exchanges
         )
 
-        # 3. Строим сигнатуру «Стало ».
         curr_counter = Counter(
             (
                 l.subject_id,
@@ -175,9 +123,8 @@ class ScheduleService:
         return orig_counter == curr_counter
     
     # ==========================================================
-    # Детализация изменений (было → стало)
+    # Детализация изменений
     # ==========================================================
-
 
     async def get_day_changes_detail(
         self,
@@ -214,15 +161,15 @@ class ScheduleService:
         ]
         changed.sort(key=lambda l: l.lesson_num or 99)
 
-        # Детекция перестановок вычисляется ДО маппинга
         day_permutation = self._detect_day_permutation(changed)
+        lesson_dtos = LessonMapper.to_dto_list(changed, day_permutation=day_permutation)
 
-        # LessonInstance → LessonDTO через единый маппер
-        lesson_dtos = [
-            self._lesson_to_dto(l, day_permutation=day_permutation)
-            for l in changed
-        ]
-
+        # P2: Обогащаем display_num для изменений
+        metadata = await self.schedule_repo.get_metadata()
+        self._enrich_display_numbers_dtos(
+            lessons=lesson_dtos,
+            metadata=metadata,
+        )
         return DayChangesDetailDTO(
             date_iso=date_iso,
             origin=origin,
@@ -230,7 +177,7 @@ class ScheduleService:
         )
 
     # ==========================================================
-    # Расписание студента (class + group + extra)
+    # Расписание студента
     # ==========================================================
 
     async def get_daily_schedule_for_student(
@@ -247,7 +194,6 @@ class ScheduleService:
         lessons: List[LessonDTO] — school (LessonDTO)
         + extra.
         """
-        # 1. School lessons (LessonInstance → LessonDTO)
         base_lessons: List[LessonInstance] = (
             await self.schedule_repo.get_lessons_for_class(
                 class_id=class_id,
@@ -255,25 +201,18 @@ class ScheduleService:
             )
         )
 
-        # ИСПРАВЛЕНО P0: детекция перестановок ДО фильтрации по группе
         day_permutation = self._detect_day_permutation(base_lessons)
 
-        # 2. Фильтрация по группе
         user_groups = group_id.split(",") if group_id and group_id != "ALL" else ["ALL"]
-        filtered_base: List[LessonInstance] = []
-
-        for lesson in base_lessons:
-            l_group = lesson.group_id
-            if "ALL" in user_groups or l_group == "ALL" or l_group in user_groups:
-                filtered_base.append(lesson)
-
-        # 3. LessonInstance → LessonDTO через единый маппер
-        school_lessons: List[LessonDTO] = [
-            self._lesson_to_dto(l, day_permutation=day_permutation)
-            for l in filtered_base
+        filtered_base: List[LessonInstance] = [
+            lesson for lesson in base_lessons
+            if "ALL" in user_groups or lesson.group_id == "ALL" or lesson.group_id in user_groups
         ]
 
-        # 4. Extra lessons
+        school_lessons: List[LessonDTO] = LessonMapper.to_dto_list(
+            filtered_base, day_permutation=day_permutation
+        )
+
         extra_lessons: List[LessonDTO] = []
         if student_id is not None:
             date_obj = self.time_service.date_from_iso(date_iso)
@@ -287,21 +226,9 @@ class ScheduleService:
                 for row in extra_rows
             ]
 
-
         combined: List[LessonDTO] = school_lessons + extra_lessons
+        combined.sort(key=self._sort_key)
 
-        # ИСПРАВЛЕНО P0: сортировка через datetime.time, а не строки
-        def sort_key(l: LessonDTO):
-            num = l.lesson_num if l.lesson_num is not None else 999
-            return (self._parse_hhmm(l.start_time), num)
-
-        combined.sort(key=sort_key)
-
-        # ИСПРАВЛЕНО: убрано избыточное обогащение group_name
-        # group_name уже корректно формируется в normalizer.py и сохраняется в БД.
-        # Повторный metadata.groups.get(...) был избыточен и мог привести к рассинхрону.
-
-        # 5. Display numbers (смены)
         metadata = await self.schedule_repo.get_metadata()
         self._enrich_display_numbers_dtos(
             lessons=school_lessons,
@@ -314,33 +241,27 @@ class ScheduleService:
             has_permutation=day_permutation,
         )
 
+    # ==========================================================
+    # Общие хелперы (Smart Date / Weekly)
+    # ==========================================================
 
-    async def get_smart_target_date(self, *, class_id: str, group_id: str, student_id: int | None = None) -> str:
-        """
-        Возвращает ближайшую дату, на которую есть ещё актуальное расписание.
-
-        Правило:
-        - если сегодня есть занятия и они ещё не завершились — вернуть сегодня;
-        - если занятия сегодня закончились — искать следующий день;
-        - если выходной, каникулы или пустое расписание — искать вперёд;
-        - поиск ограничен 8 календарными днями.
-        """
+    async def _find_target_date(
+        self,
+        get_daily_schedule,
+        today: datetime.date,
+    ) -> str:
         now = self.time_service.get_now_base()
-        today = now.date()
 
         for offset in range(8):
             candidate_date = today + timedelta(days=offset)
             candidate_iso = candidate_date.isoformat()
-            day_dto = await self.get_daily_schedule_for_student(
-                class_id=class_id, group_id=group_id, date_iso=candidate_iso, student_id=student_id
-            )
+            day_dto = await get_daily_schedule(date_iso=candidate_iso)
 
             if not day_dto.lessons:
                 continue
             if candidate_date != today:
                 return candidate_iso
 
-            # ИСПРАВЛЕНО P0: время через datetime.time, убран fallback "00:00"
             end_times = [
                 self._parse_hhmm(l.end_time)
                 for l in day_dto.lessons
@@ -357,6 +278,51 @@ class ScheduleService:
 
         return today.isoformat()
 
+    async def _build_week_schedule(
+        self,
+        get_daily_schedule,
+        week_start_iso: str,
+    ) -> FullWeekScheduleDTO:
+        start_date = self.time_service.date_from_iso(week_start_iso)
+        days = []
+        for i in range(6):
+            current_date_iso = (start_date + timedelta(days=i)).isoformat()
+            day_dto = await get_daily_schedule(date_iso=current_date_iso)
+            days.append(day_dto)
+        return FullWeekScheduleDTO(week_start_iso=week_start_iso, days=days)
+
+    async def get_smart_target_date(self, *, class_id: str, group_id: str, student_id: int | None = None) -> str:
+        """
+        Возвращает ближайшую дату, на которую есть ещё актуальное расписание.
+
+        Правило:
+        - если сегодня есть занятия и они ещё не завершились — вернуть сегодня;
+        - если занятия сегодня закончились — искать следующий день;
+        - если выходной, каникулы или пустое расписание — искать вперёд;
+        - поиск ограничен 8 календарными днями.
+        """
+        today = self.time_service.get_now_base().date()
+
+        async def get_daily(date_iso: str):
+            return await self.get_daily_schedule_for_student(
+                class_id=class_id,
+                group_id=group_id,
+                date_iso=date_iso,
+                student_id=student_id,
+            )
+
+        return await self._find_target_date(get_daily, today)
+
+    async def get_smart_teacher_target_date(self, *, teacher_id: str) -> str:
+        today = self.time_service.get_now_base().date()
+
+        async def get_daily(date_iso: str):
+            return await self.get_daily_schedule_for_teacher(
+                teacher_id=teacher_id,
+                date_iso=date_iso,
+            )
+
+        return await self._find_target_date(get_daily, today)
 
     async def get_smart_week_start(self) -> str:
         """
@@ -365,9 +331,9 @@ class ScheduleService:
         """
         now = self.time_service.get_now_base()
 
-        if now.isoweekday() == 7:  # Воскресенье -> следующая неделя
+        if now.isoweekday() == 7: 
             target_date = now + timedelta(days=1)
-        elif now.isoweekday() == 6 and now.hour >= 15: # Суббота после 15:00 -> следующая неделя
+        elif now.isoweekday() == 6 and now.hour >= 15: 
             target_date = now + timedelta(days=2)
         else:
             target_date = now
@@ -375,6 +341,121 @@ class ScheduleService:
         monday = target_date - timedelta(days=target_date.isoweekday() - 1)
         return monday.date().isoformat()
 
+    async def get_full_week_schedule(
+        self,
+        class_id: str,
+        group_id: str,
+        week_start_iso: str,
+        student_id: int | None = None,
+    ) -> FullWeekScheduleDTO:
+        """Собирает сводку (кол-во уроков, замен, доп. занятий) на неделю."""
+        async def get_daily(date_iso: str):
+            return await self.get_daily_schedule_for_student(
+                class_id=class_id,
+                group_id=group_id,
+                date_iso=date_iso,
+                student_id=student_id,
+            )
+        return await self._build_week_schedule(get_daily, week_start_iso)
+
+    async def get_full_week_schedule_for_class(
+        self,
+        class_id: str,
+        week_start_iso: str,
+    ) -> FullWeekScheduleDTO:
+        async def get_daily(date_iso: str):
+            return await self.get_daily_schedule_for_class(
+                class_id=class_id,
+                date_iso=date_iso,
+            )
+        return await self._build_week_schedule(get_daily, week_start_iso)
+
+    async def get_full_week_schedule_for_teacher(
+        self,
+        teacher_id: str,
+        week_start_iso: str,
+    ) -> FullWeekScheduleDTO:
+        async def get_daily(date_iso: str):
+            return await self.get_daily_schedule_for_teacher(
+                teacher_id=teacher_id,
+                date_iso=date_iso,
+            )
+        return await self._build_week_schedule(get_daily, week_start_iso)
+
+    # ==========================================================
+    # Расписание класса
+    # ==========================================================
+
+    async def get_daily_schedule_for_class(
+        self,
+        class_id: str,
+        date_iso: str,
+    ) -> DayScheduleDTO:
+        lessons: List[LessonInstance] = (
+            await self.schedule_repo.get_lessons_for_class(
+                class_id=class_id,
+                date_iso=date_iso,
+            )
+        )
+
+        day_permutation = self._detect_day_permutation(lessons)
+
+        school_lessons: List[LessonDTO] = LessonMapper.to_dto_list(
+            lessons, day_permutation=day_permutation
+        )
+
+        combined = sorted(school_lessons, key=self._sort_key)
+
+        metadata = await self.schedule_repo.get_metadata()
+        self._enrich_display_numbers_dtos(
+            lessons=combined,
+            metadata=metadata,
+        )
+
+        return DayScheduleDTO(
+            date_iso=date_iso,
+            lessons=combined,
+            has_permutation=day_permutation,
+        )
+
+    # ==========================================================
+    # Расписание учителя
+    # ==========================================================
+
+    async def get_daily_schedule_for_teacher(
+        self,
+        teacher_id: str,
+        date_iso: str,
+    ) -> DayScheduleDTO:
+
+        lessons: List[LessonInstance] = (
+            await self.schedule_repo.get_lessons_for_teacher(
+                teacher_id=teacher_id,
+                date_iso=date_iso,
+            )
+        )
+        day_permutation = self._detect_day_permutation(lessons)
+
+        school_lessons: List[LessonDTO] = LessonMapper.to_dto_list(
+            lessons, day_permutation=day_permutation
+        )
+
+        combined = sorted(school_lessons, key=self._sort_key)
+
+        metadata = await self.schedule_repo.get_metadata()
+        self._enrich_display_numbers_dtos(
+            lessons=combined,
+            metadata=metadata,
+        )
+        return DayScheduleDTO(
+            date_iso=date_iso,
+            lessons=combined,
+            has_permutation=day_permutation,
+        )
+
+    # ==========================================================
+    # Недельные сводки
+    # ==========================================================
 
     async def get_week_schedule_summary(
         self,
@@ -383,11 +464,10 @@ class ScheduleService:
         week_start_iso: str,
         student_id: int | None = None,
     ) -> WeekSummaryDTO:
-        """Собирает сводку (кол-во уроков, замен, доп. занятий) на неделю."""
         start_date = self.time_service.date_from_iso(week_start_iso)
         day_summaries = []
 
-        for i in range(6): # Пн - Сб
+        for i in range(6):
             current_date_iso = (start_date + timedelta(days=i)).isoformat()
             day_dto = await self.get_daily_schedule_for_student(
                 class_id=class_id,
@@ -396,7 +476,6 @@ class ScheduleService:
                 student_id=student_id,
             )
 
-            # Считаем уникальные номера основных уроков (set автоматически уберет дубли подгрупп)
             main_lesson_nums = {
                 l.lesson_num
                 for l in day_dto.lessons
@@ -422,193 +501,6 @@ class ScheduleService:
             ))
 
         return WeekSummaryDTO(week_start_iso=week_start_iso, days=day_summaries)
-
-
-    async def get_full_week_schedule(
-        self,
-        class_id: str,
-        group_id: str,
-        week_start_iso: str,
-        student_id: int | None = None,
-    ) -> FullWeekScheduleDTO:
-        """Собирает полное расписание на всю неделю."""
-        start_date = self.time_service.date_from_iso(week_start_iso)
-        days = []
-        for i in range(6):
-            current_date_iso = (start_date + timedelta(days=i)).isoformat()
-            day_dto = await self.get_daily_schedule_for_student(
-                class_id=class_id,
-                group_id=group_id,
-                date_iso=current_date_iso,
-                student_id=student_id,
-            )
-            days.append(day_dto)
-        return FullWeekScheduleDTO(week_start_iso=week_start_iso, days=days)
-
-
-    # ==========================================================
-    # Расписание класса (без групп, для поиска/админки)
-    # ==========================================================
-
-
-    async def get_daily_schedule_for_class(
-        self,
-        class_id: str,
-        date_iso: str,
-    ) -> DayScheduleDTO:
-        lessons: List[LessonInstance] = (
-            await self.schedule_repo.get_lessons_for_class(
-                class_id=class_id,
-                date_iso=date_iso,
-            )
-        )
-
-        day_permutation = self._detect_day_permutation(lessons)
-
-
-        school_lessons: List[LessonDTO] = [
-            self._lesson_to_dto(l, day_permutation=day_permutation)
-            for l in lessons
-        ]
-
-        # ИСПРАВЛЕНО P0: сортировка через datetime.time
-        def sort_key(l: LessonDTO):
-            return (self._parse_hhmm(l.start_time), l.lesson_num or 999)
-
-        combined = sorted(school_lessons, key=sort_key)
-
-        metadata = await self.schedule_repo.get_metadata()
-        self._enrich_display_numbers_dtos(
-            lessons=combined,
-            metadata=metadata,
-        )
-
-        return DayScheduleDTO(
-            date_iso=date_iso,
-            lessons=combined,
-            has_permutation=day_permutation,
-        )
-
-
-    async def get_full_week_schedule_for_class(
-        self,
-        class_id: str,
-        week_start_iso: str,
-    ) -> FullWeekScheduleDTO:
-        start_date = self.time_service.date_from_iso(week_start_iso)
-        days = []
-        for i in range(6):
-            current_date_iso = (start_date + timedelta(days=i)).isoformat()
-            day_dto = await self.get_daily_schedule_for_class(
-                class_id=class_id,
-                date_iso=current_date_iso,
-            )
-            days.append(day_dto)
-        return FullWeekScheduleDTO(week_start_iso=week_start_iso, days=days)
-
-
-    # ==========================================================
-    # Расписание учителя
-    # ==========================================================
-
-
-    async def get_daily_schedule_for_teacher(
-        self,
-        teacher_id: str,
-        date_iso: str,
-    ) -> DayScheduleDTO:
-
-        lessons: List[LessonInstance] = (
-            await self.schedule_repo.get_lessons_for_teacher(
-                teacher_id=teacher_id,
-                date_iso=date_iso,
-            )
-        )
-        day_permutation = self._detect_day_permutation(lessons)
-
-        # Единый маппер вместо дублирования конструктора
-        school_lessons: List[LessonDTO] = [
-            self._lesson_to_dto(l, day_permutation=day_permutation)
-            for l in lessons
-        ]
-
-        # ИСПРАВЛЕНО P0: сортировка через datetime.time
-        def sort_key(l: LessonDTO):
-            return (self._parse_hhmm(l.start_time), l.lesson_num or 999)
-
-        combined = sorted(
-            school_lessons,
-            key=sort_key,
-        )
-
-        metadata = await self.schedule_repo.get_metadata()
-
-        self._enrich_display_numbers_dtos(
-            lessons=combined,
-            metadata=metadata,
-        )
-        return DayScheduleDTO(
-            date_iso=date_iso,
-            lessons=combined,
-            has_permutation=day_permutation,
-        )
-
-    async def get_full_week_schedule_for_teacher(
-        self,
-        teacher_id: str,
-        week_start_iso: str,
-    ) -> FullWeekScheduleDTO:
-        start_date = self.time_service.date_from_iso(week_start_iso)
-        days = []
-        for i in range(6):
-            current_date_iso = (start_date + timedelta(days=i)).isoformat()
-            day_dto = await self.get_daily_schedule_for_teacher(
-                teacher_id=teacher_id,
-                date_iso=current_date_iso,
-            )
-            days.append(day_dto)
-        return FullWeekScheduleDTO(week_start_iso=week_start_iso, days=days)
-
-
-    async def get_smart_teacher_target_date(self, *, teacher_id: str) -> str:
-        """
-        Возвращает ближайшую дату, когда у учителя есть занятия.
-
-        Алгоритм:
-        - сегодня, если есть будущие/текущие уроки;
-        - иначе ближайший день с расписанием;
-        - поиск ограничен восемью календарными днями.
-        """
-        now = self.time_service.get_now_base()
-        today = now.date()
-
-        for offset in range(8):
-            candidate_date = today + timedelta(days=offset)
-            candidate_iso = candidate_date.isoformat()
-            day_dto = await self.get_daily_schedule_for_teacher(teacher_id=teacher_id, date_iso=candidate_iso)
-
-            if not day_dto.lessons:
-                continue
-            if candidate_date != today:
-                return candidate_iso
-
-            # ИСПРАВЛЕНО P0: время через datetime.time, убран fallback "00:00"
-            end_times = [
-                self._parse_hhmm(lesson.end_time)
-                for lesson in day_dto.lessons
-                if lesson.end_time
-            ]
-            if not end_times:
-                continue
-
-            latest_end = max(end_times)
-            now_time = now.time()
-
-            if now_time <= latest_end:
-                return candidate_iso
-
-        return today.isoformat()
-
 
     async def get_teacher_week_schedule_summary(
         self,
@@ -653,9 +545,8 @@ class ScheduleService:
             days=days,
         )
 
-
+    @staticmethod
     def _map_extra_to_lesson(
-        self,
         row: 'ExtraClassItemDTO', 
         date_iso: str,
     ) -> LessonDTO:
@@ -689,7 +580,6 @@ class ScheduleService:
         class_shifts = metadata.class_shift
         second_relative = metadata.second_relative
 
-        # Группируем уроки по period_id и class_id
         groups = {}
         for l in lessons:
             if not l.is_methodological and l.lesson_num:

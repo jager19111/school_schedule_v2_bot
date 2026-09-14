@@ -49,7 +49,7 @@ class LessonMapper:
             original_group_name=lesson.original_group_name,
             original_class_id=lesson.original_class_id,
             original_class_name=lesson.original_class_name,
-
+            display_num=None,
             group_changed=(
                 lesson.is_exchange
                 and lesson.original_group_id is not None
