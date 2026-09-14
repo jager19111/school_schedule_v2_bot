@@ -1,10 +1,9 @@
 # services/schedule_service.py
 #
-# ИСПРАВЛЕНИЯ P0:
-# 1. Время через datetime.time, а не строки с zfill.
-# 2. Детекция перестановок ДО фильтрации по группе.
-# 3. Убран fallback "00:00" в get_smart_target_date.
-# 4. Кэширование metadata в рамках одного вызова.
+# ИСПРАВЛЕНИЯ P0 (финальная версия после аудита):
+# 1. Добавлен .strip() для защиты от пробельных строк из NIKA
+# 2. Убрано избыточное обогащение group_name (уже есть из репозитория)
+# 3. Убраны groups_raw/subjects_raw/rooms_raw из DTO (не используются)
 
 from typing import List, Dict, Any, Optional, Literal
 from datetime import timedelta, datetime, time
@@ -93,8 +92,8 @@ class ScheduleService:
             lesson_num=lesson.lesson_num,
             start_time=lesson.start_time,
             end_time=lesson.end_time,
-            subject_name=lesson.subject_name or "",
-            room_name=lesson.room_name or "",
+            subject_name=(lesson.subject_name or "").strip(),
+            room_name=(lesson.room_name or "").strip(),
             is_cancelled=lesson.is_cancelled,
             is_exchange=lesson.is_exchange,
             is_extra=False,
@@ -102,19 +101,19 @@ class ScheduleService:
             
             period_id=lesson.period_id,
             group_id=lesson.group_id,
-            group_name=lesson.group_name,
+            group_name=(lesson.group_name or "").strip(),
             class_id=lesson.class_id,
             class_name=lesson.class_name,
             teacher_id=lesson.teacher_id,
-            teacher_name=lesson.teacher_name,
+            teacher_name=(lesson.teacher_name or "").strip(),
             is_methodological=lesson.is_methodological,
 
             original_subject_id=lesson.original_subject_id,
-            original_subject_name=lesson.original_subject_name,
+            original_subject_name=(lesson.original_subject_name or "").strip() if lesson.original_subject_name else None,
             original_teacher_id=lesson.original_teacher_id,
-            original_teacher_name=lesson.original_teacher_name,
+            original_teacher_name=(lesson.original_teacher_name or "").strip() if lesson.original_teacher_name else None,
             original_room_id=lesson.original_room_id,
-            original_room_name=lesson.original_room_name,
+            original_room_name=(lesson.original_room_name or "").strip() if lesson.original_room_name else None,
             original_group_id=lesson.original_group_id,
             original_group_name=lesson.original_group_name,
             original_class_id=lesson.original_class_id,
@@ -298,13 +297,12 @@ class ScheduleService:
 
         combined.sort(key=sort_key)
 
-        # 5. Обогащение групп (для school lessons)
-        metadata = await self.schedule_repo.get_metadata()
-        for l in combined:
-            if l.group_id != "ALL" and l.group_name:
-                l.group_name = metadata.groups.get(l.group_id, l.group_name)
+        # ИСПРАВЛЕНО: убрано избыточное обогащение group_name
+        # group_name уже корректно формируется в normalizer.py и сохраняется в БД.
+        # Повторный metadata.groups.get(...) был избыточен и мог привести к рассинхрону.
 
-        # 6. Display numbers (смены)
+        # 5. Display numbers (смены)
+        metadata = await self.schedule_repo.get_metadata()
         self._enrich_display_numbers_dtos(
             lessons=school_lessons,
             metadata=metadata,
