@@ -3,7 +3,7 @@ from typing import List, Dict, Any, Tuple, Optional
 import datetime
 import re
 from core.models.domain import Class, Teacher, Room, Subject, Period, LessonInstance
-
+from core.nika.exceptions import ScheduleDataError
 
 class NikaNormalizer:
     """
@@ -60,9 +60,60 @@ class NikaNormalizer:
                 continue
         
         # Если период не найден (например, каникулы), отдаем первый доступный как fallback
-        return list(periods.keys())[0] if periods else None
-    
+        #return list(periods.keys())[0] if periods else None
+        #если дата не входит ни в один период без fallback. убираем list(periods.keys())[0]
+        return None
 
+
+    def _lesson_numbers_for_day(
+        self,
+        base_schedule: dict,
+        exchanges: dict,
+        weekday: int,
+    ) -> list[int]:
+        prefix = str(weekday)
+        numbers = set()
+
+        for key in base_schedule:
+            key = str(key)
+            if key.startswith(prefix) and key[1:].isdigit():
+                numbers.add(int(key[1:]))
+
+        for key in exchanges:
+            key = str(key)
+            if key.isdigit():
+                numbers.add(int(key))
+
+        return sorted(numbers)
+
+
+    def _get_lesson_time(
+        self,
+        lesson_num: int,
+        lesson_times: dict,
+    ) -> tuple[str, str]:
+        value = lesson_times.get(str(lesson_num))
+        if (
+            not isinstance(value, list)
+            or len(value) != 2
+            or not all(isinstance(item, str) and item.strip() for item in value)
+        ):
+            raise ScheduleDataError(
+                f"Missing or invalid LESSON_TIMES[{lesson_num}]"
+            )
+
+        return value[0].strip(), value[1].strip()
+
+    @staticmethod
+    def _is_cancel_marker(value: Any) -> bool:
+        if value == "F":
+            return True
+
+        if isinstance(value, list):
+            return any(item == "F" for item in value)
+
+        return False
+    
     def build_class_lessons(self, target_dates: List[datetime.date]) -> List[LessonInstance]:
         """
         Генерирует LessonInstance на основе CLASS_SCHEDULE и CLASS_EXCHANGE для заданных дат.
@@ -90,51 +141,51 @@ class NikaNormalizer:
                 continue
             
             for class_id in classes.keys():
-                cls_name = classes[class_id].name  # ← ДОБАВЛЕНО: имя класса
+                cls_name = classes[class_id].name
                 schedule_base = self.data.get("CLASS_SCHEDULE", {}).get(period_id, {}).get(class_id, {})
                 exchanges = self.data.get("CLASS_EXCHANGE", {}).get(class_id, {}).get(date_str, {})
                 
-                # Обрабатываем 1-14 уроки
-                for lesson_num in range(1, 15):
+                # Итерация только по реально существующим ключам
+                lesson_numbers = self._lesson_numbers_for_day(schedule_base, exchanges, weekday)
+                
+                for lesson_num in lesson_numbers:
                     daylesson_key = f"{weekday}{lesson_num:02d}"
                     l_str = str(lesson_num)
                     
-                    slot_base = schedule_base.get(daylesson_key)
-                    slot_exchange = exchanges.get(l_str)
+                    slot_base = schedule_base.get(daylesson_key, {})
+                    slot_exchange = exchanges.get(l_str, {})
                     
                     if not slot_base and not slot_exchange:
                         continue
                         
                     is_exchange = bool(slot_exchange)
-                    active_slot = slot_exchange if is_exchange else slot_base
-                    
-                    # Вспомогательная функция для приведения значений к списку
+                    is_cancelled = False
+
                     def _ensure_list(val):
                         if not val: return []
                         return val if isinstance(val, list) else [val]
 
+                    # Определение отмены и восстановление исходных данных
+                    if is_exchange and self._is_cancel_marker(
+                        slot_exchange.get("s")
+                    ):
+                        is_cancelled = True
+                        # У отменённого урока текущих данных НЕТ.
+                        # Информация «было» уже хранится в orig_* ниже.
+                        raw_s, raw_t, raw_r, raw_g = [], [], [], []
+                    else:
+                        active_slot = slot_exchange if is_exchange else slot_base
+                        raw_s = _ensure_list(active_slot.get("s"))
+                        raw_t = _ensure_list(active_slot.get("t"))
+                        raw_r = _ensure_list(active_slot.get("r"))
+                        raw_g = _ensure_list(active_slot.get("g"))
 
-                    # 1. Извлекаем АКТИВНЫЕ массивы
-                    raw_s = _ensure_list(active_slot.get("s"))
-                    raw_t = _ensure_list(active_slot.get("t"))
-                    raw_r = _ensure_list(active_slot.get("r"))
-                    raw_g = _ensure_list(active_slot.get("g"))
-                    
-                    # 2. Извлекаем ОРИГИНАЛЬНЫЕ массивы (что было ДО замены/отмены)
                     orig_s = _ensure_list(slot_base.get("s")) if slot_base else []
                     orig_t = _ensure_list(slot_base.get("t")) if slot_base else []
                     orig_r = _ensure_list(slot_base.get("r")) if slot_base else []
                     orig_g = _ensure_list(slot_base.get("g")) if slot_base else []
-                    
-                    is_cancelled = False
-                    if raw_s and raw_s[0] == "F":
-                        is_cancelled = True
-                        raw_s, raw_t, raw_r, raw_g = [], [], [], []
 
-
-                    start_time = lesson_times.get(l_str, ["00:00", "00:00"])[0]
-                    end_time = lesson_times.get(l_str, ["00:00", "00:00"])[1]
-
+                    start_time, end_time = self._get_lesson_time(lesson_num, lesson_times)
 
                     # Если урок отменен, цикл должен опираться на оригинальное количество групп!
                     if is_cancelled:
@@ -172,10 +223,14 @@ class NikaNormalizer:
                         orig_grp_name = class_groups.get(o_clean_g) if o_clean_g and o_clean_g != "ALL" else None
 
 
-                        safe_g_id = clean_g if clean_g and clean_g != "ALL" else "ALL"
+                        if is_cancelled:
+                            # Отмена относится к исходной подгруппе
+                            safe_g_id = o_clean_g if o_clean_g else "ALL"
+                        else:
+                            safe_g_id = clean_g if clean_g and clean_g != "ALL" else "ALL"
                         grp_name = class_groups.get(safe_g_id, "Весь класс") if safe_g_id != "ALL" else "Весь класс"
 
-                        # Формирование детерминированного ID с учетом индекса для параллельных уроков[cite: 11]
+                        # Формирование детерминированного ID с учетом индекса для параллельных уроков
                         lesson_id = f"{period_id}_{class_id}_{iso_date}_{lesson_num}_{safe_g_id}_{idx}"
 
 
@@ -246,54 +301,57 @@ class NikaNormalizer:
                 schedule_base = self.data.get("TEACH_SCHEDULE", {}).get(period_id, {}).get(teacher_id, {})
                 exchanges = self.data.get("TEACH_EXCHANGE", {}).get(teacher_id, {}).get(date_str, {})
                 
-                for lesson_num in range(1, 15):
+                # Итерация только по реально существующим ключам без хардкода range(1, 15)
+                lesson_numbers = self._lesson_numbers_for_day(schedule_base, exchanges, weekday)
+                
+                for lesson_num in lesson_numbers:
                     daylesson_key = f"{weekday}{lesson_num:02d}"
                     l_str = str(lesson_num)
                     
-                    slot_base = schedule_base.get(daylesson_key)
-                    slot_exchange = exchanges.get(l_str)
+                    slot_base = schedule_base.get(daylesson_key, {})
+                    slot_exchange = exchanges.get(l_str, {})
                     
                     if not slot_base and not slot_exchange:
                         continue
                             
                     is_exchange = bool(slot_exchange)
-                    active_slot = slot_exchange if is_exchange else slot_base
+                    is_cancelled = False
+                    is_methodological = False
                     
                     def _ensure_list(val):
                         if not val: return []
                         return val if isinstance(val, list) else [val]
 
-
-                    # 1. Извлекаем АКТИВНЫЕ массивы. У учителей ключ 'c' (классы) вместо 't'
-                    raw_s = _ensure_list(active_slot.get("s"))
-                    raw_c = _ensure_list(active_slot.get("c"))
-                    raw_r = _ensure_list(active_slot.get("r"))
-                    raw_g = _ensure_list(active_slot.get("g"))
+                    # 1. Извлекаем АКТИВНЫЕ массивы и проверяем отмены/метод.дни
+                    if is_exchange and self._is_cancel_marker(
+                        slot_exchange.get("s")
+                    ):
+                        is_cancelled = True
+                        raw_s, raw_c, raw_r, raw_g = [], [], [], []
+                    else:
+                        active_slot = slot_exchange if is_exchange else slot_base
+                        raw_s = _ensure_list(active_slot.get("s"))
+                        
+                        if raw_s and raw_s[0] == "M":
+                            is_methodological = True
+                            raw_s = ["M"]  # Фиктивный ID для итерации[cite: 11]
+                            raw_c, raw_r, raw_g = [], [], []
+                        else:
+                            raw_c = _ensure_list(active_slot.get("c"))
+                            raw_r = _ensure_list(active_slot.get("r"))
+                            raw_g = _ensure_list(active_slot.get("g"))
                     
-                    # 2. ОРИГИНАЛЬНЫЕ массивы (базовое расписание)
+                    # 2. ОРИГИНАЛЬНЫЕ массивы (базовое расписание)[cite: 11]
                     orig_s = _ensure_list(slot_base.get("s")) if slot_base else []
                     orig_c = _ensure_list(slot_base.get("c")) if slot_base else []
                     orig_r = _ensure_list(slot_base.get("r")) if slot_base else []
                     orig_g = _ensure_list(slot_base.get("g")) if slot_base else []
-                    
-                    is_cancelled = False
-                    is_methodological = False
-                    
-                    # Обработка отмен и методических часов
-                    if raw_s and raw_s[0] == "F":
-                        is_cancelled = True
-                        raw_s, raw_c, raw_r, raw_g = [], [], [], []
-                    elif raw_s and raw_s[0] == "M":
-                        is_methodological = True
-                        raw_s = ["M"]  # Фиктивный ID для итерации
-                        raw_c, raw_r, raw_g = [], [], []
 
+                    # 3. Строгий контроль времени без фолбэков
+                    start_time, end_time = self._get_lesson_time(lesson_num, lesson_times)
 
-                    start_time = lesson_times.get(l_str, ["00:00", "00:00"])[0]
-                    end_time = lesson_times.get(l_str, ["00:00", "00:00"])[1]
-
-
-                    if is_cancelled:
+                    # Для отмен и метод. часов берем оригинальную длину массива, чтобы сохранить исходные данные[cite: 11]
+                    if is_cancelled or is_methodological:
                         max_len = max(1, len(orig_s), len(orig_c), len(orig_g))
                     else:
                         max_len = max(len(raw_s), len(raw_c), len(raw_r), len(raw_g))
@@ -301,12 +359,13 @@ class NikaNormalizer:
                     if max_len == 0:
                         continue
 
-
                     for idx in range(max_len):
                         clean_s = self._clean_val(raw_s[idx]) if idx < len(raw_s) else None
                         clean_c = self._clean_val(raw_c[idx]) if idx < len(raw_c) else None
                         clean_r = self._clean_val(raw_r[idx]) if idx < len(raw_r) else None
-                        clean_g = self._clean_val(raw_g[idx] if idx < len(raw_g) else "ALL")
+                        
+                        g_id = raw_g[idx] if idx < len(raw_g) else "ALL"
+                        clean_g = self._clean_val(g_id)
                         
                         o_clean_s = self._clean_val(orig_s[idx]) if idx < len(orig_s) else None
                         o_clean_c = self._clean_val(orig_c[idx]) if idx < len(orig_c) else None
@@ -327,15 +386,17 @@ class NikaNormalizer:
                         cls_name = classes.get(clean_c).name if clean_c and clean_c in classes else None
                         orig_cls_name = classes.get(o_clean_c).name if o_clean_c and o_clean_c in classes else None
                         
-                        # Оригинальная группа
+                        # Оригинальная группа (сохранение для истории)[cite: 11]
                         orig_grp_name = class_groups.get(o_clean_g) if o_clean_g and o_clean_g != "ALL" else None
 
-
-                        safe_g_id = clean_g if clean_g and clean_g != "ALL" else "ALL"
+                        if is_cancelled:
+                            # Отмена относится к исходной подгруппе
+                            safe_g_id = o_clean_g if o_clean_g else "ALL"
+                        else:
+                            safe_g_id = clean_g if clean_g and clean_g != "ALL" else "ALL"
                         grp_name = class_groups.get(safe_g_id, "Весь класс") if safe_g_id != "ALL" else "Весь класс"
 
-
-                        # Детерминированный ID: если класса нет (метод. день), используем маркер TEACHER_[id]
+                        # Детерминированный ID: если класса нет (метод. день), используем маркер TEACHER_[id][cite: 11]
                         effective_class_id = clean_c if clean_c else f"TEACHER_{teacher_id}"
                         lesson_id = f"T{teacher_id}_{period_id}_{effective_class_id}_{iso_date}_{lesson_num}_{safe_g_id}_{idx}"
 
@@ -363,16 +424,16 @@ class NikaNormalizer:
                             original_room_id=o_clean_r, 
                             original_room_name=orig_rom_name,
                             original_class_id=o_clean_c,  # ← оригинальный класс
-                            original_class_name=orig_cls_name,  # ← оригинальный класс (имя)
-                            original_group_id=o_clean_g,  # ← ДОБАВЛЕНО
-                            original_group_name=orig_grp_name,  # ← ДОБАВЛЕНО
+                            original_class_name=orig_cls_name,
+                            original_group_id=o_clean_g,  # ← оригинальная подгруппа
+                            original_group_name=orig_grp_name,
                             group_id=safe_g_id, 
                             group_name=grp_name,
                             is_exchange=is_exchange, 
                             is_cancelled=is_cancelled,
                             is_methodological=is_methodological,
-                            groups_raw=raw_g,  # ← ДОБАВЛЕНО (ранее отсутствовало!)
-                            subjects_raw=raw_s,  # ← ДОБАВЛЕНО (ранее отсутствовало!)
-                            rooms_raw=raw_r  # ← ДОБАВЛЕНО (ранее отсутствовало!)
+                            groups_raw=raw_g,
+                            subjects_raw=raw_s,
+                            rooms_raw=raw_r
                         ))
         return lessons

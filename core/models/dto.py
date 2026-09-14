@@ -437,44 +437,55 @@ class NikaSourceHealthDTO:
 @dataclass
 class LessonDTO:
     """
-    DTO для одного урока (рендерер + уведомления).
+    DTO одного элемента расписания: школьный урок ИЛИ доп. занятие.
 
-    Этап 3: добавлены original_*, group_changed, day_permutation,
-    class_name, teacher_name, is_methodological.
+    Школьный урок: заполнено всё; при заменах original_* хранит «было».
+    Доп. занятие: is_extra=True, id="extra-N", lesson_num=None,
+    display_num="•", все original_* остаются None.
     """
-    lesson_num: int
-    start_time: str
-    end_time: str
-    subject_name: str
-    room_name: str
-    is_cancelled: bool
-    is_exchange: bool
+    # --- Ядро (заполняется всегда) ---
+    lesson_num: Optional[int] = None
+    start_time: str = ""
+    end_time: str = ""
+    subject_name: str = ""
+    room_name: str = ""
+    is_cancelled: bool = False
+    is_exchange: bool = False
 
-    period_id: Optional[str] = None 
-    group_id: Optional[str] = None  # ← НОВОЕ ПОЛЕ
-    group_name: Optional[str] = None
-    class_id: Optional[str] = None  # ← ДОБАВЛЕНО для consistency
+    # --- Идентификатор записи ---
+    id: Optional[str] = None
+    date_iso: Optional[str] = None
+    
+    # --- Принадлежность ---
+    period_id: Optional[str] = None
+    class_id: Optional[str] = None
     class_name: Optional[str] = None
-    teacher_id: Optional[str] = None  # ← ДОБАВЛЕНО для consistency
+    group_id: Optional[str] = None
+    group_name: Optional[str] = None
+    teacher_id: Optional[str] = None
     teacher_name: Optional[str] = None
-    is_methodological: bool = False
 
+    # --- Состояния ---
+    is_methodological: bool = False
+    is_extra: bool = False
+
+    # --- «Было → стало» (только школьные уроки с заменами) ---
+    original_subject_id: Optional[str] = None
     original_subject_name: Optional[str] = None
-    original_subject_id: Optional[str] = None  # ← ДОБАВЛЕНО
+    original_teacher_id: Optional[str] = None
     original_teacher_name: Optional[str] = None
-    original_teacher_id: Optional[str] = None  # ← ДОБАВЛЕНО
+    original_room_id: Optional[str] = None
     original_room_name: Optional[str] = None
-    original_room_id: Optional[str] = None  # ← ДОБАВЛЕНО
+    original_group_id: Optional[str] = None
     original_group_name: Optional[str] = None
-    original_group_id: Optional[str] = None  # ← ДОБАВЛЕНО
     original_class_id: Optional[str] = None
     original_class_name: Optional[str] = None
-    
-    # Флаги для UI
-    group_changed: bool = False          # группа изменилась при замене
-    day_permutation: bool = False        # день — перестановка (🔁)
-    display_num: Optional[str] = None  #  номер урока 2 смены
 
+    # --- Флаги UI ---
+    group_changed: bool = False
+    day_permutation: bool = False
+    display_num: Optional[str] = None   # номер урока 2 смены ("2*"),
+                                        # заполняется _enrich_display_numbers_dtos
 
 # ==========================================================
 # DayScheduleDTO (Union: LessonDTO | Dict)
@@ -486,12 +497,11 @@ class DayScheduleDTO:
     """
     DTO для расписания на один день.
 
-    lessons: List[Union[LessonDTO, Dict]] — school lessons (LessonDTO)
-    + extra lessons (Dict из extra_classes). Extra lessons имеют
-    is_extra=True, что позволяет рендереру отличать их.
+    lessons: List[LessonDTO] — школьные уроки и доп. занятия
+    в едином формате (доп. занятия отличаются is_extra=True).
     """
     date_iso: str
-    lessons: List[Union[LessonDTO, Dict[str, Any]]] = field(default_factory=list)
+    lessons: List[LessonDTO] = field(default_factory=list)
     has_permutation: bool = False
 
 

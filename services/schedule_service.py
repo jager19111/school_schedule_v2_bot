@@ -126,47 +126,55 @@ class ScheduleService:
             for teacher_id, teacher in teachers_raw.items()
         }
         return TeacherListDTO(teachers=teachers)
+   
+    @staticmethod
+    def _lesson_to_dto(
+        lesson: LessonInstance,
+        *,
+        day_permutation: bool = False,
+    ) -> LessonDTO:
+        return LessonDTO(
+            id=lesson.id,
+            lesson_num=lesson.lesson_num,
+            start_time=lesson.start_time,
+            end_time=lesson.end_time,
+            subject_name=lesson.subject_name or "",
+            room_name=lesson.room_name or "",
+            is_cancelled=lesson.is_cancelled,
+            is_exchange=lesson.is_exchange,
+            is_extra=False,
+            date_iso=lesson.date,
+            
+            period_id=lesson.period_id,
+            group_id=lesson.group_id,
+            group_name=lesson.group_name,
+            class_id=lesson.class_id,
+            class_name=lesson.class_name,
+            teacher_id=lesson.teacher_id,
+            teacher_name=lesson.teacher_name,
+            is_methodological=lesson.is_methodological,
 
+            original_subject_id=lesson.original_subject_id,
+            original_subject_name=lesson.original_subject_name,
+            original_teacher_id=lesson.original_teacher_id,
+            original_teacher_name=lesson.original_teacher_name,
+            original_room_id=lesson.original_room_id,
+            original_room_name=lesson.original_room_name,
+            original_group_id=lesson.original_group_id,
+            original_group_name=lesson.original_group_name,
+            original_class_id=lesson.original_class_id,
+            original_class_name=lesson.original_class_name,
 
+            group_changed=(
+                lesson.is_exchange
+                and lesson.original_group_id is not None
+                and lesson.original_group_id != lesson.group_id
+            ),
+            day_permutation=day_permutation,
+        )
     # ==========================================================
     # Детекция перестановок (🔁 vs 🔀)
     # ==========================================================
-
-    if False: # Проверить на корректность. Есть замечания к этому методу. Ниже приведен на замену другой. Разобраться какой лучше
-        @staticmethod
-        def _detect_day_permutation(lessons: List[LessonInstance]) -> bool:
-            """
-            True, если ВСЕ замены дня — перестановка уроков местами.
-
-            Алгоритм:
-            1. Отбираем все уроки с is_exchange=True и not is_cancelled.
-            2. Строим мультимножество (subject_id, room_id) для original_*
-            и для текущих значений.
-            3. Если мультимножества равны — предметы/кабинеты те же,
-            просто поменялись местами (🔁). Иначе — реальная замена (🔀).
-
-            Пустой список exchange-уроков → False (нечего детектить).
-            """
-            ex = [
-                l for l in lessons
-                if l.is_exchange and not l.is_cancelled
-            ]
-
-            if len(ex) < 2:
-                return False
-
-            orig = Counter(
-                (l.original_subject_id, l.original_room_id)
-                for l in ex
-                if l.original_subject_id and l.original_room_id
-            )
-            curr = Counter(
-                (l.subject_id, l.room_id)
-                for l in ex
-                if l.subject_id and l.room_id
-            )
-
-            return orig == curr
 
     @staticmethod
     def _detect_day_permutation(lessons: List['LessonInstance']) -> bool:
@@ -252,47 +260,14 @@ class ScheduleService:
         ]
         changed.sort(key=lambda l: l.lesson_num or 99)
 
-        # LessonInstance → LessonDTO
+        # Детекция перестановок вычисляется ДО маппинга
+        day_permutation = self._detect_day_permutation(changed)
+
+        # LessonInstance → LessonDTO через единый маппер
         lesson_dtos = [
-            LessonDTO(
-                lesson_num=l.lesson_num or 0,
-                start_time=l.start_time,
-                end_time=l.end_time,
-                subject_name=l.subject_name or "",
-                room_name=l.room_name or "",
-                is_cancelled=l.is_cancelled,
-                is_exchange=l.is_exchange,
-                period_id=l.period_id,
-                group_id=l.group_id,  # ← ЗАПОЛНЯЕМ
-                group_name=l.group_name,
-                class_id=l.class_id,  # ← ЗАПОЛНЯЕМ
-                class_name=l.class_name,
-                teacher_id=l.teacher_id,  # ← ЗАПОЛНЯЕМ
-                teacher_name=l.teacher_name,
-                is_methodological=l.is_methodological,
-                original_subject_name=l.original_subject_name,
-                original_subject_id=l.original_subject_id,  # ← ЗАПОЛНЯЕМ
-                original_teacher_name=l.original_teacher_name,
-                original_teacher_id=l.original_teacher_id,  # ← ЗАПОЛНЯЕМ
-                original_room_name=l.original_room_name,
-                original_room_id=l.original_room_id,  # ← ЗАПОЛНЯЕМ
-                original_class_id=l.original_class_id,
-                original_class_name=l.original_class_name,
-                original_group_name=l.original_group_name,
-                original_group_id=l.original_group_id,  # ← ЗАПОЛНЯЕМ
-                group_changed=(
-                    l.original_group_id is not None
-                    and l.original_group_id != l.group_id
-                ),
-                day_permutation=False,  # детектируется на уровне дня
-            )
+            self._lesson_to_dto(l, day_permutation=day_permutation)
             for l in changed
         ]
-
-        # Детекция перестановок для всего дня
-        day_permutation = self._detect_day_permutation(changed)
-        for l in lesson_dtos:
-            l.day_permutation = day_permutation
 
         return DayChangesDetailDTO(
             date_iso=date_iso,
@@ -341,45 +316,14 @@ class ScheduleService:
         # 3. Детекция перестановок
         day_permutation = self._detect_day_permutation(filtered_base)
 
-        # 4. LessonInstance → LessonDTO
+        # 4. LessonInstance → LessonDTO через единый маппер
         school_lessons: List[LessonDTO] = [
-            LessonDTO(
-                lesson_num=l.lesson_num or 0,
-                start_time=l.start_time,
-                end_time=l.end_time,
-                subject_name=l.subject_name or "",
-                room_name=l.room_name or "",
-                is_cancelled=l.is_cancelled,
-                is_exchange=l.is_exchange,
-                period_id=l.period_id,
-                group_id=l.group_id,  # ← ЗАПОЛНЯЕМ
-                group_name=l.group_name,
-                class_id=l.class_id,  # ← ЗАПОЛНЯЕМ
-                class_name=l.class_name,
-                teacher_id=l.teacher_id,  # ← ЗАПОЛНЯЕМ
-                teacher_name=l.teacher_name,
-                is_methodological=l.is_methodological,
-                original_subject_name=l.original_subject_name,
-                original_subject_id=l.original_subject_id,  # ← ЗАПОЛНЯЕМ
-                original_teacher_name=l.original_teacher_name,
-                original_teacher_id=l.original_teacher_id,  # ← ЗАПОЛНЯЕМ
-                original_room_name=l.original_room_name,
-                original_room_id=l.original_room_id,  # ← ЗАПОЛНЯЕМ
-                original_class_id=l.original_class_id,
-                original_class_name=l.original_class_name,
-                original_group_name=l.original_group_name,
-                original_group_id=l.original_group_id,  # ← ЗАПОЛНЯЕМ
-                group_changed=(
-                    l.original_group_id is not None
-                    and l.original_group_id != l.group_id
-                ),
-                day_permutation=day_permutation,
-            )
+            self._lesson_to_dto(l, day_permutation=day_permutation)
             for l in filtered_base
         ]
 
         # 5. Extra lessons (Dict)
-        extra_lessons: List[Dict[str, Any]] = []
+        extra_lessons: List[LessonDTO] = []
         if student_id is not None:
             date_obj = self.time_service.date_from_iso(date_iso)
             weekday = date_obj.isoweekday()
@@ -393,19 +337,12 @@ class ScheduleService:
             ]
 
         # 6. Merge: LessonDTO + Dict
-        combined: List[Union[LessonDTO, Dict[str, Any]]] = (
-            school_lessons + extra_lessons
-        )
+        combined: List[LessonDTO] = school_lessons + extra_lessons
 
         # 7. Сортировка
-        def sort_key(l: Union[LessonDTO, Dict[str, Any]]):
-            if isinstance(l, LessonDTO):
-                num = l.lesson_num or 99
-                time = l.start_time
-            else:
-                num = l.get("lesson_num") or 99
-                time = l.get("start_time", "00:00")
-            return (time.zfill(5), num)
+        def sort_key(l: LessonDTO):
+            num = l.lesson_num if l.lesson_num is not None else 99
+            return (l.start_time.zfill(5), num)
 
         combined.sort(key=sort_key)
 
@@ -414,9 +351,8 @@ class ScheduleService:
         groups_dict = metadata.get("groups", {})
 
         for l in combined:
-            if isinstance(l, LessonDTO):
-                if l.group_id != "ALL" and l.group_name:
-                    l.group_name = groups_dict.get(l.group_id, l.group_name)
+            if l.group_id != "ALL" and l.group_name:
+                l.group_name = groups_dict.get(l.group_id, l.group_name)
 
         # 9. Display numbers (смены)
         self._enrich_display_numbers_dtos(
@@ -467,15 +403,12 @@ class ScheduleService:
             if candidate_date != today:
                 return candidate_iso
 
-            latest_end_time = max(
-                (
-                    l.start_time if isinstance(l, LessonDTO) else l.get("start_time", "00:00")
-                    for l in day_dto.lessons
-                ),
+            latest_end = max(
+                (l.end_time.zfill(5) for l in day_dto.lessons),
                 default="00:00",
             )
 
-            if now.strftime("%H:%M") <= latest_end_time:
+            if now.strftime("%H:%M") <= latest_end:
                 return candidate_iso
 
         # Fallback: если кэш ещё не загружен на будущее, возвращаем сегодня.
@@ -522,26 +455,27 @@ class ScheduleService:
 
             # Считаем уникальные номера основных уроков (set автоматически уберет дубли подгрупп)
             main_lesson_nums = {
-                l.lesson_num if isinstance(l, LessonDTO) else l.get("lesson_num")
+                l.lesson_num
                 for l in day_dto.lessons
-                if not (isinstance(l, dict) and l.get("is_extra"))
-                and (l.lesson_num if isinstance(l, LessonDTO) else l.get("lesson_num")) is not None
+                if not l.is_extra and l.lesson_num is not None
             }
             main_count = len(main_lesson_nums)
 
-            # Считаем уникальные номера измененных уроков
             exchange_nums = {
-                l.lesson_num if isinstance(l, LessonDTO) else l.get("lesson_num")
+                l.lesson_num
                 for l in day_dto.lessons
-                if (l.is_exchange if isinstance(l, LessonDTO) else l.get("is_exchange"))
-                and (l.lesson_num if isinstance(l, LessonDTO) else l.get("lesson_num")) is not None
+                if l.is_exchange and not l.is_extra
+                and l.lesson_num is not None
             }
             exchange_count = len(exchange_nums)
 
+            extra_count = sum(1 for l in day_dto.lessons if l.is_extra)
+
             # Доп. занятия не имеют номеров, их считаем напрямую
             extra_count = sum(
-                1 for l in day_dto.lessons
-                if isinstance(l, dict) and l.get("is_extra")
+                1
+                for l in day_dto.lessons
+                if l.is_extra
             )
 
             day_summaries.append(DaySummaryDTO(
@@ -595,41 +529,14 @@ class ScheduleService:
 
         day_permutation = self._detect_day_permutation(lessons)
 
+        # Единый маппер вместо дублирования конструктора
         school_lessons: List[LessonDTO] = [
-            LessonDTO(
-                lesson_num=l.lesson_num or 0,
-                start_time=l.start_time,
-                end_time=l.end_time,
-                subject_name=l.subject_name or "",
-                room_name=l.room_name or "",
-                is_cancelled=l.is_cancelled,
-                is_exchange=l.is_exchange,
-                period_id=l.period_id,
-                group_id=l.group_id,  # ← ЗАПОЛНЯЕМ
-                group_name=l.group_name,
-                class_id=l.class_id,  # ← ЗАПОЛНЯЕМ
-                class_name=l.class_name,
-                teacher_id=l.teacher_id,  # ← ЗАПОЛНЯЕМ
-                teacher_name=l.teacher_name,
-                is_methodological=l.is_methodological,
-                original_subject_name=l.original_subject_name,
-                original_subject_id=l.original_subject_id,  # ← ЗАПОЛНЯЕМ
-                original_teacher_name=l.original_teacher_name,
-                original_teacher_id=l.original_teacher_id,  # ← ЗАПОЛНЯЕМ
-                original_room_name=l.original_room_name,
-                original_room_id=l.original_room_id,  # ← ЗАПОЛНЯЕМ
-                original_class_id=l.original_class_id,
-                original_class_name=l.original_class_name,
-                original_group_name=l.original_group_name,
-                original_group_id=l.original_group_id,  # ← ЗАПОЛНЯЕМ
-                group_changed=False,
-                day_permutation=day_permutation,
-            )
+            self._lesson_to_dto(l, day_permutation=day_permutation)
             for l in lessons
         ]
 
         def sort_key(l: LessonDTO):
-            return (l.start_time.zfill(5), l.lesson_num)
+            return (l.start_time.zfill(5), l.lesson_num or 99)
 
         combined = sorted(school_lessons, key=sort_key)
 
@@ -673,58 +580,38 @@ class ScheduleService:
         teacher_id: str,
         date_iso: str,
     ) -> DayScheduleDTO:
-        logger.info(f"Тест-Teacher {teacher_id} date {date_iso}")  # ← ДОБАВИТЬ
+
         lessons: List[LessonInstance] = (
             await self.schedule_repo.get_lesson_instances_for_teacher(
                 teacher_id=teacher_id,
                 date_iso=date_iso,
             )
         )
-        logger.info("Тест Загружены уроки учителя: teacher_id=%s, count=%s", teacher_id, len(lessons))
         day_permutation = self._detect_day_permutation(lessons)
 
+        # Единый маппер вместо дублирования конструктора
         school_lessons: List[LessonDTO] = [
-            LessonDTO(
-                lesson_num=l.lesson_num or 0,
-                start_time=l.start_time,
-                end_time=l.end_time,
-                subject_name=l.subject_name or "",
-                room_name=l.room_name or "",
-                is_cancelled=l.is_cancelled,
-                is_exchange=l.is_exchange,
-                period_id=l.period_id,
-                group_id=l.group_id,  # ← ЗАПОЛНЯЕМ
-                group_name=l.group_name,
-                class_id=l.class_id,  # ← ЗАПОЛНЯЕМ
-                class_name=l.class_name,
-                teacher_id=l.teacher_id,  # ← ЗАПОЛНЯЕМ
-                teacher_name=l.teacher_name,
-                is_methodological=l.is_methodological,
-                original_subject_name=l.original_subject_name,
-                original_subject_id=l.original_subject_id,  # ← ЗАПОЛНЯЕМ
-                original_teacher_name=l.original_teacher_name,
-                original_teacher_id=l.original_teacher_id,  # ← ЗАПОЛНЯЕМ
-                original_room_name=l.original_room_name,
-                original_room_id=l.original_room_id,  # ← ЗАПОЛНЯЕМ
-                original_class_id=l.original_class_id,
-                original_class_name=l.original_class_name,
-                original_group_name=l.original_group_name,
-                original_group_id=l.original_group_id,  # ← ЗАПОЛНЯЕМ
-                group_changed=False,
-                day_permutation=day_permutation,
-            )
+            self._lesson_to_dto(l, day_permutation=day_permutation)
             for l in lessons
         ]
 
         def sort_key(l: LessonDTO):
-            return (l.start_time.zfill(5), l.lesson_num)
+            return (l.start_time.zfill(5), l.lesson_num or 99)
 
-        combined = sorted(school_lessons, key=sort_key)
+        combined = sorted(
+            school_lessons,
+            key=lambda lesson: (
+                lesson.start_time.zfill(5),
+                lesson.lesson_num or 99,
+            ),
+        )
 
-        # Display numbers (для учителей — абсолютные)
-        for l in combined:
-            l.lesson_num = l.lesson_num or 0
+        metadata = await self.schedule_repo.get_metadata()
 
+        self._enrich_display_numbers_dtos(
+            lessons=combined,
+            metadata=metadata,
+        )
         return DayScheduleDTO(
             date_iso=date_iso,
             lessons=combined,
@@ -782,12 +669,14 @@ class ScheduleService:
                 return candidate_iso
 
             latest_end_time = max(
-                (l.start_time for l in day_dto.lessons),
+                (
+                    lesson.end_time.zfill(5)
+                    for lesson in day_dto.lessons
+                ),
                 default="00:00",
             )
 
             if now.strftime("%H:%M") <= latest_end_time:
-                logger.info(f"Тест  → Today with lessons, return")  # ← ДОБАВИТЬ
                 return candidate_iso
 
         return today.isoformat()
@@ -846,36 +735,28 @@ class ScheduleService:
         self,
         row: Dict[str, Any],
         date_iso: str,
-    ) -> Dict[str, Any]:
+    ) -> LessonDTO:
         """
-        Преобразует extra_classes-запись в lesson-словарь,
-        совместимый с UIRenderer расписания.
+        Доп. занятие (extra_classes) → LessonDTO с is_extra=True.
         """
-        return {
-            "id": f"extra-{row['id']}",
-            "date": date_iso,
-
-            "lesson_num": None,
-            "display_num": "•",
-
-            "start_time": row["time_start"],
-            "end_time": row["time_end"],
-
-            "subject_name": row["title"],
-            "room_name": row.get("location") or "—",
-
-            "is_extra": True,
-            "is_cancelled": False,
-            "is_exchange": False,
-
-            # Допзанятие не является школьным уроком класса.
-            "class_id": None,
-            "group_id": "ALL",
-            "group_name": None,
-
-            # Полезно для дальнейших diagnostics и notifications.
-            "student_id": row["student_id"],
-        }
+        return LessonDTO(
+            id=f"extra-{row['id']}",
+            lesson_num=None,
+            display_num="•",
+            start_time=row["time_start"],
+            end_time=row["time_end"],
+            subject_name=row["title"],
+            room_name=row.get("location") or "—",
+            is_cancelled=False,
+            is_exchange=False,
+            is_extra=True,
+            is_methodological=False,
+            class_id=None,
+            group_id="ALL",
+            group_name=None,
+            date_iso=date_iso,
+            # student_id из старого словаря удалено — рендерер его не использует; если понадобится для диагностики, вернём отдельным полем осознанно.
+        )
 
     @staticmethod
     def _enrich_display_numbers_dtos(
@@ -927,5 +808,5 @@ class ScheduleService:
                     l.display_num = str(m)
 
         for l in lessons:
-            if not hasattr(l, "display_num") or l.display_num is None:
+            if l.display_num is None:
                 l.display_num = "•"
