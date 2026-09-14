@@ -10,6 +10,9 @@ from core.models.domain import LessonInstance
 from services.time_service import TimeService
 from core.mappers.lesson_mapper import LessonMapper
 
+
+from core.mappers.metadata_mapper import MetadataMapper
+
 from core.models.dto import (
     DayScheduleDTO,
     DaySummaryDTO,
@@ -617,3 +620,42 @@ class ScheduleService:
         for l in lessons:
             if l.display_num is None:
                 l.display_num = "•"
+                
+    # ==========================================================
+    # Прокидываем DTO в хендлеры
+    # ==========================================================            
+                
+    async def get_classes_list(self) -> ClassListDTO:
+        metadata = await self.schedule_repo.get_metadata()
+
+        return MetadataMapper.to_class_list_dto(metadata)
+
+
+    async def get_teachers_list(self) -> TeacherListDTO:
+        metadata = await self.schedule_repo.get_metadata()
+
+        return MetadataMapper.to_teacher_list_dto(metadata)
+
+
+    async def get_groups_list(self) -> GroupListDTO:
+        metadata = await self.schedule_repo.get_metadata()
+
+        return MetadataMapper.to_group_list_dto(metadata)
+    
+    
+    async def get_teacher_name(self, teacher_id: str) -> str:
+        teacher_dto = await self.get_teachers_list()
+
+        return teacher_dto.teachers.get(
+            str(teacher_id),
+            "Преподаватель",
+        )
+
+
+    async def get_class_name(self, class_id: str) -> str:
+        class_dto = await self.get_classes_list()
+
+        return class_dto.classes.get(
+            str(class_id),
+            "Класс",
+        )

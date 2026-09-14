@@ -19,7 +19,7 @@ from typing import Dict, Optional, List, Literal, Any
 # ==========================================================
 
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class ClassListDTO:
     classes: Dict[str, str]  # id -> name
 
@@ -27,6 +27,12 @@ class ClassListDTO:
 @dataclass
 class GroupListDTO:
     groups: Dict[str, str]  # id -> name
+
+
+@dataclass(frozen=True, slots=True)
+class TeacherListDTO:
+    """ DTO для списка учителей. """
+    teachers: Dict[str, str]  # id -> name
 
 
 @dataclass(frozen=True, slots=True)
@@ -660,12 +666,6 @@ class ExtraClassItemDTO:
 class ExtraClassListDTO:
     """ DTO для списка доп. занятий ребёнка. """
     items: List[ExtraClassItemDTO]
-
-
-@dataclass
-class TeacherListDTO:
-    """ DTO для списка учителей. """
-    teachers: Dict[str, str]  # id -> name
 
 
 @dataclass

@@ -6,7 +6,7 @@
 
 from dataclasses import dataclass
 from typing import Dict, Mapping
-
+from core.models.domain import Class, Teacher
 
 @dataclass(frozen=True, slots=True)
 class SchoolMetadata:
@@ -16,8 +16,8 @@ class SchoolMetadata:
     Используется для расшифровки ID в человекочитаемые названия
     и для логики второй смены.
     """
-    classes: Mapping[str, str]
+    classes: Mapping[str, Class]
     groups: Mapping[str, str]
-    teachers: Mapping[str, str]
+    teachers: Mapping[str, Teacher]
     class_shift: Mapping[str, Mapping[str, int]]
     second_relative: bool

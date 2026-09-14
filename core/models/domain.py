@@ -1,4 +1,4 @@
-# bot/core/domain.py
+# /core/model/domain.py
 from dataclasses import dataclass, field
 from typing import List, Optional
 import datetime

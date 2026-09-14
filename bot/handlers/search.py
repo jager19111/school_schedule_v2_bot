@@ -32,11 +32,10 @@ from bot.callbacks import (
     SearchTeacherWeekCD,
 )
 from services.schedule_service import ScheduleService
-from core.repository.schedule_repository import ScheduleRepository
 from services.time_service import TimeService
 from bot.utils.ui_renderer import UIRenderer
 from bot.keyboards.keyboard import Keyboards
-from core.models.dto import ClassListDTO, TeacherListDTO
+from core.models.dto import ClassListDTO, TeacherListDTO, DayScheduleDTO
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -51,145 +50,263 @@ async def search_back(callback: CallbackQuery):
 
 
 @router.callback_query(F.data == callbacks.SEARCH_CLASSES)
-async def search_classes(callback: CallbackQuery, schedule_repo: ScheduleRepository):
-    metadata = await schedule_repo.get_metadata()
-    classes_dict = {k: v.name if hasattr(v, 'name') else v for k, v in metadata.get('classes', {}).items()}
-    class_dto = ClassListDTO(classes=classes_dict)
+async def search_classes(
+    callback: CallbackQuery,
+    schedule_service: ScheduleService,
+):
+    class_dto: ClassListDTO = (
+        await schedule_service.get_classes_list()
+    )
+
     text = UIRenderer.render_search_class_select()
     kb = Keyboards.get_search_classes_kb(class_dto)
-    await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+
+    await callback.message.edit_text(
+        text,
+        reply_markup=kb,
+        parse_mode="HTML",
+    )
     await callback.answer()
 
-
 @router.callback_query(F.data == callbacks.SEARCH_TEACHERS)
-async def search_teachers(callback: CallbackQuery, schedule_repo: ScheduleRepository):
-    metadata = await schedule_repo.get_metadata()
-    teachers_dict = {k: v.name if hasattr(v, 'name') else v for k, v in metadata.get('teachers', {}).items()}
-    teacher_dto = TeacherListDTO(teachers=teachers_dict)
+async def search_teachers(
+    callback: CallbackQuery,
+    schedule_service: ScheduleService,
+):
+    teacher_dto: TeacherListDTO = (
+        await schedule_service.get_teachers_list()
+    )
+
     text = UIRenderer.render_search_teacher_select()
     kb = Keyboards.get_search_teachers_kb(teacher_dto)
-    await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+
+    await callback.message.edit_text(
+        text,
+        reply_markup=kb,
+        parse_mode="HTML",
+    )
     await callback.answer()
 
 
 @router.callback_query(SearchClassCD.filter())
-async def select_class_day(callback: CallbackQuery, callback_data: SearchClassCD, schedule_repo: ScheduleRepository, schedule_service: ScheduleService, time_service: TimeService):
+async def select_class_day(
+    callback: CallbackQuery,
+    callback_data: SearchClassCD,
+    schedule_service: ScheduleService,
+    time_service: TimeService,
+):
     class_id = callback_data.class_id
-    metadata = await schedule_repo.get_metadata()
-    cls_obj = metadata.get('classes', {}).get(class_id)
-    class_name = cls_obj.name if hasattr(cls_obj, 'name') else "Класс"
-    # Этап 4: умная дата — в TimeService (была копипастой здесь).
+    class_name = await schedule_service.get_class_name(class_id)
+
     target_date = time_service.get_smart_view_datetime()
     date_iso = target_date.date().isoformat()
-    # Сразу выводим расписание дня
-    day_dto = await schedule_service.get_daily_schedule_for_class(class_id, date_iso)
+
+    day_dto = await schedule_service.get_daily_schedule_for_class(
+        class_id,
+        date_iso,
+    )
+
     text, _ = UIRenderer.render_child_day_schedule(day_dto)
     text = f"🎓 <b>Расписание: {class_name}</b>\n" + text
-    monday = target_date - timedelta(days=target_date.isoweekday() - 1)
-    kb = Keyboards.get_search_days_kb(class_id, False, monday.date().isoformat())
-    await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+
+    monday = target_date - timedelta(
+        days=target_date.isoweekday() - 1,
+    )
+
+    kb = Keyboards.get_search_days_kb(
+        target_id=class_id,
+        is_teacher=False,
+        week_start_iso=monday.date().isoformat(),
+    )
+
+    await callback.message.edit_text(
+        text,
+        reply_markup=kb,
+        parse_mode="HTML",
+    )
     await callback.answer()
 
 
 @router.callback_query(SearchTeacherCD.filter())
-async def select_teacher_day(callback: CallbackQuery, callback_data: SearchTeacherCD, schedule_repo: ScheduleRepository, schedule_service: ScheduleService, time_service: TimeService):
+async def select_teacher_day(
+    callback: CallbackQuery,
+    callback_data: SearchTeacherCD,
+    schedule_service: ScheduleService,
+    time_service: TimeService,
+):
     teacher_id = callback_data.teacher_id
-    metadata = await schedule_repo.get_metadata()
-    tch_obj = metadata.get('teachers', {}).get(teacher_id)
-    teacher_name = tch_obj.name if hasattr(tch_obj, 'name') else "Преподаватель"
-    # Этап 4: умная дата — в TimeService (была копипастой здесь).
+    teacher_name = await schedule_service.get_teacher_name(
+        teacher_id
+    )
+
     target_date = time_service.get_smart_view_datetime()
     date_iso = target_date.date().isoformat()
-    day_dto = await schedule_service.get_daily_schedule_for_teacher(teacher_id, date_iso)
-    text, _ = UIRenderer.render_child_day_schedule(day_dto)
-    text = f"👨‍🏫 <b>Расписание: {teacher_name}</b>\n" + text
-    monday = target_date - timedelta(days=target_date.isoweekday() - 1)
-    kb = Keyboards.get_search_days_kb(teacher_id, True, monday.date().isoformat())
-    await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
-    await callback.answer()
 
+    day_dto: DayScheduleDTO = (
+        await schedule_service.get_daily_schedule_for_teacher(
+            teacher_id,
+            date_iso,
+        )
+    )
+
+    text, _ = UIRenderer.render_child_day_schedule(day_dto)
+    text = f"👨‍🏫 <b>Расписание: {teacher_name}</b>\n{text}"
+
+    monday = target_date - timedelta(
+        days=target_date.isoweekday() - 1
+    )
+
+    kb = Keyboards.get_search_days_kb(
+        target_id=teacher_id,
+        is_teacher=True,
+        week_start_iso=monday.date().isoformat(),
+    )
+
+    await callback.message.edit_text(
+        text,
+        reply_markup=kb,
+        parse_mode="HTML",
+    )
+    await callback.answer()
 
 # === ПАГИНАЦИЯ НЕДЕЛЬ ===
 
 @router.callback_query(SearchClassWeekCD.filter())
-async def nav_class_week(callback: CallbackQuery, callback_data: SearchClassWeekCD, schedule_repo: ScheduleRepository):
-    class_id, week_start_iso = callback_data.class_id, callback_data.week_start_iso
-    metadata = await schedule_repo.get_metadata()
-    cls_obj = metadata.get('classes', {}).get(class_id)
-    class_name = cls_obj.name if hasattr(cls_obj, 'name') else "Класс"
+async def nav_class_week(
+    callback: CallbackQuery,
+    callback_data: SearchClassWeekCD,
+    schedule_service: ScheduleService,
+):
+    class_id = callback_data.class_id
+    week_start_iso = callback_data.week_start_iso
+
+    class_name = await schedule_service.get_class_name(class_id)
+
     text = UIRenderer.render_search_day_select(class_name)
-    kb = Keyboards.get_search_days_kb(class_id, False, week_start_iso)
-    await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+
+    kb = Keyboards.get_search_days_kb(
+        target_id=class_id,
+        is_teacher=False,
+        week_start_iso=week_start_iso,
+    )
+
+    await callback.message.edit_text(
+        text,
+        reply_markup=kb,
+        parse_mode="HTML",
+    )
     await callback.answer()
 
-
 @router.callback_query(SearchTeacherWeekCD.filter())
-async def nav_teacher_week(callback: CallbackQuery, callback_data: SearchTeacherWeekCD, schedule_repo: ScheduleRepository):
-    teacher_id, week_start_iso = callback_data.teacher_id, callback_data.week_start_iso
-    metadata = await schedule_repo.get_metadata()
-    tch_obj = metadata.get('teachers', {}).get(teacher_id)
-    teacher_name = tch_obj.name if hasattr(tch_obj, 'name') else "Преподаватель"
+async def nav_teacher_week(
+    callback: CallbackQuery,
+    callback_data: SearchTeacherWeekCD,
+    schedule_service: ScheduleService,
+):
+    teacher_id = callback_data.teacher_id
+    week_start_iso = callback_data.week_start_iso
+
+    teacher_name = await schedule_service.get_teacher_name(
+        teacher_id,
+    )
+
     text = UIRenderer.render_search_day_select(teacher_name)
-    kb = Keyboards.get_search_days_kb(teacher_id, True, week_start_iso)
-    await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+
+    kb = Keyboards.get_search_days_kb(
+        target_id=teacher_id,
+        is_teacher=True,
+        week_start_iso=week_start_iso,
+    )
+
+    await callback.message.edit_text(
+        text,
+        reply_markup=kb,
+        parse_mode="HTML",
+    )
     await callback.answer()
 
 
 # === ВЫВОД РАСПИСАНИЯ ===
 
 @router.callback_query(SearchClassDayCD.filter())
-async def show_class_schedule(callback: CallbackQuery, callback_data: SearchClassDayCD, schedule_service: ScheduleService, schedule_repo: ScheduleRepository):
-    class_id, date_iso = callback_data.class_id, callback_data.date_iso
-    day_dto = await schedule_service.get_daily_schedule_for_class(class_id, date_iso)
-    metadata = await schedule_repo.get_metadata()
-    cls_obj = metadata.get('classes', {}).get(class_id)
-    class_name = cls_obj.name if hasattr(cls_obj, 'name') else "Класс"
+async def show_class_schedule(
+    callback: CallbackQuery,
+    callback_data: SearchClassDayCD,
+    schedule_service: ScheduleService,
+):
+    class_id = callback_data.class_id
+    date_iso = callback_data.date_iso
+
+    day_dto = await schedule_service.get_daily_schedule_for_class(
+        class_id,
+        date_iso,
+    )
+
+    class_name = await schedule_service.get_class_name(class_id)
+
     text, _ = UIRenderer.render_child_day_schedule(day_dto)
     text = f"🎓 <b>Расписание: {class_name}</b>\n" + text
+
     has_changes = any(
-        l.is_exchange or l.is_cancelled
-        for l in day_dto.lessons
+        lesson.is_exchange or lesson.is_cancelled
+        for lesson in day_dto.lessons
     )
+
     date_obj = TimeService.date_from_iso(date_iso)
-    monday = date_obj - timedelta(days=date_obj.isoweekday() - 1)
+    monday = date_obj - timedelta(
+        days=date_obj.isoweekday() - 1,
+    )
+
     kb = Keyboards.get_search_days_kb(
         target_id=class_id,
         is_teacher=False,
         week_start_iso=monday.isoformat(),
         is_full=False,
-        has_changes=has_changes,  # ← ПЕРЕДАЁМ
+        has_changes=has_changes,
         date_iso=date_iso,
     )
-    await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+
+    await callback.message.edit_text(
+        text,
+        reply_markup=kb,
+        parse_mode="HTML",
+    )
     await callback.answer()
 
 
 @router.callback_query(SearchTeacherDayCD.filter())
 async def show_teacher_schedule(
-    callback: CallbackQuery, 
-    callback_data: SearchTeacherDayCD, 
+    callback: CallbackQuery,
+    callback_data: SearchTeacherDayCD,
     schedule_service: ScheduleService,
 ) -> None:
     teacher_id = callback_data.teacher_id
     date_iso = callback_data.date_iso
-    
-    # 1. Запрашиваем расписание
-    day_dto = await schedule_service.get_daily_schedule_for_teacher(teacher_id, date_iso)
-    
-    # 2. Получаем имя учителя через сервис (без прямого обращения к сырому репо)
-    teachers_dto = await schedule_service.get_teachers_list()
-    teacher_name = teachers_dto.teachers.get(teacher_id, "Преподаватель")
-    
-    # 3. Используем новый универсальный рендер с заголовком
+
+    day_dto = (
+        await schedule_service.get_daily_schedule_for_teacher(
+            teacher_id,
+            date_iso,
+        )
+    )
+
+    teacher_name = await schedule_service.get_teacher_name(
+        teacher_id,
+    )
+
     text, _ = UIRenderer.render_child_day_schedule(day_dto)
     text = f"👨‍🏫 <b>Расписание: {teacher_name}</b>\n" + text
-    
-    has_changes = any(l.is_exchange or l.is_cancelled for l in day_dto.lessons)
-    
+
+    has_changes = any(
+        lesson.is_exchange or lesson.is_cancelled
+        for lesson in day_dto.lessons
+    )
+
     date_obj = TimeService.date_from_iso(date_iso)
-    monday = date_obj - timedelta(days=date_obj.isoweekday() - 1)
-    
-    # 4. ИСПРАВЛЕННЫЙ ВЫЗОВ: передаем teacher_id в параметр target_id
+    monday = date_obj - timedelta(
+        days=date_obj.isoweekday() - 1,
+    )
+
     kb = Keyboards.get_search_days_kb(
         target_id=teacher_id,
         is_teacher=True,
@@ -198,35 +315,88 @@ async def show_teacher_schedule(
         has_changes=has_changes,
         date_iso=date_iso,
     )
-    
-    await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+
+    await callback.message.edit_text(
+        text,
+        reply_markup=kb,
+        parse_mode="HTML",
+    )
     await callback.answer()
 
 # === ПОЛНАЯ НЕДЕЛЯ ===
 
 @router.callback_query(SearchClassFullWeekCD.filter())
-async def show_class_full_week(callback: CallbackQuery, callback_data: SearchClassFullWeekCD, schedule_service: ScheduleService, schedule_repo: ScheduleRepository):
-    class_id, week_start_iso = callback_data.class_id, callback_data.week_start_iso
-    metadata = await schedule_repo.get_metadata()
-    cls_obj = metadata.get('classes', {}).get(class_id)
-    class_name = cls_obj.name if hasattr(cls_obj, 'name') else "Класс"
-    full_dto = await schedule_service.get_full_week_schedule_for_class(class_id, week_start_iso)
+async def show_class_full_week(
+    callback: CallbackQuery,
+    callback_data: SearchClassFullWeekCD,
+    schedule_service: ScheduleService,
+):
+    class_id = callback_data.class_id
+    week_start_iso = callback_data.week_start_iso
+
+    class_name = await schedule_service.get_class_name(class_id)
+
+    full_dto = (
+        await schedule_service.get_full_week_schedule_for_class(
+            class_id,
+            week_start_iso,
+        )
+    )
+
     text, _ = UIRenderer.render_full_week_schedule(full_dto)
-    text = f"🎓 <b>Вся неделя: {class_name}</b>\n\n" + text
-    kb = Keyboards.get_search_days_kb(class_id, False, week_start_iso, is_full=True)
-    await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    text = f"🎓 <b>Вся неделя: {class_name}</b>\n\n{text}"
+
+    kb = Keyboards.get_search_days_kb(
+        target_id=class_id,
+        is_teacher=False,
+        week_start_iso=week_start_iso,
+        is_full=True,
+    )
+
+    await callback.message.edit_text(
+        text,
+        reply_markup=kb,
+        parse_mode="HTML",
+    )
     await callback.answer()
 
 
 @router.callback_query(SearchTeacherFullWeekCD.filter())
-async def show_teacher_full_week(callback: CallbackQuery, callback_data: SearchTeacherFullWeekCD, schedule_service: ScheduleService, schedule_repo: ScheduleRepository):
-    teacher_id, week_start_iso = callback_data.teacher_id, callback_data.week_start_iso
-    metadata = await schedule_repo.get_metadata()
-    tch_obj = metadata.get('teachers', {}).get(teacher_id)
-    teacher_name = tch_obj.name if hasattr(tch_obj, 'name') else "Преподаватель"
-    full_dto = await schedule_service.get_full_week_schedule_for_teacher(teacher_id, week_start_iso)
+async def show_teacher_full_week(
+    callback: CallbackQuery,
+    callback_data: SearchTeacherFullWeekCD,
+    schedule_service: ScheduleService,
+):
+    teacher_id = callback_data.teacher_id
+    week_start_iso = callback_data.week_start_iso
+
+    teacher_name = await schedule_service.get_teacher_name(
+        teacher_id,
+    )
+
+    full_dto = (
+        await schedule_service.get_full_week_schedule_for_teacher(
+            teacher_id,
+            week_start_iso,
+        )
+    )
+
     text, _ = UIRenderer.render_full_week_schedule(full_dto)
-    text = f"👨‍🏫 <b>Вся неделя: {teacher_name}</b>\n\n" + text
-    kb = Keyboards.get_search_days_kb(teacher_id, True, week_start_iso, is_full=True)
-    await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    text = (
+        f"👨‍🏫 <b>Вся неделя: {teacher_name}</b>\n\n"
+        f"{text}"
+    )
+
+    kb = Keyboards.get_search_days_kb(
+        target_id=teacher_id,
+        is_teacher=True,
+        week_start_iso=week_start_iso,
+        is_full=True,
+    )
+
+    await callback.message.edit_text(
+        text,
+        reply_markup=kb,
+        parse_mode="HTML",
+    )
     await callback.answer()
