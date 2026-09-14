@@ -46,7 +46,7 @@ import datetime
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Optional, Any
 from aiogram import Bot
 from aiogram.exceptions import (
     TelegramBadRequest,
@@ -56,7 +56,7 @@ from aiogram.exceptions import (
 )
 
 from core.repository.notification_repository import NotificationRepository
-from core.repository.extra_classes_repository import ExtraClassesRepository
+from services.extra_classes_service import ExtraClassesService
 from core.repository.schedule_repository import ScheduleRepository
 from services.time_service import TimeService
 from bot.utils.ui_renderer import UIRenderer
@@ -64,8 +64,9 @@ from core.models.dto import (
     LessonReminderDTO,
     ChangeReminderDTO,
     MorningSummaryDTO,
-    MorningLessonDTO
+    MorningLessonDTO, ExtraClassItemDTO
 )
+from core.models.domain import LessonInstance
 
 logger = logging.getLogger(__name__)
 
@@ -104,6 +105,7 @@ class PendingSend:
     context: str = ""
 
 
+        
 class NotificationService:
     """
     Сервис уведомлений (Strict DTO & Repository Pattern).
@@ -122,14 +124,14 @@ class NotificationService:
         notification_repo: NotificationRepository,
         time_service: TimeService,
         schedule_repo: ScheduleRepository,
-        extra_classes_repo: ExtraClassesRepository,
+        extra_classes_service: ExtraClassesService,
         admin_ids: Optional[list[int]] = None,
     ) -> None:
         self.bot = bot
         self.repo = notification_repo
         self.time_service = time_service
         self.schedule_repo = schedule_repo
-        self.extra_classes_repo = extra_classes_repo
+        self.extra_classes_service = extra_classes_service
 
         # Smart Throttling state.
         # Сериализация ВСЕХ отправок через один lock: планировщик
@@ -308,7 +310,65 @@ class NotificationService:
                     alert_key,
                 )
 
+    # ==============================================================
+    # DTO
+    # ==============================================================
 
+    def _map_school_lesson_to_morning_dto(
+        self,
+        lesson: LessonInstance,
+        *,
+        group_name: str | None = None,
+        room_suffix: str | None = None,
+    ) -> MorningLessonDTO:
+        room_name = lesson.room_name or "—"
+
+        if room_suffix:
+            room_name = f"{room_name} · {room_suffix}"
+
+        return MorningLessonDTO(
+            lesson_num=lesson.lesson_num,
+            start_time=lesson.start_time or "—",
+            end_time=lesson.end_time or "—",
+            subject_name=lesson.subject_name or "—",
+            room_name=room_name,
+            is_cancelled=lesson.is_cancelled,
+            is_exchange=lesson.is_exchange,
+            is_extra=False,
+            group_name=group_name,
+            original_subject_name=(
+                lesson.original_subject_name or None
+            ),
+            original_room_name=(
+                lesson.original_room_name or None
+            ),
+            group_changed=(
+                lesson.is_exchange
+                and lesson.original_group_id is not None
+                and lesson.original_group_id != lesson.group_id
+            ),
+            day_permutation=False,
+        )
+
+    def _map_extra_to_morning_dto(
+        self,
+        extra: ExtraClassItemDTO,
+    ) -> MorningLessonDTO:
+        return MorningLessonDTO(
+            lesson_num=None,
+            start_time=extra.time_start or "—",
+            end_time=extra.time_end or "—",
+            subject_name=extra.title or "—",
+            room_name=extra.location or "—",
+            is_cancelled=False,
+            is_exchange=False,
+            is_extra=True,
+            group_name=None,
+            original_subject_name=None,
+            original_room_name=None,
+            group_changed=False,
+            day_permutation=False,
+        )
         
     # ==============================================================
     # 3a. Микроочистка кеша per-chat таймстемпов
@@ -558,10 +618,14 @@ class NotificationService:
         )
 
         metadata = await self.schedule_repo.get_metadata()
-        classes = metadata.get("classes", {})
-        groups = metadata.get("groups", {})
 
-        summaries_by_recipient: dict[int, list[tuple[dict, MorningSummaryDTO]]] = {}
+        classes = metadata.classes
+        groups = metadata.groups
+
+        summaries_by_recipient: dict[
+            int,
+            list[tuple[dict[str, Any], MorningSummaryDTO]],
+        ] = {}
 
         for task in tasks:
             try:
@@ -569,80 +633,71 @@ class NotificationService:
                 target_student_id = int(task["target_student_id"])
                 source_id = f"morning_summary:{target_student_id}"
 
-                if (today_iso, source_id, recipient_id) in delivered:
+                if (
+                    today_iso,
+                    source_id,
+                    recipient_id,
+                ) in delivered:
                     continue
 
                 child_class_id = task.get("class_id")
-                child_group_id = task.get("group_id")
+                child_group_id = task.get("group_id") or "ALL"
 
                 lessons_dtos: list[MorningLessonDTO] = []
 
                 if child_class_id:
-                    raw_lessons = await self.schedule_repo.get_lessons_for_class(
-                        class_id=child_class_id,
-                        date_iso=today_iso,
+                    lessons = (
+                        await self.schedule_repo.get_lessons_for_class(
+                            class_id=child_class_id,
+                            date_iso=today_iso,
+                        )
                     )
-                    for lesson in raw_lessons:
-                        lesson_group_id = lesson.get("group_id", "ALL")
+
+                    user_groups = (
+                        child_group_id.split(",")
+                        if child_group_id != "ALL"
+                        else ["ALL"]
+                    )
+
+                    for lesson in lessons:
+                        lesson_group_id = lesson.group_id or "ALL"
 
                         if (
-                            lesson_group_id != "ALL"
-                            and child_group_id != "ALL"
-                            and lesson_group_id != child_group_id
+                            "ALL" not in user_groups
+                            and lesson_group_id != "ALL"
+                            and lesson_group_id not in user_groups
                         ):
                             continue
 
                         group_name = None
+
                         if lesson_group_id != "ALL":
                             group_name = groups.get(
                                 lesson_group_id,
                                 f"Группа {lesson_group_id}",
                             )
 
-                        lessons_dtos.append(MorningLessonDTO(
-                            lesson_num=lesson["lesson_num"],
-                            start_time=lesson["start_time"],
-                            end_time=lesson["end_time"],
-                            subject_name=lesson["subject_name"] or "—",
-                            room_name=lesson["room_name"] or "—",
-                            is_cancelled=bool(lesson["is_cancelled"]),
-                            is_exchange=bool(lesson["is_exchange"]),
-                            group_name=group_name,
+                        lessons_dtos.append(
+                            self._map_school_lesson_to_morning_dto(
+                                lesson,
+                                group_name=group_name,
+                            )
+                        )
 
-                            original_subject_name=(
-                                lesson.get("original_subject_name") or None
-                            ),
-                            original_room_name=(
-                                lesson.get("original_room_name") or None
-                            ),
-                            group_changed=(
-                                bool(lesson.get("original_group_id"))
-                                and lesson.get("original_group_id")
-                                != lesson.get("group_id")
-                            ),
-                            day_permutation=False,
-                        ))
-                raw_extras = await self.extra_classes_repo.get_extra_classes_for_student(
-                    student_id=target_student_id,
-                    day_of_week=weekday,
-                )
-                for extra in raw_extras:
-                    lessons_dtos.append(
-                        MorningLessonDTO(
-                            lesson_num=None,
-                            start_time=extra["time_start"],
-                            end_time=extra["time_end"],
-                            subject_name=extra["title"],
-                            room_name=extra["location"] or "—",
-                            is_cancelled=False,
-                            is_exchange=False,
-                            is_extra=True,
+                if target_student_id is not None:
+                    extra_items = (
+                        await self.extra_classes_service
+                        .get_extra_classes_for_student(
+                            student_id=target_student_id,
+                            day_of_week=weekday,
                         )
                     )
 
-                # Не отправляем пустую сводку и не фиксируем delivery log.
-                # Если данные появятся позже в этот же день, следующий вызов
-                # сможет сформировать полноценную сводку.
+                    lessons_dtos.extend(
+                        self._map_extra_to_morning_dto(extra)
+                        for extra in extra_items
+                    )
+
                 if not lessons_dtos:
                     logger.debug(
                         "Morning summary skipped: no lessons, "
@@ -654,31 +709,32 @@ class NotificationService:
 
                 lessons_dtos.sort(
                     key=lambda item: (
-                        item.start_time,
-                        item.lesson_num if item.lesson_num is not None else 99,
+                        item.start_time or "99:99",
+                        item.lesson_num
+                        if item.lesson_num is not None
+                        else 99,
                     )
                 )
 
                 class_name = child_class_id
-                if child_class_id and child_class_id in classes:
-                    class_obj = classes[child_class_id]
-                    class_name = getattr(
-                        class_obj,
-                        "name",
-                        child_class_id,
-                    )
+
+                if child_class_id:
+                    class_obj = classes.get(child_class_id)
+                    if class_obj is not None:
+                        class_name = class_obj.name
 
                 summary_dto = MorningSummaryDTO(
                     date_iso=today_iso,
                     lessons=lessons_dtos,
                     child_name=(
-                        task["child_name"]
-                        if task["recipient_kind"] == "adult"
+                        task.get("child_name")
+                        if task.get("recipient_kind") == "adult"
                         else None
                     ),
                     class_id=class_name,
+                    class_name=class_name,
                     has_permutation=any(
-                        lesson.day_permutation 
+                        lesson.day_permutation
                         for lesson in lessons_dtos
                     ),
                 )
@@ -699,7 +755,6 @@ class NotificationService:
                     "Unexpected morning summary assembly error: task=%r",
                     task,
                 )
-
         # --- Фаза send: paced-отправка сгруппированных сводок ---
         sent_count = 0
         failed_count = 0
@@ -1359,8 +1414,8 @@ class NotificationService:
         )
 
         metadata = await self.schedule_repo.get_metadata()
-        classes = metadata.get("classes", {})
-
+        classes = metadata.classes
+        
         sent_count = 0
         failed_count = 0
 
@@ -1374,7 +1429,7 @@ class NotificationService:
                 if (today_iso, source_id, recipient_id) in delivered:
                     continue
 
-                raw_lessons = (
+                lessons = (
                     await self.schedule_repo.get_lessons_for_teacher(
                         teacher_id=teacher_id,
                         date_iso=today_iso,
@@ -1382,43 +1437,22 @@ class NotificationService:
                 )
 
                 lessons_dtos: list[MorningLessonDTO] = []
-                for lesson in raw_lessons:
-                    class_id = lesson.get("class_id")
-                    class_obj = classes.get(class_id)
-                    class_name = (
-                        getattr(class_obj, "name", class_obj)
-                        if class_obj is not None
-                        else class_id
-                    )
-                    room_name = lesson.get("room_name") or "—"
-                    if class_name:
-                        room_name = (
-                            f"{room_name} · {class_name}"
+
+                for lesson in lessons:
+                    class_name = lesson.class_name
+
+                    if not class_name and lesson.class_id:
+                        class_obj = classes.get(lesson.class_id)
+                        class_name = (
+                            class_obj.name
+                            if class_obj is not None
+                            else lesson.class_id
                         )
+
                     lessons_dtos.append(
-                        MorningLessonDTO(
-                            lesson_num=lesson.get("lesson_num"),
-                            start_time=lesson.get("start_time") or "—",
-                            end_time=lesson.get("end_time") or "—",
-                            subject_name=(lesson.get("subject_name") or "—"),
-                            room_name=room_name,
-                            is_cancelled=bool(lesson.get("is_cancelled")),
-                            is_exchange=bool(lesson.get("is_exchange")),
-                            is_extra=False,
-                            group_name=None,
-                            # --- НОВЫЕ ПОЛЯ ---
-                            original_subject_name=(
-                                lesson.get("original_subject_name") or None
-                            ),
-                            original_room_name=(
-                                lesson.get("original_room_name") or None
-                            ),
-                            group_changed=(
-                                bool(lesson.get("original_group_id"))
-                                and lesson.get("original_group_id")
-                                != lesson.get("group_id")
-                            ),
-                            day_permutation=False,
+                        self._map_school_lesson_to_morning_dto(
+                            lesson,
+                            room_suffix=class_name,
                         )
                     )
 
@@ -1441,6 +1475,7 @@ class NotificationService:
                     lessons=lessons_dtos,
                     child_name=None,
                     class_id=None,
+                    class_name=None,
                 )
 
                 text = (

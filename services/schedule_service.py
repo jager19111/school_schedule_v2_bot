@@ -5,9 +5,9 @@ from collections import Counter
 import logging
 
 from core.repository.schedule_repository import ScheduleRepository
-from core.repository.extra_classes_repository import ExtraClassesRepository
 from core.models.domain import LessonInstance
 from services.time_service import TimeService
+from services.extra_classes_service import ExtraClassesService
 from core.mappers.lesson_mapper import LessonMapper
 
 
@@ -36,12 +36,12 @@ class ScheduleService:
     def __init__(
         self,
         schedule_repo: ScheduleRepository,
-        extra_classes_repo: ExtraClassesRepository,
         time_service: TimeService,
+        extra_classes_service: ExtraClassesService,
     ):
         self.schedule_repo = schedule_repo
-        self.extra_repo = extra_classes_repo
         self.time_service = time_service
+        self.extra_classes_service = extra_classes_service
 
     # ==========================================================
     # Вспомогательные методы
@@ -217,26 +217,38 @@ class ScheduleService:
         )
 
         extra_lessons: List[LessonDTO] = []
-        if student_id is not None:
-            date_obj = self.time_service.date_from_iso(date_iso)
-            weekday = date_obj.isoweekday()
-            extra_rows = await self.extra_repo.get_extra_classes_for_student(
-                student_id=student_id,
-                day_of_week=weekday,
-            )
-            extra_lessons = [
-                self._map_extra_to_lesson(row, date_iso)
-                for row in extra_rows
-            ]
 
-        combined: List[LessonDTO] = school_lessons + extra_lessons
-        combined.sort(key=self._sort_key)
+        if student_id is not None:
+            date_obj = self.time_service.date_from_iso(
+                date_iso
+            )
+            weekday = date_obj.isoweekday()
+
+            extra_items = (
+                await self.extra_classes_service.get_extra_classes_for_student(
+                    student_id=student_id,
+                    day_of_week=weekday,
+                )
+            )
+
+            extra_lessons = [
+                self._map_extra_to_lesson(
+                    extra,
+                    date_iso,
+                )
+                for extra in extra_items
+            ]
 
         metadata = await self.schedule_repo.get_metadata()
         self._enrich_display_numbers_dtos(
             lessons=school_lessons,
             metadata=metadata,
         )
+        
+        combined: List[LessonDTO] = school_lessons + extra_lessons
+        combined.sort(key=self._sort_key)
+
+
 
         return DayScheduleDTO(
             date_iso=date_iso,
@@ -555,6 +567,7 @@ class ScheduleService:
     ) -> LessonDTO:
         return LessonDTO(
             id=f"extra-{row.id}",
+            date_iso=date_iso,
             lesson_num=None,
             display_num="•",
             start_time=row.time_start,
@@ -565,12 +578,26 @@ class ScheduleService:
             is_exchange=False,
             is_extra=True,
             is_methodological=False,
+            period_id=None,
             class_id=None,
+            class_name=None,
             group_id="ALL",
-            group_name=None,
-            date_iso=date_iso,
+            group_name="Весь класс",
+            teacher_id=None,
+            teacher_name=None,
+            original_subject_id=None,
+            original_subject_name=None,
+            original_teacher_id=None,
+            original_teacher_name=None,
+            original_room_id=None,
+            original_room_name=None,
+            original_group_id=None,
+            original_group_name=None,
+            original_class_id=None,
+            original_class_name=None,
+            group_changed=False,
+            day_permutation=False,
         )
-
     @staticmethod
     def _enrich_display_numbers_dtos(lessons: List[LessonDTO], metadata: SchoolMetadata) -> None:
 

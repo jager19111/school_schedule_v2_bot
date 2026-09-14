@@ -356,14 +356,17 @@ async def main():
         student_repo = StudentRepository(db_path=db_connection, time_service=time_service)
 
         # 5. Сервисы
-        schedule_service = ScheduleService(schedule_repo=schedule_repo, extra_classes_repo=extra_classes_repo, time_service=time_service)
         profile_service = ProfileService(profile_repo)
-        notification_service = NotificationService(bot, notification_repo, time_service=time_service, schedule_repo=schedule_repo, extra_classes_repo=extra_classes_repo, admin_ids=config.ADMIN_IDS,)
+        students_service = StudentsService(student_repo, profile_service=profile_service)
+        extra_classes_service = ExtraClassesService(extra_classes_repo=extra_classes_repo, profile_service=profile_service, students_service=students_service, time_service=time_service)
+        schedule_service = ScheduleService(schedule_repo=schedule_repo, time_service=time_service, extra_classes_service=extra_classes_service)
+        
+        watch_targets_service = WatchTargetsService(repository=watch_target_repo)
+        notification_service = NotificationService(bot, notification_repo, time_service=time_service, schedule_repo=schedule_repo, extra_classes_service=extra_classes_service, admin_ids=config.ADMIN_IDS,)
         cleanup_job = UserCleanupJob(user_repo, time_service=time_service, dormant_days=60)
         students_service = StudentsService(student_repo, profile_service=profile_service)
         admin_service = AdminService(admin_repo=admin_repo, schedule_repo=schedule_repo, admin_ids=config.ADMIN_IDS)
-        extra_classes_service = ExtraClassesService(extra_classes_repo=extra_classes_repo, profile_service=profile_service, students_service=students_service, time_service=time_service)
-        watch_targets_service = WatchTargetsService(repository=watch_target_repo)
+       
         help_service = HelpService(public_help_url=config.HELP_PUBLIC_URL, author_contact_url=config.AUTHOR_CONTACT_URL, donation_url=config.DONATION_URL)
         notification_delivery_cleanup_job = NotificationDeliveryCleanupJob(notification_repo=notification_repo, time_service=time_service, retention_days=35)
 

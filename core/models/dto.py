@@ -624,9 +624,10 @@ class MorningSummaryDTO:
     Для взрослого получателя child_name содержит имя ребёнка.
     """
     date_iso: str
-    lessons: List[MorningLessonDTO]
-    child_name: Optional[str] = None
-    class_id: Optional[str] = None
+    lessons: list[MorningLessonDTO]
+    child_name: str | None = None
+    class_id: str | None = None
+    class_name: str | None = None
     has_permutation: bool = False
 
 
