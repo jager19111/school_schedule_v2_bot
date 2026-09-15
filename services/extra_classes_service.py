@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Optional, List
+from typing import Any, Optional, List, Mapping
 
 from core.models.dto import (
-    ActionResponseDTO,
+    ActionResponseDTO, ExtraClassDTO,
     ExtraClassItemDTO, ExtraClassViewModel,
     ExtraClassListDTO, ExtraClassesAccessDTO
 )
@@ -166,6 +166,86 @@ class ExtraClassesService:
 
         return student, access
 
+    @staticmethod
+    def _row_to_extra_class_dto(
+        row: Mapping[str, Any],
+    ) -> ExtraClassDTO:
+        return ExtraClassDTO(
+            id=int(row["id"]),
+            family_id=(
+                int(row["family_id"])
+                if row.get("family_id") is not None
+                else None
+            ),
+            student_id=int(row["student_id"]),
+            day_of_week=int(row["day_of_week"]),
+            time_start=str(row["time_start"]),
+            time_end=str(row["time_end"]),
+            title=str(row["title"]),
+            location=(
+                str(row["location"])
+                if row.get("location") is not None
+                else None
+            ),
+            reminder_minutes=int(
+                row.get("reminder_minutes", 30)
+            ),
+            created_at=row.get("created_at"),
+            updated_at=row.get("updated_at"),
+        )
+
+    @staticmethod
+    def _row_to_extra_item_dto(
+        row: Mapping[str, Any],
+    ) -> ExtraClassItemDTO:
+        return ExtraClassItemDTO(
+            id=int(row["id"]),
+            day_of_week=int(row["day_of_week"]),
+            time_start=str(row["time_start"]),
+            time_end=str(row["time_end"]),
+            title=str(row["title"]),
+            location=(
+                str(row["location"])
+                if row.get("location") is not None
+                else None
+            ),
+            reminder_minutes=int(
+                row.get("reminder_minutes", 30)
+            ),
+        )
+
+    async def get_extra_classes_for_student(
+        self,
+        *,
+        student_id: int,
+        day_of_week: int | None = None,
+    ) -> list[ExtraClassItemDTO]:
+        rows = await self.repo.get_extra_classes_for_student(
+            student_id=student_id,
+            day_of_week=day_of_week,
+        )
+
+        return [
+            self._row_to_extra_item_dto(row)
+            for row in rows
+        ]
+        
+    async def get_extra_class(
+        self,
+        *,
+        extra_id: int,
+        student_id: int,
+    ) -> ExtraClassDTO | None:
+        row = await self.repo.get_extra_class(
+            extra_id=extra_id,
+            student_id=student_id,
+        )
+
+        if row is None:
+            return None
+
+        return self._row_to_extra_class_dto(row)
+        
     async def get_student_extra_classes(
         self,
         *,

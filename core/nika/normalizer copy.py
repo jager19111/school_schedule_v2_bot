@@ -34,10 +34,9 @@ class NikaNormalizer:
     def __init__(self, nika_data: Dict[str, Any]):
         self.data = nika_data
         self.classes, self.teachers, self.rooms, self.subjects = self.build_metadata()
-# Явно указываем типы, чтобы VS Code понимал, что это словари
-        self.class_groups: Dict[str, str] = self.data.get("CLASSGROUPS", {})
-        self.lesson_times: Dict[str, List[str]] = self.data.get("LESSON_TIMES", {})
-        self.periods: Dict[str, Dict[str, str]] = self.data.get("PERIODS", {})
+        self.class_groups = self.data.get("CLASSGROUPS", {})
+        self.lesson_times = self.data.get("LESSON_TIMES", {})
+        self.periods = self.data.get("PERIODS", {})
         
     def _clean_val(self, val: Any) -> Optional[str]:
         """Очистка пустых строк в массивах NIKA."""
@@ -96,35 +95,17 @@ class NikaNormalizer:
     def _get_lesson_time(self, lesson_num: int) -> tuple[str, str] | None:
         """
         Возвращает (start, end) или None при отсутствии LESSON_TIMES.
-        Не поднимает исключение — ошибка логируется и урок пропускается.
+        В отличие от старой версии, не поднимает исключение — ошибка логируется
+        и урок пропускается, чтобы не ломать всё расписание.
         """
         value = self.lesson_times.get(str(lesson_num))
         if not isinstance(value, list) or len(value) != 2 or not all(isinstance(item, str) and item.strip() for item in value):
-            import logging
-            logging.getLogger(__name__).warning("Missing or invalid LESSON_TIMES[%s]", lesson_num)
+            logger.warning("Missing or invalid LESSON_TIMES[%s]", lesson_num)
             return None
         return value[0].strip(), value[1].strip()
 
-    @staticmethod
-    def _is_whole_class_lesson(raw_s: list, raw_g: list) -> bool:
-        """
-        Определяет, весь ли это класс или урок с группами.
-        
-        Критерии:
-        1. Нет массива g → точно весь класс
-        2. s[0] не пустой, s[1:] пустые → весь класс (даже если g есть)
-        3. s содержит несколько непустых предметов → урок с группами
-        """
-        if not raw_g:
-            return True  # Нет g → точно весь класс
-        
-        # Считаем непустые предметы
-        non_empty_subjects = sum(1 for s in raw_s if s and str(s).strip())
-        
-        if non_empty_subjects <= 1:
-            return True  # Только 1 предмет → весь класс
-        
-        return False  # Несколько предметов → урок с группами
+
+
 
     def _process_slot(
         self,
@@ -141,34 +122,39 @@ class NikaNormalizer:
         is_exchange = bool(slot_exchange)
         is_methodological = False
 
+
         def _ensure_list(val):
             if not val: return []
             return val if isinstance(val, list) else [val]
 
-        # Определяем ПОЛНУЮ отмену (когда прислали просто "F" для всех)
+
+        # ИСПРАВЛЕНО P0: merge частичных exchange-слотов
+        # Вместо полного замещения используем поля из exchange только если они присутствуют.
+        active_slot = slot_exchange if is_exchange else slot_base
+        
+        # Определяем ПОЛНУЮ отмену (когда школа присылает просто "F" на весь урок для всех групп)
         raw_s_from_exchange = _ensure_list(slot_exchange.get("s")) if slot_exchange else []
         is_full_cancel = (raw_s_from_exchange == ["F"])
         
-        # 1. Сначала делаем Умное слияние (Merge) частичных замен и базового расписания
-        if is_exchange and slot_exchange:
-            raw_s = _ensure_list(slot_exchange.get("s")) if "s" in slot_exchange else _ensure_list(slot_base.get("s"))
-            target_key = "c" if is_teacher_mode else "t"
-            raw_t_or_c = _ensure_list(slot_exchange.get(target_key)) if target_key in slot_exchange else _ensure_list(slot_base.get(target_key))
-            raw_r = _ensure_list(slot_exchange.get("r")) if "r" in slot_exchange else _ensure_list(slot_base.get("r"))
-            raw_g = _ensure_list(slot_exchange.get("g")) if "g" in slot_exchange else _ensure_list(slot_base.get("g"))
-        else:
-            active_slot = slot_base
-            target_key = "c" if is_teacher_mode else "t"
-            raw_s = _ensure_list(active_slot.get("s")) if not is_full_cancel else []
-            raw_t_or_c = _ensure_list(active_slot.get(target_key)) if not is_full_cancel else []
-            raw_r = _ensure_list(active_slot.get("r")) if not is_full_cancel else []
-            raw_g = _ensure_list(active_slot.get("g")) if not is_full_cancel else []
-
-        # 2. ТЕПЕРЬ проверяем метод. час: он может быть как в базовом расписании, так и в замене!
-        if is_teacher_mode and raw_s and raw_s[0] == "M":
+        if is_teacher_mode and raw_s_from_exchange and raw_s_from_exchange[0] == "M":
             is_methodological = True
             raw_s = ["M"]
             raw_t_or_c, raw_r, raw_g = [], [], []
+        else:
+            # Merge-логика: берём поле из exchange, если оно есть, иначе из base
+            if is_exchange and slot_exchange:
+                raw_s = _ensure_list(slot_exchange.get("s")) if "s" in slot_exchange else _ensure_list(slot_base.get("s"))
+                target_key = "c" if is_teacher_mode else "t"
+                raw_t_or_c = _ensure_list(slot_exchange.get(target_key)) if target_key in slot_exchange else _ensure_list(slot_base.get(target_key))
+                raw_r = _ensure_list(slot_exchange.get("r")) if "r" in slot_exchange else _ensure_list(slot_base.get("r"))
+                raw_g = _ensure_list(slot_exchange.get("g")) if "g" in slot_exchange else _ensure_list(slot_base.get("g"))
+            else:
+                target_key = "c" if is_teacher_mode else "t"
+                raw_s = _ensure_list(active_slot.get("s")) if not is_full_cancel else []
+                raw_t_or_c = _ensure_list(active_slot.get(target_key)) if not is_full_cancel else []
+                raw_r = _ensure_list(active_slot.get("r")) if not is_full_cancel else []
+                raw_g = _ensure_list(active_slot.get("g")) if not is_full_cancel else []
+
 
         orig_s = _ensure_list(slot_base.get("s")) if slot_base else []
         orig_target_key = "c" if is_teacher_mode else "t"
@@ -176,27 +162,19 @@ class NikaNormalizer:
         orig_r = _ensure_list(slot_base.get("r")) if slot_base else []
         orig_g = _ensure_list(slot_base.get("g")) if slot_base else []
 
+
         lesson_time = self._get_lesson_time(lesson_num)
         if lesson_time is None:
+            # Пропускаем урок без времени — логирование уже выполнено в _get_lesson_time
             return lessons
         
         start_time, end_time = lesson_time
 
 
-        # P2 (финальная версия): ИСПРАВЛЕНО — логика max_len
-        #
-        # Определяем, весь ли это класс или урок с группами
-        is_whole_class = self._is_whole_class_lesson(raw_s, raw_g)
-        
-        if is_whole_class:
-            # Урок для всего класса → 1 LessonInstance
-            max_len = 1
-        elif is_full_cancel or is_methodological:
-            # Для отмен и методических часов используем оригинальные группы
-            max_len = max(len(orig_g), 1) if orig_g else 1
+        if is_full_cancel or is_methodological:
+            max_len = max(1, len(orig_s), len(orig_t_or_c), len(orig_g))
         else:
-            # Урок с группами → разворачиваем по g
-            max_len = max(len(raw_g), len(raw_s), len(raw_t_or_c), len(raw_r))
+            max_len = max(len(raw_s), len(raw_t_or_c), len(raw_r), len(raw_g))
 
 
         if max_len == 0:
@@ -206,49 +184,44 @@ class NikaNormalizer:
         for idx in range(max_len):
             current_raw_s = raw_s[idx] if idx < len(raw_s) else None
             
-            # P2: Различаем отмену и отсутствие урока
-            is_full_cancel_pointwise = (current_raw_s == "F")
-            
-            # Если предмет пустой (но не "F") → пропускаем эту подгруппу
-            if current_raw_s is not None and str(current_raw_s).strip() == "" and not is_full_cancel_pointwise:
-                continue
-            
-            is_cancelled = is_full_cancel or is_full_cancel_pointwise
+            # ИСПРАВЛЕНО P0: пустой предмет → отмена
+            # Отмена если: полная отмена ИЛИ "F" ИЛИ пустая строка ИЛИ None после очистки
+            is_pointwise_cancelled = (
+                current_raw_s == "F"
+                or (current_raw_s is not None and str(current_raw_s).strip() == "")
+            )
+            is_cancelled = is_full_cancel or is_pointwise_cancelled
 
 
             clean_s = self._clean_val(current_raw_s) if not is_cancelled else None
             clean_t_c = self._clean_val(raw_t_or_c[idx]) if idx < len(raw_t_or_c) else None
             clean_r = self._clean_val(raw_r[idx]) if idx < len(raw_r) else None
             
-            # При полной отмене восстанавливаем оригинальную группу
+            # При полной отмене восстанавливаем оригинальную группу для отображения «было → стало »
             if is_full_cancel:
                 g_id = orig_g[idx] if idx < len(orig_g) else "ALL"
             else:
-                # P2: Если весь класс → "ALL", иначе → из массива g
-                if is_whole_class:
-                    g_id = "ALL"
-                else:
-                    g_id = raw_g[idx] if idx < len(raw_g) else "ALL"
+                g_id = raw_g[idx] if idx < len(raw_g) else "ALL"
                 
             clean_g = self._clean_val(g_id)
+
 
             o_clean_s = self._clean_val(orig_s[idx]) if idx < len(orig_s) else None
             o_clean_t_c = self._clean_val(orig_t_or_c[idx]) if idx < len(orig_t_or_c) else None
             o_clean_r = self._clean_val(orig_r[idx]) if idx < len(orig_r) else None
             o_clean_g = self._clean_val(orig_g[idx]) if idx < len(orig_g) else None
 
+
             if is_methodological:
                 sub_name = "Методический час/день"
             else:
                 sub_name = self.subjects.get(clean_s).name if clean_s and clean_s in self.subjects else ("ОТМЕНА" if is_cancelled else None)
             
-            if o_clean_s == "M":
-                orig_sub_name = "Методический час/день"
-            else:
-                orig_sub_name = self.subjects.get(o_clean_s).name if o_clean_s and o_clean_s in self.subjects else None
+            orig_sub_name = self.subjects.get(o_clean_s).name if o_clean_s and o_clean_s in self.subjects else None
             rom_name = self.rooms.get(clean_r).name if clean_r and clean_r in self.rooms else None
             orig_rom_name = self.rooms.get(o_clean_r).name if o_clean_r and o_clean_r in self.rooms else None
             orig_grp_name = self.class_groups.get(o_clean_g) if o_clean_g and o_clean_g != "ALL" else None
+
 
             if is_cancelled:
                 safe_g_id = o_clean_g if o_clean_g else "ALL"
@@ -257,8 +230,10 @@ class NikaNormalizer:
             
             grp_name = self.class_groups.get(safe_g_id, "Весь класс") if safe_g_id != "ALL" else "Весь класс"
 
+
             if is_teacher_mode:
                 effective_class_id = clean_t_c if clean_t_c else f"TEACHER_{context_id}"
+                # ИСПРАВЛЕНО P0: убран idx из lesson_id для стабильности
                 lesson_id = f"T{context_id}_{period_id}_{effective_class_id}_{iso_date}_{lesson_num}_{safe_g_id}"
                 cls_name = self.classes.get(clean_t_c).name if clean_t_c and clean_t_c in self.classes else None
                 orig_cls_name = self.classes.get(o_clean_t_c).name if o_clean_t_c and o_clean_t_c in self.classes else None
@@ -275,9 +250,11 @@ class NikaNormalizer:
                     original_class_id=o_clean_t_c, original_class_name=orig_cls_name,
                     original_group_id=o_clean_g, original_group_name=orig_grp_name,
                     group_id=safe_g_id, group_name=grp_name,
-                    is_exchange=is_exchange, is_cancelled=is_cancelled, is_methodological=is_methodological
+                    is_exchange=is_exchange, is_cancelled=is_cancelled, is_methodological=is_methodological,
+                    groups_raw=raw_g, subjects_raw=raw_s, rooms_raw=raw_r
                 ))
             else:
+                # ИСПРАВЛЕНО P0: убран idx из lesson_id для стабильности
                 lesson_id = f"{period_id}_{context_id}_{iso_date}_{lesson_num}_{safe_g_id}"
                 tea_name = self.teachers.get(clean_t_c).name if clean_t_c and clean_t_c in self.teachers else None
                 orig_tea_name = self.teachers.get(o_clean_t_c).name if o_clean_t_c and o_clean_t_c in self.teachers else None
@@ -295,9 +272,11 @@ class NikaNormalizer:
                     original_class_id=None, original_class_name=None,
                     original_group_id=o_clean_g, original_group_name=orig_grp_name,
                     group_id=safe_g_id, group_name=grp_name,
-                    is_exchange=is_exchange, is_cancelled=is_cancelled, is_methodological=False
+                    is_exchange=is_exchange, is_cancelled=is_cancelled, is_methodological=False,
+                    groups_raw=raw_g, subjects_raw=raw_s, rooms_raw=raw_r
                 ))
         return lessons
+
 
     def build_class_lessons(self, target_dates: List[datetime.date]) -> List[LessonInstance]:
         lessons = []

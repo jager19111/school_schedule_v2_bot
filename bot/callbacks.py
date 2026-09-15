@@ -419,3 +419,23 @@ class DayChangesCD(CallbackData, prefix="dcs"):
     group_id: str
     date_iso: str
     origin: str  # "class" | "teacher"
+    return_to: str = "schedule"
+
+# ==============================================================
+# Утренняя сводка
+# ==============================================================
+    
+class MorningStudentSummaryCD(
+    CallbackData,
+    prefix="mss",
+):
+    student_id: int
+    date_iso: str
+
+
+class MorningTeacherSummaryCD(
+    CallbackData,
+    prefix="mts",
+):
+    teacher_id: str
+    date_iso: str
