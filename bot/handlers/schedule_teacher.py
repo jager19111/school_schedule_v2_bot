@@ -91,7 +91,7 @@ async def _render_teacher_day(
         teacher_id=teacher_id,
         date_iso=date_iso,
     )
-    rendered = UIRenderer.render_child_day_schedule(
+    rendered = UIRenderer.render_day_schedule(
         day_dto,
         None,
     )

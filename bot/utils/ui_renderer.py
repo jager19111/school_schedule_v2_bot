@@ -10,7 +10,7 @@
 #
 # ЗАМЕНА МЕТОДОВ:
 #
-# 1. render_child_day_schedule(): принимает DayScheduleDTO с
+# 1. render_day_schedule(): принимает DayScheduleDTO с
 #    lessons: List[LessonDTO] (не Dict). Поддерживает:
 #    - has_permutation (🔁 весь день);
 #    - group_changed (смена группы);
@@ -2466,7 +2466,7 @@ class UIRenderer:
         text = "📆 <b>Расписание на всю неделю</b>\n\n"
         for day_dto in dto.days:
             if day_dto.lessons:
-                day_text, _ = UIRenderer.render_child_day_schedule(day_dto)
+                day_text, _ = UIRenderer.render_day_schedule(day_dto)
                 text += day_text + "\n"
         return text, None
 
