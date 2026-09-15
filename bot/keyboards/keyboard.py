@@ -353,21 +353,21 @@ class Keyboards:
             
         buttons = [days[0:3], days[3:6]]
         
-        # --- ДОБАВЛЕННЫЙ БЛОК: Кнопка «Изменения» ---
+        # Кнопка «Изменения» (если есть)
         if has_changes and date_iso:
             if is_teacher:
                 chg_cb = callbacks.DayChangesCD(
-                    target_kind="teacher",
-                    target_id=target_id,
-                    class_id="",
+                    target_kind="search_teacher",  # <-- ИСПРАВЛЕНО (было "teacher")
+                    target_id=target_id,           # здесь лежит teacher_id
+                    class_id="ALL",
                     group_id="ALL",
                     date_iso=date_iso,
                     origin="teacher",
                 ).pack()
             else:
                 chg_cb = callbacks.DayChangesCD(
-                    target_kind="class",
-                    target_id=target_id,
+                    target_kind="search_class",    # <-- ИСПРАВЛЕНО (было "class")
+                    target_id=target_id,           # здесь лежит class_id
                     class_id=target_id,
                     group_id="ALL",
                     date_iso=date_iso,
@@ -951,20 +951,34 @@ class Keyboards:
         Формирует кнопку возврата из просмотра изменений обратно в расписание.
         Умно маршрутизирует возврат в зависимости от источника запроса.
         """
-        if changes_data.target_kind == "teacher":
-            # Возврат в личное расписание учителя
-            back_cb = callbacks.TeacherScheduleDayCD(date_iso=changes_data.date_iso).pack()
+        target_kind = changes_data.target_kind
+        
+        if target_kind == "teacher":
+            # Возврат в ЛИЧНОЕ расписание учителя (приватный Teacher Hub)
+            back_cb = callbacks.TeacherScheduleDayCD(
+                date_iso=changes_data.date_iso
+            ).pack()
             
-        elif changes_data.target_kind == "class":
-            # Возврат в поиск по школе (конкретный класс)
+        elif target_kind == "search_teacher":
+            # Возврат в ПОИСК по школе -> Расписание учителя
+            back_cb = callbacks.SearchTeacherDayCD(
+                teacher_id=str(changes_data.target_id), 
+                date_iso=changes_data.date_iso
+            ).pack()
+            
+        elif target_kind in ("class", "search_class"):
+            # Возврат в ПОИСК по школе -> Расписание класса
+            class_id = str(changes_data.class_id or changes_data.target_id)
             back_cb = callbacks.SearchClassDayCD(
-                class_id=changes_data.class_id, 
+                class_id=class_id, 
                 date_iso=changes_data.date_iso
             ).pack()
             
         else:
-            # "student" или "watch" — возврат в основной Schedule Hub
-            back_cb = callbacks.ScheduleDayCD(date_iso=changes_data.date_iso).pack()
+            # "student" или "watch" — возврат в основной Schedule Hub ребенка/родителя
+            back_cb = callbacks.ScheduleDayCD(
+                date_iso=changes_data.date_iso
+            ).pack()
 
         return InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="◀️ Назад к расписанию", callback_data=back_cb)]

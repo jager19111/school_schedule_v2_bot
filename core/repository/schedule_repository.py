@@ -1181,3 +1181,55 @@ class ScheduleRepository(BaseRepository):
             lesson_count=len(lesson_rows),
             reason=reason,
         )
+        
+        
+            
+    async def get_todays_lessons_for_pre_reminders(
+        self,
+        date_iso: str,
+    ) -> list[LessonInstance]:
+        rows = await self._fetch_all(
+            """
+            SELECT
+                id,
+                period_id,
+                class_id,
+                class_name,
+                date,
+                weekday,
+                lesson_num,
+                start_time,
+                end_time,
+                subject_id,
+                subject_name,
+                teacher_id,
+                teacher_name,
+                room_id,
+                room_name,
+                original_subject_id,
+                original_subject_name,
+                original_teacher_id,
+                original_teacher_name,
+                original_room_id,
+                original_room_name,
+                original_class_id,
+                original_class_name,
+                original_group_id,
+                original_group_name,
+                group_id,
+                group_name,
+                is_exchange,
+                is_cancelled,
+                is_methodological
+            FROM schedule_cache
+            WHERE date = ?
+            AND is_cancelled = 0
+            ORDER BY start_time, lesson_num, id
+            """,
+            (date_iso,),
+        )
+
+        return [
+            self._row_to_lesson(row)
+            for row in rows
+        ]

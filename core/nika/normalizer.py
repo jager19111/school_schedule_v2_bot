@@ -34,9 +34,10 @@ class NikaNormalizer:
     def __init__(self, nika_data: Dict[str, Any]):
         self.data = nika_data
         self.classes, self.teachers, self.rooms, self.subjects = self.build_metadata()
-        self.class_groups = self.data.get("CLASSGROUPS", {})
-        self.lesson_times = self.data.get("LESSON_TIMES", {})
-        self.periods = self.data.get("PERIODS", {})
+# Явно указываем типы, чтобы VS Code понимал, что это словари
+        self.class_groups: Dict[str, str] = self.data.get("CLASSGROUPS", {})
+        self.lesson_times: Dict[str, List[str]] = self.data.get("LESSON_TIMES", {})
+        self.periods: Dict[str, Dict[str, str]] = self.data.get("PERIODS", {})
         
     def _clean_val(self, val: Any) -> Optional[str]:
         """Очистка пустых строк в массивах NIKA."""
@@ -148,25 +149,26 @@ class NikaNormalizer:
         raw_s_from_exchange = _ensure_list(slot_exchange.get("s")) if slot_exchange else []
         is_full_cancel = (raw_s_from_exchange == ["F"])
         
-        if is_teacher_mode and raw_s_from_exchange and raw_s_from_exchange[0] == "M":
+        # 1. Сначала делаем Умное слияние (Merge) частичных замен и базового расписания
+        if is_exchange and slot_exchange:
+            raw_s = _ensure_list(slot_exchange.get("s")) if "s" in slot_exchange else _ensure_list(slot_base.get("s"))
+            target_key = "c" if is_teacher_mode else "t"
+            raw_t_or_c = _ensure_list(slot_exchange.get(target_key)) if target_key in slot_exchange else _ensure_list(slot_base.get(target_key))
+            raw_r = _ensure_list(slot_exchange.get("r")) if "r" in slot_exchange else _ensure_list(slot_base.get("r"))
+            raw_g = _ensure_list(slot_exchange.get("g")) if "g" in slot_exchange else _ensure_list(slot_base.get("g"))
+        else:
+            active_slot = slot_base
+            target_key = "c" if is_teacher_mode else "t"
+            raw_s = _ensure_list(active_slot.get("s")) if not is_full_cancel else []
+            raw_t_or_c = _ensure_list(active_slot.get(target_key)) if not is_full_cancel else []
+            raw_r = _ensure_list(active_slot.get("r")) if not is_full_cancel else []
+            raw_g = _ensure_list(active_slot.get("g")) if not is_full_cancel else []
+
+        # 2. ТЕПЕРЬ проверяем метод. час: он может быть как в базовом расписании, так и в замене!
+        if is_teacher_mode and raw_s and raw_s[0] == "M":
             is_methodological = True
             raw_s = ["M"]
             raw_t_or_c, raw_r, raw_g = [], [], []
-        else:
-            # Умное слияние (Merge) частичных замен
-            if is_exchange and slot_exchange:
-                raw_s = _ensure_list(slot_exchange.get("s")) if "s" in slot_exchange else _ensure_list(slot_base.get("s"))
-                target_key = "c" if is_teacher_mode else "t"
-                raw_t_or_c = _ensure_list(slot_exchange.get(target_key)) if target_key in slot_exchange else _ensure_list(slot_base.get(target_key))
-                raw_r = _ensure_list(slot_exchange.get("r")) if "r" in slot_exchange else _ensure_list(slot_base.get("r"))
-                raw_g = _ensure_list(slot_exchange.get("g")) if "g" in slot_exchange else _ensure_list(slot_base.get("g"))
-            else:
-                active_slot = slot_base
-                target_key = "c" if is_teacher_mode else "t"
-                raw_s = _ensure_list(active_slot.get("s")) if not is_full_cancel else []
-                raw_t_or_c = _ensure_list(active_slot.get(target_key)) if not is_full_cancel else []
-                raw_r = _ensure_list(active_slot.get("r")) if not is_full_cancel else []
-                raw_g = _ensure_list(active_slot.get("g")) if not is_full_cancel else []
 
         orig_s = _ensure_list(slot_base.get("s")) if slot_base else []
         orig_target_key = "c" if is_teacher_mode else "t"
@@ -240,7 +242,10 @@ class NikaNormalizer:
             else:
                 sub_name = self.subjects.get(clean_s).name if clean_s and clean_s in self.subjects else ("ОТМЕНА" if is_cancelled else None)
             
-            orig_sub_name = self.subjects.get(o_clean_s).name if o_clean_s and o_clean_s in self.subjects else None
+            if o_clean_s == "M":
+                orig_sub_name = "Методический час/день"
+            else:
+                orig_sub_name = self.subjects.get(o_clean_s).name if o_clean_s and o_clean_s in self.subjects else None
             rom_name = self.rooms.get(clean_r).name if clean_r and clean_r in self.rooms else None
             orig_rom_name = self.rooms.get(o_clean_r).name if o_clean_r and o_clean_r in self.rooms else None
             orig_grp_name = self.class_groups.get(o_clean_g) if o_clean_g and o_clean_g != "ALL" else None

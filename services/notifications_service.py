@@ -46,7 +46,7 @@ import datetime
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Optional, Any
+from typing import Optional, Any, Mapping
 from aiogram import Bot
 from aiogram.exceptions import (
     TelegramBadRequest,
@@ -58,12 +58,13 @@ from aiogram.exceptions import (
 from core.repository.notification_repository import NotificationRepository
 from services.extra_classes_service import ExtraClassesService
 from core.repository.schedule_repository import ScheduleRepository
+from services.schedule_service import ScheduleService
 from services.time_service import TimeService
 from bot.utils.ui_renderer import UIRenderer
 from core.models.dto import (
     LessonReminderDTO,
     ChangeReminderDTO,
-    MorningSummaryDTO,
+    MorningSummaryDTO, PendingChangeDTO,
     MorningLessonDTO, ExtraClassItemDTO
 )
 from core.models.domain import LessonInstance
@@ -125,6 +126,7 @@ class NotificationService:
         time_service: TimeService,
         schedule_repo: ScheduleRepository,
         extra_classes_service: ExtraClassesService,
+        schedule_service: ScheduleService,
         admin_ids: Optional[list[int]] = None,
     ) -> None:
         self.bot = bot
@@ -132,6 +134,7 @@ class NotificationService:
         self.time_service = time_service
         self.schedule_repo = schedule_repo
         self.extra_classes_service = extra_classes_service
+        self.schedule_service = schedule_service
 
         # Smart Throttling state.
         # Сериализация ВСЕХ отправок через один lock: планировщик
@@ -310,66 +313,7 @@ class NotificationService:
                     alert_key,
                 )
 
-    # ==============================================================
-    # DTO
-    # ==============================================================
 
-    def _map_school_lesson_to_morning_dto(
-        self,
-        lesson: LessonInstance,
-        *,
-        group_name: str | None = None,
-        room_suffix: str | None = None,
-    ) -> MorningLessonDTO:
-        room_name = lesson.room_name or "—"
-
-        if room_suffix:
-            room_name = f"{room_name} · {room_suffix}"
-
-        return MorningLessonDTO(
-            lesson_num=lesson.lesson_num,
-            start_time=lesson.start_time or "—",
-            end_time=lesson.end_time or "—",
-            subject_name=lesson.subject_name or "—",
-            room_name=room_name,
-            is_cancelled=lesson.is_cancelled,
-            is_exchange=lesson.is_exchange,
-            is_extra=False,
-            group_name=group_name,
-            original_subject_name=(
-                lesson.original_subject_name or None
-            ),
-            original_room_name=(
-                lesson.original_room_name or None
-            ),
-            group_changed=(
-                lesson.is_exchange
-                and lesson.original_group_id is not None
-                and lesson.original_group_id != lesson.group_id
-            ),
-            day_permutation=False,
-        )
-
-    def _map_extra_to_morning_dto(
-        self,
-        extra: ExtraClassItemDTO,
-    ) -> MorningLessonDTO:
-        return MorningLessonDTO(
-            lesson_num=None,
-            start_time=extra.time_start or "—",
-            end_time=extra.time_end or "—",
-            subject_name=extra.title or "—",
-            room_name=extra.location or "—",
-            is_cancelled=False,
-            is_exchange=False,
-            is_extra=True,
-            group_name=None,
-            original_subject_name=None,
-            original_room_name=None,
-            group_changed=False,
-            day_permutation=False,
-        )
-        
     # ==============================================================
     # 3a. Микроочистка кеша per-chat таймстемпов
     # ==============================================================
@@ -558,7 +502,84 @@ class NotificationService:
     # ==============================================================
     # 1. Утренние сводки
     # ==============================================================
+    # ==============================================================
+    # DTO
+    # ==============================================================
 
+    def _map_school_lesson_to_morning_dto(
+        self,
+        lesson: LessonInstance,
+        *,
+        display_num: str | None = None,
+        group_name: str | None = None,
+        room_suffix: str | None = None,
+    ) -> MorningLessonDTO:
+        
+        return MorningLessonDTO(
+            lesson_num=lesson.lesson_num,
+            start_time=lesson.start_time or "—",
+            end_time=lesson.end_time or "—",
+            subject_name=lesson.subject_name or "—",
+            room_name=lesson.room_name or "—",
+            is_cancelled=lesson.is_cancelled,
+            is_exchange=lesson.is_exchange,
+            is_extra=False,
+            
+            # Строгое обращение к полям контракта (никаких getattr)
+            is_methodological=lesson.is_methodological,
+            
+            original_subject_name=lesson.original_subject_name or None,
+            original_room_name=lesson.original_room_name or None,
+            group_changed=(
+                lesson.is_exchange
+                and lesson.original_group_id is not None
+                and lesson.original_group_id != lesson.group_id
+            ),
+            day_permutation=False,
+
+            # Чистые поля для UI
+            group_name=group_name,
+            class_name=room_suffix,
+            teacher_name=lesson.teacher_name,
+            display_num=(
+                display_num
+                or (
+                    str(lesson.lesson_num)
+                    if lesson.lesson_num is not None
+                    else "•"
+                )
+            ),
+            group_id=lesson.group_id,
+        )
+
+    def _map_extra_to_morning_dto(
+        self,
+        extra: ExtraClassItemDTO,
+    ) -> MorningLessonDTO:
+        return MorningLessonDTO(
+            lesson_num=None,
+            start_time=extra.time_start or "—",
+            end_time=extra.time_end or "—",
+            subject_name=extra.title or "—",
+            room_name=extra.location or "—",
+            is_cancelled=False,
+            is_exchange=False,
+            is_extra=True,
+            is_methodological=False,
+            
+            original_subject_name=None,
+            original_room_name=None,
+            group_changed=False,
+            day_permutation=False,
+
+            # --- НОВЫЕ ЧИСТЫЕ ПОЛЯ ДЛЯ UI ---
+            group_name=None,
+            class_name=None,
+            teacher_name=None,
+            display_num="•",
+            group_id=None,
+        )
+        
     async def send_morning_reminders(self) -> None:
         """
         Формирует и отправляет утренние сводки.
@@ -626,7 +647,10 @@ class NotificationService:
             int,
             list[tuple[dict[str, Any], MorningSummaryDTO]],
         ] = {}
-
+        display_numbers_cache: dict[
+            tuple[str, str],
+            dict[int, str],
+        ] = {}
         for task in tasks:
             try:
                 recipient_id = int(task["recipient_id"])
@@ -653,6 +677,24 @@ class NotificationService:
                         )
                     )
 
+                    display_key = (
+                        child_class_id,
+                        today_iso,
+                    )
+
+                    if display_key not in display_numbers_cache:
+                        display_numbers_cache[display_key] = (
+                            await self.schedule_service
+                            .get_display_numbers_for_class_day(
+                                class_id=child_class_id,
+                                date_iso=today_iso,
+                            )
+                        )
+
+                    display_numbers = display_numbers_cache[
+                        display_key
+                    ]
+
                     user_groups = (
                         child_group_id.split(",")
                         if child_group_id != "ALL"
@@ -677,9 +719,19 @@ class NotificationService:
                                 f"Группа {lesson_group_id}",
                             )
 
+                        lesson_display_num = display_numbers.get(
+                            lesson.lesson_num,
+                            (
+                                str(lesson.lesson_num)
+                                if lesson.lesson_num is not None
+                                else "•"
+                            ),
+                        )
+
                         lessons_dtos.append(
                             self._map_school_lesson_to_morning_dto(
                                 lesson,
+                                display_num=lesson_display_num,
                                 group_name=group_name,
                             )
                         )
@@ -822,548 +874,6 @@ class NotificationService:
         await self._send_teacher_morning_reminders(
             current_time_str=current_time_str,
             today_iso=today_iso,
-        )
-
-    # ==============================================================
-    # 2. Изменения расписания
-    # ==============================================================
-
-    async def send_upcoming_changes(self) -> None:
-        """
-        Отправляет адресные уведомления о заменах и отменах.
-
-        Three-phase: collect (мемоизация получателей по классу и
-        учителю) -> батчевый dedup -> paced send.
-        """
-        now = self.time_service.get_now_base()
-        today = now.date()
-        today_iso = today.isoformat()
-
-        window_end_iso = (
-            today + datetime.timedelta(days=MAX_CHANGES_WINDOW_DAYS)
-        ).isoformat()
-
-        changes = await self.repo.get_pending_changes(
-            start_date_iso=today_iso,
-            end_date_iso=window_end_iso,
-        )
-
-        logger.info(
-            "Schedule changes tick: date=%s, changes=%d",
-            today_iso,
-            len(changes),
-        )
-        blocked_ids = await self._load_blocked_recipient_ids()
-        # Тиковые кеши получателей (фикс N+1).
-        recipients_cache: dict[tuple[str, str], list[dict]] = {}
-        teacher_cache: dict[str, list[dict]] = {}
-
-        pending: list[PendingSend] = []
-
-        # --- Фаза 1 (collect) ---
-        for change in changes:
-            try:
-                change_date = self.time_service.date_from_iso(
-                    change["date"],
-                )
-
-                cache_key = (change["class_id"], change["group_id"])
-                if cache_key not in recipients_cache:
-                    recipients_cache[cache_key] = (
-                        await self.repo.get_recipients_for_schedule_change(
-                            class_id=change["class_id"],
-                            group_id=change["group_id"],
-                        )
-                    )
-                recipients = recipients_cache[cache_key]
-
-                for recipient in recipients:
-                    recipient_id = int(recipient["recipient_id"])
-                    
-                    if recipient_id in blocked_ids:
-                        continue
-                    window_days = int(
-                        recipient["changes_window_days"]
-                    )
-
-                    if window_days <= 0:
-                        continue
-
-                    max_date = today + datetime.timedelta(
-                        days=window_days,
-                    )
-                    if not (today <= change_date <= max_date):
-                        continue
-
-                    dto = ChangeReminderDTO(
-                        date=change["date"],
-                        lesson_num=change["lesson_num"],
-                        subject_name=change["subject_name"] or "—",
-                        is_cancelled=bool(change["is_cancelled"]),
-                        child_name=(
-                            recipient["child_name"]
-                            if recipient["recipient_kind"] == "adult"
-                            else None
-                        ),
-                        watch_target_title=(
-                            recipient["watch_target_title"]
-                            if recipient["recipient_kind"] == "watch"
-                            else None
-                        ),
-                        original_subject_name=(
-                            change.get("original_subject_name") or None
-                        ),
-                        new_subject_name=(
-                            change.get("subject_name") or None
-                        ),
-                        original_room_name=(
-                            change.get("original_room_name") or None
-                        ),
-                        new_room_name=(
-                            change.get("room_name") or None
-                        ),
-                        original_group_name=(
-                            change.get("original_group_name") or None
-                        ),
-                        new_group_name=(
-                            change.get("group_name") or None
-                        ),
-                        group_changed=(
-                            bool(change.get("original_group_id"))
-                            and change.get("original_group_id")
-                            != change.get("group_id")
-                        ),
-                    )
-
-                    pending.append(
-                        PendingSend(
-                            notification_type="schedule_change",
-                            notification_date=change["date"],
-                            source_id=change["id"],
-                            recipient_id=recipient_id,
-                            text=UIRenderer.render_change_reminder(dto),
-                            context=(
-                                f"change_id={change['id']}, "
-                                f"kind={recipient['recipient_kind']}"
-                            ),
-                        )
-                    )
-
-                teacher_id = change.get("teacher_id")
-                if not teacher_id:
-                    continue
-
-                teacher_id = str(teacher_id)
-                if teacher_id not in teacher_cache:
-                    teacher_cache[teacher_id] = (
-                        await self.repo.get_teacher_recipients_for_schedule_change(
-                            teacher_id=teacher_id,
-                        )
-                    )
-
-                for recipient in teacher_cache[teacher_id]:
-                    try:
-                        recipient_id = int(recipient["recipient_id"])
-                        if recipient_id in blocked_ids:
-                            continue
-                        window_days = int(
-                            recipient["changes_window_days"]
-                        )
-                        if window_days <= 0:
-                            continue
-
-                        max_date = today + datetime.timedelta(
-                            days=window_days,
-                        )
-                        if not (today <= change_date <= max_date):
-                            continue
-
-                        dto = ChangeReminderDTO(
-                            date=change["date"],
-                            lesson_num=change["lesson_num"],
-                            subject_name=change["subject_name"] or "—",
-                            is_cancelled=bool(change["is_cancelled"]),
-                                original_subject_name=(
-                            change.get("original_subject_name") or None
-                            ),
-                            new_subject_name=(
-                                change.get("subject_name") or None
-                            ),
-                            original_room_name=(
-                                change.get("original_room_name") or None
-                            ),
-                            new_room_name=(
-                                change.get("room_name") or None
-                            ),
-                            original_group_name=(
-                                change.get("original_group_name") or None
-                            ),
-                            new_group_name=(
-                                change.get("group_name") or None
-                            ),
-                            group_changed=(
-                                bool(change.get("original_group_id"))
-                                and change.get("original_group_id")
-                                != change.get("group_id")
-                            ),
-                            child_name=None,
-                            watch_target_title=None,
-                        )
-
-                        teacher_name = (
-                            change.get("teacher_name")
-                            or "Учитель"
-                        )
-                        text = (
-                            "👨‍🏫 <b>Изменение в расписании учителя</b>\n"
-                            f"👤 <b>{UIRenderer.escape_html(teacher_name)}</b>\n\n"
-                            f"{UIRenderer.render_change_reminder(dto)}"
-                        )
-
-                        pending.append(
-                            PendingSend(
-                                notification_type="teacher_change",
-                                notification_date=change["date"],
-                                source_id=change["id"],
-                                recipient_id=recipient_id,
-                                text=text,
-                                context=(
-                                    f"teacher_id={teacher_id}, "
-                                    f"change_id={change['id']}"
-                                ),
-                            )
-                        )
-                    except Exception:
-                        logger.exception(
-                            "Teacher schedule change collect failed: "
-                            "change=%r recipient=%r",
-                            change,
-                            recipient,
-                        )
-
-            except (KeyError, TypeError, ValueError) as exc:
-                logger.exception(
-                    "Invalid schedule change task: change=%r, error=%s",
-                    change,
-                    exc,
-                )
-            except Exception:
-                logger.exception(
-                    "Unexpected schedule change collect error: change=%r",
-                    change,
-                )
-
-        # --- Фаза 2 (dedup) + Фаза 3 (send) ---
-        to_send = await self._drop_already_delivered(pending)
-        sent_count, failed_count = await self._flush_pending(to_send)
-
-        logger.info(
-            "Schedule changes tick done: changes=%d, candidates=%d, "
-            "pending=%d, sent=%d, failed=%d, "
-            "recipient_queries=%d, teacher_queries=%d",
-            len(changes),
-            len(pending),
-            len(to_send),
-            sent_count,
-            failed_count,
-            len(recipients_cache),
-            len(teacher_cache),
-        )
-
-    # ==============================================================
-    # 3. Предурочные напоминания
-    # ==============================================================
-
-    async def send_pre_lesson_reminders(self) -> None:
-        """
-        Отправляет адресные предурочные напоминания.
-
-        Three-phase + тиковая мемоизация получателей:
-        254 урока ~40 классов => ~40 запросов получателей вместо 254+.
-        """
-        now = self.time_service.get_now_base()
-        today_iso = now.date().isoformat()
-
-        lessons = await self.repo.get_todays_lessons_for_pre_reminders(
-            date_iso=today_iso,
-        )
-
-        logger.info(
-            "Pre-lesson reminder tick: date=%s, lessons=%d",
-            today_iso,
-            len(lessons),
-        )
-        blocked_ids = await self._load_blocked_recipient_ids()
-
-        # Тиковые кеши получателей (фикс N+1).
-        recipients_cache: dict[tuple[str, str], list[dict]] = {}
-        teacher_cache: dict[str, list[dict]] = {}
-
-        pending: list[PendingSend] = []
-
-        # --- Фаза 1 (collect) ---
-        for lesson in lessons:
-            try:
-                lesson_start_at = datetime.datetime.strptime(
-                    f"{today_iso} {lesson['start_time']}",
-                    "%Y-%m-%d %H:%M",
-                ).replace(tzinfo=self.time_service.base_tz)
-                delta_minutes = (
-                    lesson_start_at - now
-                ).total_seconds() / 60.0
-
-                # Урок уже начался или прошёл.
-                if delta_minutes <= 0:
-                    continue
-
-                cache_key = (lesson["class_id"], lesson["group_id"])
-                if cache_key not in recipients_cache:
-                    recipients_cache[cache_key] = (
-                        await self.repo.get_recipients_for_pre_lesson_reminder(
-                            class_id=lesson["class_id"],
-                            group_id=lesson["group_id"],
-                        )
-                    )
-                recipients = recipients_cache[cache_key]
-
-                for recipient in recipients:
-                    recipient_id = int(recipient["recipient_id"])
-                    if recipient_id in blocked_ids:
-                        continue
-                    offset_minutes = int(recipient["offset_minutes"])
-
-                    # 0 = получатель отключил этот тип напоминаний.
-                    if offset_minutes <= 0:
-                        continue
-
-                    # До окна уведомления ещё далеко.
-                    if delta_minutes > offset_minutes:
-                        continue
-
-                    dto = LessonReminderDTO(
-                        subject_name=lesson["subject_name"] or "—",
-                        start_time=lesson["start_time"],
-                        room_name=lesson["room_name"] or "—",
-                        is_extra=False,
-                        child_name=(
-                            recipient["child_name"]
-                            if recipient["recipient_kind"] == "adult"
-                            else None
-                        ),
-                    )
-
-                    pending.append(
-                        PendingSend(
-                            notification_type="pre_lesson",
-                            notification_date=today_iso,
-                            source_id=lesson["id"],
-                            recipient_id=recipient_id,
-                            text=UIRenderer.render_lesson_reminder(dto),
-                            context=(
-                                f"lesson_id={lesson['id']}, "
-                                f"kind={recipient['recipient_kind']}"
-                            ),
-                        )
-                    )
-
-                teacher_id = lesson.get("teacher_id")
-                if not teacher_id:
-                    continue
-
-                teacher_id = str(teacher_id)
-                if teacher_id not in teacher_cache:
-                    teacher_cache[teacher_id] = (
-                        await self.repo.get_teacher_recipients_for_pre_lesson_reminder(
-                            teacher_id=teacher_id,
-                        )
-                    )
-
-                for recipient in teacher_cache[teacher_id]:
-                    try:
-                        recipient_id = int(recipient["recipient_id"])
-                        if recipient_id in blocked_ids:
-                            continue
-                        offset_minutes = int(recipient["offset_minutes"])
-
-                        if offset_minutes <= 0:
-                            continue
-
-                        if delta_minutes > offset_minutes:
-                            continue
-
-                        dto = LessonReminderDTO(
-                            subject_name=lesson["subject_name"] or "—",
-                            start_time=lesson["start_time"],
-                            room_name=lesson["room_name"] or "—",
-                            is_extra=False,
-                            child_name=None,
-                        )
-                        text = (
-                            "👨‍🏫 <b>Напоминание об уроке</b>\n\n"
-                            f"{UIRenderer.render_lesson_reminder(dto)}"
-                        )
-
-                        pending.append(
-                            PendingSend(
-                                notification_type="teacher_pre_lesson",
-                                notification_date=today_iso,
-                                source_id=lesson["id"],
-                                recipient_id=recipient_id,
-                                text=text,
-                                context=(
-                                    f"teacher_id={teacher_id}, "
-                                    f"lesson_id={lesson['id']}"
-                                ),
-                            )
-                        )
-                    except Exception:
-                        logger.exception(
-                            "Teacher pre-lesson collect failed: "
-                            "lesson=%r recipient=%r",
-                            lesson,
-                            recipient,
-                        )
-
-            except (KeyError, TypeError, ValueError) as exc:
-                logger.exception(
-                    "Invalid pre-lesson reminder task: lesson=%r, error=%s",
-                    lesson,
-                    exc,
-                )
-            except Exception:
-                logger.exception(
-                    "Unexpected pre-lesson reminder collect error: lesson=%r",
-                    lesson,
-                )
-
-        # --- Фаза 2 (dedup) + Фаза 3 (send) ---
-        to_send = await self._drop_already_delivered(pending)
-        sent_count, failed_count = await self._flush_pending(to_send)
-
-        logger.info(
-            "Pre-lesson tick done: lessons=%d, candidates=%d, "
-            "pending=%d, sent=%d, failed=%d, "
-            "recipient_queries=%d, teacher_queries=%d",
-            len(lessons),
-            len(pending),
-            len(to_send),
-            sent_count,
-            failed_count,
-            len(recipients_cache),
-            len(teacher_cache),
-        )
-
-    # ==============================================================
-    # 4. Напоминания о доп. занятиях
-    # ==============================================================
-
-    async def send_extra_class_reminders(self) -> None:
-        """
-        Отправляет адресные напоминания о дополнительных занятиях.
-
-        Получатели уже приходят адресно из репозитория — фаза collect
-        только применяет временные фильтры.
-        """
-        now = self.time_service.get_now_base()
-        today_iso = now.date().isoformat()
-        weekday = now.isoweekday()
-
-        extras = await self.repo.get_todays_extra_classes_for_reminders(
-            day_of_week=weekday,
-        )
-
-        logger.info(
-            "Extra reminder tick: date=%s, weekday=%s, candidates=%d",
-            today_iso,
-            weekday,
-            len(extras),
-        )
-        blocked_ids = await self._load_blocked_recipient_ids()
-        pending: list[PendingSend] = []
-
-        # --- Фаза 1 (collect) ---
-        for extra in extras:
-            try:
-                extra_id = int(extra["extra_id"])
-                recipient_id = int(extra["recipient_id"])
-                if recipient_id in blocked_ids:
-                    continue
-                offset_minutes = int(extra["offset_minutes"])
-
-                if offset_minutes <= 0:
-                    logger.debug(
-                        "Extra reminder disabled by zero offset: extra_id=%s, "
-                        "recipient_id=%s",
-                        extra_id,
-                        recipient_id,
-                    )
-                    continue
-
-                start_at = datetime.datetime.strptime(
-                    f"{today_iso} {extra['time_start']}",
-                    "%Y-%m-%d %H:%M",
-                ).replace(tzinfo=self.time_service.base_tz)
-                delta_minutes = (
-                    start_at - now
-                ).total_seconds() / 60.0
-
-                # Занятие уже началось.
-                if delta_minutes <= 0:
-                    continue
-
-                # Ещё не вошли в окно напоминания.
-                if delta_minutes > offset_minutes:
-                    continue
-
-                dto = LessonReminderDTO(
-                    subject_name=extra["title"],
-                    start_time=extra["time_start"],
-                    room_name=extra["location"] or "—",
-                    is_extra=True,
-                    child_name=(
-                        extra["child_name"]
-                        if extra["recipient_kind"] == "adult"
-                        else None
-                    ),
-                )
-
-                pending.append(
-                    PendingSend(
-                        notification_type="extra_class",
-                        notification_date=today_iso,
-                        source_id=str(extra_id),
-                        recipient_id=recipient_id,
-                        text=UIRenderer.render_lesson_reminder(dto),
-                        context=(
-                            f"extra_id={extra_id}, "
-                            f"kind={extra['recipient_kind']}"
-                        ),
-                    )
-                )
-
-            except (KeyError, TypeError, ValueError) as exc:
-                logger.exception(
-                    "Invalid extra reminder task: task=%r, error=%s",
-                    extra,
-                    exc,
-                )
-            except Exception:
-                logger.exception(
-                    "Unexpected extra reminder collect error: task=%r",
-                    extra,
-                )
-
-        # --- Фаза 2 (dedup) + Фаза 3 (send) ---
-        to_send = await self._drop_already_delivered(pending)
-        sent_count, failed_count = await self._flush_pending(to_send)
-
-        logger.info(
-            "Extra reminder tick done: candidates=%d, pending=%d, "
-            "sent=%d, failed=%d",
-            len(pending),
-            len(to_send),
-            sent_count,
-            failed_count,
         )
 
     # ==============================================================
@@ -1519,3 +1029,632 @@ class NotificationService:
                 sent_count,
                 failed_count,
             )
+
+
+    # ==============================================================
+    # 2. Изменения расписания
+    # ==============================================================
+
+    @staticmethod
+    def _to_change_reminder_dto(
+        change: PendingChangeDTO,
+        *,
+        child_name: str | None = None,
+        watch_target_title: str | None = None,
+        display_num: str | None = None,
+    ) -> ChangeReminderDTO:
+        return ChangeReminderDTO(
+            date=change.date,
+            lesson_num=change.lesson_num,
+            display_num=(
+                display_num
+                if display_num is not None
+                else change.display_num
+            ),
+            subject_name=change.subject_name or "—",
+            is_cancelled=change.is_cancelled,
+            original_subject_name=change.original_subject_name,
+            new_subject_name=change.subject_name,
+            original_room_name=change.original_room_name,
+            new_room_name=change.room_name,
+            original_group_name=change.original_group_name,
+            new_group_name=change.group_name,
+            group_changed=(
+                bool(change.original_group_id)
+                and change.original_group_id != change.group_id
+            ),
+            child_name=child_name,
+            watch_target_title=watch_target_title,
+        )
+    
+    @staticmethod
+    def _map_pending_change(
+        row: Mapping[str, Any],
+    ) -> PendingChangeDTO:
+        return PendingChangeDTO(
+            id=str(row["id"]),
+            date=str(row["date"]),
+            period_id=str(row["period_id"]),
+            class_id=str(row["class_id"]),
+            group_id=str(row.get("group_id") or "ALL"),
+            group_name=(
+                str(row["group_name"])
+                if row.get("group_name") is not None
+                else None
+            ),
+
+            teacher_id=(
+                str(row["teacher_id"])
+                if row.get("teacher_id") is not None
+                else None
+            ),
+            lesson_num=int(row["lesson_num"]),
+
+            subject_id=row.get("subject_id"),
+            subject_name=row.get("subject_name"),
+            room_id=row.get("room_id"),
+            room_name=row.get("room_name"),
+            teacher_name=row.get("teacher_name"),
+
+            original_subject_id=row.get("original_subject_id"),
+            original_subject_name=row.get(
+                "original_subject_name"
+            ),
+            original_room_id=row.get("original_room_id"),
+            original_room_name=row.get(
+                "original_room_name"
+            ),
+            original_teacher_id=row.get(
+                "original_teacher_id"
+            ),
+            original_teacher_name=row.get(
+                "original_teacher_name"
+            ),
+            original_group_id=row.get(
+                "original_group_id"
+            ),
+            original_group_name=row.get(
+                "original_group_name"
+            ),
+            original_class_id=row.get(
+                "original_class_id"
+            ),
+            original_class_name=row.get(
+                "original_class_name"
+            ),
+
+            is_exchange=bool(row.get("is_exchange")),
+            is_cancelled=bool(row.get("is_cancelled")),
+        )
+            
+    async def send_upcoming_changes(self) -> None:
+        """
+        Отправляет адресные уведомления о заменах и отменах.
+
+        Three-phase: collect (мемоизация получателей по классу и
+        учителю) -> батчевый dedup -> paced send.
+        """
+        now = self.time_service.get_now_base()
+        today = now.date()
+        today_iso = today.isoformat()
+
+        window_end_iso = (
+            today + datetime.timedelta(days=MAX_CHANGES_WINDOW_DAYS)
+        ).isoformat()
+
+        raw_changes = await self.repo.get_pending_changes(
+            start_date_iso=today_iso,
+            end_date_iso=window_end_iso,
+        )
+
+        changes = [
+            self._map_pending_change(row)
+            for row in raw_changes
+        ]
+        logger.info(
+            "Schedule changes tick: date=%s, changes=%d",
+            today_iso,
+            len(changes),
+        )
+        blocked_ids = await self._load_blocked_recipient_ids()
+        # Тиковые кеши получателей (фикс N+1).
+        recipients_cache: dict[tuple[str, str], list[dict]] = {}
+        teacher_cache: dict[str, list[dict]] = {}
+        display_numbers_cache: dict[tuple[str, str],dict[int, str],] = {}
+        pending: list[PendingSend] = []
+
+        # --- Фаза 1 (collect) ---
+        for change in changes:
+            try:
+                change_date = self.time_service.date_from_iso(
+                    change.date,
+                )
+                class_display_num = str(change.lesson_num)
+
+                try:
+                    display_key = (
+                        change.class_id,
+                        change.date,
+                    )
+
+                    if display_key not in display_numbers_cache:
+                        display_numbers_cache[display_key] = (
+                            await self.schedule_service
+                            .get_display_numbers_for_class_day(
+                                class_id=change.class_id,
+                                date_iso=change.date,
+                            )
+                        )
+
+                    class_display_num = display_numbers_cache[
+                        display_key
+                    ].get(
+                        change.lesson_num,
+                        str(change.lesson_num),
+                    )
+                except Exception:
+                    logger.exception(
+                        "Failed to calculate display number: "
+                        "class_id=%s date=%s lesson_num=%s",
+                        change.class_id,
+                        change.date,
+                        change.lesson_num,
+                    )
+
+                cache_key = (
+                    change.class_id,
+                    change.group_id,
+                )
+
+                if cache_key not in recipients_cache:
+                    recipients_cache[cache_key] = (
+                        await self.repo.get_recipients_for_schedule_change(
+                            class_id=change.class_id,
+                            group_id=change.group_id,
+                        )
+                    )
+
+                recipients = recipients_cache[cache_key]
+
+                for recipient in recipients:
+                    recipient_id = int(
+                        recipient["recipient_id"]
+                    )
+
+                    if recipient_id in blocked_ids:
+                        continue
+
+                    window_days = int(
+                        recipient["changes_window_days"]
+                    )
+
+                    if window_days <= 0:
+                        continue
+
+                    max_date = today + datetime.timedelta(
+                        days=window_days,
+                    )
+
+                    if not (today <= change_date <= max_date):
+                        continue
+
+                    dto = self._to_change_reminder_dto(
+                        change,
+                        display_num=class_display_num,
+                        child_name=(
+                            recipient["child_name"]
+                            if recipient["recipient_kind"] == "adult"
+                            else None
+                        ),
+                        watch_target_title=(
+                            recipient["watch_target_title"]
+                            if recipient["recipient_kind"] == "watch"
+                            else None
+                        ),
+                    )
+                    pending.append(
+                        PendingSend(
+                            notification_type="schedule_change",
+                            notification_date=change.date,
+                            source_id=change.id,
+                            recipient_id=recipient_id,
+                            text=UIRenderer.render_change_reminder(dto),
+                            context=(
+                                f"change_id={change.id}, "
+                                f"kind={recipient['recipient_kind']}"
+                            ),
+                        )
+                    )
+
+                teacher_id = change.teacher_id
+
+                if not teacher_id:
+                    continue
+
+                teacher_id = str(teacher_id)
+
+                if teacher_id not in teacher_cache:
+                    teacher_cache[teacher_id] = (
+                        await self.repo.get_teacher_recipients_for_schedule_change(
+                            teacher_id=teacher_id,
+                        )
+                    )
+
+                for recipient in teacher_cache[teacher_id]:
+                    try:
+                        recipient_id = int(recipient["recipient_id"])
+                        if recipient_id in blocked_ids:
+                            continue
+                        window_days = int(
+                            recipient["changes_window_days"]
+                        )
+                        if window_days <= 0:
+                            continue
+
+                        max_date = today + datetime.timedelta(
+                            days=window_days,
+                        )
+                        if not (today <= change_date <= max_date):
+                            continue
+
+                        dto = self._to_change_reminder_dto(
+                            change,
+                            display_num=str(change.lesson_num),
+                        )
+
+                        teacher_name = change.teacher_name or "Учитель"
+
+                        text = (
+                            "👨‍🏫 <b>Изменение в расписании учителя</b>\n"
+                            f"👤 <b>{UIRenderer.escape_html(teacher_name)}</b>\n\n"
+                            f"{UIRenderer.render_change_reminder(dto)}"
+                        )
+
+                        pending.append(
+                            PendingSend(
+                                notification_type="teacher_change",
+                                notification_date=change.date,
+                                source_id=change.id,
+                                recipient_id=recipient_id,
+                                text=text,
+                                context=(
+                                    f"teacher_id={teacher_id}, "
+                                    f"change_id={change.id}"
+                                ),
+                            )
+                        )
+                    except Exception:
+                        logger.exception(
+                            "Teacher schedule change collect failed: "
+                            "change=%r recipient=%r",
+                            change,
+                            recipient,
+                        )
+
+            except (KeyError, TypeError, ValueError) as exc:
+                logger.exception(
+                    "Invalid schedule change task: change=%r, error=%s",
+                    change,
+                    exc,
+                )
+            except Exception:
+                logger.exception(
+                    "Unexpected schedule change collect error: change=%r",
+                    change,
+                )
+
+        # --- Фаза 2 (dedup) + Фаза 3 (send) ---
+        to_send = await self._drop_already_delivered(pending)
+        sent_count, failed_count = await self._flush_pending(to_send)
+
+        logger.info(
+            "Schedule changes tick done: changes=%d, candidates=%d, "
+            "pending=%d, sent=%d, failed=%d, "
+            "recipient_queries=%d, teacher_queries=%d",
+            len(changes),
+            len(pending),
+            len(to_send),
+            sent_count,
+            failed_count,
+            len(recipients_cache),
+            len(teacher_cache),
+        )
+
+    # ==============================================================
+    # 3. Предурочные напоминания
+    # ==============================================================
+
+    async def send_pre_lesson_reminders(self) -> None:
+        """
+        Отправляет адресные предурочные напоминания.
+
+        Three-phase + тиковая мемоизация получателей:
+        254 урока ~40 классов => ~40 запросов получателей вместо 254+.
+        """
+        now = self.time_service.get_now_base()
+        today_iso = now.date().isoformat()
+
+        lessons: list[LessonInstance] = (
+            await self.schedule_repo.get_todays_lessons_for_pre_reminders(
+                date_iso=today_iso,
+            )
+        )
+
+        logger.info(
+            "Pre-lesson reminder tick: date=%s, lessons=%d",
+            today_iso,
+            len(lessons),
+        )
+        blocked_ids = await self._load_blocked_recipient_ids()
+
+        # Тиковые кеши получателей (фикс N+1).
+        recipients_cache: dict[tuple[str, str], list[dict]] = {}
+        teacher_cache: dict[str, list[dict]] = {}
+
+        pending: list[PendingSend] = []
+
+        # --- Фаза 1 (collect) ---
+        for lesson in lessons:
+            try:
+                lesson_start_at = datetime.datetime.strptime(
+                    f"{today_iso} {lesson.start_time}",
+                    "%Y-%m-%d %H:%M",
+                ).replace(tzinfo=self.time_service.base_tz)
+                delta_minutes = (
+                    lesson_start_at - now
+                ).total_seconds() / 60.0
+
+                # Урок уже начался или прошёл.
+                if delta_minutes <= 0:
+                    continue
+
+                cache_key = (lesson.class_id, lesson.group_id or "ALL",)
+                if cache_key not in recipients_cache:
+                    recipients_cache[cache_key] = (
+                        await self.repo.get_recipients_for_pre_lesson_reminder(
+                            class_id=lesson.class_id,
+                            group_id=lesson.group_id or "ALL",
+                        )
+                    )
+                recipients = recipients_cache[cache_key]
+
+                for recipient in recipients:
+                    recipient_id = int(recipient["recipient_id"])
+                    if recipient_id in blocked_ids:
+                        continue
+                    offset_minutes = int(recipient["offset_minutes"])
+
+                    # 0 = получатель отключил этот тип напоминаний.
+                    if offset_minutes <= 0:
+                        continue
+
+                    # До окна уведомления ещё далеко.
+                    if delta_minutes > offset_minutes:
+                        continue
+
+                    dto = LessonReminderDTO(
+                        subject_name=lesson.subject_name or "—",
+                        start_time=lesson.start_time or "—",
+                        room_name=lesson.room_name or "—",
+                        is_extra=False,
+                        child_name=(
+                            recipient["child_name"]
+                            if recipient["recipient_kind"] == "adult"
+                            else None
+                        ),
+                    )
+
+                    pending.append(
+                        PendingSend(
+                            notification_type="pre_lesson",
+                            notification_date=today_iso,
+                            source_id=lesson.id,
+                            recipient_id=recipient_id,
+                            text=UIRenderer.render_lesson_reminder(dto),
+                            context=(
+                                f"lesson_id={lesson.id}, "
+                                f"kind={recipient['recipient_kind']}"
+                            ),
+                        )
+                    )
+
+                teacher_id = lesson.teacher_id
+                if not teacher_id:
+                    continue
+
+                teacher_id = str(teacher_id)
+                if teacher_id not in teacher_cache:
+                    teacher_cache[teacher_id] = (
+                        await self.repo.get_teacher_recipients_for_pre_lesson_reminder(
+                            teacher_id=teacher_id,
+                        )
+                    )
+
+                for recipient in teacher_cache[teacher_id]:
+                    try:
+                        recipient_id = int(recipient["recipient_id"])
+                        if recipient_id in blocked_ids:
+                            continue
+                        offset_minutes = int(recipient["offset_minutes"])
+
+                        if offset_minutes <= 0:
+                            continue
+
+                        if delta_minutes > offset_minutes:
+                            continue
+
+                        dto = LessonReminderDTO(
+                            subject_name=lesson.subject_name or "—",
+                            start_time=lesson.start_time or "—",
+                            room_name=lesson.room_name or "—",
+                            is_extra=False,
+                            child_name=None,
+                        )
+                        text = (
+                            "👨‍🏫 <b>Напоминание об уроке</b>\n\n"
+                            f"{UIRenderer.render_lesson_reminder(dto)}"
+                        )
+
+                        pending.append(
+                            PendingSend(
+                                notification_type="teacher_pre_lesson",
+                                notification_date=today_iso,
+                                source_id=lesson.id,
+                                recipient_id=recipient_id,
+                                text=text,
+                                context=(
+                                    f"teacher_id={teacher_id}, "
+                                    f"lesson_id={lesson.id}"
+                                ),
+                            )
+                        )
+                    except Exception:
+                        logger.exception(
+                            "Teacher pre-lesson collect failed: "
+                            "lesson=%r recipient=%r",
+                            lesson,
+                            recipient,
+                        )
+
+            except (KeyError, TypeError, ValueError) as exc:
+                logger.exception(
+                    "Invalid pre-lesson reminder task: lesson=%r, error=%s",
+                    lesson,
+                    exc,
+                )
+            except Exception:
+                logger.exception(
+                    "Unexpected pre-lesson reminder collect error: lesson=%r",
+                    lesson,
+                )
+
+        # --- Фаза 2 (dedup) + Фаза 3 (send) ---
+        to_send = await self._drop_already_delivered(pending)
+        sent_count, failed_count = await self._flush_pending(to_send)
+
+        logger.info(
+            "Pre-lesson tick done: lessons=%d, candidates=%d, "
+            "pending=%d, sent=%d, failed=%d, "
+            "recipient_queries=%d, teacher_queries=%d",
+            len(lessons),
+            len(pending),
+            len(to_send),
+            sent_count,
+            failed_count,
+            len(recipients_cache),
+            len(teacher_cache),
+        )
+
+    # ==============================================================
+    # 4. Напоминания о доп. занятиях
+    # ==============================================================
+
+    async def send_extra_class_reminders(self) -> None:
+        """
+        Отправляет адресные напоминания о дополнительных занятиях.
+
+        Получатели уже приходят адресно из репозитория — фаза collect
+        только применяет временные фильтры.
+        """
+        now = self.time_service.get_now_base()
+        today_iso = now.date().isoformat()
+        weekday = now.isoweekday()
+
+        extras = await self.repo.get_todays_extra_classes_for_reminders(
+            day_of_week=weekday,
+        )
+
+        logger.info(
+            "Extra reminder tick: date=%s, weekday=%s, candidates=%d",
+            today_iso,
+            weekday,
+            len(extras),
+        )
+        blocked_ids = await self._load_blocked_recipient_ids()
+        pending: list[PendingSend] = []
+
+        # --- Фаза 1 (collect) ---
+        for extra in extras:
+            try:
+                extra_id = int(extra["extra_id"])
+                recipient_id = int(extra["recipient_id"])
+                if recipient_id in blocked_ids:
+                    continue
+                offset_minutes = int(extra["offset_minutes"])
+
+                if offset_minutes <= 0:
+                    logger.debug(
+                        "Extra reminder disabled by zero offset: extra_id=%s, "
+                        "recipient_id=%s",
+                        extra_id,
+                        recipient_id,
+                    )
+                    continue
+
+                start_at = datetime.datetime.strptime(
+                    f"{today_iso} {extra['time_start']}",
+                    "%Y-%m-%d %H:%M",
+                ).replace(tzinfo=self.time_service.base_tz)
+                delta_minutes = (
+                    start_at - now
+                ).total_seconds() / 60.0
+
+                # Занятие уже началось.
+                if delta_minutes <= 0:
+                    continue
+
+                # Ещё не вошли в окно напоминания.
+                if delta_minutes > offset_minutes:
+                    continue
+
+                dto = LessonReminderDTO(
+                    subject_name=extra["title"],
+                    start_time=extra["time_start"],
+                    room_name=extra["location"] or "—",
+                    is_extra=True,
+                    child_name=(
+                        extra["child_name"]
+                        if extra["recipient_kind"] == "adult"
+                        else None
+                    ),
+                )
+
+                pending.append(
+                    PendingSend(
+                        notification_type="extra_class",
+                        notification_date=today_iso,
+                        source_id=str(extra_id),
+                        recipient_id=recipient_id,
+                        text=UIRenderer.render_lesson_reminder(dto),
+                        context=(
+                            f"extra_id={extra_id}, "
+                            f"kind={extra['recipient_kind']}"
+                        ),
+                    )
+                )
+
+            except (KeyError, TypeError, ValueError) as exc:
+                logger.exception(
+                    "Invalid extra reminder task: task=%r, error=%s",
+                    extra,
+                    exc,
+                )
+            except Exception:
+                logger.exception(
+                    "Unexpected extra reminder collect error: task=%r",
+                    extra,
+                )
+
+        # --- Фаза 2 (dedup) + Фаза 3 (send) ---
+        to_send = await self._drop_already_delivered(pending)
+        sent_count, failed_count = await self._flush_pending(to_send)
+
+        logger.info(
+            "Extra reminder tick done: candidates=%d, pending=%d, "
+            "sent=%d, failed=%d",
+            len(pending),
+            len(to_send),
+            sent_count,
+            failed_count,
+        )
+

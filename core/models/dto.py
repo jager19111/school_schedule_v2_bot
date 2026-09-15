@@ -577,6 +577,7 @@ class ChangeReminderDTO:
     is_cancelled: bool
 
     # NEW Этап 3:
+    display_num: Optional[str] = None
     original_subject_name: Optional[str] = None
     new_subject_name: Optional[str] = None
     original_room_name: Optional[str] = None
@@ -584,51 +585,92 @@ class ChangeReminderDTO:
     original_group_name: Optional[str] = None
     new_group_name: Optional[str] = None
     group_changed: bool = False
+    
 
     child_name: Optional[str] = None
     watch_target_title: Optional[str] = None
 
+@dataclass(frozen=True, slots=True)
+class PendingChangeDTO:
+    id: str
+    date: str
+    period_id: str
+    class_id: str
+    group_id: str
+    group_name: str | None
+    teacher_id: str | None
+    lesson_num: int
 
+    subject_id: str | None
+    subject_name: str | None
+    room_id: str | None
+    room_name: str | None
+    teacher_name: str | None
+
+    original_subject_id: str | None
+    original_subject_name: str | None
+    original_room_id: str | None
+    original_room_name: str | None
+    original_teacher_id: str | None
+    original_teacher_name: str | None
+    original_group_id: str | None
+    original_group_name: str | None
+    original_class_id: str | None
+    original_class_name: str | None
+
+    is_exchange: bool
+    is_cancelled: bool
+
+    # Вычисляемое поле, не хранится в schedule_cache.
+    display_num: str | None = None
+    
 @dataclass
 class MorningLessonDTO:
     """
     Урок для утренней сводки.
-
-    Этап 3: добавлены original_*, group_changed, day_permutation.
     """
     lesson_num: Optional[int]
     start_time: str
     end_time: str
     subject_name: str
     room_name: str
+
     is_cancelled: bool
     is_exchange: bool
     is_extra: bool = False
+    is_methodological: bool = False
     group_name: Optional[str] = None
 
-    # NEW Этап 3:
+    # Поля для зачеркиваний (было -> стало)
     original_subject_name: Optional[str] = None
     original_room_name: Optional[str] = None
     group_changed: bool = False
     day_permutation: bool = False
+    # --- НОВЫЕ ЧИСТЫЕ ПОЛЯ ДЛЯ РЕНДЕРА ---
+    class_name: Optional[str] = None
+    teacher_name: Optional[str] = None
+    display_num: Optional[str] = None
+    group_id: Optional[str] = None
 
 
 @dataclass
 class MorningSummaryDTO:
     """
-    Утренняя сводка расписания одного ребёнка.
-
-    Этап 3: добавлено has_permutation: bool.
+    Утренняя сводка (Всё сообщение целиком).
 
     Для ребёнка-получателя child_name остаётся None.
     Для взрослого получателя child_name содержит имя ребёнка.
     """
     date_iso: str
     lessons: list[MorningLessonDTO]
+    
+    # Данные для заголовка
     child_name: str | None = None
-    class_id: str | None = None
-    class_name: str | None = None
+    class_id: str | None = None     # Технический ID основного класса ученика
+    class_name: str | None = None   # Человекочитаемое название класса для заголовка
+    
     has_permutation: bool = False
+    origin: Literal["student", "teacher"] = "student"
 
 
 # ==========================================================

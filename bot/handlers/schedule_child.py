@@ -948,6 +948,7 @@ async def show_day_changes(
     """
     Показывает детали изменений «было → стало» на день.
     """
+    print(f"DEBUG: target_kind = {callback_data.target_kind}")
     try:
         detail = await schedule_service.get_day_changes_detail(
             class_id=(

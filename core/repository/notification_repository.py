@@ -68,6 +68,7 @@ class NotificationRepository(BaseRepository):
             FROM schedule_cache
             WHERE date = ?
               AND is_cancelled = 0
+              AND is_methodological = 0
             ORDER BY start_time, lesson_num, id
             """,
             (date_iso,),
@@ -160,32 +161,23 @@ class NotificationRepository(BaseRepository):
         self,
         *,
         start_date_iso: str,
-        end_date_iso: Optional[str] = None,
-    ) -> List[Dict[str, Any]]:
-        """
-        Замены/отмены для рассылки изменений.
-
-        Задача 1.4 (RAM-бомба): жесткий фильтp по дате на уровне СУБД.
-        - start_date_iso: обычно today (изменения в прошлом не рассылаем);
-        - end_date_iso: верхняя граница окна</arg_key>лений
-          (today + max(changes_window_days) = today + 31).
-        """
-        if end_date_iso is None:
-            query = """
+        end_date_iso: str | None = None,
+    ) -> list[dict[str, Any]]:
+        query = """
             SELECT
                 id,
                 date,
+                period_id,
                 class_id,
                 group_id,
+                group_name,
                 teacher_id,
                 lesson_num,
-
                 subject_id,
                 subject_name,
                 room_id,
                 room_name,
                 teacher_name,
-
                 original_subject_id,
                 original_subject_name,
                 original_room_id,
@@ -196,59 +188,25 @@ class NotificationRepository(BaseRepository):
                 original_group_name,
                 original_class_id,
                 original_class_name,
-
                 is_exchange,
-                is_cancelled
+                is_cancelled,
+                is_methodological
             FROM schedule_cache
             WHERE (is_exchange = 1 OR is_cancelled = 1)
-              AND date >= ?
-            ORDER BY date, lesson_num, id
-            """
-            return await self._fetch_all(
-                query,
-                (start_date_iso,),
-            )
-
-        query = """
-        SELECT
-            id,
-            date,
-            class_id,
-            group_id,
-            teacher_id,
-            lesson_num,
-
-            subject_id,
-            subject_name,
-            room_id,
-            room_name,
-            teacher_name,
-
-            original_subject_id,
-            original_subject_name,
-            original_room_id,
-            original_room_name,
-            original_teacher_id,
-            original_teacher_name,
-            original_group_id,
-            original_group_name,
-            original_class_id,
-            original_class_name,
-
-            is_exchange,
-            is_cancelled
-        FROM schedule_cache
-        WHERE (is_exchange = 1 OR is_cancelled = 1)
-          AND date >= ?
-          AND date <= ?
-        ORDER BY date, lesson_num, id
+            AND date >= ?
         """
+
+        params: list[str] = [start_date_iso]
+
+        if end_date_iso is not None:
+            query += " AND date <= ?"
+            params.append(end_date_iso)
+
+        query += " ORDER BY date, lesson_num, id"
+
         return await self._fetch_all(
             query,
-            (
-                start_date_iso,
-                end_date_iso,
-            ),
+            tuple(params),
         )
 
     async def get_recipients_for_schedule_change(
@@ -359,7 +317,7 @@ class NotificationRepository(BaseRepository):
                 group_id,
             ),
         )
-
+        
     async def get_morning_summary_tasks(
         self,
         time_str: str,

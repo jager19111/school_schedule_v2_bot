@@ -686,3 +686,37 @@ class ScheduleService:
             str(class_id),
             "Класс",
         )
+    # Прокидываем display_num в DTO    
+    async def get_display_numbers_for_class_day(
+        self,
+        *,
+        class_id: str,
+        date_iso: str,
+    ) -> dict[int, str]:
+        lessons = await self.schedule_repo.get_lessons_for_class(
+            class_id=class_id,
+            date_iso=date_iso,
+        )
+
+        day_permutation = self._detect_day_permutation(lessons)
+
+        lesson_dtos = LessonMapper.to_dto_list(
+            lessons,
+            day_permutation=day_permutation,
+        )
+
+        metadata = await self.schedule_repo.get_metadata()
+
+        self._enrich_display_numbers_dtos(
+            lessons=lesson_dtos,
+            metadata=metadata,
+        )
+
+        return {
+            lesson.lesson_num: (
+                lesson.display_num
+                or str(lesson.lesson_num)
+            )
+            for lesson in lesson_dtos
+            if lesson.lesson_num is not None
+        }
