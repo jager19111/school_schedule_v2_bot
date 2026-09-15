@@ -13,18 +13,20 @@ from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 from bot import callbacks
 from bot.callbacks import (
     ScheduleDayCD,
     ScheduleFullWeekCD,
     ScheduleTargetCD,
-    ScheduleWatchCD,
+    ScheduleWatchCD, MorningStudentSummaryCD, MorningTeacherSummaryCD, ScheduleDayCD, TeacherScheduleDayCD,
     ScheduleWeekCD, DayChangesCD
 )
+
 from bot.keyboards.keyboard import Keyboards
 from bot.utils.ui_renderer import UIRenderer
-from core.models.dto import ScheduleViewTargetDTO, ScheduleTargetViewModel, SchoolDictionariesDTO
+from core.models.dto import ScheduleViewTargetDTO, ScheduleTargetViewModel, SchoolDictionariesDTO, MorningLessonDTO, MorningSummaryDTO
 from services.profiles_service import ProfileService
 from services.schedule_service import ScheduleService
 from services.watch_targets_service import WatchTargetsService
@@ -246,7 +248,7 @@ async def _render_day(
     if target.kind == "student" and target.telegram_user_id != actor_user_id:
         child_name = target.title
 
-    rendered = UIRenderer.render_child_day_schedule(
+    rendered = UIRenderer.render_day_schedule(
         day_dto,
         child_name,
     )
@@ -916,9 +918,7 @@ async def show_full_schedule_week(
         students_service=students_service,
         watch_targets_service=watch_targets_service,
     )
-    # TODO (Этап 4, хелпер длины): заменить ручную проверку на общий
-    # helper с авторазбиением длинных сообщений.
-    # Этап 4.6: авторазбиение вместо отказа
+    #  хелпер длины
     delivered = await send_or_edit_long(
         callback=callback,
         text=text,
@@ -939,17 +939,31 @@ async def show_full_schedule_week(
 # ==========================================================
 
 
+# Убедись, что в начале файла есть этот импорт (скорее всего уже есть):
+# from aiogram.fsm.context import FSMContext
+
 @router.callback_query(DayChangesCD.filter())
 async def show_day_changes(
     callback: CallbackQuery,
     callback_data: DayChangesCD,
     schedule_service: ScheduleService,
+    state: FSMContext,  # <--- ДОБАВЛЕНО
 ) -> None:
     """
     Показывает детали изменений «было → стало» на день.
     """
     print(f"DEBUG: target_kind = {callback_data.target_kind}")
     try:
+        # ЗАПОМИНАЕМ СОСТОЯНИЕ УТРЕННЕЙ СВОДКИ
+        if callback_data.return_to == "morning":
+            cache_key = f"morning_cache_{callback_data.target_id}"
+            await state.update_data({
+                cache_key: {
+                    "text": callback.message.html_text, 
+                    "button": callback_data.pack()      
+                }
+            })
+
         detail = await schedule_service.get_day_changes_detail(
             class_id=(
                 callback_data.class_id
@@ -978,3 +992,56 @@ async def show_day_changes(
         logger.exception("Error showing day changes: %s", e)
         # Если произошла ошибка, выводим всплывающее окно (alert), не ломая текущее расписание
         await callback.answer("❌ Не удалось загрузить изменения. Попробуйте позже.", show_alert=True)
+        
+# ==========================================================
+# ХЕНДЛЕРЫ: ВОЗВРАТ ИЗ ИЗМЕНЕНИЙ ОБРАТНО В УТРЕННЮЮ СВОДКУ
+# ==========================================================
+
+@router.callback_query(MorningStudentSummaryCD.filter())
+async def return_to_morning_student(
+    callback: CallbackQuery,
+    callback_data: MorningStudentSummaryCD,
+    state: FSMContext,
+) -> None:
+    """Мгновенно восстанавливает утреннюю сводку (Ученик/Родитель) из FSM"""
+    data = await state.get_data()
+    cache = data.get(f"morning_cache_{callback_data.student_id}")
+
+    if cache:
+        # Восстанавливаем 1-в-1 как было!
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔄 Изменения", callback_data=cache["button"])]
+        ])
+        await callback.message.edit_text(cache["text"], reply_markup=kb, parse_mode="HTML")
+        await callback.answer()
+    else:
+        # Фолбэк: если бот перезагружался и память стерлась
+        await callback.answer(
+            "⏳ Сводка устарела.\nОткройте актуальное расписание через меню.", 
+            show_alert=True
+        )
+        await callback.message.delete()
+
+
+@router.callback_query(MorningTeacherSummaryCD.filter())
+async def return_to_morning_teacher(
+    callback: CallbackQuery,
+    callback_data: MorningTeacherSummaryCD,
+    state: FSMContext,
+) -> None:
+    """Мгновенно восстанавливает утреннюю сводку (Учитель) из FSM"""
+    data = await state.get_data()
+    cache = data.get(f"morning_cache_{callback_data.teacher_id}")
+
+    if cache:
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔄 Изменения", callback_data=cache["button"])]
+        ])
+        await callback.message.edit_text(cache["text"], reply_markup=kb, parse_mode="HTML")
+        await callback.answer()
+    else:
+        await callback.answer(
+            "⏳ Сводка устарела.\nОткройте актуальное расписание через меню.", 
+            show_alert=True
+        )
+        await callback.message.delete()

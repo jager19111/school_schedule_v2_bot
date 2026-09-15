@@ -28,9 +28,7 @@
 #
 # 5. render_week_summary() и render_full_week_schedule():
 #    обновлены под DayScheduleDTO с has_permutation.
-#
-# ПРОЧИЕ МЕТОДЫ (extra classes, settings, family и т.д.) —
-# БЕЗ ИЗМЕНЕНИЙ, скопированы из исходника.
+
 
 from html import escape
 from collections import defaultdict
@@ -45,7 +43,7 @@ from core.models.dto import (ClassListDTO, AdminStatsDTO, DayScheduleDTO, ExtraC
                             ScheduleWatchTargetDTO, StudentProfileDTO, ParentStudentNotificationSettingsDTO,
                             AdultStudentExtraClassesPermissionDTO, StudentTelegramSettingsDTO, NikaSourceHealthDTO,  
                             StudentProfileViewModel, WatchTargetViewModel, ExtraClassViewModel, FamilyMemberViewModel, StudentTelegramSettingsViewModel,
-                            ParentStudentNotificationSettingsViewModel, DayChangesDetailDTO, LessonDTO
+                            ParentStudentNotificationSettingsViewModel, DayChangesDetailDTO, LessonDTO, MorningLessonDTO
 )
 
 # Этап 6: форматтер дат. Устанавливается один раз в main.py:
@@ -115,6 +113,19 @@ class UIRenderer:
         if not value_str:
             return fallback
         return escape(value_str)
+
+    @staticmethod
+    def _format_short_date(
+        date_iso: str,
+    ) -> str:
+        try:
+            date_obj = datetime.fromisoformat(
+                date_iso,
+            )
+        except ValueError:
+            return date_iso
+
+        return date_obj.strftime("%d.%m")
 
 #-------РЕНДЕРЫ РЕГИСТРАЦИИ-------------
     @staticmethod
@@ -1467,7 +1478,7 @@ class UIRenderer:
     # ==========================================================
     
     @staticmethod
-    def render_child_day_schedule(
+    def render_day_schedule(
         dto: DayScheduleDTO,
         name: str | None = None,
     ) -> Tuple[str, None]:
@@ -1843,206 +1854,413 @@ class UIRenderer:
     # ==========================================================
     # Уведомления (MorningLessonDTO)
     # ==========================================================
-# ==========================================================
-    # Уведомления (MorningLessonDTO)
-    # ==========================================================
+    @staticmethod
+    def render_morning_summary(        dto: MorningSummaryDTO,    ) -> str:
+        """
+        Основной метод утренней сводки
+        """
+        header = UIRenderer._render_morning_header(dto)
+        lessons = UIRenderer._render_morning_lessons(dto)
+        footer = UIRenderer._render_morning_footer(dto)
 
-# ==========================================================
-    # Уведомления (MorningLessonDTO)
-    # ==========================================================
+        return "\n\n".join(
+            part
+            for part in (
+                header,
+                lessons,
+                footer,
+            )
+            if part
+        )
 
     @staticmethod
-    def render_morning_summary(dto: MorningSummaryDTO) -> str:
-        from datetime import datetime
-        date_obj = datetime.fromisoformat(dto.date_iso)
-        
-        # 1. ЗАГОЛОВОК (В одну строку с предварительным эскейпингом)
-        header = f"🌅 <b>Расписание на {date_obj.strftime('%d.%m')}</b>\n"
-        
+    def _render_morning_header(        dto: MorningSummaryDTO,    ) -> str:
+        """
+        Рендер заголовка утренней сводки
+        """
+        date_text = UIRenderer._format_short_date(            dto.date_iso,        )
+
+        if dto.origin == "teacher":
+            teacher_name = UIRenderer.escape_html(
+                dto.teacher_name,
+                "Учитель",
+            )
+
+            return (
+                f"👨‍🏫 <b>Расписание учителя на {date_text}</b>\n"
+                f"👤 <b>{teacher_name}</b>\n"
+            )
+
+        title = f"🌅 <b>Расписание на {date_text}</b>"
+
         if dto.child_name:
-            safe_child = UIRenderer.escape_html(dto.child_name)
-            safe_class = UIRenderer.escape_html(dto.class_id) if dto.class_id else ""
-            class_str = f", {safe_class}" if safe_class else ""
-            header += f"👤 {safe_child}{class_str}\n"
-        elif dto.class_id and dto.origin != 'teacher':
-            safe_class = UIRenderer.escape_html(dto.class_id)
-            header += f"🎓 Класс: {safe_class}\n"
+            target_line = (
+                f"👤 {UIRenderer.escape_html(dto.child_name)}" 
+                #f"{UIRenderer.escape_html(dto.lessons.group_name)}" вывести группу одной строкой с классом
+            )
+        elif dto.class_name:
+            target_line = (
+                f"🎓 {UIRenderer.escape_html(dto.class_name)} "
+                #f"{UIRenderer.escape_html(dto.lessons.group_name)}" вывести группу одной строкой с классом
+            )
+        else:
+            target_line = ""
+
+        return "\n".join(
+            part
+            for part in (
+                title,
+                target_line,
+            )
+            if part
+        )
+        
+    @staticmethod
+    def _render_morning_status(        dto: MorningSummaryDTO,    ) -> str:
+        """
+        Рендер сообщения о перестановках утренней сводки
+        """
+        if dto.origin != "student":
+            return ""
+
+        if not dto.has_permutation:
+            return ""
+
+        return "🔀 <i>Есть перестановки в расписании</i>"
+        
+        
+    @staticmethod
+    def _render_morning_lessons(        dto: MorningSummaryDTO,    ) -> str:
+        """
+        Рендер списка уроков утренней сводки
+        """
+        is_teacher = dto.origin == "teacher"
+
+        return "\n\n".join(
+            UIRenderer._render_morning_lesson(
+                lesson,
+                is_teacher=is_teacher,
+            )
+            for lesson in dto.lessons
+        )
+        
+    @staticmethod
+    def _render_morning_lesson(        lesson: MorningLessonDTO,        *,        is_teacher: bool,    ) -> str:
+        """
+        Рендер одного урока утренней сводки
+        """
+        display_num = (
+            lesson.display_num
+            or (
+                str(lesson.lesson_num)
+                if lesson.lesson_num is not None
+                else "•"
+            )
+        )
+
+        if lesson.is_extra:
+            icon = "🎨"
+        elif is_teacher and lesson.is_methodological:
+            icon = "🧑‍🏫"
+        elif lesson.is_cancelled:
+            icon = "❌"
+        elif lesson.is_exchange:
+            icon = "🔄"
+        else:
+            icon = "📚"
+
+        if (
+            is_teacher
+            and lesson.is_methodological
+        ):
+            subject = "Методический час"
+        else:
+            subject = lesson.subject_name or "—"
+
+        safe_subject = UIRenderer.escape_html(subject)
+        time_text = (
+            f"{lesson.start_time}–{lesson.end_time}"
+        )
+
+        first_line = (
+            f"{icon} <b>{display_num}.</b> "
+            f"{time_text} · <b>{safe_subject}</b>"
+        )
+
+        if is_teacher:
+            details = UIRenderer._render_teacher_lesson_details(
+                lesson,
+            )
+        else:
+            details = UIRenderer._render_student_lesson_details(
+                lesson,
+            )
+
+        if not details:
+            return first_line
+
+        return f"{first_line}\n   ↳ {details}"
+
+    @staticmethod
+    def _render_student_lesson_details(        lesson: MorningLessonDTO,    ) -> str:
+        """
+        Детали урока для ученика утренней сводки
+        """
+        parts = []
+
+        if lesson.teacher_name:
+            parts.append(lesson.teacher_name)
+
+        if lesson.room_name:
+            parts.append(lesson.room_name)
+
+        if lesson.group_name:
+            parts.append(lesson.group_name)
+
+        safe_parts = [
+            UIRenderer.escape_html(part)
+            for part in parts
+        ]
+
+        return " · ".join(safe_parts)
+
+    @staticmethod
+    def _render_teacher_lesson_details(        lesson: MorningLessonDTO,    ) -> str:
+        """
+        Детали урока для учителя утренней сводки
+        """
+        parts = []
+
+        if lesson.class_name:
+            parts.append(lesson.class_name)
+
+        if lesson.room_name:
+            parts.append(lesson.room_name)
+
+        if lesson.group_name:
+            parts.append(lesson.group_name)
+
+        safe_parts = [
+            UIRenderer.escape_html(part)
+            for part in parts
+        ]
+
+        return " · ".join(safe_parts)
+
+    @staticmethod
+    def _render_morning_footer(        dto: MorningSummaryDTO,    ) -> str:
+        """
+        Кнопка деталей утренней сводки
+        """
+        changes_count = sum(
+            lesson.is_exchange or lesson.is_cancelled
+            for lesson in dto.lessons
+            if not lesson.is_extra
+        )
+
+        if not changes_count:
+            return ""
+
+        return (
+            f"⚠️ Изменений: {changes_count}\n"
+            "Нажмите кнопку ниже для подробностей."
+        )
+# ==========================================================
+    # Уведомления (MorningLessonDTO)
+    # ==========================================================
+
+        @staticmethod
+        def render_morning_summary(dto: MorningSummaryDTO) -> str:
+            from datetime import datetime
+            date_obj = datetime.fromisoformat(dto.date_iso)
             
-        if dto.has_permutation:
-            header += "🔁 <i>Уроки поменялись местами</i>\n"
-
-        if not dto.lessons:
-            return f"{header}\n🏖 На сегодня занятий нет."
-
-        lines = [header, ""]
-
-        # Прямое обращение к атрибутам DTO (никаких getattr)
-        main_lessons = [l for l in dto.lessons if not l.is_extra]
-        extra_lessons = [l for l in dto.lessons if l.is_extra]
-
-        # --- ОСНОВНЫЕ УРОКИ ---
-        if main_lessons:
-            # Железобетонная сортировка
-            main_lessons.sort(key=lambda l: (
-                l.start_time.zfill(5) if l.start_time and l.start_time != "—" else "99:99",
-                l.lesson_num if l.lesson_num is not None else 99
-            ))
+            # 1. ЗАГОЛОВОК (В одну строку с предварительным эскейпингом)
+            header = f"🌅 <b>Расписание на {date_obj.strftime('%d.%m')}</b>\n"
             
-            # Группировка для выявления подгрупп/параллелей
-            grouped = {}
-            for l in main_lessons:
-                k = (l.lesson_num, l.start_time)
-                if k not in grouped:
-                    grouped[k] = []
-                grouped[k].append(l)
-
-            for (num, st), parallel in grouped.items():
-                first = parallel[0]
+            if dto.child_name:
+                safe_child = UIRenderer.escape_html(dto.child_name)
+                safe_class = UIRenderer.escape_html(dto.class_id) if dto.class_id else ""
+                class_str = f", {safe_class}" if safe_class else ""
+                header += f"👤 {safe_child}{class_str}\n"
+            elif dto.class_id and dto.origin != 'teacher':
+                safe_class = UIRenderer.escape_html(dto.class_id)
+                header += f"🎓 Класс: {safe_class}\n"
                 
-                # Номер урока (с поддержкой 2 смены для детей, без getattr)
-                num_val = first.display_num if first.display_num else first.lesson_num
-                num_str = f"{num_val}." if num_val is not None else "•."
-                time_str = f"{first.start_time}–{first.end_time}"
+            if dto.has_permutation:
+                header += "🔁 <i>Уроки поменялись местами</i>\n"
+
+            if not dto.lessons:
+                return f"{header}\n🏖 На сегодня занятий нет."
+
+            lines = [header, ""]
+
+            # Прямое обращение к атрибутам DTO (никаких getattr)
+            main_lessons = [l for l in dto.lessons if not l.is_extra]
+            extra_lessons = [l for l in dto.lessons if l.is_extra]
+
+            # --- ОСНОВНЫЕ УРОКИ ---
+            if main_lessons:
+                # Железобетонная сортировка
+                main_lessons.sort(key=lambda l: (
+                    l.start_time.zfill(5) if l.start_time and l.start_time != "—" else "99:99",
+                    l.lesson_num if l.lesson_num is not None else 99
+                ))
                 
-                # --- МЕТОДИЧЕСКИЙ ЧАС ---
-                if first.is_methodological:
-                    safe_subj_name = UIRenderer.escape_html(first.subject_name, "Методический час/день")
+                # Группировка для выявления подгрупп/параллелей
+                grouped = {}
+                for l in main_lessons:
+                    k = (l.lesson_num, l.start_time)
+                    if k not in grouped:
+                        grouped[k] = []
+                    grouped[k].append(l)
+
+                for (num, st), parallel in grouped.items():
+                    first = parallel[0]
                     
-                    if first.is_exchange and first.original_subject_name:
-                        safe_orig = UIRenderer.escape_html(first.original_subject_name)
-                        safe_subj = f"<s>{safe_orig}</s> ➔ <b>{safe_subj_name}</b>"
-                        icon = "🔄"
-                    else:
-                        safe_subj = f"<b>{safe_subj_name}</b>"
-                        icon = "🧑‍🏫"
-                    lines.append(f"{icon} {num_str} {time_str} | {safe_subj}")
-                    continue
-
-                subj_names = set()
-                for l in parallel:
-                    name = l.original_subject_name if l.is_cancelled else l.subject_name
-                    if name:
-                        subj_names.add(name.lower())
-
-                is_trud = any("труд" in s or "технология" in s for s in subj_names)
-
-                # --- ОДИН УРОК (Конкретная группа) ИЛИ СЛИЯНИЕ ТРУДА ---
-                if len(parallel) == 1 or len(subj_names) <= 1 or is_trud:
-                    l = first
-                    is_any_cancelled = any(x.is_cancelled for x in parallel)
-                    is_any_exchange = any(x.is_exchange for x in parallel)
+                    # Номер урока (с поддержкой 2 смены для детей, без getattr)
+                    num_val = first.display_num if first.display_num else first.lesson_num
+                    num_str = f"{num_val}." if num_val is not None else "•."
+                    time_str = f"{first.start_time}–{first.end_time}"
                     
-                    if is_any_cancelled:
-                        icon = "❌"
-                    elif is_any_exchange:
-                        icon = "🔁" if l.day_permutation else "🔄"
-                    else:
-                        icon = "📚"
-
-                    base_subj = "Труд(технология)" if is_trud else (list(subj_names)[0].capitalize() if subj_names else "Отмена")
-                    safe_base_subj = UIRenderer.escape_html(base_subj)
-                    
-                    if is_any_cancelled:
-                        subj_str = f"<s>{safe_base_subj}</s>"
-                    elif is_any_exchange and l.original_subject_name and l.original_subject_name != l.subject_name:
-                        safe_orig = UIRenderer.escape_html(l.original_subject_name)
-                        subj_str = f"<s>{safe_orig}</s> ➔ <b>{safe_base_subj}</b>"
-                    else:
-                        subj_str = f"<b>{safe_base_subj}</b>"
-
-                    # Сборка кабинетов с эскейпингом
-                    rooms = []
-                    for x in parallel:
-                        r = UIRenderer.escape_html(x.room_name)
-                        if r and r != "—" and r not in rooms:
-                            rooms.append(r)
-                    room_str = ", ".join(rooms) if rooms else ""
-
-                    details = []
-                    if dto.origin == 'teacher':
-                        if l.class_name:
-                            safe_class_name = UIRenderer.escape_html(l.class_name)
-                            details.append(f"🎓 {safe_class_name}")
-                    else:
-                        if l.teacher_name:
-                            safe_teacher = UIRenderer.escape_html(l.teacher_name)
-                            details.append(f"<i>{safe_teacher}</i>")
-                            
-                    if room_str and not is_any_cancelled:
-                        details.append(room_str)
+                    # --- МЕТОДИЧЕСКИЙ ЧАС ---
+                    if first.is_methodological:
+                        safe_subj_name = UIRenderer.escape_html(first.subject_name, "Методический час")
                         
-                    details_str = " · ".join(details)
-                    details_line = f"\n  ↳ {details_str}" if details_str else ""
-                    
-                    lines.append(f"{icon} {num_str} {time_str} | {subj_str}{details_line}")
-
-                # --- ДЕРЕВО ПОДГРУПП (Весь класс - разные предметы в одно время) ---
-                else:
-                    lines.append(f"📚 {num_str} {time_str}")
-                    for i, l in enumerate(parallel):
-                        prefix = "  └ " if i == len(parallel) - 1 else "  ├ "
-                        
-                        if l.is_cancelled:
-                            icon = "❌ "
-                        elif l.is_exchange:
-                            icon = "🔁 " if l.day_permutation else "🔄 "
+                        if first.is_exchange and first.original_subject_name:
+                            safe_orig = UIRenderer.escape_html(first.original_subject_name)
+                            safe_subj = f"<s>{safe_orig}</s> ➔ <b>{safe_subj_name}</b>"
+                            icon = "🔄"
                         else:
-                            icon = "🔄 " if l.is_exchange else "📚 "
-                            
-                        if l.is_cancelled:
-                            orig_subj = l.original_subject_name or l.subject_name or "Урок"
-                            safe_orig = UIRenderer.escape_html(orig_subj)
-                            subj_str = f"<s>{safe_orig}</s>"
-                        elif l.is_exchange and l.original_subject_name and l.original_subject_name != l.subject_name:
+                            safe_subj = f"<b>{safe_subj_name}</b>"
+                            icon = "🧑‍🏫"
+                        lines.append(f"{icon} {num_str} {time_str} | {safe_subj}")
+                        continue
+
+                    subj_names = set()
+                    for l in parallel:
+                        name = l.original_subject_name if l.is_cancelled else l.subject_name
+                        if name:
+                            subj_names.add(name.lower())
+
+                    is_trud = any("труд" in s or "технология" in s for s in subj_names)
+
+                    # --- ОДИН УРОК (Конкретная группа) ИЛИ СЛИЯНИЕ ТРУДА ---
+                    if len(parallel) == 1 or len(subj_names) <= 1 or is_trud:
+                        l = first
+                        is_any_cancelled = any(x.is_cancelled for x in parallel)
+                        is_any_exchange = any(x.is_exchange for x in parallel)
+                        
+                        if is_any_cancelled:
+                            icon = "❌"
+                        elif is_any_exchange:
+                            icon = "🔁" if l.day_permutation else "🔄"
+                        else:
+                            icon = "📚"
+
+                        base_subj = "Труд(технология)" if is_trud else (list(subj_names)[0].capitalize() if subj_names else "Отмена")
+                        safe_base_subj = UIRenderer.escape_html(base_subj)
+                        
+                        if is_any_cancelled:
+                            subj_str = f"<s>{safe_base_subj}</s>"
+                        elif is_any_exchange and l.original_subject_name and l.original_subject_name != l.subject_name:
                             safe_orig = UIRenderer.escape_html(l.original_subject_name)
-                            safe_subj = UIRenderer.escape_html(l.subject_name)
-                            subj_str = f"<s>{safe_orig}</s> ➔ <b>{safe_subj}</b>"
+                            subj_str = f"<s>{safe_orig}</s> ➔ <b>{safe_base_subj}</b>"
                         else:
-                            safe_subj = UIRenderer.escape_html(l.subject_name, 'Без предмета')
-                            subj_str = f"<b>{safe_subj}</b>"
+                            subj_str = f"<b>{safe_base_subj}</b>"
+
+                        # Сборка кабинетов с эскейпингом
+                        rooms = []
+                        for x in parallel:
+                            r = UIRenderer.escape_html(x.room_name)
+                            if r and r != "—" and r not in rooms:
+                                rooms.append(r)
+                        room_str = ", ".join(rooms) if rooms else ""
 
                         details = []
-                        if l.group_name and l.group_name != "Весь класс":
-                            safe_grp = UIRenderer.escape_html(l.group_name)
-                            details.append(safe_grp)
-                        elif l.group_id and l.group_id != "ALL":
-                            safe_grp_id = UIRenderer.escape_html(l.group_id)
-                            details.append(f"Гр. {safe_grp_id}")
-                            
                         if dto.origin == 'teacher':
                             if l.class_name:
                                 safe_class_name = UIRenderer.escape_html(l.class_name)
-                                details.append(safe_class_name)
+                                details.append(f"🎓 {safe_class_name}")
                         else:
                             if l.teacher_name:
                                 safe_teacher = UIRenderer.escape_html(l.teacher_name)
                                 details.append(f"<i>{safe_teacher}</i>")
+                                
+                        if room_str and not is_any_cancelled:
+                            details.append(room_str)
                             
-                        safe_room = UIRenderer.escape_html(l.room_name)
-                        if safe_room and safe_room != "—" and not l.is_cancelled:
-                            details.append(safe_room)
-
                         details_str = " · ".join(details)
-                        details_line = f"\n      ↳ {details_str}" if details_str else ""
+                        details_line = f"\n  ↳ {details_str}" if details_str else ""
                         
-                        lines.append(f"{prefix}{icon}{subj_str}{details_line}")
+                        lines.append(f"{icon} {num_str} {time_str} | {subj_str}{details_line}")
 
-        # --- ДОП. ЗАНЯТИЯ ---
-        if extra_lessons:
-            for l in extra_lessons:
-                safe_subj = UIRenderer.escape_html(l.subject_name, "Занятие")
-                safe_room = UIRenderer.escape_html(l.room_name)
-                
-                details = []
-                if safe_room and safe_room != "—":
-                    details.append(safe_room)
-                details_str = " · ".join(details)
-                details_line = f"\n  ↳ {details_str}" if details_str else ""
-                
-                lines.append(f"🎨 {l.start_time}–{l.end_time} | <b>{safe_subj}</b>{details_line}")
+                    # --- ДЕРЕВО ПОДГРУПП (Весь класс - разные предметы в одно время) ---
+                    else:
+                        lines.append(f"📚 {num_str} {time_str}")
+                        for i, l in enumerate(parallel):
+                            prefix = "  └ " if i == len(parallel) - 1 else "  ├ "
+                            
+                            if l.is_cancelled:
+                                icon = "❌ "
+                            elif l.is_exchange:
+                                icon = "🔁 " if l.day_permutation else "🔄 "
+                            else:
+                                icon = "🔄 " if l.is_exchange else "📚 "
+                                
+                            if l.is_cancelled:
+                                orig_subj = l.original_subject_name or l.subject_name or "Урок"
+                                safe_orig = UIRenderer.escape_html(orig_subj)
+                                subj_str = f"<s>{safe_orig}</s>"
+                            elif l.is_exchange and l.original_subject_name and l.original_subject_name != l.subject_name:
+                                safe_orig = UIRenderer.escape_html(l.original_subject_name)
+                                safe_subj = UIRenderer.escape_html(l.subject_name)
+                                subj_str = f"<s>{safe_orig}</s> ➔ <b>{safe_subj}</b>"
+                            else:
+                                safe_subj = UIRenderer.escape_html(l.subject_name, 'Без предмета')
+                                subj_str = f"<b>{safe_subj}</b>"
 
-        return "\n".join(lines)
-    
+                            details = []
+                            if l.group_name and l.group_name != "Весь класс":
+                                safe_grp = UIRenderer.escape_html(l.group_name)
+                                details.append(safe_grp)
+                            elif l.group_id and l.group_id != "ALL":
+                                safe_grp_id = UIRenderer.escape_html(l.group_id)
+                                details.append(f"Гр. {safe_grp_id}")
+                                
+                            if dto.origin == 'teacher':
+                                if l.class_name:
+                                    safe_class_name = UIRenderer.escape_html(l.class_name)
+                                    details.append(safe_class_name)
+                            else:
+                                if l.teacher_name:
+                                    safe_teacher = UIRenderer.escape_html(l.teacher_name)
+                                    details.append(f"<i>{safe_teacher}</i>")
+                                
+                            safe_room = UIRenderer.escape_html(l.room_name)
+                            if safe_room and safe_room != "—" and not l.is_cancelled:
+                                details.append(safe_room)
+
+                            details_str = " · ".join(details)
+                            details_line = f"\n      ↳ {details_str}" if details_str else ""
+                            
+                            lines.append(f"{prefix}{icon}{subj_str}{details_line}")
+
+            # --- ДОП. ЗАНЯТИЯ ---
+            if extra_lessons:
+                for l in extra_lessons:
+                    safe_subj = UIRenderer.escape_html(l.subject_name, "Занятие")
+                    safe_room = UIRenderer.escape_html(l.room_name)
+                    
+                    details = []
+                    if safe_room and safe_room != "—":
+                        details.append(safe_room)
+                    details_str = " · ".join(details)
+                    details_line = f"\n  ↳ {details_str}" if details_str else ""
+                    
+                    lines.append(f"🎨 {l.start_time}–{l.end_time} | <b>{safe_subj}</b>{details_line}")
+
+            return "\n".join(lines)
+        
 
         @staticmethod
         def render_morning_summary(dto: 'MorningSummaryDTO') -> str:

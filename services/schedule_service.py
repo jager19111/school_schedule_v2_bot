@@ -125,6 +125,16 @@ class ScheduleService:
 
         return orig_counter == curr_counter
     
+    def detect_day_permutation(
+        self,
+        lessons: list[LessonInstance],
+    ) -> bool:
+        """
+        Определяет, являются ли изменения в расписании простой перестановкой
+        Публичный метод для notification
+        """
+        return self._detect_day_permutation(lessons)
+
     # ==========================================================
     # Детализация изменений
     # ==========================================================

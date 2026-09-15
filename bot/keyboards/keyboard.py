@@ -948,9 +948,39 @@ class Keyboards:
     @staticmethod
     def get_day_changes_back_kb(changes_data: 'callbacks.DayChangesCD') -> InlineKeyboardMarkup:
         """
-        Формирует кнопку возврата из просмотра изменений обратно в расписание.
-        Умно маршрутизирует возврат в зависимости от источника запроса.
+        Формирует кнопку возврата из просмотра изменений.
+
+        Для обычного расписания возвращает старый callback.
+        Для утренней teacher summary возвращает в сводку учителя.
         """
+        if changes_data.return_to == "morning":
+            if changes_data.origin == "teacher":
+                back_cb = callbacks.MorningTeacherSummaryCD(
+                    teacher_id=str(changes_data.target_id),
+                    date_iso=changes_data.date_iso,
+                ).pack()
+
+                back_text = "◀️ К дневной сводке"
+
+            else:
+                back_cb = callbacks.MorningStudentSummaryCD(
+                    student_id=int(changes_data.target_id),
+                    date_iso=changes_data.date_iso,
+                ).pack()
+
+                back_text = "◀️ К дневной сводке"
+
+            return InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [
+                        InlineKeyboardButton(
+                            text=back_text,
+                            callback_data=back_cb,
+                        )
+                    ]
+                ]
+            )
+
         target_kind = changes_data.target_kind
         
         if target_kind == "teacher":
@@ -983,3 +1013,21 @@ class Keyboards:
         return InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="◀️ Назад к расписанию", callback_data=back_cb)]
         ])
+        
+    @staticmethod
+    def get_day_changes_kb(
+        changes_data: callbacks.DayChangesCD,
+    ) -> InlineKeyboardMarkup:
+        """
+        Формирует кнопку просмотра изменений в утренней сводке
+        """
+        return InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="🔄 Изменения",
+                        callback_data=changes_data.pack(),
+                    )
+                ]
+            ]
+        )

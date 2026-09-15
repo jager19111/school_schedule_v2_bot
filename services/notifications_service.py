@@ -55,6 +55,11 @@ from aiogram.exceptions import (
     TelegramRetryAfter,
 )
 
+from aiogram.types import InlineKeyboardMarkup
+from bot import callbacks
+from bot.keyboards.keyboard import Keyboards
+
+
 from core.repository.notification_repository import NotificationRepository
 from services.extra_classes_service import ExtraClassesService
 from core.repository.schedule_repository import ScheduleRepository
@@ -148,7 +153,7 @@ class NotificationService:
     # Smart Throttling
     # ==============================================================
 
-    async def _paced_send(self, *, chat_id: int, text: str) -> bool:
+    async def _paced_send(self, *, chat_id: int, text: str, reply_markup: InlineKeyboardMarkup | None = None,) -> bool:
         """
         Отправка сообщения с соблюдением лимитов Telegram.
 
@@ -188,6 +193,7 @@ class NotificationService:
                     await self.bot.send_message(
                         chat_id=chat_id,
                         text=text,
+                        reply_markup=reply_markup,
                         parse_mode="HTML",
                     )
                     finished_at = time.monotonic()
@@ -512,7 +518,8 @@ class NotificationService:
         *,
         display_num: str | None = None,
         group_name: str | None = None,
-        room_suffix: str | None = None,
+        class_name: str | None = None,
+        day_permutation: bool = False,
     ) -> MorningLessonDTO:
         
         return MorningLessonDTO(
@@ -535,11 +542,11 @@ class NotificationService:
                 and lesson.original_group_id is not None
                 and lesson.original_group_id != lesson.group_id
             ),
-            day_permutation=False,
+            day_permutation=day_permutation,
 
             # Чистые поля для UI
             group_name=group_name,
-            class_name=room_suffix,
+            class_name=class_name,
             teacher_name=lesson.teacher_name,
             display_num=(
                 display_num
@@ -676,7 +683,9 @@ class NotificationService:
                             date_iso=today_iso,
                         )
                     )
-
+                    day_permutation = self.schedule_service.detect_day_permutation(
+                        lessons
+                    )
                     display_key = (
                         child_class_id,
                         today_iso,
@@ -733,6 +742,8 @@ class NotificationService:
                                 lesson,
                                 display_num=lesson_display_num,
                                 group_name=group_name,
+                                day_permutation=day_permutation,
+                                
                             )
                         )
 
@@ -783,14 +794,11 @@ class NotificationService:
                         if task.get("recipient_kind") == "adult"
                         else None
                     ),
-                    class_id=class_name,
+                    class_id=child_class_id,
                     class_name=class_name,
-                    has_permutation=any(
-                        lesson.day_permutation
-                        for lesson in lessons_dtos
-                    ),
+                    has_permutation=day_permutation,
+                    origin="student",
                 )
-
                 summaries_by_recipient.setdefault(
                     recipient_id,
                     [],
@@ -812,54 +820,85 @@ class NotificationService:
         failed_count = 0
 
         for recipient_id, entries in summaries_by_recipient.items():
-            try:
-                rendered_parts = [
-                    UIRenderer.render_morning_summary(summary_dto)
-                    for _, summary_dto in entries
-                ]
-                final_text = "\n\n───────────────\n\n".join(rendered_parts)
-
-                sent = await self._paced_send(
-                    chat_id=recipient_id,
-                    text=final_text,
-                )
-                if not sent:
-                    failed_count += 1
-                    logger.warning(
-                        "Morning summary send failed: recipient_id=%s, "
-                        "children=%s",
-                        recipient_id,
-                        [
-                            task["target_student_id"]
-                            for task, _ in entries
-                        ],
+            for task, summary_dto in entries:
+                try:
+                    text = UIRenderer.render_morning_summary(
+                        summary_dto,
                     )
-                    continue
 
-                sent_count += 1
-                for task, _ in entries:
-                    target_student_id = int(task["target_student_id"])
+                    has_changes = any(
+                        lesson.is_exchange or lesson.is_cancelled
+                        for lesson in summary_dto.lessons
+                        if not lesson.is_extra
+                    )
+
+                    keyboard = None
+
+                    if has_changes:
+                        changes_data = callbacks.DayChangesCD(
+                            target_kind="student",
+                            target_id=int(task["target_student_id"]),
+                            class_id=str(task["class_id"]),
+                            group_id=str(
+                                task.get("group_id") or "ALL"
+                            ),
+                            date_iso=today_iso,
+                            origin="class",
+                            return_to="morning",
+                        )
+
+                        keyboard = (
+                            Keyboards.get_day_changes_kb(
+                                changes_data,
+                            )
+                        )
+
+                    sent = await self._paced_send(
+                        chat_id=recipient_id,
+                        text=text,
+                        reply_markup=keyboard,
+                    )
+
+                    if not sent:
+                        failed_count += 1
+                        logger.warning(
+                            "Morning summary send failed: "
+                            "recipient_id=%s student_id=%s",
+                            recipient_id,
+                            task["target_student_id"],
+                        )
+                        continue
+
+                    sent_count += 1
+
+                    target_student_id = int(
+                        task["target_student_id"]
+                    )
+
                     await self.repo.record_notification_delivery(
                         notification_type="morning_summary",
                         notification_date=today_iso,
-                        source_id=f"morning_summary:{target_student_id}",
+                        source_id=(
+                            f"morning_summary:{target_student_id}"
+                        ),
                         recipient_id=recipient_id,
                     )
 
-                logger.info(
-                    "Morning summary delivered: recipient_id=%s, "
-                    "children=%s",
-                    recipient_id,
-                    [
-                        task["target_student_id"]
-                        for task, _ in entries
-                    ],
-                )
-            except Exception:
-                logger.exception(
-                    "Morning summary sending error: recipient_id=%s",
-                    recipient_id,
-                )
+                    logger.info(
+                        "Morning summary delivered: "
+                        "recipient_id=%s student_id=%s",
+                        recipient_id,
+                        target_student_id,
+                    )
+
+                except Exception:
+                    failed_count += 1
+                    logger.exception(
+                        "Morning summary sending error: "
+                        "recipient_id=%s task=%r",
+                        recipient_id,
+                        task,
+                    )
 
         logger.info(
             "Morning summary tick done: tasks=%d, pending_recipients=%d, "
@@ -962,7 +1001,13 @@ class NotificationService:
                     lessons_dtos.append(
                         self._map_school_lesson_to_morning_dto(
                             lesson,
-                            room_suffix=class_name,
+                            display_num=(
+                                str(lesson.lesson_num)
+                                if lesson.lesson_num is not None
+                                else "•"
+                            ),
+                            class_name=class_name,
+                            day_permutation=False,
                         )
                     )
 
@@ -980,23 +1025,44 @@ class NotificationService:
                     )
                 )
 
-                summary_dto = MorningSummaryDTO(
+                summary_dto = MorningSummaryDTO(                    
                     date_iso=today_iso,
                     lessons=lessons_dtos,
                     child_name=None,
                     class_id=None,
                     class_name=None,
+                    teacher_name=teacher_name,
+                    has_permutation=False,
+                    origin="teacher",
                 )
 
-                text = (
-                    "👨‍🏫 <b>Расписание учителя</b>\n"
-                    f"👤 <b>{UIRenderer.escape_html(teacher_name)}</b>\n\n"
-                    f"{UIRenderer.render_morning_summary(summary_dto)}"
-                )
+                text = UIRenderer.render_morning_summary(summary_dto)
 
+                has_changes = any(
+                    lesson.is_exchange or lesson.is_cancelled
+                    for lesson in summary_dto.lessons
+                    if not lesson.is_extra
+                )
+                keyboard = None
+
+                if has_changes:
+                    changes_data = callbacks.DayChangesCD(
+                        target_kind="teacher",
+                        target_id=teacher_id,
+                        class_id="ALL",
+                        group_id="ALL",
+                        date_iso=today_iso,
+                        origin="teacher",
+                        return_to="morning",
+                    )
+
+                    keyboard = Keyboards.get_day_changes_kb(
+                        changes_data,
+                    )
                 sent = await self._paced_send(
                     chat_id=recipient_id,
                     text=text,
+                    reply_markup=keyboard,
                 )
                 if not sent:
                     failed_count += 1

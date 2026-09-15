@@ -106,7 +106,7 @@ async def select_class_day(
         date_iso,
     )
 
-    text, _ = UIRenderer.render_child_day_schedule(day_dto)
+    text, _ = UIRenderer.render_day_schedule(day_dto)
     text = f"🎓 <b>Расписание: {class_name}</b>\n" + text
 
     monday = target_date - timedelta(
@@ -149,7 +149,7 @@ async def select_teacher_day(
         )
     )
 
-    text, _ = UIRenderer.render_child_day_schedule(day_dto)
+    text, _ = UIRenderer.render_day_schedule(day_dto)
     text = f"👨‍🏫 <b>Расписание: {teacher_name}</b>\n{text}"
 
     monday = target_date - timedelta(
@@ -244,7 +244,7 @@ async def show_class_schedule(
 
     class_name = await schedule_service.get_class_name(class_id)
 
-    text, _ = UIRenderer.render_child_day_schedule(day_dto)
+    text, _ = UIRenderer.render_day_schedule(day_dto)
     text = f"🎓 <b>Расписание: {class_name}</b>\n" + text
 
     has_changes = any(
@@ -294,7 +294,7 @@ async def show_teacher_schedule(
         teacher_id,
     )
 
-    text, _ = UIRenderer.render_child_day_schedule(day_dto)
+    text, _ = UIRenderer.render_day_schedule(day_dto)
     text = f"👨‍🏫 <b>Расписание: {teacher_name}</b>\n" + text
 
     has_changes = any(
