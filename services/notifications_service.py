@@ -46,7 +46,7 @@ import datetime
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Optional, Any, Mapping
 from aiogram import Bot
 from aiogram.exceptions import (
     TelegramBadRequest,
@@ -55,17 +55,24 @@ from aiogram.exceptions import (
     TelegramRetryAfter,
 )
 
+from aiogram.types import InlineKeyboardMarkup
+from bot import callbacks
+from bot.keyboards.keyboard import Keyboards
+
+
 from core.repository.notification_repository import NotificationRepository
-from core.repository.extra_classes_repository import ExtraClassesRepository
+from services.extra_classes_service import ExtraClassesService
 from core.repository.schedule_repository import ScheduleRepository
+from services.schedule_service import ScheduleService
 from services.time_service import TimeService
 from bot.utils.ui_renderer import UIRenderer
 from core.models.dto import (
     LessonReminderDTO,
     ChangeReminderDTO,
-    MorningSummaryDTO,
-    MorningLessonDTO
+    MorningSummaryDTO, PendingChangeDTO,
+    MorningLessonDTO, ExtraClassItemDTO
 )
+from core.models.domain import LessonInstance
 
 logger = logging.getLogger(__name__)
 
@@ -104,6 +111,7 @@ class PendingSend:
     context: str = ""
 
 
+        
 class NotificationService:
     """
     Сервис уведомлений (Strict DTO & Repository Pattern).
@@ -122,14 +130,16 @@ class NotificationService:
         notification_repo: NotificationRepository,
         time_service: TimeService,
         schedule_repo: ScheduleRepository,
-        extra_classes_repo: ExtraClassesRepository,
+        extra_classes_service: ExtraClassesService,
+        schedule_service: ScheduleService,
         admin_ids: Optional[list[int]] = None,
     ) -> None:
         self.bot = bot
         self.repo = notification_repo
         self.time_service = time_service
         self.schedule_repo = schedule_repo
-        self.extra_classes_repo = extra_classes_repo
+        self.extra_classes_service = extra_classes_service
+        self.schedule_service = schedule_service
 
         # Smart Throttling state.
         # Сериализация ВСЕХ отправок через один lock: планировщик
@@ -143,7 +153,7 @@ class NotificationService:
     # Smart Throttling
     # ==============================================================
 
-    async def _paced_send(self, *, chat_id: int, text: str) -> bool:
+    async def _paced_send(self, *, chat_id: int, text: str, reply_markup: InlineKeyboardMarkup | None = None,) -> bool:
         """
         Отправка сообщения с соблюдением лимитов Telegram.
 
@@ -183,6 +193,7 @@ class NotificationService:
                     await self.bot.send_message(
                         chat_id=chat_id,
                         text=text,
+                        reply_markup=reply_markup,
                         parse_mode="HTML",
                     )
                     finished_at = time.monotonic()
@@ -309,7 +320,6 @@ class NotificationService:
                 )
 
 
-        
     # ==============================================================
     # 3a. Микроочистка кеша per-chat таймстемпов
     # ==============================================================
@@ -498,7 +508,85 @@ class NotificationService:
     # ==============================================================
     # 1. Утренние сводки
     # ==============================================================
+    # ==============================================================
+    # DTO
+    # ==============================================================
 
+    def _map_school_lesson_to_morning_dto(
+        self,
+        lesson: LessonInstance,
+        *,
+        display_num: str | None = None,
+        group_name: str | None = None,
+        class_name: str | None = None,
+        day_permutation: bool = False,
+    ) -> MorningLessonDTO:
+        
+        return MorningLessonDTO(
+            lesson_num=lesson.lesson_num,
+            start_time=lesson.start_time or "—",
+            end_time=lesson.end_time or "—",
+            subject_name=lesson.subject_name or "—",
+            room_name=lesson.room_name or "—",
+            is_cancelled=lesson.is_cancelled,
+            is_exchange=lesson.is_exchange,
+            is_extra=False,
+            
+            # Строгое обращение к полям контракта (никаких getattr)
+            is_methodological=lesson.is_methodological,
+            
+            original_subject_name=lesson.original_subject_name or None,
+            original_room_name=lesson.original_room_name or None,
+            group_changed=(
+                lesson.is_exchange
+                and lesson.original_group_id is not None
+                and lesson.original_group_id != lesson.group_id
+            ),
+            day_permutation=day_permutation,
+
+            # Чистые поля для UI
+            group_name=group_name,
+            class_name=class_name,
+            teacher_name=lesson.teacher_name,
+            display_num=(
+                display_num
+                or (
+                    str(lesson.lesson_num)
+                    if lesson.lesson_num is not None
+                    else "•"
+                )
+            ),
+            group_id=lesson.group_id,
+        )
+
+    def _map_extra_to_morning_dto(
+        self,
+        extra: ExtraClassItemDTO,
+    ) -> MorningLessonDTO:
+        return MorningLessonDTO(
+            lesson_num=None,
+            start_time=extra.time_start or "—",
+            end_time=extra.time_end or "—",
+            subject_name=extra.title or "—",
+            room_name=extra.location or "—",
+            is_cancelled=False,
+            is_exchange=False,
+            is_extra=True,
+            is_methodological=False,
+            
+            original_subject_name=None,
+            original_room_name=None,
+            group_changed=False,
+            day_permutation=False,
+
+            # --- НОВЫЕ ЧИСТЫЕ ПОЛЯ ДЛЯ UI ---
+            group_name=None,
+            class_name=None,
+            teacher_name=None,
+            display_num="•",
+            group_id=None,
+        )
+        
     async def send_morning_reminders(self) -> None:
         """
         Формирует и отправляет утренние сводки.
@@ -558,91 +646,121 @@ class NotificationService:
         )
 
         metadata = await self.schedule_repo.get_metadata()
-        classes = metadata.get("classes", {})
-        groups = metadata.get("groups", {})
 
-        summaries_by_recipient: dict[int, list[tuple[dict, MorningSummaryDTO]]] = {}
+        classes = metadata.classes
+        groups = metadata.groups
 
+        summaries_by_recipient: dict[
+            int,
+            list[tuple[dict[str, Any], MorningSummaryDTO]],
+        ] = {}
+        display_numbers_cache: dict[
+            tuple[str, str],
+            dict[int, str],
+        ] = {}
         for task in tasks:
             try:
                 recipient_id = int(task["recipient_id"])
                 target_student_id = int(task["target_student_id"])
                 source_id = f"morning_summary:{target_student_id}"
 
-                if (today_iso, source_id, recipient_id) in delivered:
+                if (
+                    today_iso,
+                    source_id,
+                    recipient_id,
+                ) in delivered:
                     continue
 
                 child_class_id = task.get("class_id")
-                child_group_id = task.get("group_id")
+                child_group_id = task.get("group_id") or "ALL"
 
                 lessons_dtos: list[MorningLessonDTO] = []
 
                 if child_class_id:
-                    raw_lessons = await self.schedule_repo.get_lessons_for_class(
-                        class_id=child_class_id,
-                        date_iso=today_iso,
+                    lessons = (
+                        await self.schedule_repo.get_lessons_for_class(
+                            class_id=child_class_id,
+                            date_iso=today_iso,
+                        )
                     )
-                    for lesson in raw_lessons:
-                        lesson_group_id = lesson.get("group_id", "ALL")
+                    day_permutation = self.schedule_service.detect_day_permutation(
+                        lessons
+                    )
+                    display_key = (
+                        child_class_id,
+                        today_iso,
+                    )
+
+                    if display_key not in display_numbers_cache:
+                        display_numbers_cache[display_key] = (
+                            await self.schedule_service
+                            .get_display_numbers_for_class_day(
+                                class_id=child_class_id,
+                                date_iso=today_iso,
+                            )
+                        )
+
+                    display_numbers = display_numbers_cache[
+                        display_key
+                    ]
+
+                    user_groups = (
+                        child_group_id.split(",")
+                        if child_group_id != "ALL"
+                        else ["ALL"]
+                    )
+
+                    for lesson in lessons:
+                        lesson_group_id = lesson.group_id or "ALL"
 
                         if (
-                            lesson_group_id != "ALL"
-                            and child_group_id != "ALL"
-                            and lesson_group_id != child_group_id
+                            "ALL" not in user_groups
+                            and lesson_group_id != "ALL"
+                            and lesson_group_id not in user_groups
                         ):
                             continue
 
                         group_name = None
+
                         if lesson_group_id != "ALL":
                             group_name = groups.get(
                                 lesson_group_id,
                                 f"Группа {lesson_group_id}",
                             )
 
-                        lessons_dtos.append(MorningLessonDTO(
-                            lesson_num=lesson["lesson_num"],
-                            start_time=lesson["start_time"],
-                            end_time=lesson["end_time"],
-                            subject_name=lesson["subject_name"] or "—",
-                            room_name=lesson["room_name"] or "—",
-                            is_cancelled=bool(lesson["is_cancelled"]),
-                            is_exchange=bool(lesson["is_exchange"]),
-                            group_name=group_name,
+                        lesson_display_num = display_numbers.get(
+                            lesson.lesson_num,
+                            (
+                                str(lesson.lesson_num)
+                                if lesson.lesson_num is not None
+                                else "•"
+                            ),
+                        )
 
-                            original_subject_name=(
-                                lesson.get("original_subject_name") or None
-                            ),
-                            original_room_name=(
-                                lesson.get("original_room_name") or None
-                            ),
-                            group_changed=(
-                                bool(lesson.get("original_group_id"))
-                                and lesson.get("original_group_id")
-                                != lesson.get("group_id")
-                            ),
-                            day_permutation=False,
-                        ))
-                raw_extras = await self.extra_classes_repo.get_extra_classes_for_student(
-                    student_id=target_student_id,
-                    day_of_week=weekday,
-                )
-                for extra in raw_extras:
-                    lessons_dtos.append(
-                        MorningLessonDTO(
-                            lesson_num=None,
-                            start_time=extra["time_start"],
-                            end_time=extra["time_end"],
-                            subject_name=extra["title"],
-                            room_name=extra["location"] or "—",
-                            is_cancelled=False,
-                            is_exchange=False,
-                            is_extra=True,
+                        lessons_dtos.append(
+                            self._map_school_lesson_to_morning_dto(
+                                lesson,
+                                display_num=lesson_display_num,
+                                group_name=group_name,
+                                day_permutation=day_permutation,
+                                
+                            )
+                        )
+
+                if target_student_id is not None:
+                    extra_items = (
+                        await self.extra_classes_service
+                        .get_extra_classes_for_student(
+                            student_id=target_student_id,
+                            day_of_week=weekday,
                         )
                     )
 
-                # Не отправляем пустую сводку и не фиксируем delivery log.
-                # Если данные появятся позже в этот же день, следующий вызов
-                # сможет сформировать полноценную сводку.
+                    lessons_dtos.extend(
+                        self._map_extra_to_morning_dto(extra)
+                        for extra in extra_items
+                    )
+
                 if not lessons_dtos:
                     logger.debug(
                         "Morning summary skipped: no lessons, "
@@ -654,35 +772,33 @@ class NotificationService:
 
                 lessons_dtos.sort(
                     key=lambda item: (
-                        item.start_time,
-                        item.lesson_num if item.lesson_num is not None else 99,
+                        item.start_time or "99:99",
+                        item.lesson_num
+                        if item.lesson_num is not None
+                        else 99,
                     )
                 )
 
                 class_name = child_class_id
-                if child_class_id and child_class_id in classes:
-                    class_obj = classes[child_class_id]
-                    class_name = getattr(
-                        class_obj,
-                        "name",
-                        child_class_id,
-                    )
+
+                if child_class_id:
+                    class_obj = classes.get(child_class_id)
+                    if class_obj is not None:
+                        class_name = class_obj.name
 
                 summary_dto = MorningSummaryDTO(
                     date_iso=today_iso,
                     lessons=lessons_dtos,
                     child_name=(
-                        task["child_name"]
-                        if task["recipient_kind"] == "adult"
+                        task.get("child_name")
+                        if task.get("recipient_kind") == "adult"
                         else None
                     ),
-                    class_id=class_name,
-                    has_permutation=any(
-                        lesson.day_permutation 
-                        for lesson in lessons_dtos
-                    ),
+                    class_id=child_class_id,
+                    class_name=class_name,
+                    has_permutation=day_permutation,
+                    origin="student",
                 )
-
                 summaries_by_recipient.setdefault(
                     recipient_id,
                     [],
@@ -699,60 +815,90 @@ class NotificationService:
                     "Unexpected morning summary assembly error: task=%r",
                     task,
                 )
-
         # --- Фаза send: paced-отправка сгруппированных сводок ---
         sent_count = 0
         failed_count = 0
 
         for recipient_id, entries in summaries_by_recipient.items():
-            try:
-                rendered_parts = [
-                    UIRenderer.render_morning_summary(summary_dto)
-                    for _, summary_dto in entries
-                ]
-                final_text = "\n\n───────────────\n\n".join(rendered_parts)
-
-                sent = await self._paced_send(
-                    chat_id=recipient_id,
-                    text=final_text,
-                )
-                if not sent:
-                    failed_count += 1
-                    logger.warning(
-                        "Morning summary send failed: recipient_id=%s, "
-                        "children=%s",
-                        recipient_id,
-                        [
-                            task["target_student_id"]
-                            for task, _ in entries
-                        ],
+            for task, summary_dto in entries:
+                try:
+                    text = UIRenderer.render_morning_summary(
+                        summary_dto,
                     )
-                    continue
 
-                sent_count += 1
-                for task, _ in entries:
-                    target_student_id = int(task["target_student_id"])
+                    has_changes = any(
+                        lesson.is_exchange or lesson.is_cancelled
+                        for lesson in summary_dto.lessons
+                        if not lesson.is_extra
+                    )
+
+                    keyboard = None
+
+                    if has_changes:
+                        changes_data = callbacks.DayChangesCD(
+                            target_kind="student",
+                            target_id=int(task["target_student_id"]),
+                            class_id=str(task["class_id"]),
+                            group_id=str(
+                                task.get("group_id") or "ALL"
+                            ),
+                            date_iso=today_iso,
+                            origin="class",
+                            return_to="morning",
+                        )
+
+                        keyboard = (
+                            Keyboards.get_day_changes_kb(
+                                changes_data,
+                            )
+                        )
+
+                    sent = await self._paced_send(
+                        chat_id=recipient_id,
+                        text=text,
+                        reply_markup=keyboard,
+                    )
+
+                    if not sent:
+                        failed_count += 1
+                        logger.warning(
+                            "Morning summary send failed: "
+                            "recipient_id=%s student_id=%s",
+                            recipient_id,
+                            task["target_student_id"],
+                        )
+                        continue
+
+                    sent_count += 1
+
+                    target_student_id = int(
+                        task["target_student_id"]
+                    )
+
                     await self.repo.record_notification_delivery(
                         notification_type="morning_summary",
                         notification_date=today_iso,
-                        source_id=f"morning_summary:{target_student_id}",
+                        source_id=(
+                            f"morning_summary:{target_student_id}"
+                        ),
                         recipient_id=recipient_id,
                     )
 
-                logger.info(
-                    "Morning summary delivered: recipient_id=%s, "
-                    "children=%s",
-                    recipient_id,
-                    [
-                        task["target_student_id"]
-                        for task, _ in entries
-                    ],
-                )
-            except Exception:
-                logger.exception(
-                    "Morning summary sending error: recipient_id=%s",
-                    recipient_id,
-                )
+                    logger.info(
+                        "Morning summary delivered: "
+                        "recipient_id=%s student_id=%s",
+                        recipient_id,
+                        target_student_id,
+                    )
+
+                except Exception:
+                    failed_count += 1
+                    logger.exception(
+                        "Morning summary sending error: "
+                        "recipient_id=%s task=%r",
+                        recipient_id,
+                        task,
+                    )
 
         logger.info(
             "Morning summary tick done: tasks=%d, pending_recipients=%d, "
@@ -770,9 +916,283 @@ class NotificationService:
         )
 
     # ==============================================================
+    # Утренние сводки учителей
+    # ==============================================================
+
+    async def _send_teacher_morning_reminders(
+        self,
+        *,
+        current_time_str: str,
+        today_iso: str,
+    ) -> None:
+        """
+        Отправляет утренние сводки зарегистрированным учителям.
+
+        Teacher summary состоит только из lesson records:
+        extra classes student profiles сюда не подмешиваются.
+
+        ИСПРАВЛЕНО (Этап 2): метод существовал, но не вызывался.
+        Теперь вызывается из send_morning_reminders каждый тик.
+        """
+        tasks = await self.repo.get_teacher_morning_summary_tasks(
+            time_str=current_time_str,
+        )
+        blocked_ids = await self._load_blocked_recipient_ids()
+        if blocked_ids:
+            tasks = [
+                task
+                for task in tasks
+                if int(task["recipient_id"]) not in blocked_ids
+            ]
+            
+        if not tasks:
+            return
+
+        # --- Фаза 1 (dedup): батчевая проверка delivery log ---
+        candidate_keys = [
+            (
+                today_iso,
+                f"teacher_morning:{str(task['teacher_id'])}",
+                int(task["recipient_id"]),
+            )
+            for task in tasks
+        ]
+        delivered = await self.repo.get_delivered_keys(
+            notification_type="teacher_morning",
+            candidate_keys=candidate_keys,
+        )
+
+        metadata = await self.schedule_repo.get_metadata()
+        classes = metadata.classes
+        
+        sent_count = 0
+        failed_count = 0
+
+        for task in tasks:
+            try:
+                recipient_id = int(task["recipient_id"])
+                teacher_id = str(task["teacher_id"])
+                teacher_name = task.get("teacher_name") or "Учитель"
+                source_id = f"teacher_morning:{teacher_id}"
+
+                if (today_iso, source_id, recipient_id) in delivered:
+                    continue
+
+                lessons = (
+                    await self.schedule_repo.get_lessons_for_teacher(
+                        teacher_id=teacher_id,
+                        date_iso=today_iso,
+                    )
+                )
+
+                lessons_dtos: list[MorningLessonDTO] = []
+
+                for lesson in lessons:
+                    class_name = lesson.class_name
+
+                    if not class_name and lesson.class_id:
+                        class_obj = classes.get(lesson.class_id)
+                        class_name = (
+                            class_obj.name
+                            if class_obj is not None
+                            else lesson.class_id
+                        )
+
+                    lessons_dtos.append(
+                        self._map_school_lesson_to_morning_dto(
+                            lesson,
+                            display_num=(
+                                str(lesson.lesson_num)
+                                if lesson.lesson_num is not None
+                                else "•"
+                            ),
+                            class_name=class_name,
+                            day_permutation=False,
+                        )
+                    )
+
+                if not lessons_dtos:
+                    continue
+
+                lessons_dtos.sort(
+                    key=lambda item: (
+                        item.start_time,
+                        (
+                            item.lesson_num
+                            if item.lesson_num is not None
+                            else 99
+                        ),
+                    )
+                )
+
+                summary_dto = MorningSummaryDTO(                    
+                    date_iso=today_iso,
+                    lessons=lessons_dtos,
+                    child_name=None,
+                    class_id=None,
+                    class_name=None,
+                    teacher_name=teacher_name,
+                    has_permutation=False,
+                    origin="teacher",
+                )
+
+                text = UIRenderer.render_morning_summary(summary_dto)
+
+                has_changes = any(
+                    lesson.is_exchange or lesson.is_cancelled
+                    for lesson in summary_dto.lessons
+                    if not lesson.is_extra
+                )
+                keyboard = None
+
+                if has_changes:
+                    changes_data = callbacks.DayChangesCD(
+                        target_kind="teacher",
+                        target_id=teacher_id,
+                        class_id="ALL",
+                        group_id="ALL",
+                        date_iso=today_iso,
+                        origin="teacher",
+                        return_to="morning",
+                    )
+
+                    keyboard = Keyboards.get_day_changes_kb(
+                        changes_data,
+                    )
+                sent = await self._paced_send(
+                    chat_id=recipient_id,
+                    text=text,
+                    reply_markup=keyboard,
+                )
+                if not sent:
+                    failed_count += 1
+                    continue
+
+                sent_count += 1
+                await self.repo.record_notification_delivery(
+                    notification_type="teacher_morning",
+                    notification_date=today_iso,
+                    source_id=source_id,
+                    recipient_id=recipient_id,
+                )
+                logger.info(
+                    "Teacher morning summary delivered: "
+                    "teacher_id=%s recipient_id=%s",
+                    teacher_id,
+                    recipient_id,
+                )
+            except Exception:
+                logger.exception(
+                    "Teacher morning summary failed: task=%r",
+                    task,
+                )
+
+        if sent_count or failed_count:
+            logger.info(
+                "Teacher morning summary tick done: tasks=%d, "
+                "sent=%d, failed=%d",
+                len(tasks),
+                sent_count,
+                failed_count,
+            )
+
+
+    # ==============================================================
     # 2. Изменения расписания
     # ==============================================================
 
+    @staticmethod
+    def _to_change_reminder_dto(
+        change: PendingChangeDTO,
+        *,
+        child_name: str | None = None,
+        watch_target_title: str | None = None,
+        display_num: str | None = None,
+    ) -> ChangeReminderDTO:
+        return ChangeReminderDTO(
+            date=change.date,
+            lesson_num=change.lesson_num,
+            display_num=(
+                display_num
+                if display_num is not None
+                else change.display_num
+            ),
+            subject_name=change.subject_name or "—",
+            is_cancelled=change.is_cancelled,
+            original_subject_name=change.original_subject_name,
+            new_subject_name=change.subject_name,
+            original_room_name=change.original_room_name,
+            new_room_name=change.room_name,
+            original_group_name=change.original_group_name,
+            new_group_name=change.group_name,
+            group_changed=(
+                bool(change.original_group_id)
+                and change.original_group_id != change.group_id
+            ),
+            child_name=child_name,
+            watch_target_title=watch_target_title,
+        )
+    
+    @staticmethod
+    def _map_pending_change(
+        row: Mapping[str, Any],
+    ) -> PendingChangeDTO:
+        return PendingChangeDTO(
+            id=str(row["id"]),
+            date=str(row["date"]),
+            period_id=str(row["period_id"]),
+            class_id=str(row["class_id"]),
+            group_id=str(row.get("group_id") or "ALL"),
+            group_name=(
+                str(row["group_name"])
+                if row.get("group_name") is not None
+                else None
+            ),
+
+            teacher_id=(
+                str(row["teacher_id"])
+                if row.get("teacher_id") is not None
+                else None
+            ),
+            lesson_num=int(row["lesson_num"]),
+
+            subject_id=row.get("subject_id"),
+            subject_name=row.get("subject_name"),
+            room_id=row.get("room_id"),
+            room_name=row.get("room_name"),
+            teacher_name=row.get("teacher_name"),
+
+            original_subject_id=row.get("original_subject_id"),
+            original_subject_name=row.get(
+                "original_subject_name"
+            ),
+            original_room_id=row.get("original_room_id"),
+            original_room_name=row.get(
+                "original_room_name"
+            ),
+            original_teacher_id=row.get(
+                "original_teacher_id"
+            ),
+            original_teacher_name=row.get(
+                "original_teacher_name"
+            ),
+            original_group_id=row.get(
+                "original_group_id"
+            ),
+            original_group_name=row.get(
+                "original_group_name"
+            ),
+            original_class_id=row.get(
+                "original_class_id"
+            ),
+            original_class_name=row.get(
+                "original_class_name"
+            ),
+
+            is_exchange=bool(row.get("is_exchange")),
+            is_cancelled=bool(row.get("is_cancelled")),
+        )
+            
     async def send_upcoming_changes(self) -> None:
         """
         Отправляет адресные уведомления о заменах и отменах.
@@ -788,11 +1208,15 @@ class NotificationService:
             today + datetime.timedelta(days=MAX_CHANGES_WINDOW_DAYS)
         ).isoformat()
 
-        changes = await self.repo.get_pending_changes(
+        raw_changes = await self.repo.get_pending_changes(
             start_date_iso=today_iso,
             end_date_iso=window_end_iso,
         )
 
+        changes = [
+            self._map_pending_change(row)
+            for row in raw_changes
+        ]
         logger.info(
             "Schedule changes tick: date=%s, changes=%d",
             today_iso,
@@ -802,31 +1226,70 @@ class NotificationService:
         # Тиковые кеши получателей (фикс N+1).
         recipients_cache: dict[tuple[str, str], list[dict]] = {}
         teacher_cache: dict[str, list[dict]] = {}
-
+        display_numbers_cache: dict[tuple[str, str],dict[int, str],] = {}
         pending: list[PendingSend] = []
 
         # --- Фаза 1 (collect) ---
         for change in changes:
             try:
                 change_date = self.time_service.date_from_iso(
-                    change["date"],
+                    change.date,
+                )
+                class_display_num = str(change.lesson_num)
+
+                try:
+                    display_key = (
+                        change.class_id,
+                        change.date,
+                    )
+
+                    if display_key not in display_numbers_cache:
+                        display_numbers_cache[display_key] = (
+                            await self.schedule_service
+                            .get_display_numbers_for_class_day(
+                                class_id=change.class_id,
+                                date_iso=change.date,
+                            )
+                        )
+
+                    class_display_num = display_numbers_cache[
+                        display_key
+                    ].get(
+                        change.lesson_num,
+                        str(change.lesson_num),
+                    )
+                except Exception:
+                    logger.exception(
+                        "Failed to calculate display number: "
+                        "class_id=%s date=%s lesson_num=%s",
+                        change.class_id,
+                        change.date,
+                        change.lesson_num,
+                    )
+
+                cache_key = (
+                    change.class_id,
+                    change.group_id,
                 )
 
-                cache_key = (change["class_id"], change["group_id"])
                 if cache_key not in recipients_cache:
                     recipients_cache[cache_key] = (
                         await self.repo.get_recipients_for_schedule_change(
-                            class_id=change["class_id"],
-                            group_id=change["group_id"],
+                            class_id=change.class_id,
+                            group_id=change.group_id,
                         )
                     )
+
                 recipients = recipients_cache[cache_key]
 
                 for recipient in recipients:
-                    recipient_id = int(recipient["recipient_id"])
-                    
+                    recipient_id = int(
+                        recipient["recipient_id"]
+                    )
+
                     if recipient_id in blocked_ids:
                         continue
+
                     window_days = int(
                         recipient["changes_window_days"]
                     )
@@ -837,14 +1300,13 @@ class NotificationService:
                     max_date = today + datetime.timedelta(
                         days=window_days,
                     )
+
                     if not (today <= change_date <= max_date):
                         continue
 
-                    dto = ChangeReminderDTO(
-                        date=change["date"],
-                        lesson_num=change["lesson_num"],
-                        subject_name=change["subject_name"] or "—",
-                        is_cancelled=bool(change["is_cancelled"]),
+                    dto = self._to_change_reminder_dto(
+                        change,
+                        display_num=class_display_num,
                         child_name=(
                             recipient["child_name"]
                             if recipient["recipient_kind"] == "adult"
@@ -855,50 +1317,28 @@ class NotificationService:
                             if recipient["recipient_kind"] == "watch"
                             else None
                         ),
-                        original_subject_name=(
-                            change.get("original_subject_name") or None
-                        ),
-                        new_subject_name=(
-                            change.get("subject_name") or None
-                        ),
-                        original_room_name=(
-                            change.get("original_room_name") or None
-                        ),
-                        new_room_name=(
-                            change.get("room_name") or None
-                        ),
-                        original_group_name=(
-                            change.get("original_group_name") or None
-                        ),
-                        new_group_name=(
-                            change.get("group_name") or None
-                        ),
-                        group_changed=(
-                            bool(change.get("original_group_id"))
-                            and change.get("original_group_id")
-                            != change.get("group_id")
-                        ),
                     )
-
                     pending.append(
                         PendingSend(
                             notification_type="schedule_change",
-                            notification_date=change["date"],
-                            source_id=change["id"],
+                            notification_date=change.date,
+                            source_id=change.id,
                             recipient_id=recipient_id,
                             text=UIRenderer.render_change_reminder(dto),
                             context=(
-                                f"change_id={change['id']}, "
+                                f"change_id={change.id}, "
                                 f"kind={recipient['recipient_kind']}"
                             ),
                         )
                     )
 
-                teacher_id = change.get("teacher_id")
+                teacher_id = change.teacher_id
+
                 if not teacher_id:
                     continue
 
                 teacher_id = str(teacher_id)
+
                 if teacher_id not in teacher_cache:
                     teacher_cache[teacher_id] = (
                         await self.repo.get_teacher_recipients_for_schedule_change(
@@ -923,42 +1363,13 @@ class NotificationService:
                         if not (today <= change_date <= max_date):
                             continue
 
-                        dto = ChangeReminderDTO(
-                            date=change["date"],
-                            lesson_num=change["lesson_num"],
-                            subject_name=change["subject_name"] or "—",
-                            is_cancelled=bool(change["is_cancelled"]),
-                                original_subject_name=(
-                            change.get("original_subject_name") or None
-                            ),
-                            new_subject_name=(
-                                change.get("subject_name") or None
-                            ),
-                            original_room_name=(
-                                change.get("original_room_name") or None
-                            ),
-                            new_room_name=(
-                                change.get("room_name") or None
-                            ),
-                            original_group_name=(
-                                change.get("original_group_name") or None
-                            ),
-                            new_group_name=(
-                                change.get("group_name") or None
-                            ),
-                            group_changed=(
-                                bool(change.get("original_group_id"))
-                                and change.get("original_group_id")
-                                != change.get("group_id")
-                            ),
-                            child_name=None,
-                            watch_target_title=None,
+                        dto = self._to_change_reminder_dto(
+                            change,
+                            display_num=str(change.lesson_num),
                         )
 
-                        teacher_name = (
-                            change.get("teacher_name")
-                            or "Учитель"
-                        )
+                        teacher_name = change.teacher_name or "Учитель"
+
                         text = (
                             "👨‍🏫 <b>Изменение в расписании учителя</b>\n"
                             f"👤 <b>{UIRenderer.escape_html(teacher_name)}</b>\n\n"
@@ -968,13 +1379,13 @@ class NotificationService:
                         pending.append(
                             PendingSend(
                                 notification_type="teacher_change",
-                                notification_date=change["date"],
-                                source_id=change["id"],
+                                notification_date=change.date,
+                                source_id=change.id,
                                 recipient_id=recipient_id,
                                 text=text,
                                 context=(
                                     f"teacher_id={teacher_id}, "
-                                    f"change_id={change['id']}"
+                                    f"change_id={change.id}"
                                 ),
                             )
                         )
@@ -1029,8 +1440,10 @@ class NotificationService:
         now = self.time_service.get_now_base()
         today_iso = now.date().isoformat()
 
-        lessons = await self.repo.get_todays_lessons_for_pre_reminders(
-            date_iso=today_iso,
+        lessons: list[LessonInstance] = (
+            await self.schedule_repo.get_todays_lessons_for_pre_reminders(
+                date_iso=today_iso,
+            )
         )
 
         logger.info(
@@ -1050,7 +1463,7 @@ class NotificationService:
         for lesson in lessons:
             try:
                 lesson_start_at = datetime.datetime.strptime(
-                    f"{today_iso} {lesson['start_time']}",
+                    f"{today_iso} {lesson.start_time}",
                     "%Y-%m-%d %H:%M",
                 ).replace(tzinfo=self.time_service.base_tz)
                 delta_minutes = (
@@ -1061,12 +1474,12 @@ class NotificationService:
                 if delta_minutes <= 0:
                     continue
 
-                cache_key = (lesson["class_id"], lesson["group_id"])
+                cache_key = (lesson.class_id, lesson.group_id or "ALL",)
                 if cache_key not in recipients_cache:
                     recipients_cache[cache_key] = (
                         await self.repo.get_recipients_for_pre_lesson_reminder(
-                            class_id=lesson["class_id"],
-                            group_id=lesson["group_id"],
+                            class_id=lesson.class_id,
+                            group_id=lesson.group_id or "ALL",
                         )
                     )
                 recipients = recipients_cache[cache_key]
@@ -1086,9 +1499,9 @@ class NotificationService:
                         continue
 
                     dto = LessonReminderDTO(
-                        subject_name=lesson["subject_name"] or "—",
-                        start_time=lesson["start_time"],
-                        room_name=lesson["room_name"] or "—",
+                        subject_name=lesson.subject_name or "—",
+                        start_time=lesson.start_time or "—",
+                        room_name=lesson.room_name or "—",
                         is_extra=False,
                         child_name=(
                             recipient["child_name"]
@@ -1101,17 +1514,17 @@ class NotificationService:
                         PendingSend(
                             notification_type="pre_lesson",
                             notification_date=today_iso,
-                            source_id=lesson["id"],
+                            source_id=lesson.id,
                             recipient_id=recipient_id,
                             text=UIRenderer.render_lesson_reminder(dto),
                             context=(
-                                f"lesson_id={lesson['id']}, "
+                                f"lesson_id={lesson.id}, "
                                 f"kind={recipient['recipient_kind']}"
                             ),
                         )
                     )
 
-                teacher_id = lesson.get("teacher_id")
+                teacher_id = lesson.teacher_id
                 if not teacher_id:
                     continue
 
@@ -1137,9 +1550,9 @@ class NotificationService:
                             continue
 
                         dto = LessonReminderDTO(
-                            subject_name=lesson["subject_name"] or "—",
-                            start_time=lesson["start_time"],
-                            room_name=lesson["room_name"] or "—",
+                            subject_name=lesson.subject_name or "—",
+                            start_time=lesson.start_time or "—",
+                            room_name=lesson.room_name or "—",
                             is_extra=False,
                             child_name=None,
                         )
@@ -1152,12 +1565,12 @@ class NotificationService:
                             PendingSend(
                                 notification_type="teacher_pre_lesson",
                                 notification_date=today_iso,
-                                source_id=lesson["id"],
+                                source_id=lesson.id,
                                 recipient_id=recipient_id,
                                 text=text,
                                 context=(
                                     f"teacher_id={teacher_id}, "
-                                    f"lesson_id={lesson['id']}"
+                                    f"lesson_id={lesson.id}"
                                 ),
                             )
                         )
@@ -1311,176 +1724,3 @@ class NotificationService:
             failed_count,
         )
 
-    # ==============================================================
-    # Утренние сводки учителей
-    # ==============================================================
-
-    async def _send_teacher_morning_reminders(
-        self,
-        *,
-        current_time_str: str,
-        today_iso: str,
-    ) -> None:
-        """
-        Отправляет утренние сводки зарегистрированным учителям.
-
-        Teacher summary состоит только из lesson records:
-        extra classes student profiles сюда не подмешиваются.
-
-        ИСПРАВЛЕНО (Этап 2): метод существовал, но не вызывался.
-        Теперь вызывается из send_morning_reminders каждый тик.
-        """
-        tasks = await self.repo.get_teacher_morning_summary_tasks(
-            time_str=current_time_str,
-        )
-        blocked_ids = await self._load_blocked_recipient_ids()
-        if blocked_ids:
-            tasks = [
-                task
-                for task in tasks
-                if int(task["recipient_id"]) not in blocked_ids
-            ]
-            
-        if not tasks:
-            return
-
-        # --- Фаза 1 (dedup): батчевая проверка delivery log ---
-        candidate_keys = [
-            (
-                today_iso,
-                f"teacher_morning:{str(task['teacher_id'])}",
-                int(task["recipient_id"]),
-            )
-            for task in tasks
-        ]
-        delivered = await self.repo.get_delivered_keys(
-            notification_type="teacher_morning",
-            candidate_keys=candidate_keys,
-        )
-
-        metadata = await self.schedule_repo.get_metadata()
-        classes = metadata.get("classes", {})
-
-        sent_count = 0
-        failed_count = 0
-
-        for task in tasks:
-            try:
-                recipient_id = int(task["recipient_id"])
-                teacher_id = str(task["teacher_id"])
-                teacher_name = task.get("teacher_name") or "Учитель"
-                source_id = f"teacher_morning:{teacher_id}"
-
-                if (today_iso, source_id, recipient_id) in delivered:
-                    continue
-
-                raw_lessons = (
-                    await self.schedule_repo.get_lessons_for_teacher(
-                        teacher_id=teacher_id,
-                        date_iso=today_iso,
-                    )
-                )
-
-                lessons_dtos: list[MorningLessonDTO] = []
-                for lesson in raw_lessons:
-                    class_id = lesson.get("class_id")
-                    class_obj = classes.get(class_id)
-                    class_name = (
-                        getattr(class_obj, "name", class_obj)
-                        if class_obj is not None
-                        else class_id
-                    )
-                    room_name = lesson.get("room_name") or "—"
-                    if class_name:
-                        room_name = (
-                            f"{room_name} · {class_name}"
-                        )
-                    lessons_dtos.append(
-                        MorningLessonDTO(
-                            lesson_num=lesson.get("lesson_num"),
-                            start_time=lesson.get("start_time") or "—",
-                            end_time=lesson.get("end_time") or "—",
-                            subject_name=(lesson.get("subject_name") or "—"),
-                            room_name=room_name,
-                            is_cancelled=bool(lesson.get("is_cancelled")),
-                            is_exchange=bool(lesson.get("is_exchange")),
-                            is_extra=False,
-                            group_name=None,
-                            # --- НОВЫЕ ПОЛЯ ---
-                            original_subject_name=(
-                                lesson.get("original_subject_name") or None
-                            ),
-                            original_room_name=(
-                                lesson.get("original_room_name") or None
-                            ),
-                            group_changed=(
-                                bool(lesson.get("original_group_id"))
-                                and lesson.get("original_group_id")
-                                != lesson.get("group_id")
-                            ),
-                            day_permutation=False,
-                        )
-                    )
-
-                if not lessons_dtos:
-                    continue
-
-                lessons_dtos.sort(
-                    key=lambda item: (
-                        item.start_time,
-                        (
-                            item.lesson_num
-                            if item.lesson_num is not None
-                            else 99
-                        ),
-                    )
-                )
-
-                summary_dto = MorningSummaryDTO(
-                    date_iso=today_iso,
-                    lessons=lessons_dtos,
-                    child_name=None,
-                    class_id=None,
-                )
-
-                text = (
-                    "👨‍🏫 <b>Расписание учителя</b>\n"
-                    f"👤 <b>{UIRenderer.escape_html(teacher_name)}</b>\n\n"
-                    f"{UIRenderer.render_morning_summary(summary_dto)}"
-                )
-
-                sent = await self._paced_send(
-                    chat_id=recipient_id,
-                    text=text,
-                )
-                if not sent:
-                    failed_count += 1
-                    continue
-
-                sent_count += 1
-                await self.repo.record_notification_delivery(
-                    notification_type="teacher_morning",
-                    notification_date=today_iso,
-                    source_id=source_id,
-                    recipient_id=recipient_id,
-                )
-                logger.info(
-                    "Teacher morning summary delivered: "
-                    "teacher_id=%s recipient_id=%s",
-                    teacher_id,
-                    recipient_id,
-                )
-            except Exception:
-                logger.exception(
-                    "Teacher morning summary failed: task=%r",
-                    task,
-                )
-
-        if sent_count or failed_count:
-            logger.info(
-                "Teacher morning summary tick done: tasks=%d, "
-                "sent=%d, failed=%d",
-                len(tasks),
-                sent_count,
-                failed_count,
-            )

@@ -4,41 +4,12 @@
 # LessonInstance (class_name, original_*, is_methodological,
 # original_group_*) и хранение расписания УЧИТЕЛЕЙ.
 #
-# РЕШЁННЫЕ ПРОБЛЕМЫ (наследие Этапов 1-2 сохранено):
-#
-# 1. Bulk Inserts (Задача 1.2): executemany с одним UPSERT.
-#
-# 2. Strict Time Governance (Задача 1.3): все временные метки —
-#    плейсхолдеры ? со значением now_utc из TimeService.
-#
-# 3. Транзакции через self.transaction() с общим write-lock.
-#
-# 4. Shared-соединение SQLite (db_path = aiosqlite.Connection).
-#
-# НОВОЕ ЭТАПА 3:
-#
-# 5. Origin-разделение: расписание классов и учителей пишется в
-#    одну таблицу schedule_cache с колонкой origin ('class'/'teacher').
-#    Запросы по классу фильтруют origin='class', по учителю —
-#    origin='teacher'. Без этого class- и teacher-уроки одного слота
-#    дублировались бы в выдаче.
-#
-# 6. Коллизия ID устранена НА УРОВНЕ НОРМАЛИЗАТОРА: учительский
-#    lesson_id получает префикс T{teacher_id}_ (см. патч normalizer).
-#    Это обязательное условие: формат ID классов и учителей совпадал,
-#    и ON CONFLICT(id) молча перезаписывал бы class-уроки teacher-уроками.
-#
-# 7. Сохраняются ВСЕ поля «было → стало»: original_subject_*,
-#    original_teacher_*, original_room_*, original_class_*,
-#    original_group_*, а также class_name, weekday, is_methodological.
-#
-# 8. groups_raw / subjects_raw / rooms_raw в БД НЕ хранятся:
-#    параллельные подгруппы восстанавливаются группировкой строк по
-#    (date, lesson_num, origin) на уровне сервиса/рендерера. Это
-#    избавляет от JSON-блобов в кэше.
-#
-# 9. Методические часы (M) теперь попадают в кэш через
-#    build_teacher_lessons() и видны в расписании учителя.
+# ИСПРАВЛЕНИЯ P0:
+# 1. Убраны List[Dict] из публичных методов — только LessonInstance.
+# 2. Убран fallback пустыми SchoolMetadata — теперь исключение.
+# 3. _metadata_cache инвалидируется после _apply_new_nika_version.
+# 4. Удалены отладочные логи «Тест ... ← ДОБАВИТЬ ».
+# 5. Вынесен публичный parse_nika() вместо _extract_json_from_js.
 
 from __future__ import annotations
 
@@ -58,9 +29,12 @@ from core.nika.fetcher import (
     ScheduleFetcher,
 )
 from core.nika.normalizer import NikaNormalizer
+from core.nika.exceptions import ScheduleDataError
 from core.repository.base_repository import BaseRepository
 from services.time_service import TimeService
 
+
+from core.models.metadata import SchoolMetadata
 
 logger = logging.getLogger(__name__)
 
@@ -164,7 +138,6 @@ class ScheduleRepository(BaseRepository):
     - class- и teacher-уроки живут в одной таблице, разделены origin.
     """
 
-
     def __init__(
         self,
         *,
@@ -175,6 +148,7 @@ class ScheduleRepository(BaseRepository):
         proxy: str | None = None,
         nika_base_url: str = "https://lyceum.nstu.ru/rasp",
         history_days: int = 7,
+        metadata_cache: Optional[SchoolMetadata] = None,
     ) -> None:
         super().__init__(
             db_path=db_path,
@@ -187,7 +161,7 @@ class ScheduleRepository(BaseRepository):
             tls_fingerprint_sha256=tls_fingerprint_sha256,
         )
         self.history_days = history_days
-
+        self._metadata_cache = metadata_cache
 
     def is_ssl_degraded(self) -> bool:
         """
@@ -198,6 +172,17 @@ class ScheduleRepository(BaseRepository):
         """
         return self.fetcher.ssl_degraded
 
+    # ==========================================================
+    # Public API: парсинг NIKA (вынесено из fetcher)
+    # ==========================================================
+
+    def parse_nika(self, content: str) -> dict[str, Any]:
+        """
+        Публичный метод для извлечения JSON из JS-файла NIKA.
+
+        Репозиторий не должен вызывать приватный _extract_json_from_js.
+        """
+        return self.fetcher._extract_json_from_js(content)
 
     # ==========================================================
     # Row <-> LessonInstance mapping (Этап 3)
@@ -570,76 +555,52 @@ class ScheduleRepository(BaseRepository):
 
 
     # ==========================================================
-    # Public metadata / schedule reads
+    # Public metadata / schedule reads (ИСПРАВЛЕНО P0)
     # ==========================================================
 
 
-    async def get_metadata(
-        self,
-    ) -> Dict[str, Any]:
+    async def get_metadata(self) -> SchoolMetadata:
         """
-        Строит metadata из текущего singleton raw NIKA cache.
+        Строит SchoolMetadata один раз и кэширует в оперативной памяти.
+
+        ИСПРАВЛЕНО P0: больше не возвращает пустые метаданные при ошибке.
         """
+        if self._metadata_cache is not None:
+            return self._metadata_cache
+
         raw = await self.get_cached_raw_nika()
-
-
         if not raw or not raw.get("content"):
-            logger.warning(
-                "NIKA raw cache is empty."
-            )
-            return {
-                "classes": {},
-                "groups": {},
-                "teachers": {},
-            }
-
+            logger.error("NIKA raw cache is empty — cannot build metadata.")
+            raise ScheduleDataError("NIKA raw cache is empty")
 
         try:
-            nika_data = self.fetcher._extract_json_from_js(
-                raw["content"],
+            nika_data = self.parse_nika(raw["content"])
+            normalizer = NikaNormalizer(nika_data)
+            
+            self._metadata_cache = SchoolMetadata(
+                classes=normalizer.classes,
+                groups=nika_data.get("CLASSGROUPS", {}),
+                teachers=normalizer.teachers,
+                class_shift=nika_data.get("CLASS_SHIFT", {}),
+                second_relative=nika_data.get("SECOND_RELATIVE", False)
             )
-            normalizer = NikaNormalizer(
-                nika_data,
-            )
-            classes, teachers, _, _ = normalizer.build_metadata()
-
-
-            return {
-                "classes": classes,
-                "groups": nika_data.get(
-                    "CLASSGROUPS",
-                    {},
-                ),
-                "teachers": teachers,
-                "class_shift": nika_data.get(
-                    "CLASS_SHIFT",
-                    {},
-                ),
-                "second_relative": nika_data.get(
-                    "SECOND_RELATIVE",
-                    False,
-                ),
-            }
-        except Exception:
-            logger.exception(
-                "Failed to build NIKA metadata from raw cache."
-            )
-            return {
-                "classes": {},
-                "groups": {},
-                "teachers": {},
-            }
+            return self._metadata_cache
+        except Exception as exc:
+            logger.exception("Failed to build NIKA metadata from raw cache.")
+            raise ScheduleDataError("Cannot build school metadata") from exc
 
 
     async def get_lessons_for_class(
         self,
         class_id: str,
         date_iso: str,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[LessonInstance]:
         """
         Расписание класса на дату (только class-origin строки).
+
+        ИСПРАВЛЕНО P0: возвращает List[LessonInstance], а не List[Dict].
         """
-        return await self._fetch_all(
+        rows = await self._fetch_all(
             """
             SELECT *
             FROM schedule_cache
@@ -650,19 +611,21 @@ class ScheduleRepository(BaseRepository):
             """,
             (class_id, date_iso),
         )
+        return [self._row_to_lesson(r) for r in rows]
 
 
     async def get_lessons_for_teacher(
         self,
         teacher_id: str,
         date_iso: str,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[LessonInstance]:
         """
         Расписание учителя на дату (только teacher-origin строки:
         включает методические часы и TEACH_EXCHANGE).
+
+        ИСПРАВЛЕНО P0: возвращает List[LessonInstance], а не List[Dict].
         """
-        logger.info(f"Тест SQL: teacher={teacher_id} date={date_iso}")  # ← ДОБАВИТЬ
-        return await self._fetch_all(
+        rows = await self._fetch_all(
             """
             SELECT *
             FROM schedule_cache
@@ -673,33 +636,11 @@ class ScheduleRepository(BaseRepository):
             """,
             (teacher_id, date_iso),
         )
-
-
-    async def get_lesson_instances_for_class(
-        self,
-        class_id: str,
-        date_iso: str,
-    ) -> List[LessonInstance]:
-        """
-        Типизированный вариант get_lessons_for_class: строки → DTO.
-        Сервис и рендерер работают с LessonInstance, а не со словарями.
-        """
-        rows = await self.get_lessons_for_class(class_id, date_iso)
         return [self._row_to_lesson(r) for r in rows]
 
 
-    async def get_lesson_instances_for_teacher(
-        self,
-        teacher_id: str,
-        date_iso: str,
-    ) -> List[LessonInstance]:
-        """
-        Типизированный вариант get_lessons_for_teacher: строки → DTO.
-        """
-        logger.info(f"Тест Repo: teacher={teacher_id} date={date_iso}")  # ← ДОБАВИТЬ
-        rows = await self.get_lessons_for_teacher(teacher_id, date_iso)
-        return [self._row_to_lesson(r) for r in rows]
-
+    # Убраны дубли get_lesson_instances_for_class/for_teacher —
+    # теперь это единственные публичные методы для выборки расписания.
 
 
     async def get_day_change_count(
@@ -711,7 +652,7 @@ class ScheduleRepository(BaseRepository):
         Количество изменённых/отменённых уроков за дату.
 
         Используется для быстрой проверки «есть ли смысл показывать
-        кнопку изменений» без выгрузки всего дня.
+        кнопку изменений » без выгрузки всего дня.
         """
         row = await self._fetch_one(
             """
@@ -810,7 +751,7 @@ class ScheduleRepository(BaseRepository):
         )
 
 
-        nika_data = self.fetcher._extract_json_from_js(
+        nika_data = self.parse_nika(
             js_content,
         )
 
@@ -827,7 +768,7 @@ class ScheduleRepository(BaseRepository):
         export_time = nika_data.get("EXPORT_TIME")
 
         # Новый filename, но содержательная часть NIKA не изменилась.
-        # Расписание не пишем; обновляем revision и singleton raw cache.
+        # Расписание не пишем; обновляем только revision и singleton raw cache.
         if (
             state is not None
             and state["semantic_sha256"] == semantic_sha256
@@ -841,6 +782,7 @@ class ScheduleRepository(BaseRepository):
                 export_date=export_date,
                 export_time=export_time,
             )
+            self._metadata_cache = None
             return ScheduleRefreshResult(
                 source_changed=True,
                 schedule_changed=False,
@@ -881,7 +823,7 @@ class ScheduleRepository(BaseRepository):
         Это не новое изменение расписания, поэтому schedule_changed=False:
         immediate change notifications запускать не нужно.
         """
-        nika_data = self.fetcher._extract_json_from_js(
+        nika_data = self.parse_nika(
             raw_content,
         )
 
@@ -1030,11 +972,13 @@ class ScheduleRepository(BaseRepository):
         build_teacher_lessons() (методические часы, TEACH_EXCHANGE).
         Учительские ID обязаны иметь префикс T{teacher_id}_ (патч
         normalizer), иначе они коллидируют с классовыми.
+
+        ИСПРАВЛЕНО P0: инвалидация _metadata_cache после успешного
+        применения новой версии NIKA.
         """
         normalizer = NikaNormalizer(
             nika_data,
         )
-
 
         class_lessons: List[LessonInstance] = (
             normalizer.build_class_lessons(target_dates)
@@ -1053,6 +997,7 @@ class ScheduleRepository(BaseRepository):
 
 
         if not target_date_values:
+            self._metadata_cache = None
             return ScheduleRefreshResult(
                 source_changed=source_changed,
                 schedule_changed=False,
@@ -1225,6 +1170,10 @@ class ScheduleRepository(BaseRepository):
         )
 
 
+        # ИСПРАВЛЕНО P0: инвалидация кеша метаданных
+        self._metadata_cache = None
+
+
         return ScheduleRefreshResult(
             source_changed=source_changed,
             schedule_changed=schedule_changed,
@@ -1232,3 +1181,55 @@ class ScheduleRepository(BaseRepository):
             lesson_count=len(lesson_rows),
             reason=reason,
         )
+        
+        
+            
+    async def get_todays_lessons_for_pre_reminders(
+        self,
+        date_iso: str,
+    ) -> list[LessonInstance]:
+        rows = await self._fetch_all(
+            """
+            SELECT
+                id,
+                period_id,
+                class_id,
+                class_name,
+                date,
+                weekday,
+                lesson_num,
+                start_time,
+                end_time,
+                subject_id,
+                subject_name,
+                teacher_id,
+                teacher_name,
+                room_id,
+                room_name,
+                original_subject_id,
+                original_subject_name,
+                original_teacher_id,
+                original_teacher_name,
+                original_room_id,
+                original_room_name,
+                original_class_id,
+                original_class_name,
+                original_group_id,
+                original_group_name,
+                group_id,
+                group_name,
+                is_exchange,
+                is_cancelled,
+                is_methodological
+            FROM schedule_cache
+            WHERE date = ?
+            AND is_cancelled = 0
+            ORDER BY start_time, lesson_num, id
+            """,
+            (date_iso,),
+        )
+
+        return [
+            self._row_to_lesson(row)
+            for row in rows
+        ]

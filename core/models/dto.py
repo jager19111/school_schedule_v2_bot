@@ -4,32 +4,14 @@
 # day_permutation, детализации изменений и расширенной информации
 # в уведомлениях о заменах.
 #
-# ИЗМЕНЕНИЯ:
-#
-# 1. LessonDTO: добавлены original_*, group_name, group_changed,
-#    day_permutation, class_name, teacher_name, is_methodological.
-#    Это минимальный DTO для рендерера одного урока.
-#
-# 2. DayScheduleDTO: lessons теперь List[LessonDTO] (строгая типизация),
-#    добавлено has_permutation: bool (флаг всего дня).
-#
-# 3. DayChangesDetailDTO: новый DTO для детализации «было → стало」.
-#    Используется сервисом (get_day_changes_detail) и рендерером
-#    изменений (render_changes_detail).
-#
-# 4. ChangeReminderDTO: расширен для уведомлений о заменах —
-#    добавлены original_subject_name, new_subject_name,
-#    original_room_name, new_room_name, group_changed.
-#    Это позволяет показать в уведомлении «Математика → Ин.яз (204→318)
-#    или «Группа 1 → Группа 2」.
-#
-# 5. MorningLessonDTO: добавлены original_*, group_changed,
-#    day_permutation для утренней сводки с заменами.
-#
-# 6. MorningSummaryDTO: добавлено has_permutation: bool.
+# ИСПРАВЛЕНИЯ P0:
+# 1. Убран SchoolMetadata из DTO — перенесён в core.models.metadata.
+# 2. Убраны лишние Any в типах.
+# 3. Удалён противоречивый комментарий «Union: LessonDTO | Dict ».
+# 4. DayScheduleDTO.lessons строго типизирован как List[LessonDTO].
 
 from dataclasses import dataclass, field
-from typing import Dict, Optional, Any, List, Literal, Union
+from typing import Dict, Optional, List, Literal, Any
 
 
 # ==========================================================
@@ -37,7 +19,7 @@ from typing import Dict, Optional, Any, List, Literal, Union
 # ==========================================================
 
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class ClassListDTO:
     classes: Dict[str, str]  # id -> name
 
@@ -45,6 +27,12 @@ class ClassListDTO:
 @dataclass
 class GroupListDTO:
     groups: Dict[str, str]  # id -> name
+
+
+@dataclass(frozen=True, slots=True)
+class TeacherListDTO:
+    """ DTO для списка учителей. """
+    teachers: Dict[str, str]  # id -> name
 
 
 @dataclass(frozen=True, slots=True)
@@ -439,7 +427,7 @@ class LessonDTO:
     """
     DTO одного элемента расписания: школьный урок ИЛИ доп. занятие.
 
-    Школьный урок: заполнено всё; при заменах original_* хранит «было».
+    Школьный урок: заполнено всё; при заменах original_* хранит «было ».
     Доп. занятие: is_extra=True, id="extra-N", lesson_num=None,
     display_num="•", все original_* остаются None.
     """
@@ -469,7 +457,7 @@ class LessonDTO:
     is_methodological: bool = False
     is_extra: bool = False
 
-    # --- «Было → стало» (только школьные уроки с заменами) ---
+    # --- «Было → стало » (только школьные уроки с заменами) ---
     original_subject_id: Optional[str] = None
     original_subject_name: Optional[str] = None
     original_teacher_id: Optional[str] = None
@@ -487,8 +475,9 @@ class LessonDTO:
     display_num: Optional[str] = None   # номер урока 2 смены ("2*"),
                                         # заполняется _enrich_display_numbers_dtos
 
+
 # ==========================================================
-# DayScheduleDTO (Union: LessonDTO | Dict)
+# DayScheduleDTO (строго типизирован)
 # ==========================================================
 
 
@@ -523,7 +512,6 @@ class DayChangesDetailDTO:
     lessons: List[LessonDTO] = field(default_factory=list)
 
 
-
 # ==========================================================
 # Недельные DTO (без изменений, оставлены для совместимости)
 # ==========================================================
@@ -549,7 +537,7 @@ class WeekSummaryDTO:
 class FullWeekScheduleDTO:
     """ DTO для полного расписания на неделю. """
     week_start_iso: str
-    days: List['DayScheduleDTO']
+    days: List[DayScheduleDTO]
 
 
 # ==========================================================
@@ -589,6 +577,7 @@ class ChangeReminderDTO:
     is_cancelled: bool
 
     # NEW Этап 3:
+    display_num: Optional[str] = None
     original_subject_name: Optional[str] = None
     new_subject_name: Optional[str] = None
     original_room_name: Optional[str] = None
@@ -596,50 +585,93 @@ class ChangeReminderDTO:
     original_group_name: Optional[str] = None
     new_group_name: Optional[str] = None
     group_changed: bool = False
+    
 
     child_name: Optional[str] = None
     watch_target_title: Optional[str] = None
 
+@dataclass(frozen=True, slots=True)
+class PendingChangeDTO:
+    id: str
+    date: str
+    period_id: str
+    class_id: str
+    group_id: str
+    group_name: str | None
+    teacher_id: str | None
+    lesson_num: int
 
+    subject_id: str | None
+    subject_name: str | None
+    room_id: str | None
+    room_name: str | None
+    teacher_name: str | None
+
+    original_subject_id: str | None
+    original_subject_name: str | None
+    original_room_id: str | None
+    original_room_name: str | None
+    original_teacher_id: str | None
+    original_teacher_name: str | None
+    original_group_id: str | None
+    original_group_name: str | None
+    original_class_id: str | None
+    original_class_name: str | None
+
+    is_exchange: bool
+    is_cancelled: bool
+
+    # Вычисляемое поле, не хранится в schedule_cache.
+    display_num: str | None = None
+    
 @dataclass
 class MorningLessonDTO:
     """
     Урок для утренней сводки.
-
-    Этап 3: добавлены original_*, group_changed, day_permutation.
     """
     lesson_num: Optional[int]
     start_time: str
     end_time: str
     subject_name: str
     room_name: str
+
     is_cancelled: bool
     is_exchange: bool
     is_extra: bool = False
+    is_methodological: bool = False
     group_name: Optional[str] = None
 
-    # NEW Этап 3:
+    # Поля для зачеркиваний (было -> стало)
     original_subject_name: Optional[str] = None
     original_room_name: Optional[str] = None
     group_changed: bool = False
     day_permutation: bool = False
+    # --- НОВЫЕ ЧИСТЫЕ ПОЛЯ ДЛЯ РЕНДЕРА ---
+    class_name: Optional[str] = None
+    teacher_name: Optional[str] = None
+    display_num: Optional[str] = None
+    group_id: Optional[str] = None
 
 
 @dataclass
 class MorningSummaryDTO:
     """
-    Утренняя сводка расписания одного ребёнка.
-
-    Этап 3: добавлено has_permutation: bool.
+    Утренняя сводка (Всё сообщение целиком).
 
     Для ребёнка-получателя child_name остаётся None.
     Для взрослого получателя child_name содержит имя ребёнка.
     """
     date_iso: str
-    lessons: List[MorningLessonDTO]
-    child_name: Optional[str] = None
-    class_id: Optional[str] = None
+    lessons: list[MorningLessonDTO]
+    
+    # Данные для заголовка
+    child_name: str | None = None
+    class_id: str | None = None     # Технический ID основного класса ученика
+    class_name: str | None = None   # Человекочитаемое название класса для заголовка
+    teacher_name: str | None = None
+    
     has_permutation: bool = False
+    origin: Literal["student", "teacher"] = "student"
 
 
 # ==========================================================
@@ -678,12 +710,6 @@ class ExtraClassItemDTO:
 class ExtraClassListDTO:
     """ DTO для списка доп. занятий ребёнка. """
     items: List[ExtraClassItemDTO]
-
-
-@dataclass
-class TeacherListDTO:
-    """ DTO для списка учителей. """
-    teachers: Dict[str, str]  # id -> name
 
 
 @dataclass
