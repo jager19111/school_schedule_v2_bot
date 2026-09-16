@@ -82,6 +82,8 @@ from core.models.dto import (
     ScheduleChangeRecipientDTO,
     TeacherChangeRecipientDTO,
     ExtraClassReminderTaskDTO,
+    NotificationSendDTO, 
+    DeliveredKeyDTO
 )
 from core.models.domain import LessonInstance
 
@@ -104,25 +106,6 @@ _CHAT_CACHE_MAX = 1000
 _CHAT_CACHE_TTL_SEC = 600.0
 
 
-@dataclass(slots=True)
-class PendingSend:
-    """
-    Кандидат на отправку, собранный в фазе collect.
-
-    Ключ дедупликации: (notification_type, notification_date,
-    source_id, recipient_id) — ровно первичный ключ
-    notification_delivery_log.
-    """
-    notification_type: str
-    notification_date: str
-    source_id: str
-    recipient_id: int
-    text: str
-    # Контекст для логов (lesson_id / change_id / extra_id и т.п.).
-    context: str = ""
-
-
-        
 class NotificationService:
     """
     Сервис уведомлений (Strict DTO & Repository Pattern).
@@ -390,7 +373,7 @@ class NotificationService:
         today_iso = now.date().isoformat()
 
         pending = [
-            PendingSend(
+            NotificationSendDTO(
                 notification_type="debug_test",
                 notification_date=today_iso,
                 source_id=f"debug_burst:{index}",
@@ -420,8 +403,8 @@ class NotificationService:
 
     async def _drop_already_delivered(
         self,
-        pending: list[PendingSend],
-    ) -> list[PendingSend]:
+        pending: list[NotificationSendDTO],
+    ) -> list[NotificationSendDTO]:
         """
         Фаза dedup: батчевая проверка delivery log по каждому типу.
 
@@ -431,20 +414,18 @@ class NotificationService:
         if not pending:
             return []
 
-        result: list[PendingSend] = []
+        result: list[NotificationSendDTO] = []
         types = sorted({item.notification_type for item in pending})
 
         for notification_type in types:
             type_items = [
-                item
-                for item in pending
-                if item.notification_type == notification_type
+                item for item in pending if item.notification_type == notification_type
             ]
             candidate_keys = [
-                (
-                    item.notification_date,
-                    item.source_id,
-                    item.recipient_id,
+                DeliveredKeyDTO(
+                    notification_date=item.notification_date,
+                    source_id=item.source_id,
+                    recipient_id=item.recipient_id,
                 )
                 for item in type_items
             ]
@@ -453,10 +434,10 @@ class NotificationService:
                 candidate_keys=candidate_keys,
             )
             for item in type_items:
-                key = (
-                    item.notification_date,
-                    item.source_id,
-                    item.recipient_id,
+                key = DeliveredKeyDTO(
+                    notification_date=item.notification_date,
+                    source_id=item.source_id,
+                    recipient_id=item.recipient_id,
                 )
                 if key not in delivered:
                     result.append(item)
@@ -465,7 +446,7 @@ class NotificationService:
 
     async def _flush_pending(
         self,
-        pending: list[PendingSend],
+        pending: list[NotificationSendDTO],
     ) -> tuple[int, int]:
         """
         Фаза send: paced-отправка + запись доставки сразу после
@@ -628,10 +609,10 @@ class NotificationService:
 
         # --- Фаза 1 (collect/dedup): батчевая проверка delivery log ---
         candidate_keys = [
-            (
-                today_iso,
-                f"morning_summary:{task.target_student_id}",
-                task.recipient_id,
+            DeliveredKeyDTO(
+                notification_date=today_iso,
+                source_id=f"morning_summary:{task.target_student_id}",
+                recipient_id=task.recipient_id,
             )
             for task in tasks
         ]
@@ -662,10 +643,10 @@ class NotificationService:
                 target_student_id = task.target_student_id
                 source_id = f"morning_summary:{target_student_id}"
 
-                if (
-                    today_iso,
-                    source_id,
-                    recipient_id,
+                if DeliveredKeyDTO(
+                    notification_date=today_iso,
+                    source_id=source_id,
+                    recipient_id=recipient_id
                 ) in delivered:
                     continue
 
@@ -937,10 +918,10 @@ class NotificationService:
 
         # --- Фаза 1 (dedup): батчевая проверка delivery log ---
         candidate_keys = [
-            (
-                today_iso,
-                f"teacher_morning:{task.teacher_id}",
-                task.recipient_id,
+            DeliveredKeyDTO(
+                notification_date=today_iso,
+                source_id=f"teacher_morning:{task.teacher_id}",
+                recipient_id=task.recipient_id,
             )
             for task in tasks
         ]
@@ -962,7 +943,11 @@ class NotificationService:
                 teacher_name = task.teacher_name or "Учитель"
                 source_id = f"teacher_morning:{teacher_id}"
 
-                if (today_iso, source_id, recipient_id) in delivered:
+                if DeliveredKeyDTO(
+                    notification_date=today_iso,
+                    source_id=source_id,
+                    recipient_id=recipient_id
+                ) in delivered:
                     continue
 
                 lessons = (
@@ -1148,7 +1133,7 @@ class NotificationService:
         recipients_cache: dict[tuple[str, str], list[ScheduleChangeRecipientDTO]] = {}
         teacher_cache: dict[str, list[TeacherChangeRecipientDTO]] = {}
         display_numbers_cache: dict[tuple[str, str],dict[int, str],] = {}
-        pending: list[PendingSend] = []
+        pending: list[NotificationSendDTO] = []
 
         # --- Фаза 1 (collect) ---
         for change in changes:
@@ -1236,7 +1221,7 @@ class NotificationService:
                         ),
                     )
                     pending.append(
-                        PendingSend(
+                        NotificationSendDTO(
                             notification_type="schedule_change",
                             notification_date=change.date,
                             source_id=change.id,
@@ -1291,7 +1276,7 @@ class NotificationService:
                         )
 
                         pending.append(
-                            PendingSend(
+                            NotificationSendDTO(
                                 notification_type="teacher_change",
                                 notification_date=change.date,
                                 source_id=change.id,
@@ -1367,7 +1352,7 @@ class NotificationService:
         recipients_cache: dict[tuple[str, str], list[PreLessonRecipientDTO]] = {}
         teacher_cache: dict[str, list[TeacherPreLessonRecipientDTO]] = {}
 
-        pending: list[PendingSend] = []
+        pending: list[NotificationSendDTO] = []
 
         # --- Фаза 1 (collect) ---
         for lesson in lessons:
@@ -1419,7 +1404,7 @@ class NotificationService:
                     )
 
                     pending.append(
-                        PendingSend(
+                        NotificationSendDTO(
                             notification_type="pre_lesson",
                             notification_date=today_iso,
                             source_id=lesson.id,
@@ -1470,7 +1455,7 @@ class NotificationService:
                         )
 
                         pending.append(
-                            PendingSend(
+                            NotificationSendDTO(
                                 notification_type="teacher_pre_lesson",
                                 notification_date=today_iso,
                                 source_id=lesson.id,
@@ -1545,7 +1530,7 @@ class NotificationService:
             len(extras),
         )
         blocked_ids = await self._load_blocked_recipient_ids()
-        pending: list[PendingSend] = []
+        pending: list[NotificationSendDTO] = []
 
         # --- Фаза 1 (collect) ---
         for extra in extras:
@@ -1594,7 +1579,7 @@ class NotificationService:
                 )
 
                 pending.append(
-                    PendingSend(
+                    NotificationSendDTO(
                         notification_type="extra_class",
                         notification_date=today_iso,
                         source_id=str(extra_id),

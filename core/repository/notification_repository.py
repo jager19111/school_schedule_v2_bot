@@ -40,10 +40,11 @@ from core.models.dto import (
     ScheduleChangeRecipientDTO,
     TeacherChangeRecipientDTO,
     ExtraClassReminderTaskDTO,
+    DeliveredKeyDTO,       # НОВОЕ
+    PreLessonSourceDTO,    # НОВОЕ
 )
 
-# Ключ доставки: (notification_date, source_id, recipient_id).
-DeliveryKey = Tuple[str, str, int]
+
 
 
 class NotificationRepository(BaseRepository):
@@ -57,32 +58,29 @@ class NotificationRepository(BaseRepository):
     async def get_todays_lessons_for_pre_reminders(
         self,
         date_iso: str,
-    ) -> List[Dict[str, Any]]:
-        """
-        Возвращает все активные уроки текущего дня.
-
-        Дедупликация выполняется не через schedule_cache.is_notified, а через
-        notification_delivery_log отдельно для каждого получателя.
-        """
-        return await self._fetch_all(
+    ) -> List[PreLessonSourceDTO]:  # БЫЛО: List[Dict[str, Any]]
+        """Возвращает все активные уроки текущего дня через строгий DTO."""
+        rows = await self._fetch_all(
             """
-            SELECT
-                id,
-                date,
-                class_id,
-                group_id,
-                teacher_id,
-                start_time,
-                subject_name,
-                room_name
+            SELECT id, date, class_id, group_id, teacher_id, start_time, subject_name, room_name
             FROM schedule_cache
-            WHERE date = ?
-              AND is_cancelled = 0
-              AND is_methodological = 0
+            WHERE date = ? AND is_cancelled = 0 AND is_methodological = 0
             ORDER BY start_time, lesson_num, id
             """,
             (date_iso,),
         )
+        return [
+            PreLessonSourceDTO(
+                id=str(row["id"]),
+                date=str(row["date"]),
+                class_id=str(row["class_id"]),
+                group_id=row.get("group_id"),
+                teacher_id=row.get("teacher_id"),
+                start_time=str(row["start_time"]),
+                subject_name=row.get("subject_name"),
+                room_name=row.get("room_name"),
+            ) for row in rows
+        ]
 
     async def get_recipients_for_pre_lesson_reminder(
         self, class_id: str, group_id: str
@@ -536,9 +534,9 @@ class NotificationRepository(BaseRepository):
         self,
         *,
         notification_type: str,
-        candidate_keys: Sequence[DeliveryKey],
+        candidate_keys: Sequence[DeliveredKeyDTO],
         chunk_size: int = 400,
-    ) -> Set[DeliveryKey]:
+    ) -> Set[DeliveredKeyDTO]:
         """
         Батчевая проверка доставки списка кандидатов одним-несколькими
         запросами вместо одиночного SELECT на каждого получателя.
@@ -563,48 +561,37 @@ class NotificationRepository(BaseRepository):
         if not candidate_keys:
             return set()
 
-        unique_keys: Set[DeliveryKey] = set(candidate_keys)
-        delivered: Set[DeliveryKey] = set()
-
+        unique_keys: Set[DeliveredKeyDTO] = set(candidate_keys)
+        delivered: Set[DeliveredKeyDTO] = set()
         keys_list = list(unique_keys)
 
         for offset in range(0, len(keys_list), chunk_size):
             chunk = keys_list[offset:offset + chunk_size]
 
-            dates = sorted({key[0] for key in chunk})
-            sources = sorted({key[1] for key in chunk})
-            recipients = sorted({key[2] for key in chunk})
+            # Обращение через атрибуты DTO, а не индексы кортежа
+            dates = sorted({key.notification_date for key in chunk})
+            sources = sorted({key.source_id for key in chunk})
+            recipients = sorted({key.recipient_id for key in chunk})
 
             def _placeholders(values: list) -> str:
                 return ",".join("?" for _ in values)
 
             query = f"""
-            SELECT
-                notification_date,
-                source_id,
-                recipient_id
+            SELECT notification_date, source_id, recipient_id
             FROM notification_delivery_log
             WHERE notification_type = ?
               AND notification_date IN ({_placeholders(dates)})
               AND source_id IN ({_placeholders(sources)})
               AND recipient_id IN ({_placeholders(recipients)})
             """
-            params = (
-                notification_type,
-                *dates,
-                *sources,
-                *recipients,
-            )
-
-            rows = await self._fetch_all(
-                query,
-                params,
-            )
+            params = (notification_type, *dates, *sources, *recipients)
+            rows = await self._fetch_all(query, params)
+            
             for row in rows:
-                key: DeliveryKey = (
-                    row["notification_date"],
-                    row["source_id"],
-                    int(row["recipient_id"]),
+                key = DeliveredKeyDTO(
+                    notification_date=row["notification_date"],
+                    source_id=row["source_id"],
+                    recipient_id=int(row["recipient_id"]),
                 )
                 if key in unique_keys:
                     delivered.add(key)

@@ -805,9 +805,9 @@ class StudentTelegramSettingsDTO:
     child_notification_settings_locked: bool = False
     
     
-    
-# Добавьте в core/models/dto.py
-
+# ==========================================================    
+# DTO для всех публичных выходов notification-слоя
+# ==========================================================
 @dataclass(frozen=True, slots=True)
 class DebugBurstResultDTO:
     """Результат выполнения стресс-теста рассылки."""
@@ -825,6 +825,10 @@ class MorningSummaryTaskDTO:
     class_id: str | None
     group_id: str | None
 
+    def __post_init__(self):
+            if self.recipient_id <= 0:
+                raise ValueError("recipient_id must be strictly positive")
+
 @dataclass(frozen=True, slots=True)
 class TeacherMorningTaskDTO:
     recipient_id: int
@@ -839,6 +843,10 @@ class PreLessonRecipientDTO:
     recipient_kind: str
     child_name: str | None
 
+    def __post_init__(self):
+            if self.recipient_id <= 0:
+                raise ValueError("recipient_id must be strictly positive")
+            
 @dataclass(frozen=True, slots=True)
 class TeacherPreLessonRecipientDTO:
     recipient_id: int
@@ -871,3 +879,49 @@ class ExtraClassReminderTaskDTO:
     offset_minutes: int
     recipient_kind: str
     child_name: str | None
+    
+    
+# ==========================================================
+# Notification Service & Repository DTOs (DTO-first подход)
+# ==========================================================
+
+@dataclass(frozen=True, slots=True)
+class DeliveredKeyDTO:
+    """Единый формат ключа дедупликации доставки."""
+    notification_date: str
+    source_id: str
+    recipient_id: int
+
+    def __post_init__(self):
+        if not self.notification_date or not self.source_id:
+            raise ValueError("notification_date and source_id cannot be empty")
+        if self.recipient_id <= 0:
+            raise ValueError("recipient_id must be strictly positive")
+
+@dataclass(frozen=True, slots=True)
+class NotificationSendDTO:
+    """Модель кандидата на отправку (полностью заменяет PendingSend)."""
+    notification_type: str
+    notification_date: str
+    source_id: str
+    recipient_id: int
+    text: str
+    context: str = ""
+
+    def __post_init__(self):
+        if not self.text:
+            raise ValueError("Notification text cannot be empty")
+        if self.recipient_id <= 0:
+            raise ValueError("recipient_id must be strictly positive")
+
+@dataclass(frozen=True, slots=True)
+class PreLessonSourceDTO:
+    """DTO для урока, возвращаемого из репозитория для предурочных напоминаний (избавляемся от dict)."""
+    id: str
+    date: str
+    class_id: str
+    start_time: str
+    group_id: str | None = None
+    teacher_id: str | None = None
+    subject_name: str | None = None
+    room_name: str | None = None
