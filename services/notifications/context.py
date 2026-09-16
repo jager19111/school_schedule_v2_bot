@@ -2,7 +2,7 @@
 
 import uuid
 from dataclasses import dataclass, field
-from typing import Dict, List, Set, Tuple
+from typing import Dict, List, Set, Tuple, Any
 
 from core.models.dto import (
     ScheduleChangeRecipientDTO,
@@ -23,7 +23,8 @@ class NotificationTickContext:
     blocked_ids: Set[int] = field(default_factory=set)
     blocked_ids_loaded: bool = False
     display_numbers_cache: Dict[Tuple[str, str], Dict[int, str]] = field(default_factory=dict)
-    
+    # === НОВЫЙ КЕШ ДЛЯ СПРАВОЧНИКОВ ===
+    metadata_cache: Any | None = None    
     # Кеши получателей
     change_recipients_cache: Dict[Tuple[str, str], List[ScheduleChangeRecipientDTO]] = field(default_factory=dict)
     teacher_change_cache: Dict[str, List[TeacherChangeRecipientDTO]] = field(default_factory=dict)

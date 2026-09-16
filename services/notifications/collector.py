@@ -109,6 +109,13 @@ class NotificationCollector:
         self.extra_classes_service = extra_classes_service
         self.schedule_service = schedule_service
 
+    async def _get_metadata(self, ctx: NotificationTickContext):
+        """Ленивая загрузка справочников: 1 запрос к БД на весь тик рассылки."""
+        if ctx.metadata_cache is None:
+            ctx.metadata_cache = await self.schedule_repo.get_metadata()
+            ctx.queries += 1  # Считаем только реальный запрос!
+        return ctx.metadata_cache
+    
     async def collect_morning_summaries(self, ctx: NotificationTickContext) -> list[NotificationSendDTO]:
         now = self.time_service.get_now_base()
         current_time_str = now.strftime("%H:%M")
@@ -126,11 +133,12 @@ class NotificationCollector:
         ctx.processed_entities += len(tasks)
 
         try:
-            metadata = await self.schedule_repo.get_metadata()
-            ctx.queries += 1
+            metadata = await self._get_metadata(ctx)
+            classes = metadata.classes
+            groups = metadata.groups
         except Exception as e:
             logger.error("Infrastructure error: Failed to load schedule metadata: %s", e)
-            return []
+            classes, groups = {}, {}
 
         classes = metadata.classes
         groups = metadata.groups
@@ -258,12 +266,12 @@ class NotificationCollector:
         ctx.processed_entities += len(tasks)
 
         try:
-            metadata = await self.schedule_repo.get_metadata()
-            ctx.queries += 1
+            metadata = await self._get_metadata(ctx)
             classes = metadata.classes
+            groups = metadata.groups
         except Exception as e:
             logger.error("Infrastructure error: Failed to load schedule metadata: %s", e)
-            return []
+            classes, groups = {}, {}
         
         candidates: list[NotificationSendDTO] = []
 
@@ -350,14 +358,12 @@ class NotificationCollector:
 
         # === ЗАГРУЖАЕМ СПРАВОЧНИКИ (Для расшифровки 004 -> 2б) ===
         try:
-            metadata = await self.schedule_repo.get_metadata()
-            ctx.queries += 1
+            metadata = await self._get_metadata(ctx)
             classes = metadata.classes
             groups = metadata.groups
         except Exception as e:
             logger.error("Infrastructure error: Failed to load schedule metadata: %s", e)
-            classes = {}
-            groups = {}
+            classes, groups = {}, {}
         
         # 1. Формируем списки всех потенциальных получателей
         raw_student_candidates = []
