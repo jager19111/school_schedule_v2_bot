@@ -19,12 +19,9 @@ from core.models.dto import (
     MorningSummaryDTO,
     MorningLessonDTO,
     LessonReminderDTO,
-    ScheduleChangeRecipientDTO,
-    TeacherChangeRecipientDTO,
-    PreLessonRecipientDTO,
-    TeacherPreLessonRecipientDTO,
 )
 from core.mappers.notification_mapper import NotificationMapper
+from .context import NotificationTickContext
 
 logger = logging.getLogger(__name__)
 MAX_CHANGES_WINDOW_DAYS = 31
@@ -46,7 +43,7 @@ class NotificationCollector:
         self.extra_classes_service = extra_classes_service
         self.schedule_service = schedule_service
 
-    async def collect_morning_summaries(self) -> tuple[list[NotificationSendDTO], int]:
+    async def collect_morning_summaries(self, ctx: NotificationTickContext) -> list[NotificationSendDTO]:
         now = self.time_service.get_now_base()
         current_time_str = now.strftime("%H:%M")
         today_iso = now.date().isoformat()
@@ -54,14 +51,15 @@ class NotificationCollector:
 
         tasks = await self.repo.get_morning_summary_tasks(time_str=current_time_str)
         if not tasks:
-            return [], 0
+            return []
+            
+        ctx.processed_entities += len(tasks)
 
         metadata = await self.schedule_repo.get_metadata()
         classes = metadata.classes
         groups = metadata.groups
 
         summaries_by_recipient: dict[int, list[tuple[MorningSummaryTaskDTO, MorningSummaryDTO]]] = {}
-        display_numbers_cache: dict[tuple[str, str], dict[int, str]] = {}
 
         for task in tasks:
             try:
@@ -77,12 +75,12 @@ class NotificationCollector:
                     day_permutation = self.schedule_service.detect_day_permutation(lessons)
                     display_key = (child_class_id, today_iso)
 
-                    if display_key not in display_numbers_cache:
-                        display_numbers_cache[display_key] = await self.schedule_service.get_display_numbers_for_class_day(
+                    if display_key not in ctx.display_numbers_cache:
+                        ctx.display_numbers_cache[display_key] = await self.schedule_service.get_display_numbers_for_class_day(
                             class_id=child_class_id, date_iso=today_iso
                         )
 
-                    display_numbers = display_numbers_cache[display_key]
+                    display_numbers = ctx.display_numbers_cache[display_key]
                     user_groups = child_group_id.split(",") if child_group_id != "ALL" else ["ALL"]
 
                     for lesson in lessons:
@@ -163,16 +161,19 @@ class NotificationCollector:
                     )
                 )
 
-        return candidates, len(tasks)
+        ctx.candidates_found += len(candidates)
+        return candidates
 
-    async def collect_teacher_morning_summaries(self) -> tuple[list[NotificationSendDTO], int]:
+    async def collect_teacher_morning_summaries(self, ctx: NotificationTickContext) -> list[NotificationSendDTO]:
         now = self.time_service.get_now_base()
         current_time_str = now.strftime("%H:%M")
         today_iso = now.date().isoformat()
 
         tasks = await self.repo.get_teacher_morning_summary_tasks(time_str=current_time_str)
         if not tasks:
-            return [], 0
+            return []
+            
+        ctx.processed_entities += len(tasks)
 
         metadata = await self.schedule_repo.get_metadata()
         classes = metadata.classes
@@ -237,19 +238,18 @@ class NotificationCollector:
             except Exception:
                 logger.exception("Teacher morning summary failed: task=%r", task)
 
-        return candidates, len(tasks)
+        ctx.candidates_found += len(candidates)
+        return candidates
 
-    async def collect_upcoming_changes(self) -> tuple[list[NotificationSendDTO], int, int, int]:
+    async def collect_upcoming_changes(self, ctx: NotificationTickContext) -> list[NotificationSendDTO]:
         now = self.time_service.get_now_base()
         today = now.date()
         today_iso = today.isoformat()
         window_end_iso = (today + datetime.timedelta(days=MAX_CHANGES_WINDOW_DAYS)).isoformat()
 
         changes = await self.repo.get_pending_changes(start_date_iso=today_iso, end_date_iso=window_end_iso)
+        ctx.processed_entities += len(changes)
         
-        recipients_cache: dict[tuple[str, str], list[ScheduleChangeRecipientDTO]] = {}
-        teacher_cache: dict[str, list[TeacherChangeRecipientDTO]] = {}
-        display_numbers_cache: dict[tuple[str, str], dict[int, str]] = {}
         candidates: list[NotificationSendDTO] = []
 
         for change in changes:
@@ -259,21 +259,21 @@ class NotificationCollector:
 
                 try:
                     display_key = (change.class_id, change.date)
-                    if display_key not in display_numbers_cache:
-                        display_numbers_cache[display_key] = await self.schedule_service.get_display_numbers_for_class_day(
+                    if display_key not in ctx.display_numbers_cache:
+                        ctx.display_numbers_cache[display_key] = await self.schedule_service.get_display_numbers_for_class_day(
                             class_id=change.class_id, date_iso=change.date
                         )
-                    class_display_num = display_numbers_cache[display_key].get(change.lesson_num, str(change.lesson_num))
+                    class_display_num = ctx.display_numbers_cache[display_key].get(change.lesson_num, str(change.lesson_num))
                 except Exception:
                     logger.exception("Failed to calculate display number: class_id=%s date=%s", change.class_id, change.date)
 
                 cache_key = (change.class_id, change.group_id)
-                if cache_key not in recipients_cache:
-                    recipients_cache[cache_key] = await self.repo.get_recipients_for_schedule_change(
+                if cache_key not in ctx.change_recipients_cache:
+                    ctx.change_recipients_cache[cache_key] = await self.repo.get_recipients_for_schedule_change(
                         class_id=change.class_id, group_id=change.group_id
                     )
 
-                for recipient in recipients_cache[cache_key]:
+                for recipient in ctx.change_recipients_cache[cache_key]:
                     window_days = recipient.changes_window_days
                     if window_days <= 0:
                         continue
@@ -301,10 +301,10 @@ class NotificationCollector:
                 if not teacher_id:
                     continue
 
-                if teacher_id not in teacher_cache:
-                    teacher_cache[teacher_id] = await self.repo.get_teacher_recipients_for_schedule_change(teacher_id=teacher_id)
+                if teacher_id not in ctx.teacher_change_cache:
+                    ctx.teacher_change_cache[teacher_id] = await self.repo.get_teacher_recipients_for_schedule_change(teacher_id=teacher_id)
 
-                for recipient in teacher_cache[teacher_id]:
+                for recipient in ctx.teacher_change_cache[teacher_id]:
                     try:
                         window_days = recipient.changes_window_days
                         if window_days <= 0:
@@ -336,16 +336,16 @@ class NotificationCollector:
             except Exception:
                 logger.exception("Unexpected schedule change collect error: change=%r", change)
 
-        return candidates, len(changes), len(recipients_cache), len(teacher_cache)
+        ctx.candidates_found += len(candidates)
+        return candidates
 
-    async def collect_pre_lesson_reminders(self) -> tuple[list[NotificationSendDTO], int, int, int]:
+    async def collect_pre_lesson_reminders(self, ctx: NotificationTickContext) -> list[NotificationSendDTO]:
         now = self.time_service.get_now_base()
         today_iso = now.date().isoformat()
 
         lessons = await self.repo.get_todays_lessons_for_pre_reminders(date_iso=today_iso)
-
-        recipients_cache: dict[tuple[str, str], list[PreLessonRecipientDTO]] = {}
-        teacher_cache: dict[str, list[TeacherPreLessonRecipientDTO]] = {}
+        ctx.processed_entities += len(lessons)
+        
         candidates: list[NotificationSendDTO] = []
 
         for lesson in lessons:
@@ -357,12 +357,12 @@ class NotificationCollector:
                     continue
 
                 cache_key = (lesson.class_id, lesson.group_id or "ALL")
-                if cache_key not in recipients_cache:
-                    recipients_cache[cache_key] = await self.repo.get_recipients_for_pre_lesson_reminder(
+                if cache_key not in ctx.pre_lesson_recipients_cache:
+                    ctx.pre_lesson_recipients_cache[cache_key] = await self.repo.get_recipients_for_pre_lesson_reminder(
                         class_id=lesson.class_id, group_id=lesson.group_id or "ALL"
                     )
 
-                for recipient in recipients_cache[cache_key]:
+                for recipient in ctx.pre_lesson_recipients_cache[cache_key]:
                     offset_minutes = recipient.offset_minutes
                     if offset_minutes <= 0 or delta_minutes > offset_minutes:
                         continue
@@ -390,10 +390,10 @@ class NotificationCollector:
                 if not teacher_id:
                     continue
 
-                if teacher_id not in teacher_cache:
-                    teacher_cache[teacher_id] = await self.repo.get_teacher_recipients_for_pre_lesson_reminder(teacher_id=teacher_id)
+                if teacher_id not in ctx.teacher_pre_lesson_cache:
+                    ctx.teacher_pre_lesson_cache[teacher_id] = await self.repo.get_teacher_recipients_for_pre_lesson_reminder(teacher_id=teacher_id)
 
-                for recipient in teacher_cache[teacher_id]:
+                for recipient in ctx.teacher_pre_lesson_cache[teacher_id]:
                     try:
                         offset_minutes = recipient.offset_minutes
                         if offset_minutes <= 0 or delta_minutes > offset_minutes:
@@ -427,14 +427,17 @@ class NotificationCollector:
             except Exception:
                 logger.exception("Unexpected pre-lesson reminder collect error: lesson=%r", lesson)
 
-        return candidates, len(lessons), len(recipients_cache), len(teacher_cache)
+        ctx.candidates_found += len(candidates)
+        return candidates
 
-    async def collect_extra_class_reminders(self) -> list[NotificationSendDTO]:
+    async def collect_extra_class_reminders(self, ctx: NotificationTickContext) -> list[NotificationSendDTO]:
         now = self.time_service.get_now_base()
         today_iso = now.date().isoformat()
         weekday = now.isoweekday()
 
         extras = await self.repo.get_todays_extra_classes_for_reminders(day_of_week=weekday)
+        ctx.processed_entities += len(extras)
+        
         candidates: list[NotificationSendDTO] = []
 
         for extra in extras:
@@ -471,4 +474,5 @@ class NotificationCollector:
             except Exception:
                 logger.exception("Unexpected extra reminder collect error: task=%r", extra)
 
+        ctx.candidates_found += len(candidates)
         return candidates
