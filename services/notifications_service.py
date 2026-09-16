@@ -84,7 +84,7 @@ class NotificationService:
             NotificationSendDTO(
                 notification_type="debug_test",
                 notification_date=today_iso,
-                source_id=f"debug_burst:{index}",
+                source_ids=f"debug_burst:{index}",
                 recipient_id=chat_id,
                 text=f"🧪 Стресс-тест уведомлений: сообщение {index + 1} из {count}",
                 context="stress_test",

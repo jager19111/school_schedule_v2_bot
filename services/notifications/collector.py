@@ -2,8 +2,8 @@
 
 import datetime
 import logging
-import hashlib
 from collections import defaultdict
+
 from bot.utils.ui_renderer import UIRenderer
 
 from core.repository.notification_repository import NotificationRepository
@@ -13,11 +13,17 @@ from services.schedule_service import ScheduleService
 from services.time_service import TimeService
 
 from core.models.dto import (
-    NotificationSendDTO, DailyChangeSummaryDTO,
-    MorningSummaryTaskDTO, ChangeReminderDTO,
-    MorningSummaryDTO, ScheduleChangeRecipientDTO,
-    MorningLessonDTO, TeacherChangeRecipientDTO,
-    LessonReminderDTO, PendingChangeDTO
+    NotificationSendDTO,
+    MorningSummaryTaskDTO,
+    MorningSummaryDTO,
+    MorningLessonDTO,
+    LessonReminderDTO,
+    ChangeReminderDTO,
+    DailyChangeSummaryDTO,
+    PendingChangeDTO,
+    ScheduleChangeRecipientDTO,
+    TeacherChangeRecipientDTO,
+    DeliveredKeyDTO,
 )
 from core.mappers.notification_mapper import NotificationMapper
 from .context import NotificationTickContext
@@ -26,20 +32,8 @@ logger = logging.getLogger(__name__)
 MAX_CHANGES_WINDOW_DAYS = 31
 
 
-
-
 class DailyChangesAggregator:
-    """Хелпер для склеивания одиночных изменений расписания в дневные сводки."""
-    
-    @staticmethod
-    def _generate_composite_source_id(target_prefix: str, date: str, changes: list[ChangeReminderDTO]) -> str:
-        """
-        Создает уникальный ID на основе набора изменений. 
-        Если добавится новое изменение, ID сменится и бот пришлет обновленную сводку.
-        """
-        ids_str = ",".join(sorted(c.change_id for c in changes))
-        h = hashlib.md5(ids_str.encode()).hexdigest()[:8]
-        return f"sch_agg:{target_prefix}:{date}:{h}"
+    """Хелпер для склеивания Delta-изменений расписания в дневные сводки."""
 
     @staticmethod
     def aggregate_student_changes(
@@ -47,31 +41,24 @@ class DailyChangesAggregator:
     ) -> list[NotificationSendDTO]:
         groups = defaultdict(list)
         for rec_id, date, rec, dto in student_records:
-            target_key = f"s_{rec.student_id}" if rec.student_id else f"w_{rec.watch_target_title}"
-            groups[(rec_id, date, target_key, rec)].append(dto)
+            groups[(rec_id, date, rec)].append(dto)
 
         candidates = []
-        for (rec_id, date, target_key, rec), changes in groups.items():
+        for (rec_id, date, rec), changes in groups.items():
             summary = DailyChangeSummaryDTO(
-                date=date,
-                recipient_kind=rec.recipient_kind,
-                changes=changes,
-                child_name=rec.child_name,
-                watch_target_title=rec.watch_target_title
+                date=date, recipient_kind=rec.recipient_kind, changes=changes,
+                child_name=rec.child_name, watch_target_title=rec.watch_target_title
             )
-            
             try:
                 text = UIRenderer.render_daily_changes_summary(summary)
             except Exception as e:
                 logger.error("Render error for aggregated schedule changes: %s", e)
                 continue
 
-            source_id = DailyChangesAggregator._generate_composite_source_id(target_key, date, changes)
-            
             candidates.append(NotificationSendDTO(
                 notification_type="schedule_change",
                 notification_date=date,
-                source_id=source_id,
+                source_ids=[c.change_id for c in changes],  # Передаем список реальных ID уроков
                 recipient_id=rec_id,
                 text=text,
                 context=f"aggregated_changes={len(changes)}"
@@ -89,39 +76,31 @@ class DailyChangesAggregator:
         candidates = []
         for (rec_id, date, teacher_id, teacher_name, rec), changes in groups.items():
             summary = DailyChangeSummaryDTO(
-                date=date,
-                recipient_kind="teacher",
-                changes=changes,
-                teacher_name=teacher_name
+                date=date, recipient_kind="teacher", changes=changes, teacher_name=teacher_name
             )
-            
             try:
                 text = UIRenderer.render_daily_changes_summary(summary)
             except Exception as e:
                 logger.error("Render error for aggregated teacher changes: %s", e)
                 continue
 
-            source_id = DailyChangesAggregator._generate_composite_source_id(f"t_{teacher_id}", date, changes)
-            
             candidates.append(NotificationSendDTO(
                 notification_type="teacher_change",
                 notification_date=date,
-                source_id=source_id,
+                source_ids=[c.change_id for c in changes],  # Передаем список реальных ID уроков
                 recipient_id=rec_id,
                 text=text,
                 context=f"teacher_id={teacher_id}, aggregated={len(changes)}"
             ))
         return candidates
-    
+
+
 class NotificationCollector:
     """Сборщик кандидатов. Превращает данные базы в готовые NotificationSendDTO."""
 
     def __init__(
-        self,
-        notification_repo: NotificationRepository,
-        time_service: TimeService,
-        schedule_repo: ScheduleRepository,
-        extra_classes_service: ExtraClassesService,
+        self, notification_repo: NotificationRepository, time_service: TimeService,
+        schedule_repo: ScheduleRepository, extra_classes_service: ExtraClassesService,
         schedule_service: ScheduleService,
     ) -> None:
         self.repo = notification_repo
@@ -143,9 +122,7 @@ class NotificationCollector:
             logger.exception("Infrastructure error: Failed to fetch morning summary tasks: %s", e)
             return []
 
-        if not tasks:
-            return []
-            
+        if not tasks: return []
         ctx.processed_entities += len(tasks)
 
         try:
@@ -217,17 +194,13 @@ class NotificationCollector:
                 class_name = child_class_id
                 if child_class_id:
                     class_obj = classes.get(child_class_id)
-                    if class_obj is not None:
-                        class_name = class_obj.name
+                    if class_obj is not None: class_name = class_obj.name
 
                 summary_dto = MorningSummaryDTO(
-                    date_iso=today_iso,
-                    lessons=lessons_dtos,
+                    date_iso=today_iso, lessons=lessons_dtos,
                     child_name=(task.child_name if task.recipient_kind == "adult" else None),
-                    class_id=child_class_id,
-                    class_name=class_name,
-                    has_permutation=day_permutation,
-                    origin="student",
+                    class_id=child_class_id, class_name=class_name,
+                    has_permutation=day_permutation, origin="student",
                 )
                 summaries_by_recipient.setdefault(recipient_id, []).append((task, summary_dto))
 
@@ -246,34 +219,25 @@ class NotificationCollector:
                     continue
                     
                 has_changes = any((lesson.is_exchange or lesson.is_cancelled) for lesson in summary_dto.lessons if not lesson.is_extra)
-            # === Манифест действий вместо физической клавиатуры ===
                 action_type = None
                 action_payload = None
 
                 if has_changes:
                     action_type = "day_changes"
                     action_payload = {
-                        "target_kind": "student",
-                        "target_id": task.target_student_id,
-                        "class_id": str(task.class_id),
-                        "group_id": str(task.group_id or "ALL"),
-                        "date_iso": today_iso,
-                        "origin": "class",
-                        "return_to": "morning",
+                        "target_kind": "student", "target_id": task.target_student_id,
+                        "class_id": str(task.class_id), "group_id": str(task.group_id or "ALL"),
+                        "date_iso": today_iso, "origin": "class", "return_to": "morning",
                     }
 
-                candidates.append(
-                    NotificationSendDTO(
-                        notification_type="morning_summary",
-                        notification_date=today_iso,
-                        source_id=f"morning_summary:{task.target_student_id}",
-                        recipient_id=recipient_id,
-                        text=text,
-                        action_type=action_type,
-                        action_payload=action_payload,
-                        context=f"student_id={task.target_student_id}"
-                    )
-                )
+                candidates.append(NotificationSendDTO(
+                    notification_type="morning_summary",
+                    notification_date=today_iso,
+                    source_ids=[f"morning_summary:{task.target_student_id}"],
+                    recipient_id=recipient_id, text=text,
+                    action_type=action_type, action_payload=action_payload,
+                    context=f"student_id={task.target_student_id}"
+                ))
 
         ctx.candidates += len(candidates)
         return candidates
@@ -286,8 +250,7 @@ class NotificationCollector:
         try:
             tasks = await self.repo.get_teacher_morning_summary_tasks(time_str=current_time_str)
             ctx.queries += 1
-            if not tasks:
-                return []
+            if not tasks: return []
         except Exception as e:
             logger.exception("Infrastructure error: Failed to fetch teacher morning tasks: %s", e)
             return []
@@ -327,9 +290,7 @@ class NotificationCollector:
                         )
                     )
 
-                if not lessons_dtos:
-                    continue
-
+                if not lessons_dtos: continue
                 lessons_dtos.sort(key=lambda item: (item.start_time, (item.lesson_num if item.lesson_num is not None else 99)))
 
                 summary_dto = MorningSummaryDTO(                    
@@ -344,34 +305,25 @@ class NotificationCollector:
                     continue
                     
                 has_changes = any((lesson.is_exchange or lesson.is_cancelled) for lesson in summary_dto.lessons if not lesson.is_extra)
-                # === Манифест действий вместо физической клавиатуры ===
                 action_type = None
                 action_payload = None
 
                 if has_changes:
                     action_type = "day_changes"
                     action_payload = {
-                        "target_kind": "teacher",
-                        "target_id": teacher_id,
-                        "class_id": "ALL",
-                        "group_id": "ALL",
-                        "date_iso": today_iso,
-                        "origin": "teacher",
-                        "return_to": "morning",
+                        "target_kind": "teacher", "target_id": teacher_id,
+                        "class_id": "ALL", "group_id": "ALL",
+                        "date_iso": today_iso, "origin": "teacher", "return_to": "morning",
                     }
 
-                candidates.append(
-                    NotificationSendDTO(
-                        notification_type="teacher_morning",
-                        notification_date=today_iso,
-                        source_id=f"teacher_morning:{teacher_id}",
-                        recipient_id=recipient_id,
-                        text=text,
-                        action_type=action_type,
-                        action_payload=action_payload,
-                        context=f"teacher_id={teacher_id}"
-                    )
-                )
+                candidates.append(NotificationSendDTO(
+                    notification_type="teacher_morning",
+                    notification_date=today_iso,
+                    source_ids=[f"teacher_morning:{teacher_id}"],
+                    recipient_id=recipient_id, text=text,
+                    action_type=action_type, action_payload=action_payload,
+                    context=f"teacher_id={teacher_id}"
+                ))
 
             except (KeyError, ValueError, TypeError) as e:
                 logger.error("Data prep error: Teacher morning summary failed for %s: %s", getattr(task, 'teacher_id', 'unknown'), e)
@@ -396,21 +348,16 @@ class NotificationCollector:
             
         ctx.processed_entities += len(changes)
         
-        # Словари для устранения дублей NIKA (оставляем только самую качественную запись урока)
-        student_candidates_map: dict[tuple, tuple[int, int, str, ScheduleChangeRecipientDTO, ChangeReminderDTO]] = {}
-        teacher_candidates_map: dict[tuple, tuple[int, int, str, TeacherChangeRecipientDTO, ChangeReminderDTO, str]] = {}
-
-        def get_change_score(c: PendingChangeDTO) -> int:
-            """Оценивает 'качество' записи. Прямая замена > Добавление > Отмена."""
-            if c.is_exchange and c.original_subject_name: return 3
-            if c.is_exchange: return 2
-            return 1
+        # 1. Формируем списки всех потенциальных получателей
+        raw_student_candidates = []
+        raw_teacher_candidates = []
+        student_candidate_keys = []
+        teacher_candidate_keys = []
 
         for change in changes:
             try:
                 change_date = self.time_service.date_from_iso(change.date)
                 class_display_num = str(change.lesson_num)
-                score = get_change_score(change)
 
                 display_key = (change.class_id, change.date)
                 if display_key not in ctx.display_numbers_cache:
@@ -428,23 +375,13 @@ class NotificationCollector:
 
                 for recipient in ctx.change_recipients_cache[cache_key]:
                     window_days = recipient.changes_window_days
-                    if window_days <= 0 or not (today <= change_date <= (today + datetime.timedelta(days=window_days))):
-                        continue
-                        
-                    dedup_key = (recipient.recipient_id, change.date, change.lesson_num, change.group_id)
-
-                    if dedup_key not in student_candidates_map or score >= student_candidates_map[dedup_key][0]:
-                        dto = NotificationMapper.to_change_reminder_dto(
-                            change,
-                            display_num=class_display_num,
-                            child_name=(recipient.child_name if recipient.recipient_kind == "adult" else None),
-                            watch_target_title=(recipient.watch_target_title if recipient.recipient_kind == "watch" else None),
-                        )
-                        student_candidates_map[dedup_key] = (score, recipient.recipient_id, change.date, recipient, dto)
+                    if window_days > 0 and (today <= change_date <= (today + datetime.timedelta(days=window_days))):
+                        del_key = DeliveredKeyDTO(change.date, change.id, recipient.recipient_id)
+                        student_candidate_keys.append(del_key)
+                        raw_student_candidates.append((del_key, change, recipient, class_display_num))
 
                 teacher_id = change.teacher_id
-                if not teacher_id:
-                    continue
+                if not teacher_id: continue
 
                 if teacher_id not in ctx.teacher_change_cache:
                     ctx.teacher_change_cache[teacher_id] = await self.repo.get_teacher_recipients_for_schedule_change(teacher_id=teacher_id)
@@ -452,22 +389,61 @@ class NotificationCollector:
 
                 for recipient in ctx.teacher_change_cache[teacher_id]:
                     window_days = recipient.changes_window_days
-                    if window_days <= 0 or not (today <= change_date <= (today + datetime.timedelta(days=window_days))):
-                        continue
-
-                    dedup_key = (recipient.recipient_id, change.date, change.lesson_num, change.group_id)
-
-                    if dedup_key not in teacher_candidates_map or score >= teacher_candidates_map[dedup_key][0]:
-                        dto = NotificationMapper.to_change_reminder_dto(change, display_num=str(change.lesson_num))
+                    if window_days > 0 and (today <= change_date <= (today + datetime.timedelta(days=window_days))):
+                        del_key = DeliveredKeyDTO(change.date, change.id, recipient.recipient_id)
+                        teacher_candidate_keys.append(del_key)
                         teacher_name = change.teacher_name or "Учитель"
-                        teacher_candidates_map[dedup_key] = (score, recipient.recipient_id, change.date, recipient, dto, teacher_name)
+                        raw_teacher_candidates.append((del_key, change, recipient, teacher_name))
 
-            except (KeyError, ValueError, TypeError) as e:
-                logger.error("Data prep error for schedule change=%s: %s", getattr(change, 'id', 'unknown'), e)
             except Exception as e:
-                logger.exception("Infrastructure error during schedule change collect: %s", e)
+                logger.error("Data prep error for schedule change=%s: %s", getattr(change, 'id', 'unknown'), e)
 
-        # Выгружаем значения без Score и отправляем в агрегатор
+        # 2. Получаем списки УЖЕ доставленных изменений (чтобы реализовать Delta-оповещение)
+        try:
+            student_delivered = await self.repo.get_delivered_keys(notification_type="schedule_change", candidate_keys=student_candidate_keys)
+            teacher_delivered = await self.repo.get_delivered_keys(notification_type="teacher_change", candidate_keys=teacher_candidate_keys)
+            ctx.queries += 2
+        except Exception as e:
+            logger.error("Infrastructure error: Failed to fetch delivered keys for delta filter: %s", e)
+            student_delivered, teacher_delivered = set(), set()
+
+        def get_change_score(c: PendingChangeDTO) -> int:
+            """Оценивает 'качество' записи. Прямая замена > Добавление > Отмена."""
+            if c.is_exchange and c.original_subject_name: return 3
+            if c.is_exchange: return 2
+            return 1
+
+        student_candidates_map = {}
+        teacher_candidates_map = {}
+
+        # 3. Фильтруем (Delta) и применяем Quality Score (Дедупликация подгрупп NIKA)
+        for del_key, change, recipient, class_display_num in raw_student_candidates:
+            if del_key in student_delivered:
+                continue  # Уже отправляли, пропускаем!
+                
+            dedup_key = (recipient.recipient_id, change.date, change.lesson_num, change.group_id)
+            score = get_change_score(change)
+            
+            if dedup_key not in student_candidates_map or score >= student_candidates_map[dedup_key][0]:
+                dto = NotificationMapper.to_change_reminder_dto(
+                    change, display_num=class_display_num,
+                    child_name=(recipient.child_name if recipient.recipient_kind == "adult" else None),
+                    watch_target_title=(recipient.watch_target_title if recipient.recipient_kind == "watch" else None),
+                )
+                student_candidates_map[dedup_key] = (score, recipient.recipient_id, change.date, recipient, dto)
+
+        for del_key, change, recipient, teacher_name in raw_teacher_candidates:
+            if del_key in teacher_delivered:
+                continue  # Уже отправляли, пропускаем!
+                
+            dedup_key = (recipient.recipient_id, change.date, change.lesson_num, change.group_id)
+            score = get_change_score(change)
+            
+            if dedup_key not in teacher_candidates_map or score >= teacher_candidates_map[dedup_key][0]:
+                dto = NotificationMapper.to_change_reminder_dto(change, display_num=str(change.lesson_num))
+                teacher_candidates_map[dedup_key] = (score, recipient.recipient_id, change.date, recipient, dto, teacher_name)
+
+        # 4. Склеиваем и рендерим
         student_records = [val[1:] for val in student_candidates_map.values()]
         teacher_records = [val[1:] for val in teacher_candidates_map.values()]
 
@@ -497,8 +473,7 @@ class NotificationCollector:
                 lesson_start_at = datetime.datetime.strptime(f"{today_iso} {lesson.start_time}", "%Y-%m-%d %H:%M").replace(tzinfo=self.time_service.base_tz)
                 delta_minutes = (lesson_start_at - now).total_seconds() / 60.0
 
-                if delta_minutes <= 0:
-                    continue
+                if delta_minutes <= 0: continue
 
                 cache_key = (lesson.class_id, lesson.group_id or "ALL")
                 if cache_key not in ctx.pre_lesson_recipients_cache:
@@ -509,37 +484,27 @@ class NotificationCollector:
 
                 for recipient in ctx.pre_lesson_recipients_cache[cache_key]:
                     offset_minutes = recipient.offset_minutes
-                    if offset_minutes <= 0 or delta_minutes > offset_minutes:
-                        continue
+                    if offset_minutes <= 0 or delta_minutes > offset_minutes: continue
 
                     dto = LessonReminderDTO(
-                        subject_name=lesson.subject_name or "—",
-                        start_time=lesson.start_time or "—",
-                        room_name=lesson.room_name or "—",
-                        is_extra=False,
+                        subject_name=lesson.subject_name or "—", start_time=lesson.start_time or "—",
+                        room_name=lesson.room_name or "—", is_extra=False,
                         child_name=(recipient.child_name if recipient.recipient_kind == "adult" else None),
                     )
 
-                    try:
-                        text = UIRenderer.render_lesson_reminder(dto)
+                    try: text = UIRenderer.render_lesson_reminder(dto)
                     except Exception as e:
                         logger.error("Render error for lesson reminder %s: %s", lesson.id, e)
                         continue
 
-                    candidates.append(
-                        NotificationSendDTO(
-                            notification_type="pre_lesson",
-                            notification_date=today_iso,
-                            source_id=lesson.id,
-                            recipient_id=recipient.recipient_id,
-                            text=text,
-                            context=f"lesson_id={lesson.id}, kind={recipient.recipient_kind}",
-                        )
-                    )
+                    candidates.append(NotificationSendDTO(
+                        notification_type="pre_lesson", notification_date=today_iso,
+                        source_ids=[lesson.id], recipient_id=recipient.recipient_id,
+                        text=text, context=f"lesson_id={lesson.id}, kind={recipient.recipient_kind}",
+                    ))
 
                 teacher_id = lesson.teacher_id
-                if not teacher_id:
-                    continue
+                if not teacher_id: continue
 
                 if teacher_id not in ctx.teacher_pre_lesson_cache:
                     ctx.teacher_pre_lesson_cache[teacher_id] = await self.repo.get_teacher_recipients_for_pre_lesson_reminder(teacher_id=teacher_id)
@@ -547,36 +512,24 @@ class NotificationCollector:
 
                 for recipient in ctx.teacher_pre_lesson_cache[teacher_id]:
                     offset_minutes = recipient.offset_minutes
-                    if offset_minutes <= 0 or delta_minutes > offset_minutes:
-                        continue
+                    if offset_minutes <= 0 or delta_minutes > offset_minutes: continue
 
                     dto = LessonReminderDTO(
-                        subject_name=lesson.subject_name or "—",
-                        start_time=lesson.start_time or "—",
-                        room_name=lesson.room_name or "—",
-                        is_extra=False,
-                        child_name=None,
+                        subject_name=lesson.subject_name or "—", start_time=lesson.start_time or "—",
+                        room_name=lesson.room_name or "—", is_extra=False, child_name=None,
                     )
                     
                     try:
-                        text = (
-                            "👨‍🏫 <b>Напоминание об уроке</b>\n\n"
-                            f"{UIRenderer.render_lesson_reminder(dto)}"
-                        )
+                        text = "👨‍🏫 <b>Напоминание об уроке</b>\n\n" + UIRenderer.render_lesson_reminder(dto)
                     except Exception as e:
                         logger.error("Render error for teacher lesson reminder %s: %s", lesson.id, e)
                         continue
 
-                    candidates.append(
-                        NotificationSendDTO(
-                            notification_type="teacher_pre_lesson",
-                            notification_date=today_iso,
-                            source_id=lesson.id,
-                            recipient_id=recipient.recipient_id,
-                            text=text,
-                            context=f"teacher_id={teacher_id}, lesson_id={lesson.id}",
-                        )
-                    )
+                    candidates.append(NotificationSendDTO(
+                        notification_type="teacher_pre_lesson", notification_date=today_iso,
+                        source_ids=[lesson.id], recipient_id=recipient.recipient_id,
+                        text=text, context=f"teacher_id={teacher_id}, lesson_id={lesson.id}",
+                    ))
 
             except (KeyError, ValueError, TypeError) as e:
                 logger.error("Data prep error for pre-lesson reminder lesson=%s: %s", getattr(lesson, 'id', 'unknown'), e)
@@ -604,39 +557,29 @@ class NotificationCollector:
         for extra in extras:
             try:
                 offset_minutes = extra.offset_minutes
-                if offset_minutes <= 0:
-                    continue
+                if offset_minutes <= 0: continue
 
                 start_at = datetime.datetime.strptime(f"{today_iso} {extra.time_start}", "%Y-%m-%d %H:%M").replace(tzinfo=self.time_service.base_tz)
                 delta_minutes = (start_at - now).total_seconds() / 60.0
 
-                if delta_minutes <= 0 or delta_minutes > offset_minutes:
-                    continue
+                if delta_minutes <= 0 or delta_minutes > offset_minutes: continue
 
                 dto = LessonReminderDTO(
-                    subject_name=extra.title,
-                    start_time=extra.time_start,
-                    room_name=extra.location or "—",
-                    is_extra=True,
+                    subject_name=extra.title, start_time=extra.time_start,
+                    room_name=extra.location or "—", is_extra=True,
                     child_name=(extra.child_name if extra.recipient_kind == "adult" else None),
                 )
 
-                try:
-                    text = UIRenderer.render_lesson_reminder(dto)
+                try: text = UIRenderer.render_lesson_reminder(dto)
                 except Exception as e:
                     logger.error("Render error for extra class %s: %s", extra.extra_id, e)
                     continue
 
-                candidates.append(
-                    NotificationSendDTO(
-                        notification_type="extra_class",
-                        notification_date=today_iso,
-                        source_id=str(extra.extra_id),
-                        recipient_id=extra.recipient_id,
-                        text=text,
-                        context=f"extra_id={extra.extra_id}, kind={extra.recipient_kind}",
-                    )
-                )
+                candidates.append(NotificationSendDTO(
+                    notification_type="extra_class", notification_date=today_iso,
+                    source_ids=[str(extra.extra_id)], recipient_id=extra.recipient_id,
+                    text=text, context=f"extra_id={extra.extra_id}, kind={extra.recipient_kind}",
+                ))
 
             except (KeyError, ValueError, TypeError) as e:
                 logger.error("Data prep error for extra class=%s: %s", getattr(extra, 'extra_id', 'unknown'), e)

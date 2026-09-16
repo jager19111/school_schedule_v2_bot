@@ -937,7 +937,7 @@ class NotificationSendDTO:
     """Модель кандидата на отправку (полностью заменяет PendingSend)."""
     notification_type: str
     notification_date: str
-    source_id: str
+    source_ids: str
     recipient_id: int
     text: str
     context: str = ""
@@ -948,7 +948,7 @@ class NotificationSendDTO:
     def __post_init__(self):
         if not self.notification_type or not str(self.notification_type).strip():
             raise ValueError("notification_type cannot be empty")
-        if not self.source_id or not str(self.source_id).strip():
+        if not self.source_ids or not str(self.source_ids).strip():
             raise ValueError("source_id cannot be empty")
         if not self.text or not str(self.text).strip():
             raise ValueError("Notification text cannot be empty")
