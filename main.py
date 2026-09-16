@@ -75,6 +75,10 @@ from database.migrations import apply_migrations
 
 from bot.utils.ui_renderer import UIRenderer
 
+from services.notifications.collector import NotificationCollector
+from services.notifications.pipeline import NotificationPipeline
+from services.notifications.dispatcher import NotificationDispatcher
+
 from bot.middlewares.antiflood import AntiFloodMiddleware
 from bot.middlewares.error_middleware import GlobalErrorMiddleware
 from bot.handlers import (
@@ -355,6 +359,16 @@ async def main():
         watch_target_repo = WatchTargetRepository(db_path=db_connection, time_service=time_service)
         student_repo = StudentRepository(db_path=db_connection, time_service=time_service)
 
+        # =====================================================================
+        # ВНИМАНИЕ / TODO НА БУДУЩЕЕ (Изучить Dishka):
+        # Количество зависимостей растет, ручная сборка начинает раздувать main.py.
+        # Когда появится время, рекомендуется переписать этот блок на DI-фреймворк Dishka.
+        # Это позволит:
+        #   1. Избавиться от строгого порядка инициализации (Dishka сама строит граф).
+        #   2. Использовать Scopes (например, Scope.REQUEST для сессий БД на каждый хендлер).
+        #   3. Чистить код хендлеров через декоратор @inject вместо проброса через dp.
+        # =====================================================================
+
         # 5. Сервисы
         profile_service = ProfileService(profile_repo)
         students_service = StudentsService(student_repo, profile_service=profile_service)
@@ -362,7 +376,19 @@ async def main():
         schedule_service = ScheduleService(schedule_repo=schedule_repo, time_service=time_service, extra_classes_service=extra_classes_service)
         
         watch_targets_service = WatchTargetsService(repository=watch_target_repo)
-        notification_service = NotificationService(bot=bot, notification_repo=notification_repo, time_service=time_service, schedule_repo=schedule_repo, extra_classes_service=extra_classes_service, schedule_service = schedule_service, admin_ids=config.ADMIN_IDS,)
+        # Обновленный тонкий фасад NotificationService со всеми новыми зависимостями
+        # Подсервисы для новой модульной системы уведомлений
+        notification_collector = NotificationCollector(notification_repo=notification_repo, time_service=time_service, schedule_repo=schedule_repo, extra_classes_service=extra_classes_service, schedule_service = schedule_service)
+        notification_dispatcher = NotificationDispatcher(bot=bot, notification_repo=notification_repo, admin_ids=config.ADMIN_IDS, )
+        notification_pipeline = NotificationPipeline(dispatcher=notification_dispatcher, notification_repo=notification_repo,)
+    
+        notification_service = NotificationService(
+            collector=notification_collector,
+            pipeline=notification_pipeline,
+            dispatcher=notification_dispatcher,
+            time_service=time_service,
+
+        )
         cleanup_job = UserCleanupJob(user_repo, time_service=time_service, dormant_days=60)
         students_service = StudentsService(student_repo, profile_service=profile_service)
         admin_service = AdminService(admin_repo=admin_repo, schedule_repo=schedule_repo, admin_ids=config.ADMIN_IDS)
@@ -414,7 +440,7 @@ async def main():
             db_path=config.DB_PATH,
             notification_service=notification_service, # Для теста из админ хендлера
             antiflood=antiflood_middleware,
-            config=config
+            config=config,
         )
 
         # 7. Первоначальная синхронизация кэша при старте

@@ -1,30 +1,4 @@
 # core/repository/notification_repository.py
-#
-# РЕШЁННЫЕ ПРОБЛЕМЫ:
-#
-# 1. RAM-бомба (Задача 1.4): get_pending_changes с жёстким фильтром
-#    по дате на уровне СУБД + частичный индекс idx_schedule_pending_changes.
-#
-# 2. Strict Time Governance (Задача 1.3): record_notification_delivery
-#    пишет sent_at из TimeService.
-#
-# 3. НОВОЕ (Этап 2, фикс N+1): get_delivered_keys — батчевая проверка
-#    доставки. Раньше сервис стрелял одиночным SELECT 1 ... на каждого
-#    получателя каждого урока (при 100+ пользователях — тысячи мелких
-#    запросов за один тик APScheduler). Теперь один запрос на чанк
-#    кандидатов: WHERE type=? AND date IN (...) AND source IN (...)
-#    AND recipient IN (...), точное членство кортежа проверяется в Python.
-#    Одиночный is_notification_delivered сохранён для редких вызовов.
-#
-# 4. get_blocked_user_ids — вызывается сервисом при
-#    TelegramForbiddenError (пользователь заблокировал бота), чтобы
-#    не продолжать бессмысленные попытки отправки каждый тик.
-
-# СЕМАНТИКА
-# - is_notifications_enabled — личный выключатель пользователя и
-#   инструмент родителя. Система его НЕ трогает.
-# - notifications_blocked — ТОЛЬКО системный маркер "пользователь
-#   заблокировал бот". Снимается автоматически при активности.
 
 from __future__ import annotations
 
@@ -40,22 +14,289 @@ from core.models.dto import (
     ScheduleChangeRecipientDTO,
     TeacherChangeRecipientDTO,
     ExtraClassReminderTaskDTO,
-    DeliveredKeyDTO,       # НОВОЕ
-    PreLessonSourceDTO,    # НОВОЕ
+    DeliveredKeyDTO,
+    PreLessonSourceDTO,
 )
 
 from core.mappers.notification_mapper import NotificationMapper
 
 class NotificationRepository(BaseRepository):
     """
-    Репозиторий</arg_key>ленных данных для NotificationService.
-
-    - Читает schedule_cache (уроки, замены, отмены).
-    - Пишет/читает notification_delivery_log (дедупликация доставок).
+    Репозиторий уведомлений.
+    Обеспечивает доступ к расписанию и получателям.
+    Избавлен от дублирования SQL благодаря внутренним Query Helpers.
     """
 
     # ==============================================================
-    # Хелперы для batch-дедупликации
+    # 1. SQL Query Helpers (Фабрики запросов)
+    # ==============================================================
+
+    def _build_family_query(
+        self,
+        child_select: str,
+        adult_select: str,
+        child_where: str,
+        adult_where: str,
+        extra_from: str = "",
+    ) -> str:
+        """
+        Генерирует базовый UNION ALL для Telegram-учеников и подписанных взрослых.
+        Устраняет дублирование JOIN'ов и проверок базовых статусов.
+        """
+        child_cols = f", {child_select}" if child_select.strip() else ""
+        adult_cols = f", {adult_select}" if adult_select.strip() else ""
+
+        return f"""
+        SELECT
+            student.id AS student_id,
+            child.user_id AS recipient_id,
+            'student' AS recipient_kind,
+            NULL AS child_name
+            {child_cols}
+        FROM student_profiles AS student
+        {extra_from}
+        JOIN users AS child ON child.user_id = student.telegram_user_id
+        WHERE student.is_active = 1
+          AND child.role = 'child'
+          AND child.is_notifications_enabled = 1
+          {child_where}
+
+        UNION ALL
+
+        SELECT
+            student.id AS student_id,
+            adult.user_id AS recipient_id,
+            'adult' AS recipient_kind,
+            COALESCE(NULLIF(TRIM(student.name), ''), 'Ученик') AS child_name
+            {adult_cols}
+        FROM student_profiles AS student
+        JOIN parent_student_settings AS settings ON settings.student_id = student.id
+        {extra_from}
+        JOIN users AS adult ON adult.user_id = settings.parent_user_id
+        WHERE student.is_active = 1
+          AND adult.role IN ('parent', 'observer')
+          AND adult.is_notifications_enabled = 1
+          {adult_where}
+        """
+
+    async def _get_teacher_configs(
+        self, select_fields: str, where_clause: str, params: tuple
+    ) -> list[Mapping[str, Any]]:
+        """Унифицированный запрос для получателей-учителей."""
+        query = f"""
+            SELECT
+                user_id AS recipient_id,
+                teacher_id
+                {f', {select_fields}' if select_fields else ''}
+            FROM users
+            WHERE role = 'teacher'
+              AND is_notifications_enabled = 1
+              {where_clause}
+            ORDER BY user_id
+        """
+        return await self._fetch_all(query, params)
+
+    # ==============================================================
+    # 2. Получение кандидатов (Students & Family)
+    # ==============================================================
+
+    async def get_recipients_for_pre_lesson_reminder(self, class_id: str, group_id: str) -> list[PreLessonRecipientDTO]:
+        """
+        Возвращает получателей напоминания перед школьным уроком.
+
+        student:
+        - Telegram-ученик получает напоминание только для собственного
+        student profile.
+
+        adult:
+        - parent/observer получает напоминание только при активной
+        подписке parent_student_settings.receive_pre_lesson_reminders.
+
+        Virtual student:
+        - сам сообщения не получает;
+        - его родитель/observer получает сообщения при наличии подписки.
+        """
+        class_group_cond = "AND student.class_id = ? AND (student.group_id = ? OR student.group_id = 'ALL' OR ? = 'ALL')"
+        
+        query = self._build_family_query(
+            child_select="child.pre_lesson_offset_minutes AS offset_minutes",
+            adult_select="adult.pre_lesson_offset_minutes AS offset_minutes",
+            child_where=class_group_cond,
+            adult_where=f"AND settings.receive_pre_lesson_reminders = 1 {class_group_cond}",
+        ) + " ORDER BY recipient_id, student_id"
+        
+        params = (class_id, group_id, group_id, class_id, group_id, group_id)
+        rows = await self._fetch_all(query, params)
+        return [NotificationMapper.to_pre_lesson_recipient_dto(row) for row in rows]
+
+    async def get_recipients_for_schedule_change(self, class_id: str, group_id: str) -> list[ScheduleChangeRecipientDTO]:
+        """
+        Возвращает получателей уведомления о замене/отмене урока.
+
+        Включает:
+        - Telegram-учеников;
+        - взрослых, подписанных на конкретный student profile;
+        - владельцев самостоятельных watch targets.
+        """
+        class_group_cond = "AND student.class_id = ? AND (student.group_id = ? OR student.group_id = 'ALL' OR ? = 'ALL')"
+        
+        base_query = self._build_family_query(
+            child_select="child.changes_window_days AS changes_window_days, NULL AS watch_target_title",
+            adult_select="adult.changes_window_days AS changes_window_days, NULL AS watch_target_title",
+            child_where=f"AND child.receive_schedule_changes = 1 {class_group_cond}",
+            adult_where=f"AND settings.receive_schedule_changes = 1 AND adult.receive_schedule_changes = 1 {class_group_cond}",
+        )
+        
+        # Специфичное добавление третьего UNION для Schedule Watch Targets
+        watch_query = """
+        UNION ALL
+        SELECT
+            NULL AS student_id,
+            owner.user_id AS recipient_id,
+            'watch' AS recipient_kind,
+            NULL AS child_name,
+            owner.changes_window_days AS changes_window_days,
+            COALESCE(NULLIF(TRIM(watch.title), ''), watch.class_id) AS watch_target_title
+        FROM schedule_watch_targets AS watch
+        JOIN users AS owner ON owner.user_id = watch.owner_user_id
+        WHERE watch.class_id = ?
+          AND (watch.group_id = ? OR watch.group_id = 'ALL' OR ? = 'ALL')
+          AND watch.is_enabled = 1
+          AND watch.receive_schedule_changes = 1
+          AND owner.is_notifications_enabled = 1
+          AND owner.receive_schedule_changes = 1
+        """
+        
+        query = f"{base_query} {watch_query} ORDER BY recipient_id, student_id"
+        params = (class_id, group_id, group_id, class_id, group_id, group_id, class_id, group_id, group_id)
+        
+        rows = await self._fetch_all(query, params)
+        return [NotificationMapper.to_schedule_change_recipient_dto(row) for row in rows]
+
+    async def get_morning_summary_tasks(self, time_str: str) -> list[MorningSummaryTaskDTO]:
+        """
+        Возвращает задачи утренних сводок.
+
+        target_student_id — это всегда student_profiles.id.
+        Virtual student не получает сообщение сам, но может попасть
+        в сводку родителя или observer.
+        """
+        query = self._build_family_query(
+            child_select="student.id AS target_student_id, student.class_id, student.group_id",
+            adult_select="student.id AS target_student_id, student.class_id, student.group_id",
+            child_where="AND child.morning_summary_time = ?",
+            adult_where="AND settings.receive_morning_summary = 1 AND adult.morning_summary_time = ?",
+        ) + " ORDER BY recipient_id, target_student_id"
+        
+        rows = await self._fetch_all(query, (time_str, time_str))
+        return [NotificationMapper.to_morning_summary_task_dto(row) for row in rows]
+
+    async def get_todays_extra_classes_for_reminders(self, day_of_week: int) -> list[ExtraClassReminderTaskDTO]:
+        """
+        Возвращает адресные задачи напоминаний о дополнительных занятиях.
+
+        Telegram child получает только занятия своего student profile.
+        Parent/observer получает занятия student profiles, на которые
+        подписан через parent_student_settings.
+        """
+        query = self._build_family_query(
+            child_select=(
+                "extra.id AS extra_id, extra.time_start, extra.title, extra.location, "
+                "CAST(COALESCE(extra.reminder_minutes, child.global_extra_reminder) AS INTEGER) AS offset_minutes"
+            ),
+            adult_select=(
+                "extra.id AS extra_id, extra.time_start, extra.title, extra.location, "
+                "CAST(COALESCE(extra.reminder_minutes, adult.global_extra_reminder) AS INTEGER) AS offset_minutes"
+            ),
+            child_where="AND extra.day_of_week = ? AND child.receive_extra_class_reminders = 1",
+            adult_where="AND extra.day_of_week = ? AND settings.receive_extra_class_reminders = 1 AND adult.receive_extra_class_reminders = 1",
+            extra_from="JOIN extra_classes AS extra ON extra.student_id = student.id",
+        ) + " ORDER BY recipient_id, student_id, extra_id"
+
+        rows = await self._fetch_all(query, (day_of_week, day_of_week))
+        return [NotificationMapper.to_extra_class_reminder_task_dto(row) for row in rows]
+
+    # ==============================================================
+    # 3. Получение кандидатов (Teachers)
+    # ==============================================================
+
+    async def get_teacher_morning_summary_tasks(self, *, time_str: str) -> list[TeacherMorningTaskDTO]:
+        """
+        Возвращает teacher accounts, для которых настало время
+        личной утренней сводки.
+        """
+        rows = await self._get_teacher_configs(
+            select_fields="name AS teacher_name",
+            where_clause="AND teacher_id IS NOT NULL AND TRIM(teacher_id) != '' AND morning_summary_time = ?",
+            params=(time_str,),
+        )
+        return [NotificationMapper.to_teacher_morning_task_dto(row) for row in rows]
+
+    async def get_teacher_recipients_for_pre_lesson_reminder(self, *, teacher_id: str) -> list[TeacherPreLessonRecipientDTO]:
+        """
+        Возвращает Telegram teachers, привязанных к NIKA teacher_id.
+
+        Teacher получает только собственные уроки.
+        """
+        rows = await self._get_teacher_configs(
+            select_fields="pre_lesson_offset_minutes AS offset_minutes",
+            where_clause="AND teacher_id = ? AND pre_lesson_offset_minutes > 0",
+            params=(teacher_id,),
+        )
+        return [NotificationMapper.to_teacher_pre_lesson_recipient_dto(row) for row in rows]
+
+    async def get_teacher_recipients_for_schedule_change(self, *, teacher_id: str) -> list[TeacherChangeRecipientDTO]:
+        """
+        Возвращает teachers, которым следует отправить уведомление
+        о замене или отмене в собственном расписании.
+        """
+        rows = await self._get_teacher_configs(
+            select_fields="changes_window_days",
+            where_clause="AND teacher_id = ? AND receive_schedule_changes = 1 AND changes_window_days > 0",
+            params=(teacher_id,),
+        )
+        return [NotificationMapper.to_teacher_change_recipient_dto(row) for row in rows]
+
+    # ==============================================================
+    # 4. Данные кэша расписания
+    # ==============================================================
+
+    async def get_todays_lessons_for_pre_reminders(self, date_iso: str) -> List[PreLessonSourceDTO]:
+        """Возвращает все активные уроки текущего дня через строгий DTO."""
+        rows = await self._fetch_all(
+            """
+            SELECT id, date, class_id, group_id, teacher_id, start_time, subject_name, room_name
+            FROM schedule_cache
+            WHERE date = ? AND is_cancelled = 0 AND is_methodological = 0
+            ORDER BY start_time, lesson_num, id
+            """,
+            (date_iso,),
+        )
+        return [NotificationMapper.to_pre_lesson_source_dto(row) for row in rows]
+
+    async def get_pending_changes(self, *, start_date_iso: str, end_date_iso: str | None = None) -> list[PendingChangeDTO]:
+        query = """
+            SELECT
+                id, date, period_id, class_id, group_id, group_name, teacher_id, lesson_num,
+                subject_id, subject_name, room_id, room_name, teacher_name,
+                original_subject_id, original_subject_name, original_room_id, original_room_name,
+                original_teacher_id, original_teacher_name, original_group_id, original_group_name,
+                original_class_id, original_class_name, is_exchange, is_cancelled, is_methodological
+            FROM schedule_cache
+            WHERE (is_exchange = 1 OR is_cancelled = 1) AND date >= ?
+        """
+        params = [start_date_iso]
+        if end_date_iso:
+            query += " AND date <= ?"
+            params.append(end_date_iso)
+        
+        query += " ORDER BY date, lesson_num, id"
+        
+        rows = await self._fetch_all(query, tuple(params))
+        return [NotificationMapper.to_pending_change_dto(row) for row in rows]
+
+    # ==============================================================
+    # 5. Delivery Log и Throttling Controls
     # ==============================================================
 
     @staticmethod
@@ -70,10 +311,7 @@ class NotificationRepository(BaseRepository):
         return ",".join(["?"] * count)
 
     @staticmethod
-    def _filter_cross_product(
-        rows: list[Mapping[str, Any]], 
-        valid_keys: Set[DeliveredKeyDTO]
-    ) -> Set[DeliveredKeyDTO]:
+    def _filter_cross_product(rows: list[Mapping[str, Any]], valid_keys: Set[DeliveredKeyDTO]) -> Set[DeliveredKeyDTO]:
         """
         Отфильтровывает кросс-продукт, возникший из-за независимых IN-списков,
         оставляя только те ключи, которые реально запрашивались.
@@ -89,17 +327,7 @@ class NotificationRepository(BaseRepository):
                 delivered.add(key)
         return delivered
 
-    # ==============================================================
-    # Основные методы дедупликации
-    # ==============================================================
-
-    async def get_delivered_keys(
-        self,
-        *,
-        notification_type: str,
-        candidate_keys: Sequence[DeliveredKeyDTO],
-        chunk_size: int = 400,
-    ) -> Set[DeliveredKeyDTO]:
+    async def get_delivered_keys(self, *, notification_type: str, candidate_keys: Sequence[DeliveredKeyDTO], chunk_size: int = 400) -> Set[DeliveredKeyDTO]:
         """
         Батчевая проверка доставки с защитой от N+1.
         Использует IN-списки для извлечения кандидатов и фильтрует SQL кросс-продукт.
@@ -140,21 +368,13 @@ class NotificationRepository(BaseRepository):
               AND source_id IN ({self._generate_in_placeholders(len(sources))})
               AND recipient_id IN ({self._generate_in_placeholders(len(recipients))})
             """
-            params = (notification_type, *dates, *sources, *recipients)
             
-            rows = await self._fetch_all(query, params)
+            rows = await self._fetch_all(query, (notification_type, *dates, *sources, *recipients))
             delivered.update(self._filter_cross_product(rows, unique_keys))
 
         return delivered
 
-    async def record_notification_delivery(
-        self,
-        *,
-        notification_type: str,
-        notification_date: str,
-        source_id: str,
-        recipient_id: int,
-    ) -> bool:
+    async def record_notification_delivery(self, *, notification_type: str, notification_date: str, source_id: str, recipient_id: int) -> bool:
         """
         Фиксирует успешную доставку.
 
@@ -165,37 +385,16 @@ class NotificationRepository(BaseRepository):
         в конце тика: если процесс упадёт в середине рассылки,
         уже отправленные сообщения не продублируются на следующем тике.
         """
-        now_utc = self._now_utc_str()
         changed = await self._execute(
             """
-            INSERT OR IGNORE INTO notification_delivery_log (
-                notification_type,
-                notification_date,
-                source_id,
-                recipient_id,
-                sent_at
-            )
+            INSERT OR IGNORE INTO notification_delivery_log (notification_type, notification_date, source_id, recipient_id, sent_at)
             VALUES (?, ?, ?, ?, ?)
             """,
-            (
-                notification_type,
-                notification_date,
-                source_id,
-                recipient_id,
-                now_utc,
-            ),
+            (notification_type, notification_date, source_id, recipient_id, self._now_utc_str()),
         )
         return changed == 1
 
-
-    async def is_notification_delivered(
-        self,
-        *,
-        notification_type: str,
-        notification_date: str,
-        source_id: str,
-        recipient_id: int,
-    ) -> bool:
+    async def is_notification_delivered(self, *, notification_type: str, notification_date: str, source_id: str, recipient_id: int) -> bool:
         """
         Проверяет, доставлено ли уведомление (одиночная проверка).
 
@@ -206,389 +405,13 @@ class NotificationRepository(BaseRepository):
             """
             SELECT 1 AS delivered
             FROM notification_delivery_log
-            WHERE notification_type = ?
-              AND notification_date = ?
-              AND source_id = ?
-              AND recipient_id = ?
+            WHERE notification_type = ? AND notification_date = ? AND source_id = ? AND recipient_id = ?
             """,
-            (
-                notification_type,
-                notification_date,
-                source_id,
-                recipient_id,
-            ),
+            (notification_type, notification_date, source_id, recipient_id),
         )
         return row is not None
 
-    
-    async def get_todays_lessons_for_pre_reminders(
-        self,
-        date_iso: str,
-    ) -> List[PreLessonSourceDTO]:
-        """Возвращает все активные уроки текущего дня через строгий DTO."""
-        rows = await self._fetch_all(
-            """
-            SELECT id, date, class_id, group_id, teacher_id, start_time, subject_name, room_name
-            FROM schedule_cache
-            WHERE date = ? AND is_cancelled = 0 AND is_methodological = 0
-            ORDER BY start_time, lesson_num, id
-            """,
-            (date_iso,),
-        )
-        return [NotificationMapper.to_pre_lesson_source_dto(row) for row in rows]
-
-    async def get_recipients_for_pre_lesson_reminder(
-        self, class_id: str, group_id: str
-    ) -> list[PreLessonRecipientDTO]:
-        """
-        Возвращает получателей напоминания перед школьным уроком.
-
-        student:
-        - Telegram-ученик получает напоминание только для собственного
-        student profile.
-
-        adult:
-        - parent/observer получает напоминание только при активной
-        подписке parent_student_settings.receive_pre_lesson_reminders.
-
-        Virtual student:
-        - сам сообщения не получает;
-        - его родитель/observer получает сообщения при наличии подписки.
-        """
-        query = """
-        SELECT
-            student.id AS student_id,
-            child.user_id AS recipient_id,
-            child.pre_lesson_offset_minutes AS offset_minutes,
-            'student' AS recipient_kind,
-            NULL AS child_name
-        FROM student_profiles AS student
-        JOIN users AS child
-            ON child.user_id = student.telegram_user_id
-        WHERE student.class_id = ?
-        AND (
-            student.group_id = ?
-            OR student.group_id = 'ALL'
-            OR ? = 'ALL'
-        )
-        AND student.is_active = 1
-        AND child.role = 'child'
-        AND child.is_notifications_enabled = 1
-
-        UNION ALL
-
-        SELECT
-            student.id AS student_id,
-            adult.user_id AS recipient_id,
-            adult.pre_lesson_offset_minutes AS offset_minutes,
-            'adult' AS recipient_kind,
-            COALESCE(
-                NULLIF(TRIM(student.name), ''),
-                'Ученик'
-            ) AS child_name
-        FROM student_profiles AS student
-        JOIN parent_student_settings AS settings
-            ON settings.student_id = student.id
-        AND settings.receive_pre_lesson_reminders = 1
-        JOIN users AS adult
-            ON adult.user_id = settings.parent_user_id
-        WHERE student.class_id = ?
-        AND (
-            student.group_id = ?
-            OR student.group_id = 'ALL'
-            OR ? = 'ALL'
-        )
-        AND student.is_active = 1
-        AND adult.role IN ('parent', 'observer')
-        AND adult.is_notifications_enabled = 1
-
-        ORDER BY
-            recipient_id,
-            student_id
-        """
-        rows = await self._fetch_all(query, (class_id, group_id, group_id, class_id, group_id, group_id))
-        return [NotificationMapper.to_pre_lesson_recipient_dto(row) for row in rows]
-
-    async def get_pending_changes(
-        self, *, start_date_iso: str, end_date_iso: str | None = None
-    ) -> list[PendingChangeDTO]:
-        query = """
-            SELECT
-                id,
-                date,
-                period_id,
-                class_id,
-                group_id,
-                group_name,
-                teacher_id,
-                lesson_num,
-                subject_id,
-                subject_name,
-                room_id,
-                room_name,
-                teacher_name,
-                original_subject_id,
-                original_subject_name,
-                original_room_id,
-                original_room_name,
-                original_teacher_id,
-                original_teacher_name,
-                original_group_id,
-                original_group_name,
-                original_class_id,
-                original_class_name,
-                is_exchange,
-                is_cancelled,
-                is_methodological
-            FROM schedule_cache
-            WHERE (is_exchange = 1 OR is_cancelled = 1)
-            AND date >= ?
-        """
-
-        params: list[str] = [start_date_iso]
-        if end_date_iso is not None:
-            query += " AND date <= ?"
-            params.append(end_date_iso)
-
-        query += " ORDER BY date, lesson_num, id"
-
-        rows = await self._fetch_all(query, tuple(params))
-        return [NotificationMapper.to_pending_change_dto(row) for row in rows]
-
-    async def get_recipients_for_schedule_change(
-        self, class_id: str, group_id: str
-    ) -> list[ScheduleChangeRecipientDTO]:
-        """
-        Возвращает получателей уведомления о замене/отмене урока.
-
-        Включает:
-        - Telegram-учеников;
-        - взрослых, подписанных на конкретный student profile;
-        - владельцев самостоятельных watch targets.
-        """
-        query = """
-        SELECT
-            student.id AS student_id,
-            child.user_id AS recipient_id,
-            child.changes_window_days AS changes_window_days,
-            'student' AS recipient_kind,
-            NULL AS child_name,
-            NULL AS watch_target_title
-        FROM student_profiles AS student
-        JOIN users AS child
-            ON child.user_id = student.telegram_user_id
-        WHERE student.class_id = ?
-        AND (
-            student.group_id = ?
-            OR student.group_id = 'ALL'
-            OR ? = 'ALL'
-        )
-        AND student.is_active = 1
-        AND child.role = 'child'
-        AND child.is_notifications_enabled = 1
-        AND child.receive_schedule_changes = 1
-
-        UNION ALL
-
-        SELECT
-            student.id AS student_id,
-            adult.user_id AS recipient_id,
-            adult.changes_window_days AS changes_window_days,
-            'adult' AS recipient_kind,
-            COALESCE(
-                NULLIF(TRIM(student.name), ''),
-                'Ученик'
-            ) AS child_name,
-            NULL AS watch_target_title
-        FROM student_profiles AS student
-        JOIN parent_student_settings AS settings
-            ON settings.student_id = student.id
-        AND settings.receive_schedule_changes = 1
-        JOIN users AS adult
-            ON adult.user_id = settings.parent_user_id
-        WHERE student.class_id = ?
-        AND (
-            student.group_id = ?
-            OR student.group_id = 'ALL'
-            OR ? = 'ALL'
-        )
-        AND student.is_active = 1
-        AND adult.role IN ('parent', 'observer')
-        AND adult.is_notifications_enabled = 1
-        AND adult.receive_schedule_changes = 1
-
-        UNION ALL
-
-        SELECT
-            NULL AS student_id,
-            owner.user_id AS recipient_id,
-            owner.changes_window_days AS changes_window_days,
-            'watch' AS recipient_kind,
-            NULL AS child_name,
-            COALESCE(
-                NULLIF(TRIM(watch.title), ''),
-                watch.class_id
-            ) AS watch_target_title
-        FROM schedule_watch_targets AS watch
-        JOIN users AS owner
-            ON owner.user_id = watch.owner_user_id
-        WHERE watch.class_id = ?
-        AND (
-            watch.group_id = ?
-            OR watch.group_id = 'ALL'
-            OR ? = 'ALL'
-        )
-        AND watch.is_enabled = 1
-        AND watch.receive_schedule_changes = 1
-        AND owner.is_notifications_enabled = 1
-        AND owner.receive_schedule_changes = 1
-
-        ORDER BY
-            recipient_id,
-            student_id
-        """
-        rows = await self._fetch_all(query, (class_id, group_id, group_id, class_id, group_id, group_id, class_id, group_id, group_id))
-        return [NotificationMapper.to_schedule_change_recipient_dto(row) for row in rows]
-        
-    async def get_morning_summary_tasks(self, time_str: str) -> list[MorningSummaryTaskDTO]:
-        """
-        Возвращает задачи утренних сводок.
-
-        target_student_id — это всегда student_profiles.id.
-        Virtual student не получает сообщение сам, но может попасть
-        в сводку родителя или observer.
-        """
-        query = """
-        SELECT
-            child.user_id AS recipient_id,
-            student.id AS target_student_id,
-            'student' AS recipient_kind,
-            NULL AS child_name,
-            student.class_id,
-            student.group_id
-        FROM student_profiles AS student
-        JOIN users AS child
-            ON child.user_id = student.telegram_user_id
-        WHERE student.is_active = 1
-        AND child.role = 'child'
-        AND child.is_notifications_enabled = 1
-        AND child.morning_summary_time = ?
-
-        UNION ALL
-
-        SELECT
-            adult.user_id AS recipient_id,
-            student.id AS target_student_id,
-            'adult' AS recipient_kind,
-            COALESCE(
-                NULLIF(TRIM(student.name), ''),
-                'Ученик'
-            ) AS child_name,
-            student.class_id,
-            student.group_id
-        FROM parent_student_settings AS settings
-        JOIN student_profiles AS student
-            ON student.id = settings.student_id
-        JOIN users AS adult
-            ON adult.user_id = settings.parent_user_id
-        WHERE student.is_active = 1
-        AND settings.receive_morning_summary = 1
-        AND adult.role IN ('parent', 'observer')
-        AND adult.is_notifications_enabled = 1
-        AND adult.morning_summary_time = ?
-
-        ORDER BY
-            recipient_id,
-            target_student_id
-        """
-        rows = await self._fetch_all(query, (time_str, time_str))
-        return [NotificationMapper.to_morning_summary_task_dto(row) for row in rows]
-
-    async def get_todays_extra_classes_for_reminders(self, day_of_week: int) -> list[ExtraClassReminderTaskDTO]:
-        """
-        Возвращает адресные задачи напоминаний о дополнительных занятиях.
-
-        Telegram child получает только занятия своего student profile.
-        Parent/observer получает занятия student profiles, на которые
-        подписан через parent_student_settings.
-        """
-        query = """
-        SELECT
-            extra.id AS extra_id,
-            student.id AS student_id,
-            extra.time_start,
-            extra.title,
-            extra.location,
-            child.user_id AS recipient_id,
-            CAST(
-                COALESCE(
-                    extra.reminder_minutes,
-                    child.global_extra_reminder
-                )
-                AS INTEGER
-            ) AS offset_minutes,
-            'student' AS recipient_kind,
-            NULL AS child_name
-        FROM extra_classes AS extra
-        JOIN student_profiles AS student
-            ON student.id = extra.student_id
-        JOIN users AS child
-            ON child.user_id = student.telegram_user_id
-        WHERE extra.day_of_week = ?
-        AND student.is_active = 1
-        AND child.role = 'child'
-        AND child.is_notifications_enabled = 1
-        AND child.receive_extra_class_reminders = 1
-
-        UNION ALL
-
-        SELECT
-            extra.id AS extra_id,
-            student.id AS student_id,
-            extra.time_start,
-            extra.title,
-            extra.location,
-            adult.user_id AS recipient_id,
-            CAST(
-                COALESCE(
-                    extra.reminder_minutes,
-                    adult.global_extra_reminder
-                )
-                AS INTEGER
-            ) AS offset_minutes,
-            'adult' AS recipient_kind,
-            COALESCE(
-                NULLIF(TRIM(student.name), ''),
-                'Ученик'
-            ) AS child_name
-        FROM extra_classes AS extra
-        JOIN student_profiles AS student
-            ON student.id = extra.student_id
-        JOIN parent_student_settings AS settings
-            ON settings.student_id = student.id
-        AND settings.receive_extra_class_reminders = 1
-        JOIN users AS adult
-            ON adult.user_id = settings.parent_user_id
-        WHERE extra.day_of_week = ?
-        AND student.is_active = 1
-        AND adult.role IN ('parent', 'observer')
-        AND adult.is_notifications_enabled = 1
-        AND adult.receive_extra_class_reminders = 1
-
-        ORDER BY
-            recipient_id,
-            student_id,
-            extra_id
-        """
-        rows = await self._fetch_all(query, (day_of_week, day_of_week))
-        return [NotificationMapper.to_extra_class_reminder_task_dto(row) for row in rows]
-
-
-    async def mark_user_notifications_blocked(
-        self,
-        *,
-        user_id: int,
-    ) -> bool:
+    async def mark_user_notifications_blocked(self, *, user_id: int) -> bool:
         """
         Помечает пользователя как заблокировавшего бот.
 
@@ -599,17 +422,8 @@ class NotificationRepository(BaseRepository):
         (profile_repository.update_last_active).
         """
         changed = await self._execute(
-            """
-            UPDATE users
-            SET notifications_blocked = 1,
-                updated_at = ?
-            WHERE user_id = ?
-              AND notifications_blocked = 0
-            """,
-            (
-                self._now_utc_str(),
-                user_id,
-            ),
+            "UPDATE users SET notifications_blocked = 1, updated_at = ? WHERE user_id = ? AND notifications_blocked = 0",
+            (self._now_utc_str(), user_id),
         )
         return changed == 1
 
@@ -622,115 +436,14 @@ class NotificationRepository(BaseRepository):
         Загружается заново каждый тик, поэтому авто-разблокировка при
         активности подхватывается без перезапуска бота.
         """
-        rows = await self._fetch_all(
-            """
-            SELECT user_id
-            FROM users
-            WHERE notifications_blocked = 1
-            """
-        )
+        rows = await self._fetch_all("SELECT user_id FROM users WHERE notifications_blocked = 1")
         return [int(row["user_id"]) for row in rows]
 
-
-    async def delete_notification_delivery_before(
-        self,
-        before_date_iso: str,
-    ) -> int:
+    async def delete_notification_delivery_before(self, before_date_iso: str) -> int:
         """
         Удаляет записи успешных доставок до указанной даты.
 
         notification_date хранится как ISO YYYY-MM-DD, поэтому строковое
         сравнение корректно соответствует хронологическому.
         """
-        return await self._execute(
-            """
-            DELETE FROM notification_delivery_log
-            WHERE notification_date < ?
-            """,
-            (before_date_iso,),
-        )
-
-    # ==============================================================
-    # Teacher-методы
-    # ==============================================================
-
-    async def get_teacher_morning_summary_tasks(
-        self,
-        *,
-        time_str: str,
-    ) -> list[TeacherMorningTaskDTO]:
-        """
-        Возвращает teacher accounts, для которых настало время
-        личной утренней сводки.
-        """
-        rows = await self._fetch_all(
-            """
-            SELECT
-                user_id AS recipient_id,
-                teacher_id,
-                name AS teacher_name
-            FROM users
-            WHERE role = 'teacher'
-              AND teacher_id IS NOT NULL
-              AND TRIM(teacher_id) != ''
-              AND is_notifications_enabled = 1
-              AND morning_summary_time = ?
-            ORDER BY user_id
-            """,
-            (time_str,),
-        )
-        return [NotificationMapper.to_teacher_morning_task_dto(row) for row in rows]
-
-    async def get_teacher_recipients_for_pre_lesson_reminder(
-        self,
-        *,
-        teacher_id: str,
-    ) -> list[TeacherPreLessonRecipientDTO]:
-        """
-        Возвращает Telegram teachers, привязанных к NIKA teacher_id.
-
-        Teacher получает только собственные уроки.
-        """
-        rows = await self._fetch_all(
-            """
-            SELECT
-                user_id AS recipient_id,
-                teacher_id,
-                pre_lesson_offset_minutes AS offset_minutes
-            FROM users
-            WHERE role = 'teacher'
-              AND teacher_id = ?
-              AND is_notifications_enabled = 1
-              AND pre_lesson_offset_minutes > 0
-            ORDER BY user_id
-            """,
-            (teacher_id,),
-        )
-        return [NotificationMapper.to_teacher_pre_lesson_recipient_dto(row) for row in rows]
-
-    async def get_teacher_recipients_for_schedule_change(
-        self,
-        *,
-        teacher_id: str,
-    ) -> list[TeacherChangeRecipientDTO]:
-        """
-        Возвращает teachers, которым следует отправить уведомление
-        о замене или отмене в собственном расписании.
-        """
-        rows = await self._fetch_all(
-            """
-            SELECT
-                user_id AS recipient_id,
-                teacher_id,
-                changes_window_days
-            FROM users
-            WHERE role = 'teacher'
-              AND teacher_id = ?
-              AND is_notifications_enabled = 1
-              AND receive_schedule_changes = 1
-              AND changes_window_days > 0
-            ORDER BY user_id
-            """,
-            (teacher_id,),
-        )
-        return [NotificationMapper.to_teacher_change_recipient_dto(row) for row in rows]
+        return await self._execute("DELETE FROM notification_delivery_log WHERE notification_date < ?", (before_date_iso,))
