@@ -20,7 +20,7 @@ class NotificationPipeline:
         self.repo = notification_repo
         self.dispatcher = dispatcher
 
-    async def _drop_already_delivered(self, pending: list[NotificationSendDTO]) -> list[NotificationSendDTO]:
+    async def _drop_already_delivered(self, ctx: NotificationTickContext, pending: list[NotificationSendDTO]) -> list[NotificationSendDTO]:
         """
         Отфильтровывает уже отправленные уведомления.
         Строго использует DeliveredKeyDTO для генерации ключей и проверки в set.
@@ -47,13 +47,17 @@ class NotificationPipeline:
                 for item in type_items
             ]
             
-            # 2. Получаем set[DeliveredKeyDTO] от репозитория
-            delivered: set[DeliveredKeyDTO] = await self.repo.get_delivered_keys(
-                notification_type=notification_type,
-                candidate_keys=candidate_keys,
-            )
-            
-            # 3. Проверяем вхождение DTO в сет
+            try:
+                delivered = await self.repo.get_delivered_keys(
+                    notification_type=notification_type,
+                    candidate_keys=candidate_keys,
+                )
+                ctx.queries += 1
+            except Exception as e:
+                logger.error("Infrastructure error: Failed to fetch delivered keys: %s", e)
+                # Fallback: Если БД недоступна, считаем, что ничего не доставлено, чтобы не подавлять отправку
+                delivered = set()
+                
             for item in type_items:
                 key = DeliveredKeyDTO(
                     notification_date=item.notification_date,
@@ -70,12 +74,13 @@ class NotificationPipeline:
         if not candidates:
             return
 
-        # Инициализируем blocked_ids один раз за весь тик
+        # Фаза 1: Фильтрация blocked_ids
         if not ctx.blocked_ids_loaded:
             try:
                 ctx.blocked_ids = set(await self.repo.get_blocked_user_ids())
-            except Exception:
-                logger.exception("Failed to load blocked user ids")
+                ctx.queries += 1
+            except Exception as e:
+                logger.error("Access error: Failed to load blocked user ids: %s", e)
                 ctx.blocked_ids = set()
             ctx.blocked_ids_loaded = True
 
@@ -86,30 +91,38 @@ class NotificationPipeline:
         if not candidates:
             return
 
-        # Фаза 2: Батчевая дедупликация (полностью агностичная)
-        to_send = await self._drop_already_delivered(candidates)
+        # Фаза 2: Батчевая дедупликация
+        to_send = await self._drop_already_delivered(ctx, candidates)
+        ctx.pending += len(to_send)
 
         # Фаза 3: Отправка и запись в лог
         for item in to_send:
             sent = await self.dispatcher.send(
                 chat_id=item.recipient_id,
                 text=item.text,
-                action_type=item.action_type,       # Манифест UI-действия
-                action_payload=item.action_payload, # Полезная нагрузка UI
+                action_type=item.action_type,
+                action_payload=item.action_payload,
             )
             
             if not sent:
                 ctx.failed += 1
-                logger.warning(
-                    "Send failed: type=%s, source_id=%s, recipient_id=%s",
+                # Ошибки отправки (Send error) уже залогированы внутри диспетчера с полным контекстом Telegram
+                logger.debug(
+                    "Pipeline send failed: type=%s, source_id=%s, recipient_id=%s",
                     item.notification_type, item.source_id, item.recipient_id,
                 )
                 continue
 
-            await self.repo.record_notification_delivery(
-                notification_type=item.notification_type,
-                notification_date=item.notification_date,
-                source_id=item.source_id,
-                recipient_id=item.recipient_id,
-            )
+            try:
+                await self.repo.record_notification_delivery(
+                    notification_type=item.notification_type,
+                    notification_date=item.notification_date,
+                    source_id=item.source_id,
+                    recipient_id=item.recipient_id,
+                )
+                ctx.queries += 1
+            except Exception as e:
+                # Ошибка записи не должна ломать статистику sent, но о ней нужно знать
+                logger.error("Infrastructure error: Failed to record delivery for %s: %s", item.source_id, e)
+
             ctx.sent += 1

@@ -22,6 +22,7 @@ class NotificationDispatcher:
     Диспетчер отправки. Отвечает только за взаимодействие с Telegram API:
     лимиты (Smart Throttling), блокировки (Lock), сетевые ошибки и алерты админам.
     """
+    
     GLOBAL_SEND_INTERVAL_SEC = 0.045
     PER_CHAT_SEND_INTERVAL_SEC = 1.1
     MAX_SEND_ATTEMPTS = 3
@@ -56,15 +57,15 @@ class NotificationDispatcher:
         }
 
     def _build_keyboard(self, action_type: str | None, payload: dict | None) -> Optional[InlineKeyboardMarkup]:
-            """Превращает абстрактное намерение (action_type) в физическую клавиатуру Telegram."""
-            if not action_type or not payload:
-                return None
-                
-            if action_type == "day_changes":
-                # Импортируем локально, чтобы не засорять глобальную область видимости
-                from bot import callbacks
-                from bot.keyboards.keyboard import Keyboards
-                
+        """Превращает абстрактное намерение (action_type) в физическую клавиатуру Telegram."""
+        if not action_type or not payload:
+            return None
+            
+        if action_type == "day_changes":
+            from bot import callbacks
+            from bot.keyboards.keyboard import Keyboards
+            
+            try:
                 cb_data = callbacks.DayChangesCD(
                     target_kind=payload["target_kind"],
                     target_id=payload["target_id"],
@@ -72,12 +73,15 @@ class NotificationDispatcher:
                     group_id=payload["group_id"],
                     date_iso=payload["date_iso"],
                     origin=payload["origin"],
-                    return_to=payload["return_to"],
+                    return_to=payload.get("return_to", "morning"),
                 )
                 return Keyboards.get_day_changes_kb(cb_data)
-                
-            return None
-    
+            except Exception as e:
+                logger.error("Render error: Failed to build keyboard for action %s: %s", action_type, e)
+                return None
+            
+        return None
+
     async def send(
         self, 
         chat_id: int, 
@@ -86,9 +90,8 @@ class NotificationDispatcher:
         action_payload: dict | None = None
     ) -> bool:
         """Paced-отправка с соблюдением лимитов Telegram."""
-        # Превращаем манифест в физическую клавиатуру
         keyboard = self._build_keyboard(action_type, action_payload)
-                         
+        
         async with self._send_lock:
             for attempt in range(1, self.MAX_SEND_ATTEMPTS + 1):
                 now_mono = time.monotonic()
@@ -104,10 +107,9 @@ class NotificationDispatcher:
                     await self.bot.send_message(
                         chat_id=chat_id,
                         text=text,
-                        reply_markup=keyboard,  # Передаем сгенерированную клавиатуру
+                        reply_markup=keyboard,
                         parse_mode="HTML",
                     )
-                    
                     finished_at = time.monotonic()
                     self._global_last_send_at = finished_at
                     self._chat_last_send_at[chat_id] = finished_at
@@ -116,32 +118,32 @@ class NotificationDispatcher:
 
                 except TelegramRetryAfter as exc:
                     logger.warning(
-                        "Telegram 429 flood control: chat_id=%s, retry_after=%ss, attempt=%d/%d",
+                        "Send error: Telegram 429 flood control (chat_id=%s, retry_after=%ss, attempt=%d/%d)",
                         chat_id, exc.retry_after, attempt, self.MAX_SEND_ATTEMPTS,
                     )
                     if attempt < self.MAX_SEND_ATTEMPTS:
                         await asyncio.sleep(float(exc.retry_after) + 0.5)
 
                 except TelegramForbiddenError:
-                    logger.warning("Chat %s blocked the bot. Marking user as notifications_blocked.", chat_id)
+                    logger.warning("Access error: Chat %s blocked the bot. Marking user as blocked.", chat_id)
                     try:
                         await self.repo.mark_user_notifications_blocked(user_id=chat_id)
-                    except Exception:
-                        logger.exception("Failed to mark blocked chat %s", chat_id)
+                    except Exception as e:
+                        logger.error("Infrastructure error: Failed to mark blocked chat %s: %s", chat_id, e)
                     return False
 
                 except TelegramBadRequest as exc:
-                    logger.warning("Telegram rejected message: chat_id=%s, error=%s", chat_id, exc)
+                    logger.warning("Send error: Telegram rejected message (chat_id=%s, error=%s)", chat_id, exc)
                     return False
 
                 except (TelegramNetworkError, asyncio.TimeoutError, OSError) as exc:
                     logger.warning(
-                        "Network error sending to chat %s (attempt %d/%d): %s",
+                        "Infrastructure error: Network error sending to chat %s (attempt %d/%d): %s",
                         chat_id, attempt, self.MAX_SEND_ATTEMPTS, exc,
                     )
                     await asyncio.sleep(0.5 * attempt)
 
-            logger.error("Giving up sending to chat %s after %d attempts", chat_id, self.MAX_SEND_ATTEMPTS)
+            logger.error("Send error: Giving up sending to chat %s after %d attempts", chat_id, self.MAX_SEND_ATTEMPTS)
             return False
 
     async def send_admin_alert(self, alert_key: str, text: str) -> None:
@@ -158,4 +160,4 @@ class NotificationDispatcher:
         for admin_id in self._admin_ids:
             sent = await self.send(chat_id=admin_id, text=text)
             if not sent:
-                logger.warning("Admin alert not delivered: admin_id=%s, key=%s", admin_id, alert_key)
+                logger.warning("Send error: Admin alert not delivered (admin_id=%s, key=%s)", admin_id, alert_key)

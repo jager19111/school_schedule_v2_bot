@@ -549,7 +549,7 @@ class FullWeekScheduleDTO:
 # Notification DTO (Этап 3: расширен для original_*, group_changed)
 # ==========================================================
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 @dataclass
 class LessonReminderDTO:
     """
@@ -564,8 +564,7 @@ class LessonReminderDTO:
     is_extra: bool = False
     child_name: Optional[str] = None
 
-
-@dataclass
+@dataclass(frozen=True)
 class ChangeReminderDTO:
     """
     Уведомление о замене или отмене урока.
@@ -629,7 +628,7 @@ class PendingChangeDTO:
     # Вычисляемое поле, не хранится в schedule_cache.
     display_num: str | None = None
     
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class MorningLessonDTO:
     """
     Урок для утренней сводки.
@@ -923,7 +922,7 @@ class DeliveredKeyDTO:
         if self.recipient_id <= 0:
             raise ValueError("recipient_id must be strictly positive")
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class NotificationSendDTO:
     """Модель кандидата на отправку (полностью заменяет PendingSend)."""
     notification_type: str
