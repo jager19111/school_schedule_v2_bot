@@ -44,7 +44,7 @@ from core.models.dto import (
     PreLessonSourceDTO,    # НОВОЕ
 )
 
-
+from core.mappers.notification_mapper import NotificationMapper
 
 
 class NotificationRepository(BaseRepository):
@@ -69,18 +69,7 @@ class NotificationRepository(BaseRepository):
             """,
             (date_iso,),
         )
-        return [
-            PreLessonSourceDTO(
-                id=str(row["id"]),
-                date=str(row["date"]),
-                class_id=str(row["class_id"]),
-                group_id=row.get("group_id"),
-                teacher_id=row.get("teacher_id"),
-                start_time=str(row["start_time"]),
-                subject_name=row.get("subject_name"),
-                room_name=row.get("room_name"),
-            ) for row in rows
-        ]
+        return [NotificationMapper.to_pre_lesson_source_dto(row) for row in rows]
 
     async def get_recipients_for_pre_lesson_reminder(
         self, class_id: str, group_id: str
@@ -152,15 +141,7 @@ class NotificationRepository(BaseRepository):
             student_id
         """
         rows = await self._fetch_all(query, (class_id, group_id, group_id, class_id, group_id, group_id))
-        return [
-            PreLessonRecipientDTO(
-                student_id=row.get("student_id"),
-                recipient_id=int(row["recipient_id"]),
-                offset_minutes=int(row["offset_minutes"]),
-                recipient_kind=str(row["recipient_kind"]),
-                child_name=row.get("child_name")
-            ) for row in rows
-        ]
+        return [NotificationMapper.to_pre_lesson_recipient_dto(row) for row in rows]
 
     async def get_pending_changes(
         self, *, start_date_iso: str, end_date_iso: str | None = None
@@ -206,35 +187,7 @@ class NotificationRepository(BaseRepository):
         query += " ORDER BY date, lesson_num, id"
 
         rows = await self._fetch_all(query, tuple(params))
-        return [
-            PendingChangeDTO(
-                id=str(row["id"]),
-                date=str(row["date"]),
-                period_id=str(row["period_id"]),
-                class_id=str(row["class_id"]),
-                group_id=str(row.get("group_id") or "ALL"),
-                group_name=str(row["group_name"]) if row.get("group_name") is not None else None,
-                teacher_id=str(row["teacher_id"]) if row.get("teacher_id") is not None else None,
-                lesson_num=int(row["lesson_num"]),
-                subject_id=row.get("subject_id"),
-                subject_name=row.get("subject_name"),
-                room_id=row.get("room_id"),
-                room_name=row.get("room_name"),
-                teacher_name=row.get("teacher_name"),
-                original_subject_id=row.get("original_subject_id"),
-                original_subject_name=row.get("original_subject_name"),
-                original_room_id=row.get("original_room_id"),
-                original_room_name=row.get("original_room_name"),
-                original_teacher_id=row.get("original_teacher_id"),
-                original_teacher_name=row.get("original_teacher_name"),
-                original_group_id=row.get("original_group_id"),
-                original_group_name=row.get("original_group_name"),
-                original_class_id=row.get("original_class_id"),
-                original_class_name=row.get("original_class_name"),
-                is_exchange=bool(row.get("is_exchange")),
-                is_cancelled=bool(row.get("is_cancelled")),
-            ) for row in rows
-        ]
+        return [NotificationMapper.to_pending_change_dto(row) for row in rows]
 
     async def get_recipients_for_schedule_change(
         self, class_id: str, group_id: str
@@ -329,16 +282,7 @@ class NotificationRepository(BaseRepository):
             student_id
         """
         rows = await self._fetch_all(query, (class_id, group_id, group_id, class_id, group_id, group_id, class_id, group_id, group_id))
-        return [
-            ScheduleChangeRecipientDTO(
-                student_id=row.get("student_id"),
-                recipient_id=int(row["recipient_id"]),
-                changes_window_days=int(row["changes_window_days"]),
-                recipient_kind=str(row["recipient_kind"]),
-                child_name=row.get("child_name"),
-                watch_target_title=row.get("watch_target_title")
-            ) for row in rows
-        ]
+        return [NotificationMapper.to_schedule_change_recipient_dto(row) for row in rows]
         
     async def get_morning_summary_tasks(self, time_str: str) -> list[MorningSummaryTaskDTO]:
         """
@@ -392,16 +336,7 @@ class NotificationRepository(BaseRepository):
             target_student_id
         """
         rows = await self._fetch_all(query, (time_str, time_str))
-        return [
-            MorningSummaryTaskDTO(
-                recipient_id=int(row["recipient_id"]),
-                target_student_id=int(row["target_student_id"]),
-                recipient_kind=str(row["recipient_kind"]),
-                child_name=row.get("child_name"),
-                class_id=row.get("class_id"),
-                group_id=row.get("group_id"),
-            ) for row in rows
-        ]
+        return [NotificationMapper.to_morning_summary_task_dto(row) for row in rows]
 
     async def get_todays_extra_classes_for_reminders(self, day_of_week: int) -> list[ExtraClassReminderTaskDTO]:
         """
@@ -480,19 +415,7 @@ class NotificationRepository(BaseRepository):
             extra_id
         """
         rows = await self._fetch_all(query, (day_of_week, day_of_week))
-        return [
-            ExtraClassReminderTaskDTO(
-                extra_id=int(row["extra_id"]),
-                student_id=int(row["student_id"]),
-                time_start=str(row["time_start"]),
-                title=str(row["title"]),
-                location=row.get("location"),
-                recipient_id=int(row["recipient_id"]),
-                offset_minutes=int(row["offset_minutes"]),
-                recipient_kind=str(row["recipient_kind"]),
-                child_name=row.get("child_name")
-            ) for row in rows
-        ]
+        return [NotificationMapper.to_extra_class_reminder_task_dto(row) for row in rows]
 
     async def is_notification_delivered(
         self,
@@ -733,14 +656,7 @@ class NotificationRepository(BaseRepository):
             """,
             (time_str,),
         )
-        return [
-            TeacherMorningTaskDTO(
-                recipient_id=int(row["recipient_id"]),
-                teacher_id=str(row["teacher_id"]),
-                teacher_name=str(row["teacher_name"]) if row.get("teacher_name") else None,
-            )
-            for row in rows
-        ]
+        return [NotificationMapper.to_teacher_morning_task_dto(row) for row in rows]
 
     async def get_teacher_recipients_for_pre_lesson_reminder(
         self,
@@ -767,14 +683,7 @@ class NotificationRepository(BaseRepository):
             """,
             (teacher_id,),
         )
-        return [
-            TeacherPreLessonRecipientDTO(
-                recipient_id=int(row["recipient_id"]),
-                teacher_id=str(row["teacher_id"]),
-                offset_minutes=int(row["offset_minutes"]),
-            )
-            for row in rows
-        ]
+        return [NotificationMapper.to_teacher_pre_lesson_recipient_dto(row) for row in rows]
 
     async def get_teacher_recipients_for_schedule_change(
         self,
@@ -801,11 +710,4 @@ class NotificationRepository(BaseRepository):
             """,
             (teacher_id,),
         )
-        return [
-            TeacherChangeRecipientDTO(
-                recipient_id=int(row["recipient_id"]),
-                teacher_id=str(row["teacher_id"]),
-                changes_window_days=int(row["changes_window_days"]),
-            )
-            for row in rows
-        ]
+        return [NotificationMapper.to_teacher_change_recipient_dto(row) for row in rows]

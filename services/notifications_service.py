@@ -86,6 +86,7 @@ from core.models.dto import (
     DeliveredKeyDTO
 )
 from core.models.domain import LessonInstance
+from core.mappers.notification_mapper import NotificationMapper
 
 logger = logging.getLogger(__name__)
 
@@ -491,82 +492,7 @@ class NotificationService:
 
         return sent_count, failed_count
 
-
-    def _map_school_lesson_to_morning_dto(
-        self,
-        lesson: LessonInstance,
-        *,
-        display_num: str | None = None,
-        group_name: str | None = None,
-        class_name: str | None = None,
-        day_permutation: bool = False,
-    ) -> MorningLessonDTO:
-        
-        return MorningLessonDTO(
-            lesson_num=lesson.lesson_num,
-            start_time=lesson.start_time or "—",
-            end_time=lesson.end_time or "—",
-            subject_name=lesson.subject_name or "—",
-            room_name=lesson.room_name or "—",
-            is_cancelled=lesson.is_cancelled,
-            is_exchange=lesson.is_exchange,
-            is_extra=False,
-            
-            # Строгое обращение к полям контракта (никаких getattr)
-            is_methodological=lesson.is_methodological,
-            
-            original_subject_name=lesson.original_subject_name or None,
-            original_room_name=lesson.original_room_name or None,
-            group_changed=(
-                lesson.is_exchange
-                and lesson.original_group_id is not None
-                and lesson.original_group_id != lesson.group_id
-            ),
-            day_permutation=day_permutation,
-
-            # Чистые поля для UI
-            group_name=group_name,
-            class_name=class_name,
-            teacher_name=lesson.teacher_name,
-            display_num=(
-                display_num
-                or (
-                    str(lesson.lesson_num)
-                    if lesson.lesson_num is not None
-                    else "•"
-                )
-            ),
-            group_id=lesson.group_id,
-        )
-
-    def _map_extra_to_morning_dto(
-        self,
-        extra: ExtraClassItemDTO,
-    ) -> MorningLessonDTO:
-        return MorningLessonDTO(
-            lesson_num=None,
-            start_time=extra.time_start or "—",
-            end_time=extra.time_end or "—",
-            subject_name=extra.title or "—",
-            room_name=extra.location or "—",
-            is_cancelled=False,
-            is_exchange=False,
-            is_extra=True,
-            is_methodological=False,
-            
-            original_subject_name=None,
-            original_room_name=None,
-            group_changed=False,
-            day_permutation=False,
-
-            # --- НОВЫЕ ЧИСТЫЕ ПОЛЯ ДЛЯ UI ---
-            group_name=None,
-            class_name=None,
-            teacher_name=None,
-            display_num="•",
-            group_id=None,
-        )
-        
+       
     # ==============================================================
     # 1. Утренние сводки
     # ==============================================================
@@ -717,7 +643,7 @@ class NotificationService:
                         )
 
                         lessons_dtos.append(
-                            self._map_school_lesson_to_morning_dto(
+                            NotificationMapper.map_school_lesson_to_morning_dto(
                                 lesson,
                                 display_num=lesson_display_num,
                                 group_name=group_name,
@@ -735,7 +661,7 @@ class NotificationService:
                     )
 
                     lessons_dtos.extend(
-                        self._map_extra_to_morning_dto(extra)
+                        NotificationMapper.map_extra_to_morning_dto(extra)
                         for extra in extra_items
                     )
 
@@ -971,13 +897,9 @@ class NotificationService:
                         )
 
                     lessons_dtos.append(
-                        self._map_school_lesson_to_morning_dto(
+                        NotificationMapper.map_school_lesson_to_morning_dto(
                             lesson,
-                            display_num=(
-                                str(lesson.lesson_num)
-                                if lesson.lesson_num is not None
-                                else "•"
-                            ),
+                            display_num=(str(lesson.lesson_num) if lesson.lesson_num is not None else "•"),
                             class_name=class_name,
                             day_permutation=False,
                         )
@@ -1206,19 +1128,11 @@ class NotificationService:
                     if not (today <= change_date <= max_date):
                         continue
 
-                    dto = self._to_change_reminder_dto(
+                    dto = NotificationMapper.to_change_reminder_dto(
                         change,
                         display_num=class_display_num,
-                        child_name=(
-                            recipient.child_name
-                            if recipient.recipient_kind == "adult"
-                            else None
-                        ),
-                        watch_target_title=(
-                            recipient.watch_target_title
-                            if recipient.recipient_kind == "watch"
-                            else None
-                        ),
+                        child_name=(recipient.child_name if recipient.recipient_kind == "adult" else None),
+                        watch_target_title=(recipient.watch_target_title if recipient.recipient_kind == "watch" else None),
                     )
                     pending.append(
                         NotificationSendDTO(
@@ -1262,7 +1176,7 @@ class NotificationService:
                         if not (today <= change_date <= max_date):
                             continue
 
-                        dto = self._to_change_reminder_dto(
+                        dto = NotificationMapper.to_change_reminder_dto(
                             change,
                             display_num=str(change.lesson_num),
                         )
