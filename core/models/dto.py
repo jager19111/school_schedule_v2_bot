@@ -803,3 +803,71 @@ class StudentTelegramSettingsDTO:
     receive_extra_class_reminders: bool = True
     can_manage_own_extra_classes: bool = True
     child_notification_settings_locked: bool = False
+    
+    
+    
+# Добавьте в core/models/dto.py
+
+@dataclass(frozen=True, slots=True)
+class DebugBurstResultDTO:
+    """Результат выполнения стресс-теста рассылки."""
+    requested: int
+    pending: int
+    sent: int
+    failed: int
+
+@dataclass(frozen=True, slots=True)
+class MorningSummaryTaskDTO:
+    recipient_id: int
+    target_student_id: int
+    recipient_kind: str
+    child_name: str | None
+    class_id: str | None
+    group_id: str | None
+
+@dataclass(frozen=True, slots=True)
+class TeacherMorningTaskDTO:
+    recipient_id: int
+    teacher_id: str
+    teacher_name: str | None
+
+@dataclass(frozen=True, slots=True)
+class PreLessonRecipientDTO:
+    student_id: int | None
+    recipient_id: int
+    offset_minutes: int
+    recipient_kind: str
+    child_name: str | None
+
+@dataclass(frozen=True, slots=True)
+class TeacherPreLessonRecipientDTO:
+    recipient_id: int
+    teacher_id: str
+    offset_minutes: int
+
+@dataclass(frozen=True, slots=True)
+class ScheduleChangeRecipientDTO:
+    student_id: int | None
+    recipient_id: int
+    changes_window_days: int
+    recipient_kind: str
+    child_name: str | None
+    watch_target_title: str | None
+
+@dataclass(frozen=True, slots=True)
+class TeacherChangeRecipientDTO:
+    recipient_id: int
+    teacher_id: str
+    changes_window_days: int
+
+@dataclass(frozen=True, slots=True)
+class ExtraClassReminderTaskDTO:
+    extra_id: int
+    student_id: int
+    time_start: str
+    title: str
+    location: str | None
+    recipient_id: int
+    offset_minutes: int
+    recipient_kind: str
+    child_name: str | None

@@ -31,6 +31,16 @@ from __future__ import annotations
 from typing import List, Dict, Any, Optional, Sequence, Set, Tuple
 
 from core.repository.base_repository import BaseRepository
+from core.models.dto import (
+    PendingChangeDTO,
+    MorningSummaryTaskDTO,
+    TeacherMorningTaskDTO,
+    PreLessonRecipientDTO,
+    TeacherPreLessonRecipientDTO,
+    ScheduleChangeRecipientDTO,
+    TeacherChangeRecipientDTO,
+    ExtraClassReminderTaskDTO,
+)
 
 # Ключ доставки: (notification_date, source_id, recipient_id).
 DeliveryKey = Tuple[str, str, int]
@@ -75,10 +85,8 @@ class NotificationRepository(BaseRepository):
         )
 
     async def get_recipients_for_pre_lesson_reminder(
-        self,
-        class_id: str,
-        group_id: str,
-    ) -> List[Dict[str, Any]]:
+        self, class_id: str, group_id: str
+    ) -> list[PreLessonRecipientDTO]:
         """
         Возвращает получателей напоминания перед школьным уроком.
 
@@ -145,24 +153,20 @@ class NotificationRepository(BaseRepository):
             recipient_id,
             student_id
         """
-        return await self._fetch_all(
-            query,
-            (
-                class_id,
-                group_id,
-                group_id,
-                class_id,
-                group_id,
-                group_id,
-            ),
-        )
+        rows = await self._fetch_all(query, (class_id, group_id, group_id, class_id, group_id, group_id))
+        return [
+            PreLessonRecipientDTO(
+                student_id=row.get("student_id"),
+                recipient_id=int(row["recipient_id"]),
+                offset_minutes=int(row["offset_minutes"]),
+                recipient_kind=str(row["recipient_kind"]),
+                child_name=row.get("child_name")
+            ) for row in rows
+        ]
 
     async def get_pending_changes(
-        self,
-        *,
-        start_date_iso: str,
-        end_date_iso: str | None = None,
-    ) -> list[dict[str, Any]]:
+        self, *, start_date_iso: str, end_date_iso: str | None = None
+    ) -> list[PendingChangeDTO]:
         query = """
             SELECT
                 id,
@@ -197,23 +201,46 @@ class NotificationRepository(BaseRepository):
         """
 
         params: list[str] = [start_date_iso]
-
         if end_date_iso is not None:
             query += " AND date <= ?"
             params.append(end_date_iso)
 
         query += " ORDER BY date, lesson_num, id"
 
-        return await self._fetch_all(
-            query,
-            tuple(params),
-        )
+        rows = await self._fetch_all(query, tuple(params))
+        return [
+            PendingChangeDTO(
+                id=str(row["id"]),
+                date=str(row["date"]),
+                period_id=str(row["period_id"]),
+                class_id=str(row["class_id"]),
+                group_id=str(row.get("group_id") or "ALL"),
+                group_name=str(row["group_name"]) if row.get("group_name") is not None else None,
+                teacher_id=str(row["teacher_id"]) if row.get("teacher_id") is not None else None,
+                lesson_num=int(row["lesson_num"]),
+                subject_id=row.get("subject_id"),
+                subject_name=row.get("subject_name"),
+                room_id=row.get("room_id"),
+                room_name=row.get("room_name"),
+                teacher_name=row.get("teacher_name"),
+                original_subject_id=row.get("original_subject_id"),
+                original_subject_name=row.get("original_subject_name"),
+                original_room_id=row.get("original_room_id"),
+                original_room_name=row.get("original_room_name"),
+                original_teacher_id=row.get("original_teacher_id"),
+                original_teacher_name=row.get("original_teacher_name"),
+                original_group_id=row.get("original_group_id"),
+                original_group_name=row.get("original_group_name"),
+                original_class_id=row.get("original_class_id"),
+                original_class_name=row.get("original_class_name"),
+                is_exchange=bool(row.get("is_exchange")),
+                is_cancelled=bool(row.get("is_cancelled")),
+            ) for row in rows
+        ]
 
     async def get_recipients_for_schedule_change(
-        self,
-        class_id: str,
-        group_id: str,
-    ) -> List[Dict[str, Any]]:
+        self, class_id: str, group_id: str
+    ) -> list[ScheduleChangeRecipientDTO]:
         """
         Возвращает получателей уведомления о замене/отмене урока.
 
@@ -303,25 +330,19 @@ class NotificationRepository(BaseRepository):
             recipient_id,
             student_id
         """
-        return await self._fetch_all(
-            query,
-            (
-                class_id,
-                group_id,
-                group_id,
-                class_id,
-                group_id,
-                group_id,
-                class_id,
-                group_id,
-                group_id,
-            ),
-        )
+        rows = await self._fetch_all(query, (class_id, group_id, group_id, class_id, group_id, group_id, class_id, group_id, group_id))
+        return [
+            ScheduleChangeRecipientDTO(
+                student_id=row.get("student_id"),
+                recipient_id=int(row["recipient_id"]),
+                changes_window_days=int(row["changes_window_days"]),
+                recipient_kind=str(row["recipient_kind"]),
+                child_name=row.get("child_name"),
+                watch_target_title=row.get("watch_target_title")
+            ) for row in rows
+        ]
         
-    async def get_morning_summary_tasks(
-        self,
-        time_str: str,
-    ) -> List[Dict[str, Any]]:
+    async def get_morning_summary_tasks(self, time_str: str) -> list[MorningSummaryTaskDTO]:
         """
         Возвращает задачи утренних сводок.
 
@@ -372,15 +393,19 @@ class NotificationRepository(BaseRepository):
             recipient_id,
             target_student_id
         """
-        return await self._fetch_all(
-            query,
-            (time_str, time_str),
-        )
+        rows = await self._fetch_all(query, (time_str, time_str))
+        return [
+            MorningSummaryTaskDTO(
+                recipient_id=int(row["recipient_id"]),
+                target_student_id=int(row["target_student_id"]),
+                recipient_kind=str(row["recipient_kind"]),
+                child_name=row.get("child_name"),
+                class_id=row.get("class_id"),
+                group_id=row.get("group_id"),
+            ) for row in rows
+        ]
 
-    async def get_todays_extra_classes_for_reminders(
-        self,
-        day_of_week: int,
-    ) -> List[Dict[str, Any]]:
+    async def get_todays_extra_classes_for_reminders(self, day_of_week: int) -> list[ExtraClassReminderTaskDTO]:
         """
         Возвращает адресные задачи напоминаний о дополнительных занятиях.
 
@@ -456,10 +481,20 @@ class NotificationRepository(BaseRepository):
             student_id,
             extra_id
         """
-        return await self._fetch_all(
-            query,
-            (day_of_week, day_of_week),
-        )
+        rows = await self._fetch_all(query, (day_of_week, day_of_week))
+        return [
+            ExtraClassReminderTaskDTO(
+                extra_id=int(row["extra_id"]),
+                student_id=int(row["student_id"]),
+                time_start=str(row["time_start"]),
+                title=str(row["title"]),
+                location=row.get("location"),
+                recipient_id=int(row["recipient_id"]),
+                offset_minutes=int(row["offset_minutes"]),
+                recipient_kind=str(row["recipient_kind"]),
+                child_name=row.get("child_name")
+            ) for row in rows
+        ]
 
     async def is_notification_delivered(
         self,
@@ -690,12 +725,12 @@ class NotificationRepository(BaseRepository):
         self,
         *,
         time_str: str,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[TeacherMorningTaskDTO]:
         """
         Возвращает teacher accounts, для которых настало время
         личной утренней сводки.
         """
-        return await self._fetch_all(
+        rows = await self._fetch_all(
             """
             SELECT
                 user_id AS recipient_id,
@@ -711,18 +746,26 @@ class NotificationRepository(BaseRepository):
             """,
             (time_str,),
         )
+        return [
+            TeacherMorningTaskDTO(
+                recipient_id=int(row["recipient_id"]),
+                teacher_id=str(row["teacher_id"]),
+                teacher_name=str(row["teacher_name"]) if row.get("teacher_name") else None,
+            )
+            for row in rows
+        ]
 
     async def get_teacher_recipients_for_pre_lesson_reminder(
         self,
         *,
         teacher_id: str,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[TeacherPreLessonRecipientDTO]:
         """
         Возвращает Telegram teachers, привязанных к NIKA teacher_id.
 
         Teacher получает только собственные уроки.
         """
-        return await self._fetch_all(
+        rows = await self._fetch_all(
             """
             SELECT
                 user_id AS recipient_id,
@@ -737,17 +780,25 @@ class NotificationRepository(BaseRepository):
             """,
             (teacher_id,),
         )
+        return [
+            TeacherPreLessonRecipientDTO(
+                recipient_id=int(row["recipient_id"]),
+                teacher_id=str(row["teacher_id"]),
+                offset_minutes=int(row["offset_minutes"]),
+            )
+            for row in rows
+        ]
 
     async def get_teacher_recipients_for_schedule_change(
         self,
         *,
         teacher_id: str,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[TeacherChangeRecipientDTO]:
         """
         Возвращает teachers, которым следует отправить уведомление
         о замене или отмене в собственном расписании.
         """
-        return await self._fetch_all(
+        rows = await self._fetch_all(
             """
             SELECT
                 user_id AS recipient_id,
@@ -763,3 +814,11 @@ class NotificationRepository(BaseRepository):
             """,
             (teacher_id,),
         )
+        return [
+            TeacherChangeRecipientDTO(
+                recipient_id=int(row["recipient_id"]),
+                teacher_id=str(row["teacher_id"]),
+                changes_window_days=int(row["changes_window_days"]),
+            )
+            for row in rows
+        ]

@@ -159,15 +159,6 @@ async def cmd_stress(
         count,
     )
 
-    await message.answer(
-        "🧪 <b>Стресс-тест пайплайна уведомлений</b>\n\n"
-        f"Получатель (chat_id): <code>{target_chat_id}</code>\n"
-        f"Сообщений: {count}\n"
-        f"Оценка времени: ~{estimated_seconds} сек.\n\n"
-        "Для теста рестарта: прервите бота на середине (Ctrl+C), "
-        "запустите снова и выполните команду ещё раз."
-    )
-
     # Используем извлеченный target_chat_id вместо message.from_user.id
     result = await notification_service.debug_send_burst(
         chat_id=target_chat_id,
@@ -177,12 +168,13 @@ async def cmd_stress(
     await message.answer(
         "🧪 <b>Стресс-тест завершён</b>\n\n"
         f"Получатель: <code>{target_chat_id}</code>\n"
-        f"Запрошено: {result['requested']}\n"
-        f"К отправке после дедупликации: {result['pending']}\n"
-        f"Отправлено: {result['sent']}\n"
-        f"Ошибок: {result['failed']}"
+        f"Запрошено: {result.requested}\n"
+        f"К отправке после дедупликации: {result.pending}\n"
+        f"Отправлено: {result.sent}\n"
+        f"Ошибок: {result.failed}\n\n"
+        "Если 'к отправке' меньше 'запрошено' — дедупликация "
+        "отработала (это уже отправленные сегодня сообщения)."
     )
-
     logger.info(
         "Stress test finished: admin_id=%s, target_id=%s, result=%s",
         message.from_user.id,

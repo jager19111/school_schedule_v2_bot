@@ -66,11 +66,22 @@ from core.repository.schedule_repository import ScheduleRepository
 from services.schedule_service import ScheduleService
 from services.time_service import TimeService
 from bot.utils.ui_renderer import UIRenderer
+
 from core.models.dto import (
     LessonReminderDTO,
     ChangeReminderDTO,
-    MorningSummaryDTO, PendingChangeDTO,
-    MorningLessonDTO, ExtraClassItemDTO
+    MorningSummaryDTO,
+    PendingChangeDTO,
+    MorningLessonDTO,
+    ExtraClassItemDTO,
+    DebugBurstResultDTO,
+    MorningSummaryTaskDTO,
+    TeacherMorningTaskDTO,
+    PreLessonRecipientDTO,
+    TeacherPreLessonRecipientDTO,
+    ScheduleChangeRecipientDTO,
+    TeacherChangeRecipientDTO,
+    ExtraClassReminderTaskDTO,
 )
 from core.models.domain import LessonInstance
 
@@ -349,12 +360,7 @@ class NotificationService:
     # 3b. Админ-стресс-тест боевого пайплайна
     # ==============================================================
 
-    async def debug_send_burst(
-        self,
-        *,
-        chat_id: int,
-        count: int,
-    ) -> dict[str, int]:
+    async def debug_send_burst(self, *, chat_id: int, count: int) -> DebugBurstResultDTO:
         """
         Стресс-тест РЕАЛЬНОГО пайплайна уведомлений (только админ).
 
@@ -401,13 +407,12 @@ class NotificationService:
         to_send = await self._drop_already_delivered(pending)
         sent_count, failed_count = await self._flush_pending(to_send)
 
-        return {
-            "requested": len(pending),
-            "pending": len(to_send),
-            "sent": sent_count,
-            "failed": failed_count,
-        }
-
+        return DebugBurstResultDTO(
+            requested=len(pending),
+            pending=len(to_send),
+            sent=sent_count,
+            failed=failed_count,
+        )
 
     # ==============================================================
     # Общие помощники фаз collect/dedup/send
@@ -505,12 +510,6 @@ class NotificationService:
 
         return sent_count, failed_count
 
-    # ==============================================================
-    # 1. Утренние сводки
-    # ==============================================================
-    # ==============================================================
-    # DTO
-    # ==============================================================
 
     def _map_school_lesson_to_morning_dto(
         self,
@@ -587,17 +586,13 @@ class NotificationService:
             group_id=None,
         )
         
+    # ==============================================================
+    # 1. Утренние сводки
+    # ==============================================================
+
     async def send_morning_reminders(self) -> None:
         """
         Формирует и отправляет утренние сводки.
-
-        Ребёнок получает сводку только по себе.
-        Взрослый получает одно сообщение, объединяющее сводки всех детей,
-        на которых он подписан через parent_student_settings.
-
-        В конце тика отправляются утренние сводки учителей
-        (_send_teacher_morning_reminders). Раньше этот метод
-        существовал, но не вызывался — сводки учителей не уходили.
         """
         now = self.time_service.get_now_base()
         current_time_str = now.strftime("%H:%M")
@@ -613,7 +608,7 @@ class NotificationService:
             tasks = [
                 task
                 for task in tasks
-                if int(task["recipient_id"]) not in blocked_ids
+                if task.recipient_id not in blocked_ids
             ]
 
         if not tasks:
@@ -635,8 +630,8 @@ class NotificationService:
         candidate_keys = [
             (
                 today_iso,
-                f"morning_summary:{int(task['target_student_id'])}",
-                int(task["recipient_id"]),
+                f"morning_summary:{task.target_student_id}",
+                task.recipient_id,
             )
             for task in tasks
         ]
@@ -650,18 +645,21 @@ class NotificationService:
         classes = metadata.classes
         groups = metadata.groups
 
+        # ИСПРАВЛЕНИЕ ТИПА: Больше никаких dict[str, Any]
         summaries_by_recipient: dict[
             int,
-            list[tuple[dict[str, Any], MorningSummaryDTO]],
+            list[tuple[MorningSummaryTaskDTO, MorningSummaryDTO]],
         ] = {}
         display_numbers_cache: dict[
             tuple[str, str],
             dict[int, str],
         ] = {}
+        
         for task in tasks:
             try:
-                recipient_id = int(task["recipient_id"])
-                target_student_id = int(task["target_student_id"])
+                # ИСПРАВЛЕНИЕ: Вызовы через точку к DTO
+                recipient_id = task.recipient_id
+                target_student_id = task.target_student_id
                 source_id = f"morning_summary:{target_student_id}"
 
                 if (
@@ -671,8 +669,8 @@ class NotificationService:
                 ) in delivered:
                     continue
 
-                child_class_id = task.get("class_id")
-                child_group_id = task.get("group_id") or "ALL"
+                child_class_id = task.class_id
+                child_group_id = task.group_id or "ALL"
 
                 lessons_dtos: list[MorningLessonDTO] = []
 
@@ -743,7 +741,6 @@ class NotificationService:
                                 display_num=lesson_display_num,
                                 group_name=group_name,
                                 day_permutation=day_permutation,
-                                
                             )
                         )
 
@@ -790,8 +787,8 @@ class NotificationService:
                     date_iso=today_iso,
                     lessons=lessons_dtos,
                     child_name=(
-                        task.get("child_name")
-                        if task.get("recipient_kind") == "adult"
+                        task.child_name
+                        if task.recipient_kind == "adult"
                         else None
                     ),
                     class_id=child_class_id,
@@ -815,7 +812,8 @@ class NotificationService:
                     "Unexpected morning summary assembly error: task=%r",
                     task,
                 )
-        # --- Фаза send: paced-отправка сгруппированных сводок ---
+                
+    # --- Фаза send: paced-отправка сгруппированных сводок ---
         sent_count = 0
         failed_count = 0
 
@@ -837,10 +835,10 @@ class NotificationService:
                     if has_changes:
                         changes_data = callbacks.DayChangesCD(
                             target_kind="student",
-                            target_id=int(task["target_student_id"]),
-                            class_id=str(task["class_id"]),
+                            target_id=task.target_student_id,
+                            class_id=str(task.class_id),
                             group_id=str(
-                                task.get("group_id") or "ALL"
+                                task.group_id or "ALL"
                             ),
                             date_iso=today_iso,
                             origin="class",
@@ -865,21 +863,17 @@ class NotificationService:
                             "Morning summary send failed: "
                             "recipient_id=%s student_id=%s",
                             recipient_id,
-                            task["target_student_id"],
+                            task.target_student_id,
                         )
                         continue
 
                     sent_count += 1
 
-                    target_student_id = int(
-                        task["target_student_id"]
-                    )
-
                     await self.repo.record_notification_delivery(
                         notification_type="morning_summary",
                         notification_date=today_iso,
                         source_id=(
-                            f"morning_summary:{target_student_id}"
+                            f"morning_summary:{task.target_student_id}"
                         ),
                         recipient_id=recipient_id,
                     )
@@ -888,7 +882,7 @@ class NotificationService:
                         "Morning summary delivered: "
                         "recipient_id=%s student_id=%s",
                         recipient_id,
-                        target_student_id,
+                        task.target_student_id,
                     )
 
                 except Exception:
@@ -909,12 +903,11 @@ class NotificationService:
             failed_count,
         )
 
-        # Учительские утренние сводки (раньше не вызывались).
+        # Учительские утренние сводки
         await self._send_teacher_morning_reminders(
             current_time_str=current_time_str,
             today_iso=today_iso,
         )
-
     # ==============================================================
     # Утренние сводки учителей
     # ==============================================================
@@ -927,12 +920,6 @@ class NotificationService:
     ) -> None:
         """
         Отправляет утренние сводки зарегистрированным учителям.
-
-        Teacher summary состоит только из lesson records:
-        extra classes student profiles сюда не подмешиваются.
-
-        ИСПРАВЛЕНО (Этап 2): метод существовал, но не вызывался.
-        Теперь вызывается из send_morning_reminders каждый тик.
         """
         tasks = await self.repo.get_teacher_morning_summary_tasks(
             time_str=current_time_str,
@@ -942,7 +929,7 @@ class NotificationService:
             tasks = [
                 task
                 for task in tasks
-                if int(task["recipient_id"]) not in blocked_ids
+                if task.recipient_id not in blocked_ids
             ]
             
         if not tasks:
@@ -952,8 +939,8 @@ class NotificationService:
         candidate_keys = [
             (
                 today_iso,
-                f"teacher_morning:{str(task['teacher_id'])}",
-                int(task["recipient_id"]),
+                f"teacher_morning:{task.teacher_id}",
+                task.recipient_id,
             )
             for task in tasks
         ]
@@ -970,9 +957,9 @@ class NotificationService:
 
         for task in tasks:
             try:
-                recipient_id = int(task["recipient_id"])
-                teacher_id = str(task["teacher_id"])
-                teacher_name = task.get("teacher_name") or "Учитель"
+                recipient_id = task.recipient_id
+                teacher_id = task.teacher_id
+                teacher_name = task.teacher_name or "Учитель"
                 source_id = f"teacher_morning:{teacher_id}"
 
                 if (today_iso, source_id, recipient_id) in delivered:
@@ -1059,6 +1046,7 @@ class NotificationService:
                     keyboard = Keyboards.get_day_changes_kb(
                         changes_data,
                     )
+                    
                 sent = await self._paced_send(
                     chat_id=recipient_id,
                     text=text,
@@ -1096,11 +1084,10 @@ class NotificationService:
                 failed_count,
             )
 
-
     # ==============================================================
     # 2. Изменения расписания
     # ==============================================================
-
+    
     @staticmethod
     def _to_change_reminder_dto(
         change: PendingChangeDTO,
@@ -1132,73 +1119,10 @@ class NotificationService:
             child_name=child_name,
             watch_target_title=watch_target_title,
         )
-    
-    @staticmethod
-    def _map_pending_change(
-        row: Mapping[str, Any],
-    ) -> PendingChangeDTO:
-        return PendingChangeDTO(
-            id=str(row["id"]),
-            date=str(row["date"]),
-            period_id=str(row["period_id"]),
-            class_id=str(row["class_id"]),
-            group_id=str(row.get("group_id") or "ALL"),
-            group_name=(
-                str(row["group_name"])
-                if row.get("group_name") is not None
-                else None
-            ),
 
-            teacher_id=(
-                str(row["teacher_id"])
-                if row.get("teacher_id") is not None
-                else None
-            ),
-            lesson_num=int(row["lesson_num"]),
-
-            subject_id=row.get("subject_id"),
-            subject_name=row.get("subject_name"),
-            room_id=row.get("room_id"),
-            room_name=row.get("room_name"),
-            teacher_name=row.get("teacher_name"),
-
-            original_subject_id=row.get("original_subject_id"),
-            original_subject_name=row.get(
-                "original_subject_name"
-            ),
-            original_room_id=row.get("original_room_id"),
-            original_room_name=row.get(
-                "original_room_name"
-            ),
-            original_teacher_id=row.get(
-                "original_teacher_id"
-            ),
-            original_teacher_name=row.get(
-                "original_teacher_name"
-            ),
-            original_group_id=row.get(
-                "original_group_id"
-            ),
-            original_group_name=row.get(
-                "original_group_name"
-            ),
-            original_class_id=row.get(
-                "original_class_id"
-            ),
-            original_class_name=row.get(
-                "original_class_name"
-            ),
-
-            is_exchange=bool(row.get("is_exchange")),
-            is_cancelled=bool(row.get("is_cancelled")),
-        )
-            
     async def send_upcoming_changes(self) -> None:
         """
         Отправляет адресные уведомления о заменах и отменах.
-
-        Three-phase: collect (мемоизация получателей по классу и
-        учителю) -> батчевый dedup -> paced send.
         """
         now = self.time_service.get_now_base()
         today = now.date()
@@ -1208,24 +1132,21 @@ class NotificationService:
             today + datetime.timedelta(days=MAX_CHANGES_WINDOW_DAYS)
         ).isoformat()
 
-        raw_changes = await self.repo.get_pending_changes(
+        # Репозиторий теперь возвращает список готовых PendingChangeDTO
+        changes = await self.repo.get_pending_changes(
             start_date_iso=today_iso,
             end_date_iso=window_end_iso,
         )
 
-        changes = [
-            self._map_pending_change(row)
-            for row in raw_changes
-        ]
         logger.info(
             "Schedule changes tick: date=%s, changes=%d",
             today_iso,
             len(changes),
         )
         blocked_ids = await self._load_blocked_recipient_ids()
-        # Тиковые кеши получателей (фикс N+1).
-        recipients_cache: dict[tuple[str, str], list[dict]] = {}
-        teacher_cache: dict[str, list[dict]] = {}
+        
+        recipients_cache: dict[tuple[str, str], list[ScheduleChangeRecipientDTO]] = {}
+        teacher_cache: dict[str, list[TeacherChangeRecipientDTO]] = {}
         display_numbers_cache: dict[tuple[str, str],dict[int, str],] = {}
         pending: list[PendingSend] = []
 
@@ -1283,16 +1204,12 @@ class NotificationService:
                 recipients = recipients_cache[cache_key]
 
                 for recipient in recipients:
-                    recipient_id = int(
-                        recipient["recipient_id"]
-                    )
+                    recipient_id = recipient.recipient_id
 
                     if recipient_id in blocked_ids:
                         continue
 
-                    window_days = int(
-                        recipient["changes_window_days"]
-                    )
+                    window_days = recipient.changes_window_days
 
                     if window_days <= 0:
                         continue
@@ -1308,13 +1225,13 @@ class NotificationService:
                         change,
                         display_num=class_display_num,
                         child_name=(
-                            recipient["child_name"]
-                            if recipient["recipient_kind"] == "adult"
+                            recipient.child_name
+                            if recipient.recipient_kind == "adult"
                             else None
                         ),
                         watch_target_title=(
-                            recipient["watch_target_title"]
-                            if recipient["recipient_kind"] == "watch"
+                            recipient.watch_target_title
+                            if recipient.recipient_kind == "watch"
                             else None
                         ),
                     )
@@ -1327,7 +1244,7 @@ class NotificationService:
                             text=UIRenderer.render_change_reminder(dto),
                             context=(
                                 f"change_id={change.id}, "
-                                f"kind={recipient['recipient_kind']}"
+                                f"kind={recipient.recipient_kind}"
                             ),
                         )
                     )
@@ -1336,8 +1253,6 @@ class NotificationService:
 
                 if not teacher_id:
                     continue
-
-                teacher_id = str(teacher_id)
 
                 if teacher_id not in teacher_cache:
                     teacher_cache[teacher_id] = (
@@ -1348,12 +1263,11 @@ class NotificationService:
 
                 for recipient in teacher_cache[teacher_id]:
                     try:
-                        recipient_id = int(recipient["recipient_id"])
+                        recipient_id = recipient.recipient_id
                         if recipient_id in blocked_ids:
                             continue
-                        window_days = int(
-                            recipient["changes_window_days"]
-                        )
+                            
+                        window_days = recipient.changes_window_days
                         if window_days <= 0:
                             continue
 
@@ -1433,9 +1347,6 @@ class NotificationService:
     async def send_pre_lesson_reminders(self) -> None:
         """
         Отправляет адресные предурочные напоминания.
-
-        Three-phase + тиковая мемоизация получателей:
-        254 урока ~40 классов => ~40 запросов получателей вместо 254+.
         """
         now = self.time_service.get_now_base()
         today_iso = now.date().isoformat()
@@ -1453,9 +1364,8 @@ class NotificationService:
         )
         blocked_ids = await self._load_blocked_recipient_ids()
 
-        # Тиковые кеши получателей (фикс N+1).
-        recipients_cache: dict[tuple[str, str], list[dict]] = {}
-        teacher_cache: dict[str, list[dict]] = {}
+        recipients_cache: dict[tuple[str, str], list[PreLessonRecipientDTO]] = {}
+        teacher_cache: dict[str, list[TeacherPreLessonRecipientDTO]] = {}
 
         pending: list[PendingSend] = []
 
@@ -1470,7 +1380,6 @@ class NotificationService:
                     lesson_start_at - now
                 ).total_seconds() / 60.0
 
-                # Урок уже начался или прошёл.
                 if delta_minutes <= 0:
                     continue
 
@@ -1485,16 +1394,15 @@ class NotificationService:
                 recipients = recipients_cache[cache_key]
 
                 for recipient in recipients:
-                    recipient_id = int(recipient["recipient_id"])
+                    recipient_id = recipient.recipient_id
                     if recipient_id in blocked_ids:
                         continue
-                    offset_minutes = int(recipient["offset_minutes"])
+                    
+                    offset_minutes = recipient.offset_minutes
 
-                    # 0 = получатель отключил этот тип напоминаний.
                     if offset_minutes <= 0:
                         continue
 
-                    # До окна уведомления ещё далеко.
                     if delta_minutes > offset_minutes:
                         continue
 
@@ -1504,8 +1412,8 @@ class NotificationService:
                         room_name=lesson.room_name or "—",
                         is_extra=False,
                         child_name=(
-                            recipient["child_name"]
-                            if recipient["recipient_kind"] == "adult"
+                            recipient.child_name
+                            if recipient.recipient_kind == "adult"
                             else None
                         ),
                     )
@@ -1519,7 +1427,7 @@ class NotificationService:
                             text=UIRenderer.render_lesson_reminder(dto),
                             context=(
                                 f"lesson_id={lesson.id}, "
-                                f"kind={recipient['recipient_kind']}"
+                                f"kind={recipient.recipient_kind}"
                             ),
                         )
                     )
@@ -1528,7 +1436,6 @@ class NotificationService:
                 if not teacher_id:
                     continue
 
-                teacher_id = str(teacher_id)
                 if teacher_id not in teacher_cache:
                     teacher_cache[teacher_id] = (
                         await self.repo.get_teacher_recipients_for_pre_lesson_reminder(
@@ -1538,10 +1445,11 @@ class NotificationService:
 
                 for recipient in teacher_cache[teacher_id]:
                     try:
-                        recipient_id = int(recipient["recipient_id"])
+                        recipient_id = recipient.recipient_id
                         if recipient_id in blocked_ids:
                             continue
-                        offset_minutes = int(recipient["offset_minutes"])
+                            
+                        offset_minutes = recipient.offset_minutes
 
                         if offset_minutes <= 0:
                             continue
@@ -1642,11 +1550,13 @@ class NotificationService:
         # --- Фаза 1 (collect) ---
         for extra in extras:
             try:
-                extra_id = int(extra["extra_id"])
-                recipient_id = int(extra["recipient_id"])
+                extra_id = extra.extra_id
+                recipient_id = extra.recipient_id
+                
                 if recipient_id in blocked_ids:
                     continue
-                offset_minutes = int(extra["offset_minutes"])
+                    
+                offset_minutes = extra.offset_minutes
 
                 if offset_minutes <= 0:
                     logger.debug(
@@ -1658,29 +1568,27 @@ class NotificationService:
                     continue
 
                 start_at = datetime.datetime.strptime(
-                    f"{today_iso} {extra['time_start']}",
+                    f"{today_iso} {extra.time_start}",
                     "%Y-%m-%d %H:%M",
                 ).replace(tzinfo=self.time_service.base_tz)
                 delta_minutes = (
                     start_at - now
                 ).total_seconds() / 60.0
 
-                # Занятие уже началось.
                 if delta_minutes <= 0:
                     continue
 
-                # Ещё не вошли в окно напоминания.
                 if delta_minutes > offset_minutes:
                     continue
 
                 dto = LessonReminderDTO(
-                    subject_name=extra["title"],
-                    start_time=extra["time_start"],
-                    room_name=extra["location"] or "—",
+                    subject_name=extra.title,
+                    start_time=extra.time_start,
+                    room_name=extra.location or "—",
                     is_extra=True,
                     child_name=(
-                        extra["child_name"]
-                        if extra["recipient_kind"] == "adult"
+                        extra.child_name
+                        if extra.recipient_kind == "adult"
                         else None
                     ),
                 )
@@ -1694,7 +1602,7 @@ class NotificationService:
                         text=UIRenderer.render_lesson_reminder(dto),
                         context=(
                             f"extra_id={extra_id}, "
-                            f"kind={extra['recipient_kind']}"
+                            f"kind={extra.recipient_kind}"
                         ),
                     )
                 )
@@ -1723,4 +1631,3 @@ class NotificationService:
             sent_count,
             failed_count,
         )
-
