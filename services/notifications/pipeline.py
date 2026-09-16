@@ -10,7 +10,11 @@ from .context import NotificationTickContext
 logger = logging.getLogger(__name__)
 
 class NotificationPipeline:
-    """Оркестратор пайплайна: фильтрация (blocked_ids) -> дедупликация -> отправка -> persist."""
+    """
+    Универсальный оркестратор пайплайна.
+    Не содержит бизнес-логики и не знает о конкретных сценариях.
+    Опирается только на атрибуты NotificationSendDTO.
+    """
 
     def __init__(self, notification_repo: NotificationRepository, dispatcher: NotificationDispatcher) -> None:
         self.repo = notification_repo
@@ -25,6 +29,9 @@ class NotificationPipeline:
             return []
 
         result: list[NotificationSendDTO] = []
+        
+        # ДИНАМИЧЕСКАЯ ГРУППИРОВКА: пайплайн не знает, что именно он отправляет.
+        # Он просто собирает уникальные типы из DTO кандидатов.
         types = sorted({item.notification_type for item in pending})
 
         for notification_type in types:
@@ -79,7 +86,7 @@ class NotificationPipeline:
         if not candidates:
             return
 
-        # Фаза 2: Батчевая дедупликация
+        # Фаза 2: Батчевая дедупликация (полностью агностичная)
         to_send = await self._drop_already_delivered(candidates)
 
         # Фаза 3: Отправка и запись в лог
@@ -87,8 +94,8 @@ class NotificationPipeline:
             sent = await self.dispatcher.send(
                 chat_id=item.recipient_id,
                 text=item.text,
-                action_type=item.action_type,        # ПРОКИДЫВАЕМ ACTION TYPE
-                action_payload=item.action_payload,  # ПРОКИДЫВАЕМ ACTION PAYLOAD
+                action_type=item.action_type,       # Манифест UI-действия
+                action_payload=item.action_payload, # Полезная нагрузка UI
             )
             
             if not sent:
