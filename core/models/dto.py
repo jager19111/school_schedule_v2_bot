@@ -549,7 +549,6 @@ class FullWeekScheduleDTO:
 # Notification DTO (Этап 3: расширен для original_*, group_changed)
 # ==========================================================
 
-@dataclass(frozen=True)
 @dataclass
 class LessonReminderDTO:
     """
@@ -564,7 +563,7 @@ class LessonReminderDTO:
     is_extra: bool = False
     child_name: Optional[str] = None
 
-@dataclass(frozen=True)
+@dataclass
 class ChangeReminderDTO:
     """
     Уведомление о замене или отмене урока.
@@ -575,6 +574,7 @@ class ChangeReminderDTO:
     child_name задан только для взрослого получателя.
     Для ребёнка остаётся None.
     """
+    change_id: str
     date: str
     lesson_num: int
     subject_name: str
@@ -594,6 +594,16 @@ class ChangeReminderDTO:
     child_name: Optional[str] = None
     watch_target_title: Optional[str] = None
 
+@dataclass
+class DailyChangeSummaryDTO:
+    """DTO для склеенной дневной сводки изменений (используется только в рассылках)."""
+    date: str
+    recipient_kind: str
+    changes: List[ChangeReminderDTO]
+    child_name: Optional[str] = None
+    watch_target_title: Optional[str] = None
+    teacher_name: Optional[str] = None
+    
 @dataclass(frozen=True, slots=True)
 class PendingChangeDTO:
     id: str
@@ -628,7 +638,7 @@ class PendingChangeDTO:
     # Вычисляемое поле, не хранится в schedule_cache.
     display_num: str | None = None
     
-@dataclass(frozen=True)
+@dataclass
 class MorningLessonDTO:
     """
     Урок для утренней сводки.
@@ -922,7 +932,7 @@ class DeliveredKeyDTO:
         if self.recipient_id <= 0:
             raise ValueError("recipient_id must be strictly positive")
 
-@dataclass(frozen=True)
+@dataclass
 class NotificationSendDTO:
     """Модель кандидата на отправку (полностью заменяет PendingSend)."""
     notification_type: str

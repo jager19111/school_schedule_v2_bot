@@ -2,7 +2,8 @@
 
 import datetime
 import logging
-
+import hashlib
+from collections import defaultdict
 from bot.utils.ui_renderer import UIRenderer
 
 from core.repository.notification_repository import NotificationRepository
@@ -12,11 +13,11 @@ from services.schedule_service import ScheduleService
 from services.time_service import TimeService
 
 from core.models.dto import (
-    NotificationSendDTO,
-    MorningSummaryTaskDTO,
-    MorningSummaryDTO,
-    MorningLessonDTO,
-    LessonReminderDTO,
+    NotificationSendDTO, DailyChangeSummaryDTO,
+    MorningSummaryTaskDTO, ChangeReminderDTO,
+    MorningSummaryDTO, ScheduleChangeRecipientDTO,
+    MorningLessonDTO, TeacherChangeRecipientDTO,
+    LessonReminderDTO, PendingChangeDTO
 )
 from core.mappers.notification_mapper import NotificationMapper
 from .context import NotificationTickContext
@@ -24,6 +25,94 @@ from .context import NotificationTickContext
 logger = logging.getLogger(__name__)
 MAX_CHANGES_WINDOW_DAYS = 31
 
+
+
+
+class DailyChangesAggregator:
+    """Хелпер для склеивания одиночных изменений расписания в дневные сводки."""
+    
+    @staticmethod
+    def _generate_composite_source_id(target_prefix: str, date: str, changes: list[ChangeReminderDTO]) -> str:
+        """
+        Создает уникальный ID на основе набора изменений. 
+        Если добавится новое изменение, ID сменится и бот пришлет обновленную сводку.
+        """
+        ids_str = ",".join(sorted(c.change_id for c in changes))
+        h = hashlib.md5(ids_str.encode()).hexdigest()[:8]
+        return f"sch_agg:{target_prefix}:{date}:{h}"
+
+    @staticmethod
+    def aggregate_student_changes(
+        student_records: list[tuple[int, str, ScheduleChangeRecipientDTO, ChangeReminderDTO]]
+    ) -> list[NotificationSendDTO]:
+        groups = defaultdict(list)
+        for rec_id, date, rec, dto in student_records:
+            target_key = f"s_{rec.student_id}" if rec.student_id else f"w_{rec.watch_target_title}"
+            groups[(rec_id, date, target_key, rec)].append(dto)
+
+        candidates = []
+        for (rec_id, date, target_key, rec), changes in groups.items():
+            summary = DailyChangeSummaryDTO(
+                date=date,
+                recipient_kind=rec.recipient_kind,
+                changes=changes,
+                child_name=rec.child_name,
+                watch_target_title=rec.watch_target_title
+            )
+            
+            try:
+                text = UIRenderer.render_daily_changes_summary(summary)
+            except Exception as e:
+                logger.error("Render error for aggregated schedule changes: %s", e)
+                continue
+
+            source_id = DailyChangesAggregator._generate_composite_source_id(target_key, date, changes)
+            
+            candidates.append(NotificationSendDTO(
+                notification_type="schedule_change",
+                notification_date=date,
+                source_id=source_id,
+                recipient_id=rec_id,
+                text=text,
+                context=f"aggregated_changes={len(changes)}"
+            ))
+        return candidates
+
+    @staticmethod
+    def aggregate_teacher_changes(
+        teacher_records: list[tuple[int, str, TeacherChangeRecipientDTO, ChangeReminderDTO, str]]
+    ) -> list[NotificationSendDTO]:
+        groups = defaultdict(list)
+        for rec_id, date, rec, dto, teacher_name in teacher_records:
+            groups[(rec_id, date, rec.teacher_id, teacher_name, rec)].append(dto)
+
+        candidates = []
+        for (rec_id, date, teacher_id, teacher_name, rec), changes in groups.items():
+            summary = DailyChangeSummaryDTO(
+                date=date,
+                recipient_kind="teacher",
+                changes=changes,
+                teacher_name=teacher_name
+            )
+            
+            try:
+                text = UIRenderer.render_daily_changes_summary(summary)
+            except Exception as e:
+                logger.error("Render error for aggregated teacher changes: %s", e)
+                continue
+
+            source_id = DailyChangesAggregator._generate_composite_source_id(f"t_{teacher_id}", date, changes)
+            
+            candidates.append(NotificationSendDTO(
+                notification_type="teacher_change",
+                notification_date=date,
+                source_id=source_id,
+                recipient_id=rec_id,
+                text=text,
+                context=f"teacher_id={teacher_id}, aggregated={len(changes)}"
+            ))
+        return candidates
+    
 class NotificationCollector:
     """Сборщик кандидатов. Превращает данные базы в готовые NotificationSendDTO."""
 
@@ -306,12 +395,22 @@ class NotificationCollector:
             return []
             
         ctx.processed_entities += len(changes)
-        candidates: list[NotificationSendDTO] = []
+        
+        # Словари для устранения дублей NIKA (оставляем только самую качественную запись урока)
+        student_candidates_map: dict[tuple, tuple[int, int, str, ScheduleChangeRecipientDTO, ChangeReminderDTO]] = {}
+        teacher_candidates_map: dict[tuple, tuple[int, int, str, TeacherChangeRecipientDTO, ChangeReminderDTO, str]] = {}
+
+        def get_change_score(c: PendingChangeDTO) -> int:
+            """Оценивает 'качество' записи. Прямая замена > Добавление > Отмена."""
+            if c.is_exchange and c.original_subject_name: return 3
+            if c.is_exchange: return 2
+            return 1
 
         for change in changes:
             try:
                 change_date = self.time_service.date_from_iso(change.date)
                 class_display_num = str(change.lesson_num)
+                score = get_change_score(change)
 
                 display_key = (change.class_id, change.date)
                 if display_key not in ctx.display_numbers_cache:
@@ -331,30 +430,17 @@ class NotificationCollector:
                     window_days = recipient.changes_window_days
                     if window_days <= 0 or not (today <= change_date <= (today + datetime.timedelta(days=window_days))):
                         continue
-
-                    dto = NotificationMapper.to_change_reminder_dto(
-                        change,
-                        display_num=class_display_num,
-                        child_name=(recipient.child_name if recipient.recipient_kind == "adult" else None),
-                        watch_target_title=(recipient.watch_target_title if recipient.recipient_kind == "watch" else None),
-                    )
-                    
-                    try:
-                        text = UIRenderer.render_change_reminder(dto)
-                    except Exception as e:
-                        logger.error("Render error for schedule change %s: %s", change.id, e)
-                        continue
                         
-                    candidates.append(
-                        NotificationSendDTO(
-                            notification_type="schedule_change",
-                            notification_date=change.date,
-                            source_id=change.id,
-                            recipient_id=recipient.recipient_id,
-                            text=text,
-                            context=f"change_id={change.id}, kind={recipient.recipient_kind}",
+                    dedup_key = (recipient.recipient_id, change.date, change.lesson_num, change.group_id)
+
+                    if dedup_key not in student_candidates_map or score >= student_candidates_map[dedup_key][0]:
+                        dto = NotificationMapper.to_change_reminder_dto(
+                            change,
+                            display_num=class_display_num,
+                            child_name=(recipient.child_name if recipient.recipient_kind == "adult" else None),
+                            watch_target_title=(recipient.watch_target_title if recipient.recipient_kind == "watch" else None),
                         )
-                    )
+                        student_candidates_map[dedup_key] = (score, recipient.recipient_id, change.date, recipient, dto)
 
                 teacher_id = change.teacher_id
                 if not teacher_id:
@@ -369,36 +455,26 @@ class NotificationCollector:
                     if window_days <= 0 or not (today <= change_date <= (today + datetime.timedelta(days=window_days))):
                         continue
 
-                    dto = NotificationMapper.to_change_reminder_dto(change, display_num=str(change.lesson_num))
-                    teacher_name = change.teacher_name or "Учитель"
-                    
-                    try:
-                        rendered_reminder = UIRenderer.render_change_reminder(dto)
-                        text = (
-                            "👨‍🏫 <b>Изменение в расписании учителя</b>\n"
-                            f"👤 <b>{UIRenderer.escape_html(teacher_name)}</b>\n\n"
-                            f"{rendered_reminder}"
-                        )
-                    except Exception as e:
-                        logger.error("Render error for teacher schedule change %s: %s", change.id, e)
-                        continue
+                    dedup_key = (recipient.recipient_id, change.date, change.lesson_num, change.group_id)
 
-                    candidates.append(
-                        NotificationSendDTO(
-                            notification_type="teacher_change",
-                            notification_date=change.date,
-                            source_id=change.id,
-                            recipient_id=recipient.recipient_id,
-                            text=text,
-                            context=f"teacher_id={teacher_id}, change_id={change.id}",
-                        )
-                    )
+                    if dedup_key not in teacher_candidates_map or score >= teacher_candidates_map[dedup_key][0]:
+                        dto = NotificationMapper.to_change_reminder_dto(change, display_num=str(change.lesson_num))
+                        teacher_name = change.teacher_name or "Учитель"
+                        teacher_candidates_map[dedup_key] = (score, recipient.recipient_id, change.date, recipient, dto, teacher_name)
 
             except (KeyError, ValueError, TypeError) as e:
                 logger.error("Data prep error for schedule change=%s: %s", getattr(change, 'id', 'unknown'), e)
             except Exception as e:
                 logger.exception("Infrastructure error during schedule change collect: %s", e)
 
+        # Выгружаем значения без Score и отправляем в агрегатор
+        student_records = [val[1:] for val in student_candidates_map.values()]
+        teacher_records = [val[1:] for val in teacher_candidates_map.values()]
+
+        candidates = []
+        candidates.extend(DailyChangesAggregator.aggregate_student_changes(student_records))
+        candidates.extend(DailyChangesAggregator.aggregate_teacher_changes(teacher_records))
+        
         ctx.candidates += len(candidates)
         return candidates
 

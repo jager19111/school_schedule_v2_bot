@@ -259,6 +259,7 @@ class NotificationMapper:
         display_num: str | None = None,
     ) -> ChangeReminderDTO:
         return ChangeReminderDTO(
+            change_id=change.id,
             date=change.date,
             lesson_num=change.lesson_num,
             display_num=(display_num if display_num is not None else change.display_num),

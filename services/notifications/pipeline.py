@@ -65,6 +65,9 @@ class NotificationPipeline:
                     recipient_id=item.recipient_id,
                 )
                 if key not in delivered:
+                    # ВАЖНО: Добавляем в сет прямо сейчас, чтобы предотвратить 
+                    # дубли source_id внутри одного тика
+                    delivered.add(key)
                     result.append(item)
 
         return result
@@ -91,8 +94,20 @@ class NotificationPipeline:
         if not candidates:
             return
 
-        # Фаза 2: Батчевая дедупликация
-        to_send = await self._drop_already_delivered(ctx, candidates)
+        # ВАЖНО: Семантическая дедупликация (Защита от дублей подгрупп NIKA)
+        # Если в расписании NIKA 2 записи об отмене для разных групп, а ученик подписан
+        # на "Весь класс", он соберет 2 кандидата. Так как текст у них 100% идентичный,
+        # мы оставляем только один, чтобы не спамить.
+        unique_candidates = []
+        seen_texts = set()
+        for c in candidates:
+            sig = (c.recipient_id, c.text)
+            if sig not in seen_texts:
+                seen_texts.add(sig)
+                unique_candidates.append(c)
+
+        # Фаза 2: Батчевая дедупликация базы данных
+        to_send = await self._drop_already_delivered(ctx, unique_candidates)
         ctx.pending += len(to_send)
 
         # Фаза 3: Отправка и запись в лог
