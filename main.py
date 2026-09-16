@@ -457,7 +457,8 @@ async def main():
         scheduler.add_job(
             notification_service.send_upcoming_changes,
             trigger="interval",
-            minutes=15,
+            #minutes=15,
+            minutes=1,
             id="upcoming_changes",
             replace_existing=True,
             coalesce=True,

@@ -907,6 +907,7 @@ class NotificationSendDTO:
     recipient_id: int
     text: str
     context: str = ""
+    reply_markup: Any | None = None  # НОВОЕ ПОЛЕ для клавиатур (Any, чтобы не тащить aiogram в DTO)
 
     def __post_init__(self):
         if not self.text:

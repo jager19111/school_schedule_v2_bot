@@ -34,10 +34,6 @@
 #    Вся отправка сериализована через asyncio.Lock — два тика
 #    планировщика физически не могут превысить лимит вместе.
 #
-# 4. ИСПРАВЛЕН БАГ: _send_teacher_morning_reminders существовал,
-#    но нигде не вызывался — утренние сводки учителей не отправлялись.
-#    Теперь send_morning_reminders вызывает его в конце тика.
-#
 # 5. Метрики: каждый тик логирует candidates/pending/sent/failed/
 #    db_queries — контроль эффекта оптимизации.
 
@@ -388,12 +384,11 @@ class NotificationService:
             for index in range(count)
         ]
 
-        to_send = await self._drop_already_delivered(pending)
-        sent_count, failed_count = await self._flush_pending(to_send)
+        sent_count, failed_count = await self._execute_notification_pipeline(pending)
 
         return DebugBurstResultDTO(
             requested=len(pending),
-            pending=len(to_send),
+            pending=0,
             sent=sent_count,
             failed=failed_count,
         )
@@ -461,16 +456,13 @@ class NotificationService:
             sent = await self._paced_send(
                 chat_id=item.recipient_id,
                 text=item.text,
+                reply_markup=item.reply_markup,  # ПРОКИДЫВАЕМ КЛАВИАТУРУ
             )
             if not sent:
                 failed_count += 1
                 logger.warning(
-                    "Send failed: type=%s, source_id=%s, "
-                    "recipient_id=%s, context=%s",
-                    item.notification_type,
-                    item.source_id,
-                    item.recipient_id,
-                    item.context,
+                    "Send failed: type=%s, source_id=%s, recipient_id=%s, context=%s",
+                    item.notification_type, item.source_id, item.recipient_id, item.context,
                 )
                 continue
 
@@ -481,16 +473,38 @@ class NotificationService:
                 recipient_id=item.recipient_id,
             )
             sent_count += 1
-            logger.info(
-                "Delivered: type=%s, source_id=%s, recipient_id=%s, "
-                "context=%s",
-                item.notification_type,
-                item.source_id,
-                item.recipient_id,
-                item.context,
-            )
 
         return sent_count, failed_count
+
+    async def _execute_notification_pipeline(
+        self,
+        candidates: list[NotificationSendDTO],
+    ) -> tuple[int, int]:
+        """
+        Единый пайплайн отправки уведомлений:
+        1. Отсев заблокировавших бота (blocked_ids).
+        2. Батчевая дедупликация.
+        3. Paced-отправка и сохранение доставки в лог.
+        """
+        if not candidates:
+            return 0, 0
+
+        # Фаза 1: Фильтрация blocked_ids
+        blocked_ids = await self._load_blocked_recipient_ids()
+        if blocked_ids:
+            candidates = [
+                c for c in candidates 
+                if c.recipient_id not in blocked_ids
+            ]
+
+        if not candidates:
+            return 0, 0
+
+        # Фаза 2: Батчевая дедупликация (уже отправленные)
+        to_send = await self._drop_already_delivered(candidates)
+
+        # Фаза 3: Отправка и запись в лог
+        return await self._flush_pending(to_send)
 
        
     # ==============================================================
@@ -498,193 +512,82 @@ class NotificationService:
     # ==============================================================
 
     async def send_morning_reminders(self) -> None:
-        """
-        Формирует и отправляет утренние сводки.
-        """
+        """Формирует и отправляет утренние сводки."""
         now = self.time_service.get_now_base()
         current_time_str = now.strftime("%H:%M")
         today_iso = now.date().isoformat()
         weekday = now.isoweekday()
 
-        tasks = await self.repo.get_morning_summary_tasks(
-            time_str=current_time_str,
-        )
-        # Пользователи, заблокировавшие бот, не получают сводки.
-        blocked_ids = await self._load_blocked_recipient_ids()
-        if blocked_ids:
-            tasks = [
-                task
-                for task in tasks
-                if task.recipient_id not in blocked_ids
-            ]
+        tasks = await self.repo.get_morning_summary_tasks(time_str=current_time_str)
 
         if not tasks:
-            # Учительские сводки проверяем независимо от детских задач.
-            await self._send_teacher_morning_reminders(
-                current_time_str=current_time_str,
-                today_iso=today_iso,
-            )
+            await self._send_teacher_morning_reminders(current_time_str=current_time_str, today_iso=today_iso)
             return
 
-        logger.info(
-            "Morning summary tick: date=%s, time=%s, tasks=%d",
-            today_iso,
-            current_time_str,
-            len(tasks),
-        )
-
-        # --- Фаза 1 (collect/dedup): батчевая проверка delivery log ---
-        candidate_keys = [
-            DeliveredKeyDTO(
-                notification_date=today_iso,
-                source_id=f"morning_summary:{task.target_student_id}",
-                recipient_id=task.recipient_id,
-            )
-            for task in tasks
-        ]
-        delivered = await self.repo.get_delivered_keys(
-            notification_type="morning_summary",
-            candidate_keys=candidate_keys,
-        )
+        logger.info("Morning summary tick: date=%s, time=%s, tasks=%d", today_iso, current_time_str, len(tasks))
 
         metadata = await self.schedule_repo.get_metadata()
-
         classes = metadata.classes
         groups = metadata.groups
 
-        # ИСПРАВЛЕНИЕ ТИПА: Больше никаких dict[str, Any]
-        summaries_by_recipient: dict[
-            int,
-            list[tuple[MorningSummaryTaskDTO, MorningSummaryDTO]],
-        ] = {}
-        display_numbers_cache: dict[
-            tuple[str, str],
-            dict[int, str],
-        ] = {}
+        summaries_by_recipient: dict[int, list[tuple[MorningSummaryTaskDTO, MorningSummaryDTO]]] = {}
+        display_numbers_cache: dict[tuple[str, str], dict[int, str]] = {}
         
+        # ЧИСТАЯ СБОРКА — никаких проверок доставки и блокировок здесь больше нет
         for task in tasks:
             try:
-                # ИСПРАВЛЕНИЕ: Вызовы через точку к DTO
                 recipient_id = task.recipient_id
                 target_student_id = task.target_student_id
-                source_id = f"morning_summary:{target_student_id}"
-
-                if DeliveredKeyDTO(
-                    notification_date=today_iso,
-                    source_id=source_id,
-                    recipient_id=recipient_id
-                ) in delivered:
-                    continue
-
                 child_class_id = task.class_id
                 child_group_id = task.group_id or "ALL"
 
                 lessons_dtos: list[MorningLessonDTO] = []
 
                 if child_class_id:
-                    lessons = (
-                        await self.schedule_repo.get_lessons_for_class(
-                            class_id=child_class_id,
-                            date_iso=today_iso,
-                        )
-                    )
-                    day_permutation = self.schedule_service.detect_day_permutation(
-                        lessons
-                    )
-                    display_key = (
-                        child_class_id,
-                        today_iso,
-                    )
+                    lessons = await self.schedule_repo.get_lessons_for_class(class_id=child_class_id, date_iso=today_iso)
+                    day_permutation = self.schedule_service.detect_day_permutation(lessons)
+                    display_key = (child_class_id, today_iso)
 
                     if display_key not in display_numbers_cache:
-                        display_numbers_cache[display_key] = (
-                            await self.schedule_service
-                            .get_display_numbers_for_class_day(
-                                class_id=child_class_id,
-                                date_iso=today_iso,
-                            )
+                        display_numbers_cache[display_key] = await self.schedule_service.get_display_numbers_for_class_day(
+                            class_id=child_class_id, date_iso=today_iso
                         )
 
-                    display_numbers = display_numbers_cache[
-                        display_key
-                    ]
-
-                    user_groups = (
-                        child_group_id.split(",")
-                        if child_group_id != "ALL"
-                        else ["ALL"]
-                    )
+                    display_numbers = display_numbers_cache[display_key]
+                    user_groups = child_group_id.split(",") if child_group_id != "ALL" else ["ALL"]
 
                     for lesson in lessons:
                         lesson_group_id = lesson.group_id or "ALL"
-
-                        if (
-                            "ALL" not in user_groups
-                            and lesson_group_id != "ALL"
-                            and lesson_group_id not in user_groups
-                        ):
+                        if "ALL" not in user_groups and lesson_group_id != "ALL" and lesson_group_id not in user_groups:
                             continue
 
                         group_name = None
-
                         if lesson_group_id != "ALL":
-                            group_name = groups.get(
-                                lesson_group_id,
-                                f"Группа {lesson_group_id}",
-                            )
+                            group_name = groups.get(lesson_group_id, f"Группа {lesson_group_id}")
 
                         lesson_display_num = display_numbers.get(
                             lesson.lesson_num,
-                            (
-                                str(lesson.lesson_num)
-                                if lesson.lesson_num is not None
-                                else "•"
-                            ),
+                            (str(lesson.lesson_num) if lesson.lesson_num is not None else "•")
                         )
 
                         lessons_dtos.append(
                             NotificationMapper.map_school_lesson_to_morning_dto(
-                                lesson,
-                                display_num=lesson_display_num,
-                                group_name=group_name,
-                                day_permutation=day_permutation,
+                                lesson, display_num=lesson_display_num, group_name=group_name, day_permutation=day_permutation,
                             )
                         )
 
                 if target_student_id is not None:
-                    extra_items = (
-                        await self.extra_classes_service
-                        .get_extra_classes_for_student(
-                            student_id=target_student_id,
-                            day_of_week=weekday,
-                        )
+                    extra_items = await self.extra_classes_service.get_extra_classes_for_student(
+                        student_id=target_student_id, day_of_week=weekday
                     )
-
-                    lessons_dtos.extend(
-                        NotificationMapper.map_extra_to_morning_dto(extra)
-                        for extra in extra_items
-                    )
+                    lessons_dtos.extend(NotificationMapper.map_extra_to_morning_dto(extra) for extra in extra_items)
 
                 if not lessons_dtos:
-                    logger.debug(
-                        "Morning summary skipped: no lessons, "
-                        "recipient_id=%s, student_id=%s",
-                        recipient_id,
-                        target_student_id,
-                    )
                     continue
 
-                lessons_dtos.sort(
-                    key=lambda item: (
-                        item.start_time or "99:99",
-                        item.lesson_num
-                        if item.lesson_num is not None
-                        else 99,
-                    )
-                )
+                lessons_dtos.sort(key=lambda item: (item.start_time or "99:99", item.lesson_num if item.lesson_num is not None else 99))
 
                 class_name = child_class_id
-
                 if child_class_id:
                     class_obj = classes.get(child_class_id)
                     if class_obj is not None:
@@ -693,303 +596,123 @@ class NotificationService:
                 summary_dto = MorningSummaryDTO(
                     date_iso=today_iso,
                     lessons=lessons_dtos,
-                    child_name=(
-                        task.child_name
-                        if task.recipient_kind == "adult"
-                        else None
-                    ),
+                    child_name=(task.child_name if task.recipient_kind == "adult" else None),
                     class_id=child_class_id,
                     class_name=class_name,
                     has_permutation=day_permutation,
                     origin="student",
                 )
-                summaries_by_recipient.setdefault(
-                    recipient_id,
-                    [],
-                ).append((task, summary_dto))
+                summaries_by_recipient.setdefault(recipient_id, []).append((task, summary_dto))
 
-            except (KeyError, TypeError, ValueError) as exc:
-                logger.exception(
-                    "Invalid morning summary task: task=%r, error=%s",
-                    task,
-                    exc,
-                )
             except Exception:
-                logger.exception(
-                    "Unexpected morning summary assembly error: task=%r",
-                    task,
-                )
+                logger.exception("Unexpected morning summary assembly error: task=%r", task)
                 
-    # --- Фаза send: paced-отправка сгруппированных сводок ---
-        sent_count = 0
-        failed_count = 0
-
+        candidates: list[NotificationSendDTO] = []
         for recipient_id, entries in summaries_by_recipient.items():
             for task, summary_dto in entries:
-                try:
-                    text = UIRenderer.render_morning_summary(
-                        summary_dto,
+                text = UIRenderer.render_morning_summary(summary_dto)
+                has_changes = any((lesson.is_exchange or lesson.is_cancelled) for lesson in summary_dto.lessons if not lesson.is_extra)
+                keyboard = None
+
+                if has_changes:
+                    changes_data = callbacks.DayChangesCD(
+                        target_kind="student", target_id=task.target_student_id,
+                        class_id=str(task.class_id), group_id=str(task.group_id or "ALL"),
+                        date_iso=today_iso, origin="class", return_to="morning",
                     )
+                    keyboard = Keyboards.get_day_changes_kb(changes_data)
 
-                    has_changes = any(
-                        lesson.is_exchange or lesson.is_cancelled
-                        for lesson in summary_dto.lessons
-                        if not lesson.is_extra
-                    )
-
-                    keyboard = None
-
-                    if has_changes:
-                        changes_data = callbacks.DayChangesCD(
-                            target_kind="student",
-                            target_id=task.target_student_id,
-                            class_id=str(task.class_id),
-                            group_id=str(
-                                task.group_id or "ALL"
-                            ),
-                            date_iso=today_iso,
-                            origin="class",
-                            return_to="morning",
-                        )
-
-                        keyboard = (
-                            Keyboards.get_day_changes_kb(
-                                changes_data,
-                            )
-                        )
-
-                    sent = await self._paced_send(
-                        chat_id=recipient_id,
-                        text=text,
-                        reply_markup=keyboard,
-                    )
-
-                    if not sent:
-                        failed_count += 1
-                        logger.warning(
-                            "Morning summary send failed: "
-                            "recipient_id=%s student_id=%s",
-                            recipient_id,
-                            task.target_student_id,
-                        )
-                        continue
-
-                    sent_count += 1
-
-                    await self.repo.record_notification_delivery(
+                candidates.append(
+                    NotificationSendDTO(
                         notification_type="morning_summary",
                         notification_date=today_iso,
-                        source_id=(
-                            f"morning_summary:{task.target_student_id}"
-                        ),
+                        source_id=f"morning_summary:{task.target_student_id}",
                         recipient_id=recipient_id,
+                        text=text,
+                        reply_markup=keyboard,
+                        context=f"student_id={task.target_student_id}"
                     )
+                )
 
-                    logger.info(
-                        "Morning summary delivered: "
-                        "recipient_id=%s student_id=%s",
-                        recipient_id,
-                        task.target_student_id,
-                    )
-
-                except Exception:
-                    failed_count += 1
-                    logger.exception(
-                        "Morning summary sending error: "
-                        "recipient_id=%s task=%r",
-                        recipient_id,
-                        task,
-                    )
-
-        logger.info(
-            "Morning summary tick done: tasks=%d, pending_recipients=%d, "
-            "sent=%d, failed=%d",
-            len(tasks),
-            len(summaries_by_recipient),
-            sent_count,
-            failed_count,
-        )
-
-        # Учительские утренние сводки
-        await self._send_teacher_morning_reminders(
-            current_time_str=current_time_str,
-            today_iso=today_iso,
-        )
+        sent_count, failed_count = await self._execute_notification_pipeline(candidates)
+        logger.info("Morning summary tick done: tasks=%d, sent=%d, failed=%d", len(tasks), sent_count, failed_count)
+        await self._send_teacher_morning_reminders(current_time_str=current_time_str, today_iso=today_iso)
     # ==============================================================
     # Утренние сводки учителей
     # ==============================================================
 
-    async def _send_teacher_morning_reminders(
-        self,
-        *,
-        current_time_str: str,
-        today_iso: str,
-    ) -> None:
-        """
-        Отправляет утренние сводки зарегистрированным учителям.
-        """
-        tasks = await self.repo.get_teacher_morning_summary_tasks(
-            time_str=current_time_str,
-        )
-        blocked_ids = await self._load_blocked_recipient_ids()
-        if blocked_ids:
-            tasks = [
-                task
-                for task in tasks
-                if task.recipient_id not in blocked_ids
-            ]
-            
+    async def _send_teacher_morning_reminders(self, *, current_time_str: str, today_iso: str) -> None:
+        """Отправляет утренние сводки зарегистрированным учителям."""
+        tasks = await self.repo.get_teacher_morning_summary_tasks(time_str=current_time_str)
         if not tasks:
             return
-
-        # --- Фаза 1 (dedup): батчевая проверка delivery log ---
-        candidate_keys = [
-            DeliveredKeyDTO(
-                notification_date=today_iso,
-                source_id=f"teacher_morning:{task.teacher_id}",
-                recipient_id=task.recipient_id,
-            )
-            for task in tasks
-        ]
-        delivered = await self.repo.get_delivered_keys(
-            notification_type="teacher_morning",
-            candidate_keys=candidate_keys,
-        )
 
         metadata = await self.schedule_repo.get_metadata()
         classes = metadata.classes
         
-        sent_count = 0
-        failed_count = 0
+        candidates: list[NotificationSendDTO] = []
 
         for task in tasks:
             try:
                 recipient_id = task.recipient_id
                 teacher_id = task.teacher_id
                 teacher_name = task.teacher_name or "Учитель"
-                source_id = f"teacher_morning:{teacher_id}"
 
-                if DeliveredKeyDTO(
-                    notification_date=today_iso,
-                    source_id=source_id,
-                    recipient_id=recipient_id
-                ) in delivered:
-                    continue
-
-                lessons = (
-                    await self.schedule_repo.get_lessons_for_teacher(
-                        teacher_id=teacher_id,
-                        date_iso=today_iso,
-                    )
-                )
-
+                lessons = await self.schedule_repo.get_lessons_for_teacher(teacher_id=teacher_id, date_iso=today_iso)
                 lessons_dtos: list[MorningLessonDTO] = []
 
                 for lesson in lessons:
                     class_name = lesson.class_name
-
                     if not class_name and lesson.class_id:
                         class_obj = classes.get(lesson.class_id)
-                        class_name = (
-                            class_obj.name
-                            if class_obj is not None
-                            else lesson.class_id
-                        )
+                        class_name = class_obj.name if class_obj is not None else lesson.class_id
 
                     lessons_dtos.append(
                         NotificationMapper.map_school_lesson_to_morning_dto(
-                            lesson,
-                            display_num=(str(lesson.lesson_num) if lesson.lesson_num is not None else "•"),
-                            class_name=class_name,
-                            day_permutation=False,
+                            lesson, display_num=(str(lesson.lesson_num) if lesson.lesson_num is not None else "•"),
+                            class_name=class_name, day_permutation=False,
                         )
                     )
 
                 if not lessons_dtos:
                     continue
 
-                lessons_dtos.sort(
-                    key=lambda item: (
-                        item.start_time,
-                        (
-                            item.lesson_num
-                            if item.lesson_num is not None
-                            else 99
-                        ),
-                    )
-                )
+                lessons_dtos.sort(key=lambda item: (item.start_time, (item.lesson_num if item.lesson_num is not None else 99)))
 
                 summary_dto = MorningSummaryDTO(                    
-                    date_iso=today_iso,
-                    lessons=lessons_dtos,
-                    child_name=None,
-                    class_id=None,
-                    class_name=None,
-                    teacher_name=teacher_name,
-                    has_permutation=False,
-                    origin="teacher",
+                    date_iso=today_iso, lessons=lessons_dtos, child_name=None, class_id=None,
+                    class_name=None, teacher_name=teacher_name, has_permutation=False, origin="teacher",
                 )
 
                 text = UIRenderer.render_morning_summary(summary_dto)
-
-                has_changes = any(
-                    lesson.is_exchange or lesson.is_cancelled
-                    for lesson in summary_dto.lessons
-                    if not lesson.is_extra
-                )
+                has_changes = any((lesson.is_exchange or lesson.is_cancelled) for lesson in summary_dto.lessons if not lesson.is_extra)
                 keyboard = None
 
                 if has_changes:
                     changes_data = callbacks.DayChangesCD(
-                        target_kind="teacher",
-                        target_id=teacher_id,
-                        class_id="ALL",
-                        group_id="ALL",
-                        date_iso=today_iso,
-                        origin="teacher",
-                        return_to="morning",
+                        target_kind="teacher", target_id=teacher_id, class_id="ALL", group_id="ALL",
+                        date_iso=today_iso, origin="teacher", return_to="morning",
                     )
+                    keyboard = Keyboards.get_day_changes_kb(changes_data)
 
-                    keyboard = Keyboards.get_day_changes_kb(
-                        changes_data,
+                candidates.append(
+                    NotificationSendDTO(
+                        notification_type="teacher_morning",
+                        notification_date=today_iso,
+                        source_id=f"teacher_morning:{teacher_id}",
+                        recipient_id=recipient_id,
+                        text=text,
+                        reply_markup=keyboard,
+                        context=f"teacher_id={teacher_id}"
                     )
-                    
-                sent = await self._paced_send(
-                    chat_id=recipient_id,
-                    text=text,
-                    reply_markup=keyboard,
                 )
-                if not sent:
-                    failed_count += 1
-                    continue
 
-                sent_count += 1
-                await self.repo.record_notification_delivery(
-                    notification_type="teacher_morning",
-                    notification_date=today_iso,
-                    source_id=source_id,
-                    recipient_id=recipient_id,
-                )
-                logger.info(
-                    "Teacher morning summary delivered: "
-                    "teacher_id=%s recipient_id=%s",
-                    teacher_id,
-                    recipient_id,
-                )
             except Exception:
-                logger.exception(
-                    "Teacher morning summary failed: task=%r",
-                    task,
-                )
+                logger.exception("Teacher morning summary failed: task=%r", task)
 
-        if sent_count or failed_count:
-            logger.info(
-                "Teacher morning summary tick done: tasks=%d, "
-                "sent=%d, failed=%d",
-                len(tasks),
-                sent_count,
-                failed_count,
-            )
+        sent_count, failed_count = await self._execute_notification_pipeline(candidates)
+        if candidates:
+            logger.info("Teacher morning summary tick done: tasks=%d, sent=%d, failed=%d", len(tasks), sent_count, failed_count)
 
     # ==============================================================
     # 2. Изменения расписания
@@ -1050,7 +773,6 @@ class NotificationService:
             today_iso,
             len(changes),
         )
-        blocked_ids = await self._load_blocked_recipient_ids()
         
         recipients_cache: dict[tuple[str, str], list[ScheduleChangeRecipientDTO]] = {}
         teacher_cache: dict[str, list[TeacherChangeRecipientDTO]] = {}
@@ -1113,9 +835,6 @@ class NotificationService:
                 for recipient in recipients:
                     recipient_id = recipient.recipient_id
 
-                    if recipient_id in blocked_ids:
-                        continue
-
                     window_days = recipient.changes_window_days
 
                     if window_days <= 0:
@@ -1162,10 +881,7 @@ class NotificationService:
 
                 for recipient in teacher_cache[teacher_id]:
                     try:
-                        recipient_id = recipient.recipient_id
-                        if recipient_id in blocked_ids:
-                            continue
-                            
+                        recipient_id = recipient.recipient_id                          
                         window_days = recipient.changes_window_days
                         if window_days <= 0:
                             continue
@@ -1223,20 +939,13 @@ class NotificationService:
                 )
 
         # --- Фаза 2 (dedup) + Фаза 3 (send) ---
-        to_send = await self._drop_already_delivered(pending)
-        sent_count, failed_count = await self._flush_pending(to_send)
+        sent_count, failed_count = await self._execute_notification_pipeline(pending)
 
         logger.info(
             "Schedule changes tick done: changes=%d, candidates=%d, "
-            "pending=%d, sent=%d, failed=%d, "
-            "recipient_queries=%d, teacher_queries=%d",
-            len(changes),
-            len(pending),
-            len(to_send),
-            sent_count,
-            failed_count,
-            len(recipients_cache),
-            len(teacher_cache),
+            "sent=%d, failed=%d, recipient_queries=%d, teacher_queries=%d",
+            len(changes), len(pending), sent_count, failed_count, 
+            len(recipients_cache), len(teacher_cache),
         )
 
     # ==============================================================
@@ -1261,7 +970,6 @@ class NotificationService:
             today_iso,
             len(lessons),
         )
-        blocked_ids = await self._load_blocked_recipient_ids()
 
         recipients_cache: dict[tuple[str, str], list[PreLessonRecipientDTO]] = {}
         teacher_cache: dict[str, list[TeacherPreLessonRecipientDTO]] = {}
@@ -1294,8 +1002,6 @@ class NotificationService:
 
                 for recipient in recipients:
                     recipient_id = recipient.recipient_id
-                    if recipient_id in blocked_ids:
-                        continue
                     
                     offset_minutes = recipient.offset_minutes
                     if offset_minutes <= 0 or delta_minutes > offset_minutes:
@@ -1340,8 +1046,6 @@ class NotificationService:
                 for recipient in teacher_cache[teacher_id]:
                     try:
                         recipient_id = recipient.recipient_id
-                        if recipient_id in blocked_ids:
-                            continue
                             
                         offset_minutes = recipient.offset_minutes
                         if offset_minutes <= 0 or delta_minutes > offset_minutes:
@@ -1383,19 +1087,13 @@ class NotificationService:
 
         # --- Фаза 2 (dedup) + Фаза 3 (send) ---
         # Вся дедупликация и отправка с защитой от лимитов Telegram происходит здесь
-        to_send = await self._drop_already_delivered(pending)
-        sent_count, failed_count = await self._flush_pending(to_send)
+        sent_count, failed_count = await self._execute_notification_pipeline(pending)
 
         logger.info(
-            "Pre-lesson tick done: lessons=%d, candidates=%d, pending=%d, sent=%d, failed=%d, "
+            "Pre-lesson tick done: lessons=%d, candidates=%d, sent=%d, failed=%d, "
             "recipient_queries=%d, teacher_queries=%d",
-            len(lessons),
-            len(pending),
-            len(to_send),
-            sent_count,
-            failed_count,
-            len(recipients_cache),
-            len(teacher_cache),
+            len(lessons), len(pending), sent_count, failed_count,
+            len(recipients_cache), len(teacher_cache),
         )
 
     # ==============================================================
@@ -1423,7 +1121,6 @@ class NotificationService:
             weekday,
             len(extras),
         )
-        blocked_ids = await self._load_blocked_recipient_ids()
         pending: list[NotificationSendDTO] = []
 
         # --- Фаза 1 (collect) ---
@@ -1431,9 +1128,6 @@ class NotificationService:
             try:
                 extra_id = extra.extra_id
                 recipient_id = extra.recipient_id
-                
-                if recipient_id in blocked_ids:
-                    continue
                     
                 offset_minutes = extra.offset_minutes
 
@@ -1499,14 +1193,9 @@ class NotificationService:
                 )
 
         # --- Фаза 2 (dedup) + Фаза 3 (send) ---
-        to_send = await self._drop_already_delivered(pending)
-        sent_count, failed_count = await self._flush_pending(to_send)
+        sent_count, failed_count = await self._execute_notification_pipeline(pending)
 
         logger.info(
-            "Extra reminder tick done: candidates=%d, pending=%d, "
-            "sent=%d, failed=%d",
-            len(pending),
-            len(to_send),
-            sent_count,
-            failed_count,
+            "Extra reminder tick done: candidates=%d, sent=%d, failed=%d",
+            len(pending), sent_count, failed_count,
         )
