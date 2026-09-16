@@ -484,7 +484,7 @@ async def main():
             notification_service.send_upcoming_changes,
             trigger="interval",
             #minutes=15,
-            minutes=1,
+            minutes=10,
             id="upcoming_changes",
             replace_existing=True,
             coalesce=True,
