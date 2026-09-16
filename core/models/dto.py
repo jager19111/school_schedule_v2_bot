@@ -590,6 +590,8 @@ class ChangeReminderDTO:
     new_group_name: Optional[str] = None
     group_changed: bool = False
     
+    original_class_name: Optional[str] = None
+    new_class_name: Optional[str] = None
 
     child_name: Optional[str] = None
     watch_target_title: Optional[str] = None

@@ -2499,105 +2499,73 @@ class UIRenderer:
             f"🏫 Кабинет: {safe_room}"
         )
 
-        @staticmethod
-        def render_change_reminder(dto: ChangeReminderDTO) -> str:
-            display_num = (
-                dto.display_num
-                or str(dto.lesson_num)
-            )
-            if dto.watch_target_title:
-                target_line = (
-                    "🎓 Отслеживаемый класс: "
-                    f"<b>{UIRenderer.escape_html(dto.watch_target_title)}</b>\n"
-                )
-            elif dto.child_name:
-                target_line = (
-                    "👤 Ребёнок: "
-                    f"<b>{UIRenderer.escape_html(dto.child_name)}</b>\n"
-                )
-            else:
-                target_line = ""
-
-            if dto.is_cancelled:
-                safe_subj = UIRenderer.escape_html(
-                    dto.original_subject_name or dto.subject_name,
-                    "Урок",
-                )
-                return (
-                    "🚫 <b>Отмена урока</b>\n"
-                    f"{target_line}"
-                    f"📅 Дата: {dto.date}\n"
-                    f"🔢 Урок: {display_num}\n"
-                    f"📚 Предмет: <b><s>{safe_subj}</s></b>\n"
-                    f"❌ <b>Отменено</b>"
-                )
-
-            safe_orig_subj = UIRenderer.escape_html(dto.original_subject_name, "—")
-            safe_new_subj = UIRenderer.escape_html(dto.new_subject_name or dto.subject_name, "—")
-            safe_orig_room = UIRenderer.escape_html(dto.original_room_name, "—")
-            safe_new_room = UIRenderer.escape_html(dto.new_room_name, "—")
-
-            was_str = f"{safe_orig_subj} ({safe_orig_room})" if safe_orig_room and safe_orig_room != "—" else safe_orig_subj
-            now_str = f"{safe_new_subj} ({safe_new_room})" if safe_new_room and safe_new_room != "—" else safe_new_subj
-
-            change_line = f"🔄 <b>{was_str} → {now_str}</b>\n"
-
-            group_line = ""
-            if dto.group_changed and dto.original_group_name and dto.new_group_name:
-                safe_orig_grp = UIRenderer.escape_html(dto.original_group_name)
-                safe_new_grp = UIRenderer.escape_html(dto.new_group_name)
-                group_line = f"👥 Группа: <s>{safe_orig_grp}</s> → <b>{safe_new_grp}</b>\n"
-
-            return (
-                "🔄 <b>Изменение в расписании</b>\n"
-                f"{target_line}"
-                f"📅 Дата: {dto.date}\n"
-                f"🔢 Урок: {display_num}\n"
-                f"{change_line}"
-                f"{group_line}"
-            )
-
 # Склеенное изменение расписания
     @staticmethod
     def render_daily_changes_summary(summary: 'DailyChangeSummaryDTO') -> str:
-        lines = ["🔄 <b>Изменения в расписании</b>"]
+        lines = []
         
-        if summary.recipient_kind == "student" and summary.child_name:
-            lines.append(f"👤 <b>Ребёнок:</b> {UIRenderer.escape_html(summary.child_name)}")
-        elif summary.recipient_kind == "adult":
-            lines.append(f"👤 <b>Ребёнок:</b> {UIRenderer.escape_html(summary.child_name or 'Ученик')}")
-        elif summary.recipient_kind == "watch":
-            lines.append(f"🎯 <b>Цель:</b> {UIRenderer.escape_html(summary.watch_target_title or 'Класс')}")
-        elif summary.recipient_kind == "teacher":
-            lines.append(f"👨‍🏫 <b>Учитель:</b> {UIRenderer.escape_html(summary.teacher_name or 'Учитель')}")
+        # 1. Заголовок
+        if summary.recipient_kind == "adult" and summary.child_name:
+            lines.append(f"🔄 <b>Изменения в расписании ({UIRenderer.escape_html(summary.child_name)})</b>")
+        elif summary.recipient_kind == "watch" and summary.watch_target_title:
+            lines.append(f"🔄 <b>Изменения в расписании ({UIRenderer.escape_html(summary.watch_target_title)})</b>")
+        else:
+            lines.append("🔄 <b>Изменения в расписании</b>")
              
+        # 2. Дата
         date_parts = summary.date.split("-")
         formatted_date = f"{date_parts[2]}.{date_parts[1]}.{date_parts[0]}" if len(date_parts) == 3 else summary.date
         lines.append(f"📅 <b>Дата:</b> {formatted_date}\n")
         
         sorted_changes = sorted(summary.changes, key=lambda c: c.lesson_num)
+        is_teacher = summary.recipient_kind == "teacher"
         
+        # Хелпер сборки Предмет + Класс (для учителей) + Группа
+        def get_core(subj: str | None, cls_name: str | None, grp_name: str | None) -> str:
+            if not subj or subj == "—":
+                return "—"
+            parts = [UIRenderer.escape_html(subj)]
+            if is_teacher and cls_name:
+                parts.append(UIRenderer.escape_html(cls_name))
+            if grp_name and str(grp_name).strip() not in ("Весь класс", "ALL", "None", "", "—"):
+                parts.append(UIRenderer.escape_html(grp_name))
+            return " · ".join(parts)
+        
+        # 3. Список уроков
         for c in sorted_changes:
-            num_str = c.display_num or str(c.lesson_num)
+            num_str = str(c.lesson_num) if is_teacher else (c.display_num or str(c.lesson_num))
+            
+            orig_core = get_core(c.original_subject_name, c.original_class_name, c.original_group_name)
+            new_core = get_core(c.new_subject_name, c.new_class_name, c.new_group_name)
+            
+            orig_room = UIRenderer.escape_html(c.original_room_name or "")
+            new_room = UIRenderer.escape_html(c.new_room_name or "")
+            orig_room_fmt = f" ({orig_room})" if orig_room and orig_room != "—" else ""
+            new_room_fmt = f" ({new_room})" if new_room and new_room != "—" else ""
+            
+            # --- СЦЕНАРИЙ А: ОТМЕНА ---
             if c.is_cancelled:
-                lines.append(f"🚫 <b>{num_str} урок:</b> <s>{UIRenderer.escape_html(c.subject_name)}</s> <i>(отменено)</i>")
-            else:
-                old_subj = UIRenderer.escape_html(c.original_subject_name) if c.original_subject_name else "—"
-                new_subj = UIRenderer.escape_html(c.new_subject_name) if c.new_subject_name else "—"
-                old_room = f" ({UIRenderer.escape_html(c.original_room_name)})" if c.original_room_name else ""
-                new_room = f" ({UIRenderer.escape_html(c.new_room_name)})" if c.new_room_name else ""
+                core_to_strike = orig_core if c.original_subject_name else get_core(c.subject_name, c.new_class_name, c.new_group_name)
+                room_to_strike = orig_room_fmt if c.original_subject_name else (f" ({orig_room})" if orig_room and orig_room != "—" else "")
+                lines.append(f"🚫 <b>{num_str}.</b> <s>{core_to_strike}{room_to_strike}</s>")
+                continue
                 
-                group_info = ""
-                if c.group_changed:
-                    old_g = UIRenderer.escape_html(c.original_group_name) if c.original_group_name else "Весь класс"
-                    new_g = UIRenderer.escape_html(c.new_group_name) if c.new_group_name else "Весь класс"
-                    group_info = f" <i>[{old_g} → {new_g}]</i>"
-                    
-                lines.append(f"🔄 <b>{num_str}.</b> {old_subj}{old_room} → {new_subj}{new_room}{group_info}")
+            # --- СЦЕНАРИЙ Б: НОВЫЙ УРОК (БЫЛО ПУСТО) ---
+            if orig_core == "—":
+                lines.append(f"🔄 <b>{num_str}.</b> <s>—</s> → {new_core}{new_room_fmt}")
+                continue
+                
+            # --- СЦЕНАРИЙ В: ЗАМЕНА ПРЕДМЕТА, КЛАССА ИЛИ ГРУППЫ ---
+            if orig_core != new_core:
+                lines.append(f"🔄 <b>{num_str}.</b> <s>{orig_core}{orig_room_fmt}</s> → {new_core}{new_room_fmt}")
+                
+            # --- СЦЕНАРИЙ Г: СМЕНА ТОЛЬКО КАБИНЕТА ---
+            else:
+                old_r = orig_room if orig_room and orig_room != "—" else "—"
+                new_r = new_room if new_room and new_room != "—" else "—"
+                lines.append(f"🔁 <b>{num_str}.</b> {orig_core} <s>({old_r})</s> → ({new_r})")
                 
         return "\n".join(lines)
-
-
 
 
 

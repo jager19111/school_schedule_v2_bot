@@ -347,6 +347,17 @@ class NotificationCollector:
             return []
             
         ctx.processed_entities += len(changes)
+
+        # === ЗАГРУЖАЕМ СПРАВОЧНИКИ (Для расшифровки 004 -> 2б) ===
+        try:
+            metadata = await self.schedule_repo.get_metadata()
+            ctx.queries += 1
+            classes = metadata.classes
+            groups = metadata.groups
+        except Exception as e:
+            logger.error("Infrastructure error: Failed to load schedule metadata: %s", e)
+            classes = {}
+            groups = {}
         
         # 1. Формируем списки всех потенциальных получателей
         raw_student_candidates = []
@@ -366,6 +377,14 @@ class NotificationCollector:
                     )
                 class_display_num = ctx.display_numbers_cache[display_key].get(change.lesson_num, str(change.lesson_num))
 
+                # === РАСШИФРОВКА КОДОВ КЛАССА И ГРУППЫ ===
+                class_obj = classes.get(change.class_id)
+                human_class_name = class_obj.name if class_obj is not None else change.class_id
+                
+                human_group_name = change.group_name
+                if not human_group_name and change.group_id and change.group_id != "ALL":
+                    human_group_name = groups.get(change.group_id, f"Группа {change.group_id}")
+
                 cache_key = (change.class_id, change.group_id)
                 if cache_key not in ctx.change_recipients_cache:
                     ctx.change_recipients_cache[cache_key] = await self.repo.get_recipients_for_schedule_change(
@@ -378,7 +397,8 @@ class NotificationCollector:
                     if window_days > 0 and (today <= change_date <= (today + datetime.timedelta(days=window_days))):
                         del_key = DeliveredKeyDTO(change.date, change.id, recipient.recipient_id)
                         student_candidate_keys.append(del_key)
-                        raw_student_candidates.append((del_key, change, recipient, class_display_num))
+                        # Передаем расшифрованные имена
+                        raw_student_candidates.append((del_key, change, recipient, class_display_num, human_class_name, human_group_name))
 
                 teacher_id = change.teacher_id
                 if not teacher_id: continue
@@ -393,12 +413,12 @@ class NotificationCollector:
                         del_key = DeliveredKeyDTO(change.date, change.id, recipient.recipient_id)
                         teacher_candidate_keys.append(del_key)
                         teacher_name = change.teacher_name or "Учитель"
-                        raw_teacher_candidates.append((del_key, change, recipient, teacher_name))
+                        raw_teacher_candidates.append((del_key, change, recipient, teacher_name, human_class_name, human_group_name))
 
             except Exception as e:
                 logger.error("Data prep error for schedule change=%s: %s", getattr(change, 'id', 'unknown'), e)
 
-        # 2. Получаем списки УЖЕ доставленных изменений (чтобы реализовать Delta-оповещение)
+        # 2. Получаем списки УЖЕ доставленных изменений (Delta-оповещение)
         try:
             student_delivered = await self.repo.get_delivered_keys(notification_type="schedule_change", candidate_keys=student_candidate_keys)
             teacher_delivered = await self.repo.get_delivered_keys(notification_type="teacher_change", candidate_keys=teacher_candidate_keys)
@@ -416,8 +436,8 @@ class NotificationCollector:
         student_candidates_map = {}
         teacher_candidates_map = {}
 
-        # 3. Фильтруем (Delta) и применяем Quality Score (Дедупликация подгрупп NIKA)
-        for del_key, change, recipient, class_display_num in raw_student_candidates:
+        # 3. Фильтруем (Delta) и применяем Quality Score
+        for del_key, change, recipient, class_display_num, h_class, h_group in raw_student_candidates:
             if del_key in student_delivered:
                 continue  # Уже отправляли, пропускаем!
                 
@@ -429,10 +449,12 @@ class NotificationCollector:
                     change, display_num=class_display_num,
                     child_name=(recipient.child_name if recipient.recipient_kind == "adult" else None),
                     watch_target_title=(recipient.watch_target_title if recipient.recipient_kind == "watch" else None),
+                    class_name=h_class,    # <--- ПРОКИДЫВАЕМ
+                    group_name=h_group     # <--- ПРОКИДЫВАЕМ
                 )
                 student_candidates_map[dedup_key] = (score, recipient.recipient_id, change.date, recipient, dto)
 
-        for del_key, change, recipient, teacher_name in raw_teacher_candidates:
+        for del_key, change, recipient, teacher_name, h_class, h_group in raw_teacher_candidates:
             if del_key in teacher_delivered:
                 continue  # Уже отправляли, пропускаем!
                 
@@ -440,7 +462,11 @@ class NotificationCollector:
             score = get_change_score(change)
             
             if dedup_key not in teacher_candidates_map or score >= teacher_candidates_map[dedup_key][0]:
-                dto = NotificationMapper.to_change_reminder_dto(change, display_num=str(change.lesson_num))
+                dto = NotificationMapper.to_change_reminder_dto(
+                    change, display_num=str(change.lesson_num),
+                    class_name=h_class,    # <--- ПРОКИДЫВАЕМ
+                    group_name=h_group     # <--- ПРОКИДЫВАЕМ
+                )
                 teacher_candidates_map[dedup_key] = (score, recipient.recipient_id, change.date, recipient, dto, teacher_name)
 
         # 4. Склеиваем и рендерим

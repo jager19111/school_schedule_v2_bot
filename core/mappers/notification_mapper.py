@@ -257,7 +257,20 @@ class NotificationMapper:
         child_name: str | None = None,
         watch_target_title: str | None = None,
         display_num: str | None = None,
+        class_name: str | None = None,  # <--- НОВЫЙ ПАРАМЕТР
+        group_name: str | None = None,  # <--- НОВЫЙ ПАРАМЕТР
+        
     ) -> ChangeReminderDTO:
+        
+        # Умный Fallback: Если в базе нет старого названия класса (оно не менялось), 
+        # берем его из нового урока, чтобы рендер мог красиво его зачеркнуть.
+        orig_class = change.original_class_name or change.original_class_id or class_name or change.class_id
+        new_class = class_name or change.class_id
+
+        # То же самое для подгрупп
+        orig_group = change.original_group_name or change.original_group_id or group_name or change.group_name or change.group_id
+        new_group = group_name or change.group_name or change.group_id
+        
         return ChangeReminderDTO(
             change_id=change.id,
             date=change.date,
@@ -269,8 +282,10 @@ class NotificationMapper:
             new_subject_name=change.subject_name,
             original_room_name=change.original_room_name,
             new_room_name=change.room_name,
-            original_group_name=change.original_group_name,
-            new_group_name=change.group_name,
+            original_group_name=orig_group,
+            new_group_name=new_group,
+            original_class_name=orig_class,
+            new_class_name=new_class,
             group_changed=(bool(change.original_group_id) and change.original_group_id != change.group_id),
             child_name=child_name,
             watch_target_title=watch_target_title,
