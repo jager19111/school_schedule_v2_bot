@@ -1246,14 +1246,14 @@ class NotificationService:
     async def send_pre_lesson_reminders(self) -> None:
         """
         Отправляет адресные предурочные напоминания.
+        Включает рассылку ученикам, родителям и учителям.
         """
         now = self.time_service.get_now_base()
         today_iso = now.date().isoformat()
 
-        lessons: list[LessonInstance] = (
-            await self.schedule_repo.get_todays_lessons_for_pre_reminders(
-                date_iso=today_iso,
-            )
+        # Получаем DTO, а не словари
+        lessons = await self.repo.get_todays_lessons_for_pre_reminders(
+            date_iso=today_iso,
         )
 
         logger.info(
@@ -1275,14 +1275,14 @@ class NotificationService:
                     f"{today_iso} {lesson.start_time}",
                     "%Y-%m-%d %H:%M",
                 ).replace(tzinfo=self.time_service.base_tz)
-                delta_minutes = (
-                    lesson_start_at - now
-                ).total_seconds() / 60.0
+                
+                delta_minutes = (lesson_start_at - now).total_seconds() / 60.0
 
                 if delta_minutes <= 0:
                     continue
 
-                cache_key = (lesson.class_id, lesson.group_id or "ALL",)
+                # 1. ВЕТКА УЧЕНИКОВ И РОДИТЕЛЕЙ
+                cache_key = (lesson.class_id, lesson.group_id or "ALL")
                 if cache_key not in recipients_cache:
                     recipients_cache[cache_key] = (
                         await self.repo.get_recipients_for_pre_lesson_reminder(
@@ -1298,11 +1298,7 @@ class NotificationService:
                         continue
                     
                     offset_minutes = recipient.offset_minutes
-
-                    if offset_minutes <= 0:
-                        continue
-
-                    if delta_minutes > offset_minutes:
+                    if offset_minutes <= 0 or delta_minutes > offset_minutes:
                         continue
 
                     dto = LessonReminderDTO(
@@ -1324,17 +1320,16 @@ class NotificationService:
                             source_id=lesson.id,
                             recipient_id=recipient_id,
                             text=UIRenderer.render_lesson_reminder(dto),
-                            context=(
-                                f"lesson_id={lesson.id}, "
-                                f"kind={recipient.recipient_kind}"
-                            ),
+                            context=f"lesson_id={lesson.id}, kind={recipient.recipient_kind}",
                         )
                     )
 
+                # 2. ВЕТКА УЧИТЕЛЕЙ
                 teacher_id = lesson.teacher_id
                 if not teacher_id:
                     continue
 
+                # Мемоизация внутри тика, чтобы не дергать БД на каждый урок одного учителя
                 if teacher_id not in teacher_cache:
                     teacher_cache[teacher_id] = (
                         await self.repo.get_teacher_recipients_for_pre_lesson_reminder(
@@ -1349,11 +1344,7 @@ class NotificationService:
                             continue
                             
                         offset_minutes = recipient.offset_minutes
-
-                        if offset_minutes <= 0:
-                            continue
-
-                        if delta_minutes > offset_minutes:
+                        if offset_minutes <= 0 or delta_minutes > offset_minutes:
                             continue
 
                         dto = LessonReminderDTO(
@@ -1375,39 +1366,28 @@ class NotificationService:
                                 source_id=lesson.id,
                                 recipient_id=recipient_id,
                                 text=text,
-                                context=(
-                                    f"teacher_id={teacher_id}, "
-                                    f"lesson_id={lesson.id}"
-                                ),
+                                context=f"teacher_id={teacher_id}, lesson_id={lesson.id}",
                             )
                         )
                     except Exception:
                         logger.exception(
-                            "Teacher pre-lesson collect failed: "
-                            "lesson=%r recipient=%r",
+                            "Teacher pre-lesson collect failed: lesson=%r recipient=%r",
                             lesson,
                             recipient,
                         )
 
             except (KeyError, TypeError, ValueError) as exc:
-                logger.exception(
-                    "Invalid pre-lesson reminder task: lesson=%r, error=%s",
-                    lesson,
-                    exc,
-                )
+                logger.exception("Invalid pre-lesson reminder task: lesson=%r, error=%s", lesson, exc)
             except Exception:
-                logger.exception(
-                    "Unexpected pre-lesson reminder collect error: lesson=%r",
-                    lesson,
-                )
+                logger.exception("Unexpected pre-lesson reminder collect error: lesson=%r", lesson)
 
         # --- Фаза 2 (dedup) + Фаза 3 (send) ---
+        # Вся дедупликация и отправка с защитой от лимитов Telegram происходит здесь
         to_send = await self._drop_already_delivered(pending)
         sent_count, failed_count = await self._flush_pending(to_send)
 
         logger.info(
-            "Pre-lesson tick done: lessons=%d, candidates=%d, "
-            "pending=%d, sent=%d, failed=%d, "
+            "Pre-lesson tick done: lessons=%d, candidates=%d, pending=%d, sent=%d, failed=%d, "
             "recipient_queries=%d, teacher_queries=%d",
             len(lessons),
             len(pending),

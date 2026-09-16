@@ -28,7 +28,7 @@
 
 from __future__ import annotations
 
-from typing import List, Dict, Any, Optional, Sequence, Set, Tuple
+from typing import List, Any, Sequence, Set, Mapping
 
 from core.repository.base_repository import BaseRepository
 from core.models.dto import (
@@ -46,7 +46,6 @@ from core.models.dto import (
 
 from core.mappers.notification_mapper import NotificationMapper
 
-
 class NotificationRepository(BaseRepository):
     """
     Репозиторий</arg_key>ленных данных для NotificationService.
@@ -55,10 +54,177 @@ class NotificationRepository(BaseRepository):
     - Пишет/читает notification_delivery_log (дедупликация доставок).
     """
 
+    # ==============================================================
+    # Хелперы для batch-дедупликации
+    # ==============================================================
+
+    @staticmethod
+    def _chunk_list(data: list, chunk_size: int):
+        """Разбивает список на чанки заданного размера."""
+        for i in range(0, len(data), chunk_size):
+            yield data[i:i + chunk_size]
+
+    @staticmethod
+    def _generate_in_placeholders(count: int) -> str:
+        """Генерирует строку плейсхолдеров для SQL IN (...)."""
+        return ",".join(["?"] * count)
+
+    @staticmethod
+    def _filter_cross_product(
+        rows: list[Mapping[str, Any]], 
+        valid_keys: Set[DeliveredKeyDTO]
+    ) -> Set[DeliveredKeyDTO]:
+        """
+        Отфильтровывает кросс-продукт, возникший из-за независимых IN-списков,
+        оставляя только те ключи, которые реально запрашивались.
+        """
+        delivered: Set[DeliveredKeyDTO] = set()
+        for row in rows:
+            key = DeliveredKeyDTO(
+                notification_date=row["notification_date"],
+                source_id=row["source_id"],
+                recipient_id=int(row["recipient_id"]),
+            )
+            if key in valid_keys:
+                delivered.add(key)
+        return delivered
+
+    # ==============================================================
+    # Основные методы дедупликации
+    # ==============================================================
+
+    async def get_delivered_keys(
+        self,
+        *,
+        notification_type: str,
+        candidate_keys: Sequence[DeliveredKeyDTO],
+        chunk_size: int = 400,
+    ) -> Set[DeliveredKeyDTO]:
+        """
+        Батчевая проверка доставки с защитой от N+1.
+        Использует IN-списки для извлечения кандидатов и фильтрует SQL кросс-продукт.
+        
+        candidate_keys: кортежи (notification_date, source_id, recipient_id).
+
+        Как решается N+1:
+        - кандидаты дедуплицируются и режутся на чанки (по умолчанию 400);
+        - для чанка выполняется ОДИН запрос с тремя IN-списками
+          (dates, sources, recipients). PK-индекс
+          (notification_type, notification_date, source_id, recipient_id)
+          используется по префиксу;
+        - IN-списки дают возможный переселект (cross product), поэтому
+          каждый вернувшийся кортеж проверяется на точное членство
+          в множестве кандидатов — ложных срабатываний нет;
+        - чанкинг делает метод независимым от SQLITE_MAX_VARIABLE_NUMBER
+          (999 в старых SQLite, 32766 в новых: 3.45+/3.53+ поддерживают
+          с запасом, но консервативный чанк работает везде).
+
+        Возвращает set кортежей, которые УЖЕ доставлены.
+        """
+        if not candidate_keys:
+            return set()
+
+        unique_keys: Set[DeliveredKeyDTO] = set(candidate_keys)
+        delivered: Set[DeliveredKeyDTO] = set()
+
+        for chunk in self._chunk_list(list(unique_keys), chunk_size):
+            dates = sorted({key.notification_date for key in chunk})
+            sources = sorted({key.source_id for key in chunk})
+            recipients = sorted({key.recipient_id for key in chunk})
+
+            query = f"""
+            SELECT notification_date, source_id, recipient_id
+            FROM notification_delivery_log
+            WHERE notification_type = ?
+              AND notification_date IN ({self._generate_in_placeholders(len(dates))})
+              AND source_id IN ({self._generate_in_placeholders(len(sources))})
+              AND recipient_id IN ({self._generate_in_placeholders(len(recipients))})
+            """
+            params = (notification_type, *dates, *sources, *recipients)
+            
+            rows = await self._fetch_all(query, params)
+            delivered.update(self._filter_cross_product(rows, unique_keys))
+
+        return delivered
+
+    async def record_notification_delivery(
+        self,
+        *,
+        notification_type: str,
+        notification_date: str,
+        source_id: str,
+        recipient_id: int,
+    ) -> bool:
+        """
+        Фиксирует успешную доставку.
+
+        Возвращает True, если была создана новая запись.
+        INSERT OR IGNORE защищает от дублей при повторном вызове.
+
+        Запись выполняется ПОСЛЕ КАЖДОЙ успешной отправки, а не батчем
+        в конце тика: если процесс упадёт в середине рассылки,
+        уже отправленные сообщения не продублируются на следующем тике.
+        """
+        now_utc = self._now_utc_str()
+        changed = await self._execute(
+            """
+            INSERT OR IGNORE INTO notification_delivery_log (
+                notification_type,
+                notification_date,
+                source_id,
+                recipient_id,
+                sent_at
+            )
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                notification_type,
+                notification_date,
+                source_id,
+                recipient_id,
+                now_utc,
+            ),
+        )
+        return changed == 1
+
+
+    async def is_notification_delivered(
+        self,
+        *,
+        notification_type: str,
+        notification_date: str,
+        source_id: str,
+        recipient_id: int,
+    ) -> bool:
+        """
+        Проверяет, доставлено ли уведомление (одиночная проверка).
+
+        Оставлена для редких call-site (единичные проверки).
+        В горячих циклах сервис использует get_delivered_keys.
+        """
+        row = await self._fetch_one(
+            """
+            SELECT 1 AS delivered
+            FROM notification_delivery_log
+            WHERE notification_type = ?
+              AND notification_date = ?
+              AND source_id = ?
+              AND recipient_id = ?
+            """,
+            (
+                notification_type,
+                notification_date,
+                source_id,
+                recipient_id,
+            ),
+        )
+        return row is not None
+
+    
     async def get_todays_lessons_for_pre_reminders(
         self,
         date_iso: str,
-    ) -> List[PreLessonSourceDTO]:  # БЫЛО: List[Dict[str, Any]]
+    ) -> List[PreLessonSourceDTO]:
         """Возвращает все активные уроки текущего дня через строгий DTO."""
         rows = await self._fetch_all(
             """
@@ -417,149 +583,6 @@ class NotificationRepository(BaseRepository):
         rows = await self._fetch_all(query, (day_of_week, day_of_week))
         return [NotificationMapper.to_extra_class_reminder_task_dto(row) for row in rows]
 
-    async def is_notification_delivered(
-        self,
-        *,
-        notification_type: str,
-        notification_date: str,
-        source_id: str,
-        recipient_id: int,
-    ) -> bool:
-        """
-        Проверяет, доставлено ли уведомление (одиночная проверка).
-
-        Оставлена для редких call-site (единичные проверки).
-        В горячих циклах сервис использует get_delivered_keys.
-        """
-        row = await self._fetch_one(
-            """
-            SELECT 1 AS delivered
-            FROM notification_delivery_log
-            WHERE notification_type = ?
-              AND notification_date = ?
-              AND source_id = ?
-              AND recipient_id = ?
-            """,
-            (
-                notification_type,
-                notification_date,
-                source_id,
-                recipient_id,
-            ),
-        )
-        return row is not None
-
-    # ==============================================================
-    # НОВОЕ (Этап 2): батчевая проверка доставки — фикс N+1.
-    # ==============================================================
-
-    async def get_delivered_keys(
-        self,
-        *,
-        notification_type: str,
-        candidate_keys: Sequence[DeliveredKeyDTO],
-        chunk_size: int = 400,
-    ) -> Set[DeliveredKeyDTO]:
-        """
-        Батчевая проверка доставки списка кандидатов одним-несколькими
-        запросами вместо одиночного SELECT на каждого получателя.
-
-        candidate_keys: кортежи (notification_date, source_id, recipient_id).
-
-        Как решается N+1:
-        - кандидаты дедуплицируются и режутся на чанки (по умолчанию 400);
-        - для чанка выполняется ОДИН запрос с тремя IN-списками
-          (dates, sources, recipients). PK-индекс
-          (notification_type, notification_date, source_id, recipient_id)
-          используется по префиксу;
-        - IN-списки дают возможный переселект (cross product), поэтому
-          каждый вернувшийся кортеж проверяется на точное членство
-          в множестве кандидатов — ложных срабатываний нет;
-        - чанкинг делает метод независимым от SQLITE_MAX_VARIABLE_NUMBER
-          (999 в старых SQLite, 32766 в новых: 3.45+/3.53+ поддерживают
-          с запасом, но консервативный чанк работает везде).
-
-        Возвращает set кортежей, которые УЖЕ доставлены.
-        """
-        if not candidate_keys:
-            return set()
-
-        unique_keys: Set[DeliveredKeyDTO] = set(candidate_keys)
-        delivered: Set[DeliveredKeyDTO] = set()
-        keys_list = list(unique_keys)
-
-        for offset in range(0, len(keys_list), chunk_size):
-            chunk = keys_list[offset:offset + chunk_size]
-
-            # Обращение через атрибуты DTO, а не индексы кортежа
-            dates = sorted({key.notification_date for key in chunk})
-            sources = sorted({key.source_id for key in chunk})
-            recipients = sorted({key.recipient_id for key in chunk})
-
-            def _placeholders(values: list) -> str:
-                return ",".join("?" for _ in values)
-
-            query = f"""
-            SELECT notification_date, source_id, recipient_id
-            FROM notification_delivery_log
-            WHERE notification_type = ?
-              AND notification_date IN ({_placeholders(dates)})
-              AND source_id IN ({_placeholders(sources)})
-              AND recipient_id IN ({_placeholders(recipients)})
-            """
-            params = (notification_type, *dates, *sources, *recipients)
-            rows = await self._fetch_all(query, params)
-            
-            for row in rows:
-                key = DeliveredKeyDTO(
-                    notification_date=row["notification_date"],
-                    source_id=row["source_id"],
-                    recipient_id=int(row["recipient_id"]),
-                )
-                if key in unique_keys:
-                    delivered.add(key)
-
-        return delivered
-
-    async def record_notification_delivery(
-        self,
-        *,
-        notification_type: str,
-        notification_date: str,
-        source_id: str,
-        recipient_id: int,
-    ) -> bool:
-        """
-        Фиксирует успешную доставку.
-
-        Возвращает True, если была создана новая запись.
-        INSERT OR IGNORE защищает от дублей при повторном вызове.
-
-        Запись выполняется ПОСЛЕ КАЖДОЙ успешной отправки, а не батчем
-        в конце тика: если процесс упадёт в середине рассылки,
-        уже отправленные сообщения не продублируются на следующем тике.
-        """
-        now_utc = self._now_utc_str()
-        changed = await self._execute(
-            """
-            INSERT OR IGNORE INTO notification_delivery_log (
-                notification_type,
-                notification_date,
-                source_id,
-                recipient_id,
-                sent_at
-            )
-            VALUES (?, ?, ?, ?, ?)
-            """,
-            (
-                notification_type,
-                notification_date,
-                source_id,
-                recipient_id,
-                now_utc,
-            ),
-        )
-        return changed == 1
 
     async def mark_user_notifications_blocked(
         self,
