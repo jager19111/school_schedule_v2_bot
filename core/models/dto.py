@@ -11,8 +11,13 @@
 # 4. DayScheduleDTO.lessons строго типизирован как List[LessonDTO].
 
 from dataclasses import dataclass, field
-from typing import Dict, Optional, List, Literal, Any
+from typing import Dict, Optional, List, Literal, Any, Protocol
 
+class ReplyMarkupProtocol(Protocol):
+    """Маркерный протокол для UI-клавиатур, избавляющий DTO от зависимости aiogram."""
+    pass
+
+RecipientKind = Literal["student", "adult", "watch", "teacher"]
 
 # ==========================================================
 # Справочники
@@ -544,7 +549,7 @@ class FullWeekScheduleDTO:
 # Notification DTO (Этап 3: расширен для original_*, group_changed)
 # ==========================================================
 
-
+@dataclass(frozen=True, slots=True)
 @dataclass
 class LessonReminderDTO:
     """
@@ -624,7 +629,7 @@ class PendingChangeDTO:
     # Вычисляемое поле, не хранится в schedule_cache.
     display_num: str | None = None
     
-@dataclass
+@dataclass(frozen=True, slots=True)
 class MorningLessonDTO:
     """
     Урок для утренней сводки.
@@ -634,7 +639,6 @@ class MorningLessonDTO:
     end_time: str
     subject_name: str
     room_name: str
-
     is_cancelled: bool
     is_exchange: bool
     is_extra: bool = False
@@ -646,7 +650,6 @@ class MorningLessonDTO:
     original_room_name: Optional[str] = None
     group_changed: bool = False
     day_permutation: bool = False
-    # --- НОВЫЕ ЧИСТЫЕ ПОЛЯ ДЛЯ РЕНДЕРА ---
     class_name: Optional[str] = None
     teacher_name: Optional[str] = None
     display_num: Optional[str] = None
@@ -820,14 +823,16 @@ class DebugBurstResultDTO:
 class MorningSummaryTaskDTO:
     recipient_id: int
     target_student_id: int
-    recipient_kind: str
-    child_name: str | None
-    class_id: str | None
-    group_id: str | None
+    recipient_kind: RecipientKind
+    child_name: Optional[str]
+    class_id: Optional[str]
+    group_id: Optional[str]
 
     def __post_init__(self):
-            if self.recipient_id <= 0:
-                raise ValueError("recipient_id must be strictly positive")
+        if self.recipient_id <= 0:
+            raise ValueError("recipient_id must be strictly positive")
+        if self.target_student_id <= 0:
+            raise ValueError("target_student_id must be strictly positive")
 
 @dataclass(frozen=True, slots=True)
 class TeacherMorningTaskDTO:
@@ -837,30 +842,44 @@ class TeacherMorningTaskDTO:
 
 @dataclass(frozen=True, slots=True)
 class PreLessonRecipientDTO:
-    student_id: int | None
+    student_id: Optional[int]
     recipient_id: int
     offset_minutes: int
-    recipient_kind: str
-    child_name: str | None
+    recipient_kind: RecipientKind
+    child_name: Optional[str]
 
     def __post_init__(self):
-            if self.recipient_id <= 0:
-                raise ValueError("recipient_id must be strictly positive")
+        if self.recipient_id <= 0:
+            raise ValueError("recipient_id must be strictly positive")
+        if self.offset_minutes < 0:
+            raise ValueError("offset_minutes cannot be negative")
             
 @dataclass(frozen=True, slots=True)
 class TeacherPreLessonRecipientDTO:
     recipient_id: int
-    teacher_id: str
+    teacher_id: Optional[int]
     offset_minutes: int
 
+    def __post_init__(self):
+        if self.recipient_id <= 0:
+            raise ValueError("recipient_id must be strictly positive")
+        if self.offset_minutes < 0:
+            raise ValueError("offset_minutes cannot be negative")
+        
 @dataclass(frozen=True, slots=True)
 class ScheduleChangeRecipientDTO:
-    student_id: int | None
+    student_id: Optional[int]
     recipient_id: int
     changes_window_days: int
-    recipient_kind: str
-    child_name: str | None
-    watch_target_title: str | None
+    recipient_kind: RecipientKind
+    child_name: Optional[str]
+    watch_target_title: Optional[str]
+
+    def __post_init__(self):
+        if self.recipient_id <= 0:
+            raise ValueError("recipient_id must be strictly positive")
+        if self.changes_window_days < 0:
+            raise ValueError("changes_window_days cannot be negative")
 
 @dataclass(frozen=True, slots=True)
 class TeacherChangeRecipientDTO:
@@ -871,14 +890,20 @@ class TeacherChangeRecipientDTO:
 @dataclass(frozen=True, slots=True)
 class ExtraClassReminderTaskDTO:
     extra_id: int
-    student_id: int
+    student_id: Optional[int]
     time_start: str
     title: str
     location: str | None
     recipient_id: int
     offset_minutes: int
-    recipient_kind: str
-    child_name: str | None
+    recipient_kind: RecipientKind
+    child_name: Optional[str]
+    
+    def __post_init__(self):
+        if self.recipient_id <= 0:
+            raise ValueError("recipient_id must be strictly positive")
+        if self.offset_minutes < 0:
+            raise ValueError("offset_minutes cannot be negative")
     
     
 # ==========================================================
@@ -907,10 +932,16 @@ class NotificationSendDTO:
     recipient_id: int
     text: str
     context: str = ""
-    reply_markup: Any | None = None  # НОВОЕ ПОЛЕ для клавиатур (Any, чтобы не тащить aiogram в DTO)
+   # === НОВЫЙ БЛОК: Манифест действий вместо физической клавиатуры ===
+    action_type: str | None = None      # Например: "day_changes"
+    action_payload: dict | None = None  # Данные для кнопки: {"target_id": 123, ...}
 
     def __post_init__(self):
-        if not self.text:
+        if not self.notification_type or not str(self.notification_type).strip():
+            raise ValueError("notification_type cannot be empty")
+        if not self.source_id or not str(self.source_id).strip():
+            raise ValueError("source_id cannot be empty")
+        if not self.text or not str(self.text).strip():
             raise ValueError("Notification text cannot be empty")
         if self.recipient_id <= 0:
             raise ValueError("recipient_id must be strictly positive")

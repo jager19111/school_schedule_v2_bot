@@ -17,6 +17,10 @@ class NotificationPipeline:
         self.dispatcher = dispatcher
 
     async def _drop_already_delivered(self, pending: list[NotificationSendDTO]) -> list[NotificationSendDTO]:
+        """
+        Отфильтровывает уже отправленные уведомления.
+        Строго использует DeliveredKeyDTO для генерации ключей и проверки в set.
+        """
         if not pending:
             return []
 
@@ -25,6 +29,8 @@ class NotificationPipeline:
 
         for notification_type in types:
             type_items = [item for item in pending if item.notification_type == notification_type]
+            
+            # 1. Генерируем массив DTO-ключей для репозитория
             candidate_keys = [
                 DeliveredKeyDTO(
                     notification_date=item.notification_date,
@@ -33,10 +39,14 @@ class NotificationPipeline:
                 )
                 for item in type_items
             ]
-            delivered = await self.repo.get_delivered_keys(
+            
+            # 2. Получаем set[DeliveredKeyDTO] от репозитория
+            delivered: set[DeliveredKeyDTO] = await self.repo.get_delivered_keys(
                 notification_type=notification_type,
                 candidate_keys=candidate_keys,
             )
+            
+            # 3. Проверяем вхождение DTO в сет
             for item in type_items:
                 key = DeliveredKeyDTO(
                     notification_date=item.notification_date,
@@ -77,7 +87,8 @@ class NotificationPipeline:
             sent = await self.dispatcher.send(
                 chat_id=item.recipient_id,
                 text=item.text,
-                reply_markup=item.reply_markup,
+                action_type=item.action_type,        # ПРОКИДЫВАЕМ ACTION TYPE
+                action_payload=item.action_payload,  # ПРОКИДЫВАЕМ ACTION PAYLOAD
             )
             
             if not sent:

@@ -3,8 +3,7 @@
 import datetime
 import logging
 
-from bot import callbacks
-from bot.keyboards.keyboard import Keyboards
+
 from bot.utils.ui_renderer import UIRenderer
 
 from core.repository.notification_repository import NotificationRepository
@@ -139,15 +138,21 @@ class NotificationCollector:
             for task, summary_dto in entries:
                 text = UIRenderer.render_morning_summary(summary_dto)
                 has_changes = any((lesson.is_exchange or lesson.is_cancelled) for lesson in summary_dto.lessons if not lesson.is_extra)
-                keyboard = None
+            # === Манифест действий вместо физической клавиатуры ===
+                action_type = None
+                action_payload = None
 
                 if has_changes:
-                    changes_data = callbacks.DayChangesCD(
-                        target_kind="student", target_id=task.target_student_id,
-                        class_id=str(task.class_id), group_id=str(task.group_id or "ALL"),
-                        date_iso=today_iso, origin="class", return_to="morning",
-                    )
-                    keyboard = Keyboards.get_day_changes_kb(changes_data)
+                    action_type = "day_changes"
+                    action_payload = {
+                        "target_kind": "student",
+                        "target_id": task.target_student_id,
+                        "class_id": str(task.class_id),
+                        "group_id": str(task.group_id or "ALL"),
+                        "date_iso": today_iso,
+                        "origin": "class",
+                        "return_to": "morning",
+                    }
 
                 candidates.append(
                     NotificationSendDTO(
@@ -156,7 +161,8 @@ class NotificationCollector:
                         source_id=f"morning_summary:{task.target_student_id}",
                         recipient_id=recipient_id,
                         text=text,
-                        reply_markup=keyboard,
+                        action_type=action_type,           # Заменили reply_markup
+                        action_payload=action_payload,     # Передали словарь
                         context=f"student_id={task.target_student_id}"
                     )
                 )
@@ -214,14 +220,21 @@ class NotificationCollector:
 
                 text = UIRenderer.render_morning_summary(summary_dto)
                 has_changes = any((lesson.is_exchange or lesson.is_cancelled) for lesson in summary_dto.lessons if not lesson.is_extra)
-                keyboard = None
+                # === Манифест действий вместо физической клавиатуры ===
+                action_type = None
+                action_payload = None
 
                 if has_changes:
-                    changes_data = callbacks.DayChangesCD(
-                        target_kind="teacher", target_id=teacher_id, class_id="ALL", group_id="ALL",
-                        date_iso=today_iso, origin="teacher", return_to="morning",
-                    )
-                    keyboard = Keyboards.get_day_changes_kb(changes_data)
+                    action_type = "day_changes"
+                    action_payload = {
+                        "target_kind": "teacher",
+                        "target_id": teacher_id,
+                        "class_id": "ALL",
+                        "group_id": "ALL",
+                        "date_iso": today_iso,
+                        "origin": "teacher",
+                        "return_to": "morning",
+                    }
 
                 candidates.append(
                     NotificationSendDTO(
@@ -230,7 +243,8 @@ class NotificationCollector:
                         source_id=f"teacher_morning:{teacher_id}",
                         recipient_id=recipient_id,
                         text=text,
-                        reply_markup=keyboard,
+                        action_type=action_type,           # Заменили reply_markup
+                        action_payload=action_payload,     # Передали словарь
                         context=f"teacher_id={teacher_id}"
                     )
                 )

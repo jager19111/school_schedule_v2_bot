@@ -1,11 +1,22 @@
-from typing import Any, Mapping
+# core/mappers/notification_mapper.py
+
+from typing import Any, Optional, Protocol
 from core.models.dto import (
     PreLessonSourceDTO, PreLessonRecipientDTO, PendingChangeDTO,
     ScheduleChangeRecipientDTO, MorningSummaryTaskDTO, ExtraClassReminderTaskDTO,
     TeacherMorningTaskDTO, TeacherPreLessonRecipientDTO, TeacherChangeRecipientDTO,
-    MorningLessonDTO, ExtraClassItemDTO, ChangeReminderDTO
+    MorningLessonDTO, ExtraClassItemDTO, ChangeReminderDTO, DeliveredKeyDTO
 )
 from core.models.domain import LessonInstance
+
+class DatabaseRowProtocol(Protocol):
+    """
+    Контракт для безопасной распаковки строк базы данных.
+    Отвязывает маппер от конкретного драйвера БД (sqlite3, asyncpg, dict и т.д.).
+    """
+    def get(self, key: str, default: Any = None) -> Any: ...
+    def __getitem__(self, key: str) -> Any: ...
+
 
 class FieldHelper:
     """Единый helper для безопасного извлечения и приведения типов из SQL-строк."""
@@ -47,14 +58,26 @@ class FieldHelper:
 
 
 class NotificationMapper:
-    """Слой адаптации SQL-строк и Domain-моделей в DTO."""
+    """
+    Слой адаптации SQL-строк и Domain-моделей в DTO.
+    Используется строго внутри слоя Repository и Collector.
+    """
 
+    @staticmethod
+    def to_delivered_key_dto(row: DatabaseRowProtocol) -> DeliveredKeyDTO:
+        """Безопасный маппинг строки БД в ключ дедупликации."""
+        return DeliveredKeyDTO(
+            notification_date=FieldHelper.as_str(row.get("notification_date")),
+            source_id=FieldHelper.as_str(row.get("source_id")),
+            recipient_id=FieldHelper.as_int(row.get("recipient_id")),
+        )
+        
     # ==========================================
-    # Мапперы для Репозитория (dict -> DTO)
+    # Мапперы для Репозитория (DatabaseRowProtocol -> DTO)
     # ==========================================
 
     @staticmethod
-    def to_pre_lesson_source_dto(row: Mapping[str, Any]) -> PreLessonSourceDTO:
+    def to_pre_lesson_source_dto(row: DatabaseRowProtocol) -> PreLessonSourceDTO:
         return PreLessonSourceDTO(
             id=FieldHelper.as_str(row.get("id")),
             date=FieldHelper.as_str(row.get("date")),
@@ -67,7 +90,7 @@ class NotificationMapper:
         )
 
     @staticmethod
-    def to_pre_lesson_recipient_dto(row: Mapping[str, Any]) -> PreLessonRecipientDTO:
+    def to_pre_lesson_recipient_dto(row: DatabaseRowProtocol) -> PreLessonRecipientDTO:
         return PreLessonRecipientDTO(
             student_id=FieldHelper.as_optional_int(row.get("student_id")),
             recipient_id=FieldHelper.as_int(row.get("recipient_id")),
@@ -77,7 +100,7 @@ class NotificationMapper:
         )
 
     @staticmethod
-    def to_pending_change_dto(row: Mapping[str, Any]) -> PendingChangeDTO:
+    def to_pending_change_dto(row: DatabaseRowProtocol) -> PendingChangeDTO:
         return PendingChangeDTO(
             id=FieldHelper.as_str(row.get("id")),
             date=FieldHelper.as_str(row.get("date")),
@@ -107,7 +130,7 @@ class NotificationMapper:
         )
 
     @staticmethod
-    def to_schedule_change_recipient_dto(row: Mapping[str, Any]) -> ScheduleChangeRecipientDTO:
+    def to_schedule_change_recipient_dto(row: DatabaseRowProtocol) -> ScheduleChangeRecipientDTO:
         return ScheduleChangeRecipientDTO(
             student_id=FieldHelper.as_optional_int(row.get("student_id")),
             recipient_id=FieldHelper.as_int(row.get("recipient_id")),
@@ -118,7 +141,7 @@ class NotificationMapper:
         )
 
     @staticmethod
-    def to_morning_summary_task_dto(row: Mapping[str, Any]) -> MorningSummaryTaskDTO:
+    def to_morning_summary_task_dto(row: DatabaseRowProtocol) -> MorningSummaryTaskDTO:
         return MorningSummaryTaskDTO(
             recipient_id=FieldHelper.as_int(row.get("recipient_id")),
             target_student_id=FieldHelper.as_int(row.get("target_student_id")),
@@ -129,7 +152,7 @@ class NotificationMapper:
         )
 
     @staticmethod
-    def to_extra_class_reminder_task_dto(row: Mapping[str, Any]) -> ExtraClassReminderTaskDTO:
+    def to_extra_class_reminder_task_dto(row: DatabaseRowProtocol) -> ExtraClassReminderTaskDTO:
         return ExtraClassReminderTaskDTO(
             extra_id=FieldHelper.as_int(row.get("extra_id")),
             student_id=FieldHelper.as_int(row.get("student_id")),
@@ -143,7 +166,7 @@ class NotificationMapper:
         )
 
     @staticmethod
-    def to_teacher_morning_task_dto(row: Mapping[str, Any]) -> TeacherMorningTaskDTO:
+    def to_teacher_morning_task_dto(row: DatabaseRowProtocol) -> TeacherMorningTaskDTO:
         return TeacherMorningTaskDTO(
             recipient_id=FieldHelper.as_int(row.get("recipient_id")),
             teacher_id=FieldHelper.as_str(row.get("teacher_id")),
@@ -151,7 +174,7 @@ class NotificationMapper:
         )
 
     @staticmethod
-    def to_teacher_pre_lesson_recipient_dto(row: Mapping[str, Any]) -> TeacherPreLessonRecipientDTO:
+    def to_teacher_pre_lesson_recipient_dto(row: DatabaseRowProtocol) -> TeacherPreLessonRecipientDTO:
         return TeacherPreLessonRecipientDTO(
             recipient_id=FieldHelper.as_int(row.get("recipient_id")),
             teacher_id=FieldHelper.as_str(row.get("teacher_id")),
@@ -159,7 +182,7 @@ class NotificationMapper:
         )
 
     @staticmethod
-    def to_teacher_change_recipient_dto(row: Mapping[str, Any]) -> TeacherChangeRecipientDTO:
+    def to_teacher_change_recipient_dto(row: DatabaseRowProtocol) -> TeacherChangeRecipientDTO:
         return TeacherChangeRecipientDTO(
             recipient_id=FieldHelper.as_int(row.get("recipient_id")),
             teacher_id=FieldHelper.as_str(row.get("teacher_id")),

@@ -1,7 +1,6 @@
 # services/notifications_service.py
 
 import logging
-from typing import Optional
 
 from core.models.dto import NotificationSendDTO, DebugBurstResultDTO
 from services.time_service import TimeService

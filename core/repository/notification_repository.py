@@ -311,43 +311,28 @@ class NotificationRepository(BaseRepository):
         return ",".join(["?"] * count)
 
     @staticmethod
-    def _filter_cross_product(rows: list[Mapping[str, Any]], valid_keys: Set[DeliveredKeyDTO]) -> Set[DeliveredKeyDTO]:
+    def _filter_cross_product(rows: list[Any], valid_keys: Set[DeliveredKeyDTO]) -> Set[DeliveredKeyDTO]:
         """
-        Отфильтровывает кросс-продукт, возникший из-за независимых IN-списков,
-        оставляя только те ключи, которые реально запрашивались.
+        Отфильтровывает кросс-продукт, используя строгий DTO-маппинг.
+        Никаких row["..."] — только DatabaseRowProtocol.
         """
         delivered: Set[DeliveredKeyDTO] = set()
         for row in rows:
-            key = DeliveredKeyDTO(
-                notification_date=row["notification_date"],
-                source_id=row["source_id"],
-                recipient_id=int(row["recipient_id"]),
-            )
+            key = NotificationMapper.to_delivered_key_dto(row)
             if key in valid_keys:
                 delivered.add(key)
         return delivered
 
-    async def get_delivered_keys(self, *, notification_type: str, candidate_keys: Sequence[DeliveredKeyDTO], chunk_size: int = 400) -> Set[DeliveredKeyDTO]:
+    async def get_delivered_keys(
+        self, 
+        *, 
+        notification_type: str, 
+        candidate_keys: Sequence[DeliveredKeyDTO], 
+        chunk_size: int = 400
+    ) -> Set[DeliveredKeyDTO]:
         """
         Батчевая проверка доставки с защитой от N+1.
-        Использует IN-списки для извлечения кандидатов и фильтрует SQL кросс-продукт.
-        
-        candidate_keys: кортежи (notification_date, source_id, recipient_id).
-
-        Как решается N+1:
-        - кандидаты дедуплицируются и режутся на чанки (по умолчанию 400);
-        - для чанка выполняется ОДИН запрос с тремя IN-списками
-          (dates, sources, recipients). PK-индекс
-          (notification_type, notification_date, source_id, recipient_id)
-          используется по префиксу;
-        - IN-списки дают возможный переселект (cross product), поэтому
-          каждый вернувшийся кортеж проверяется на точное членство
-          в множестве кандидатов — ложных срабатываний нет;
-        - чанкинг делает метод независимым от SQLITE_MAX_VARIABLE_NUMBER
-          (999 в старых SQLite, 32766 в новых: 3.45+/3.53+ поддерживают
-          с запасом, но консервативный чанк работает везде).
-
-        Возвращает set кортежей, которые УЖЕ доставлены.
+        Принимает и возвращает исключительно объекты DeliveredKeyDTO.
         """
         if not candidate_keys:
             return set()
@@ -356,6 +341,7 @@ class NotificationRepository(BaseRepository):
         delivered: Set[DeliveredKeyDTO] = set()
 
         for chunk in self._chunk_list(list(unique_keys), chunk_size):
+            # Извлекаем параметры для SQL напрямую из DTO
             dates = sorted({key.notification_date for key in chunk})
             sources = sorted({key.source_id for key in chunk})
             recipients = sorted({key.recipient_id for key in chunk})
@@ -370,6 +356,7 @@ class NotificationRepository(BaseRepository):
             """
             
             rows = await self._fetch_all(query, (notification_type, *dates, *sources, *recipients))
+            # Фильтруем и пополняем сет готовыми DeliveredKeyDTO
             delivered.update(self._filter_cross_product(rows, unique_keys))
 
         return delivered

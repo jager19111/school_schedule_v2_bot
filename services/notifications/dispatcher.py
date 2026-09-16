@@ -55,13 +55,40 @@ class NotificationDispatcher:
             if ts > cutoff
         }
 
+    def _build_keyboard(self, action_type: str | None, payload: dict | None) -> Optional[InlineKeyboardMarkup]:
+            """Превращает абстрактное намерение (action_type) в физическую клавиатуру Telegram."""
+            if not action_type or not payload:
+                return None
+                
+            if action_type == "day_changes":
+                # Импортируем локально, чтобы не засорять глобальную область видимости
+                from bot import callbacks
+                from bot.keyboards.keyboard import Keyboards
+                
+                cb_data = callbacks.DayChangesCD(
+                    target_kind=payload["target_kind"],
+                    target_id=payload["target_id"],
+                    class_id=payload["class_id"],
+                    group_id=payload["group_id"],
+                    date_iso=payload["date_iso"],
+                    origin=payload["origin"],
+                    return_to=payload["return_to"],
+                )
+                return Keyboards.get_day_changes_kb(cb_data)
+                
+            return None
+    
     async def send(
         self, 
         chat_id: int, 
         text: str, 
-        reply_markup: Optional[InlineKeyboardMarkup] = None
+        action_type: str | None = None,
+        action_payload: dict | None = None
     ) -> bool:
         """Paced-отправка с соблюдением лимитов Telegram."""
+        # Превращаем манифест в физическую клавиатуру
+        keyboard = self._build_keyboard(action_type, action_payload)
+                         
         async with self._send_lock:
             for attempt in range(1, self.MAX_SEND_ATTEMPTS + 1):
                 now_mono = time.monotonic()
@@ -77,9 +104,10 @@ class NotificationDispatcher:
                     await self.bot.send_message(
                         chat_id=chat_id,
                         text=text,
-                        reply_markup=reply_markup,
+                        reply_markup=keyboard,  # Передаем сгенерированную клавиатуру
                         parse_mode="HTML",
                     )
+                    
                     finished_at = time.monotonic()
                     self._global_last_send_at = finished_at
                     self._chat_last_send_at[chat_id] = finished_at
