@@ -26,7 +26,6 @@ from aiogram.exceptions import TelegramBadRequest
 
 from services.profiles_service import ProfileService
 from services.students_service import StudentsService
-from core.repository.schedule_repository import ScheduleRepository
 from services.schedule_service import ScheduleService
 from services.help_service import HelpService
 from bot.utils.ui_renderer import UIRenderer
@@ -757,7 +756,6 @@ async def process_family_code_input(
       (тот же deep-link поток по invite token из FSM);
     - parent/observer -> consume сразу, главное меню.
     """
-
     code = normalize_short_code(message.text)
     data = await state.get_data()
     role = data.get("role", "parent")
@@ -786,16 +784,17 @@ async def process_family_code_input(
         )
         return
 
+    # 1. Извлекаем актуальный профиль ДО вызова consume_family_invite, 
+    # чтобы получить вручную введенное на предыдущем шаге имя.
+    user_dto = await profile_service.get_user_profile_dto(user_id)
+    current_name = user_dto.name or message.from_user.first_name or "Пользователь"
+
     if invite_role == "child":
-        # Тот же поток, что и deep-link: токен в FSM, consume в process_group.
-        # Имя берём из профиля (сохранено на шаге ввода имени) — process_group
-        # требует pending_invite_name для consume.
-        user_dto = await profile_service.get_user_profile_dto(user_id)
         await state.update_data(
             family_invite_token=invite["token"],
             invited_role="child",
             family_invite_actor_user_id=user_id,
-            pending_invite_name=user_dto.name or message.from_user.first_name or "Ребёнок",
+            pending_invite_name=current_name,
         )
         dicts_dto = await schedule_service.get_school_dictionaries()
         text = UIRenderer.render_class_selection(dicts_dto.as_class_list)
@@ -804,13 +803,13 @@ async def process_family_code_input(
         await state.set_state(RegistrationStates.waiting_for_class)
         return
 
+    # 2. Передаем current_name (которое теперь гарантированно хранит ручной ввод)
     consumed_role = await profile_service.consume_family_invite(
         token=invite["token"],
         user_id=user_id,
-        name=data.get("pending_invite_name")
-        or message.from_user.first_name
-        or "Пользователь",
+        name=data.get("pending_invite_name") or current_name,
     )
+    
     if consumed_role is None:
         await state.clear()
         await message.answer(
@@ -818,10 +817,13 @@ async def process_family_code_input(
             "Попросите у администратора семьи новый код."
         )
         return
-    user_dto = await profile_service.get_user_profile_dto(user_id)
+        
+    # Обновляем DTO на случай, если consume_family_invite изменил другие поля
+    updated_dto = await profile_service.get_user_profile_dto(user_id)
     await state.clear()
+    
     await message.answer(
-        UIRenderer.render_success_join(name=user_dto.name, role=consumed_role),
+        UIRenderer.render_success_join(name=updated_dto.name, role=consumed_role),
         parse_mode="HTML",
     )
     await _show_main_menu(message)
