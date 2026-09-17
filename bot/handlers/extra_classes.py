@@ -15,6 +15,8 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
 from aiogram.exceptions import TelegramBadRequest
 
+from core.mappers.extra_class_mapper import ExtraClassMapper
+
 from bot import callbacks
 from bot.callbacks import (
     ExtraAddCD,
@@ -33,7 +35,6 @@ from services.profiles_service import ProfileService
 from services.students_service import StudentsService
 from services.schedule_service import ScheduleService
 from bot.utils.fsm_guard import validate_fsm_session
-from services.extra_classes_service import ExtraClassesService
 from core.models.dto import ExtraClassViewModel
        
 logger = logging.getLogger(__name__)
@@ -59,34 +60,14 @@ async def _show_extra_menu_for_student(
     student profile только для корректного отображения имени, класса
     и Telegram-статуса.
     """
-    access = await extra_classes_service.get_access(
+    student, access = await extra_classes_service.resolve_student_access(
         actor_user_id=actor_user_id,
         target_student_id=target_student_id,
     )
-    if not access.can_view:
+    if student is None or not access.can_view:
         return False
-
-    student = None
-    actor_access = await students_service.get_student_for_adult(
-        adult_user_id=actor_user_id,
-        student_id=target_student_id,
-    )
-    if actor_access is not None:
-        student, _student_access = actor_access
-        # Parent / observer: может перейти к selector своих учеников.
-        can_switch_student = True
-    else:
-        student = await students_service.get_student_by_telegram_user_id(
-            telegram_user_id=actor_user_id,
-        )
-        if (
-            student is None
-            or student.id != target_student_id
-            or not student.is_active
-        ):
-            return False
-        # Child: только собственный student_profile.
-        can_switch_student = False
+        
+    can_switch_student = student.telegram_user_id != actor_user_id
 
     # Запрашиваем справочники школы единым запросом через ScheduleServiceV2
     dicts_dto = await schedule_service.get_school_dictionaries()
@@ -126,22 +107,6 @@ async def _show_extra_menu_for_student(
         )
 
     return True
-
-
-async def _require_extra_manage_access(
-    *,
-    actor_user_id: int,
-    target_student_id: int,
-    extra_classes_service: ExtraClassesService,
-) -> bool:
-    """
-    Проверяет право редактировать допзанятия конкретного ученика.
-    """
-    access = await extra_classes_service.get_access(
-        actor_user_id=actor_user_id,
-        target_student_id=target_student_id,
-    )
-    return access.can_manage
 
 
 class ExtraClassStates(StatesGroup):
@@ -426,9 +391,7 @@ async def show_extra_list(
             show_alert=True,
         )
         return
-    view_models = ExtraClassesService.build_view_models(
-        response.data.items,
-    )
+    view_models = ExtraClassMapper.to_view_models(response.data.items)
     text, _ = UIRenderer.render_extra_classes_list(view_models)
     try:
         await callback.message.edit_text(
@@ -456,32 +419,22 @@ async def start_delete_extra(
     extra_classes_service: ExtraClassesService,
 ) -> None:
     """Запускает удаление занятия при наличии manage-права."""
+    # Заменить блок с _require_extra_manage_access и get_student_extra_classes на это:
     target_student_id = callback_data.student_id
     actor_user_id = callback.from_user.id
-    can_manage = await _require_extra_manage_access(
+    
+    student, access = await extra_classes_service.resolve_student_access(
         actor_user_id=actor_user_id,
         target_student_id=target_student_id,
-        extra_classes_service=extra_classes_service,
     )
-    if not can_manage:
-        await callback.answer(
-            "🔒 У вас нет права удалять занятия этого ученика.",
-            show_alert=True,
-        )
+    if not access.can_manage:
+        await callback.answer("🔒 У вас нет права редактировать занятия этого ученика.", show_alert=True)
         return
-    list_response = await extra_classes_service.get_student_extra_classes(
-        actor_user_id=callback.from_user.id,
-        target_student_id=target_student_id,
-    )
-    if not list_response.success:
-        await callback.answer(
-            "У вас нет доступа к занятиям ребёнка.",
-            show_alert=True,
-        )
-        return
-    view_models = ExtraClassesService.build_view_models(
-        list_response.data.items,
-    )
+
+    # Запрашиваем сырые DTO без повторной проверки прав (экономим SQL)
+    items = await extra_classes_service.get_extra_classes_for_student(student_id=target_student_id)
+    view_models = ExtraClassMapper.to_view_models(items)
+    
     if not view_models:
         text, _ = UIRenderer.render_extra_class_delete_prompt(view_models)
         await callback.message.edit_text(
@@ -603,19 +556,18 @@ async def start_add_extra(
     extra_classes_service: ExtraClassesService,
 ) -> None:
     """Запускает FSM добавления занятия при наличии manage-права."""
+    # Заменить блок с _require_extra_manage_access на это:
     target_student_id = callback_data.student_id
     actor_user_id = callback.from_user.id
-    can_manage = await _require_extra_manage_access(
+    
+    student, access = await extra_classes_service.resolve_student_access(
         actor_user_id=actor_user_id,
         target_student_id=target_student_id,
-        extra_classes_service=extra_classes_service,
     )
-    if not can_manage:
-        await callback.answer(
-            "🔒 У вас нет права добавлять занятия этому ребёнку.",
-            show_alert=True,
-        )
+    if not access.can_manage:
+        await callback.answer("🔒 У вас нет права добавлять занятия этому ребёнку.", show_alert=True)
         return
+    
     await state.update_data(
         target_student_id=target_student_id,
         extra_actor_user_id=actor_user_id,
@@ -857,17 +809,13 @@ async def finalize_extra_class(
         return
 
     shown = await _show_extra_menu_for_student(
-        message_obj=(
-            event.message
-            if isinstance(event, CallbackQuery)
-            else event
-        ),
+        message_obj=event,
         actor_user_id=actor_user_id,
         target_student_id=target_student_id,
         extra_classes_service=extra_classes_service,
         students_service=students_service,
         schedule_service=schedule_service,
-        edit_message=isinstance(event, CallbackQuery),
+        edit_message=False,
         prefix=text_success,
     )
     if not shown:
@@ -887,32 +835,22 @@ async def start_edit_extra(
     extra_classes_service: ExtraClassesService,
 ) -> None:
     """Запускает редактирование занятия при наличии manage-права."""
+    # Заменить блок с _require_extra_manage_access и get_student_extra_classes на это:
     target_student_id = callback_data.student_id
     actor_user_id = callback.from_user.id
-    can_manage = await _require_extra_manage_access(
+    
+    student, access = await extra_classes_service.resolve_student_access(
         actor_user_id=actor_user_id,
         target_student_id=target_student_id,
-        extra_classes_service=extra_classes_service,
     )
-    if not can_manage:
-        await callback.answer(
-            "🔒 У вас нет права редактировать занятия этого ученика.",
-            show_alert=True,
-        )
+    if not access.can_manage:
+        await callback.answer("🔒 У вас нет права редактировать занятия этого ученика.", show_alert=True)
         return
-    list_response = await extra_classes_service.get_student_extra_classes(
-        actor_user_id=callback.from_user.id,
-        target_student_id=target_student_id,
-    )
-    if not list_response.success:
-        await callback.answer(
-            "У вас нет доступа к занятиям ребёнка.",
-            show_alert=True,
-        )
-        return
-    view_models = ExtraClassesService.build_view_models(
-        list_response.data.items,
-    )
+
+    # Запрашиваем сырые DTO без повторной проверки прав (экономим SQL)
+    items = await extra_classes_service.get_extra_classes_for_student(student_id=target_student_id)
+    view_models = ExtraClassMapper.to_view_models(items)
+    
     if not view_models:
         text, _ = UIRenderer.render_extra_class_edit_prompt(view_models)
         await callback.message.edit_text(
@@ -969,37 +907,29 @@ async def process_edit_id(
             parse_mode="HTML",
         )
         return
+    # Заменить весь блок загрузки list_response и проверки any() на это:
     extra_id = int(raw_extra_id)
-    list_response = await extra_classes_service.get_student_extra_classes(
+    
+    student, access = await extra_classes_service.resolve_student_access(
         actor_user_id=actor_user_id,
         target_student_id=target_student_id,
     )
-    if not list_response.success:
+    if not access.can_manage:
         await state.clear()
-        await message.answer(
-            "🔒 У вас больше нет доступа к занятиям этого ученика."
-        )
+        await message.answer("🔒 У вас больше нет права редактировать занятия ребёнка.")
         return
-    dto_list = list_response.data
-    if not any(item.id == extra_id for item in dto_list.items):
+
+    # Точечный SELECT вместо сканирования списка
+    item_response = await extra_classes_service.get_extra_class(
+        actor_user_id=actor_user_id,
+        target_student_id=target_student_id,
+        extra_id=extra_id,
+    )
+    if not item_response.success:
         text, _ = UIRenderer.render_extra_class_not_found()
-        await message.answer(
-            text,
-            reply_markup=Keyboards.get_cancel_keyboard(),
-            parse_mode="HTML",
-        )
+        await message.answer(text, reply_markup=Keyboards.get_cancel_keyboard(), parse_mode="HTML")
         return
-    can_manage = await _require_extra_manage_access(
-        actor_user_id=actor_user_id,
-        target_student_id=target_student_id,
-        extra_classes_service=extra_classes_service,
-    )
-    if not can_manage:
-        await state.clear()
-        await message.answer(
-            "🔒 У вас больше нет права редактировать занятия ребёнка."
-        )
-        return
+
     await state.update_data(edit_id=extra_id)
     text, _ = UIRenderer.render_extra_class_edit_field_select()
     await message.answer(

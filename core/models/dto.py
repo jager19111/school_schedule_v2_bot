@@ -709,8 +709,8 @@ class ExtraClassDTO:
     title: str
     location: str | None
     reminder_minutes: int
-    created_at: str | None = None
-    updated_at: str | None = None
+    created_at: datetime | None = None  # <-- ИСПРАВЛЕНО
+    updated_at: datetime | None = None  # <-- ИСПРАВЛЕНО
 
 
 @dataclass

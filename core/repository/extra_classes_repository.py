@@ -1,24 +1,48 @@
 # core/repository/extra_classes_repository.py
 #
-# РЕШЁННЫЕ ПРОБЛЕМЫ:
+# ШАГ 2 плана рефакторинга: строгий контракт репозитория.
 #
-# 1. Strict Time Governance: CURRENT_TIMESTAMP в update_extra_class
-#    заменён на параметр now_utc из TimeService.
+# ИЗМЕНЕНИЯ против предыдущей версии:
+# 1. get_extra_classes_for_student -> list[ExtraClassItemDTO],
+#    get_extra_class -> ExtraClassDTO | None: dict больше не покидает
+#    контекст SQL-запроса. Маппинг — через ExtraClassMapper.
+# 2. Список из 11 колонок, дублировавшийся в трёх SELECT,
+#    вынесен в единую константу _EXTRA_CLASS_COLUMNS.
+# 3. Сентинел location переименован в публичный UNSET — сервис
+#    использует тот же объект, чтобы различать «не передано»
+#    и «очистить поле».
 #
-# 2. create_extra_class явно передаёт created_at/updated_at —
-#    дефолтов в схеме больше нет.
-#
-# 3. INSERT обёрнут в self._write_lock(): на shared-соединении
-#    запись сериализуется с транзакциями других репозиториев.
+# Сохранено (проверено, не требует правок):
+# - Strict Time Governance: now_utc из TimeService, не из СУБД;
+# - create_extra_class обёрнут в write-lock на shared-соединении;
+# - DELETE/UPDATE защищены условием student_id (владение занятием).
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Optional
 
+from core.mappers.extra_class_mapper import ExtraClassMapper
+from core.models.dto import ExtraClassDTO, ExtraClassItemDTO
 from core.repository.base_repository import BaseRepository
 from services.time_service import TimeService
 
-_UNSET = object()
+# Сентинел «поле не передано».
+# location=None -> очистить место занятия; location=UNSET -> не трогать.
+UNSET = object()
+
+_EXTRA_CLASS_COLUMNS = """
+            id,
+            family_id,
+            student_id,
+            day_of_week,
+            time_start,
+            time_end,
+            title,
+            location,
+            reminder_minutes,
+            created_at,
+            updated_at
+"""
 
 
 class ExtraClassesRepository(BaseRepository):
@@ -50,9 +74,7 @@ class ExtraClassesRepository(BaseRepository):
         location: Optional[str] = None,
         reminder_minutes: int = 30,
     ) -> int:
-        """
-        Создаёт дополнительное занятие конкретному student profile.
-        """
+        """Создаёт дополнительное занятие student profile. Возвращает id."""
         now_utc = self._now_utc_str()
         query = """
         INSERT INTO extra_classes (
@@ -92,25 +114,17 @@ class ExtraClassesRepository(BaseRepository):
         *,
         student_id: int,
         day_of_week: Optional[int] = None,
-    ) -> list[dict[str, Any]]:
+    ) -> list[ExtraClassItemDTO]:
         """
-        Возвращает занятия одного student profile.
-        Если указан day_of_week, возвращает занятия только на этот день.
+        Занятия одного student profile.
+
+        С day_of_week — занятия одного дня (горячий путь расписания
+        и утренних сводок); без — весь список для экрана кружков.
+        Возвращает строго list[ExtraClassItemDTO].
         """
         if day_of_week is None:
-            query = """
-            SELECT
-                id,
-                family_id,
-                student_id,
-                day_of_week,
-                time_start,
-                time_end,
-                title,
-                location,
-                reminder_minutes,
-                created_at,
-                updated_at
+            query = f"""
+            SELECT {_EXTRA_CLASS_COLUMNS}
             FROM extra_classes
             WHERE student_id = ?
             ORDER BY
@@ -118,67 +132,41 @@ class ExtraClassesRepository(BaseRepository):
                 time_start,
                 id
             """
-            return await self._fetch_all(
-                query,
-                (student_id,),
-            )
-        query = """
-        SELECT
-            id,
-            family_id,
-            student_id,
-            day_of_week,
-            time_start,
-            time_end,
-            title,
-            location,
-            reminder_minutes,
-            created_at,
-            updated_at
-        FROM extra_classes
-        WHERE student_id = ?
-          AND day_of_week = ?
-        ORDER BY
-            time_start,
-            id
-        """
-        return await self._fetch_all(
-            query,
-            (student_id, day_of_week),
-        )
+            rows = await self._fetch_all(query, (student_id,))
+        else:
+            query = f"""
+            SELECT {_EXTRA_CLASS_COLUMNS}
+            FROM extra_classes
+            WHERE student_id = ?
+              AND day_of_week = ?
+            ORDER BY
+                time_start,
+                id
+            """
+            rows = await self._fetch_all(query, (student_id, day_of_week))
+
+        return ExtraClassMapper.to_item_list(rows)
 
     async def get_extra_class(
         self,
         *,
         extra_id: int,
         student_id: int,
-    ) -> Optional[dict[str, Any]]:
+    ) -> Optional[ExtraClassDTO]:
         """
-        Возвращает одно занятие, только если оно принадлежит student_id.
-        Метод нужен сервису для безопасной partial update и проверки
-        итогового временного интервала.
+        Одно занятие, только если оно принадлежит student_id.
+
+        Нужен сервису для безопасной partial update и проверки
+        итогового временного интервала. Возвращает ExtraClassDTO | None.
         """
-        query = """
-        SELECT
-            id,
-            family_id,
-            student_id,
-            day_of_week,
-            time_start,
-            time_end,
-            title,
-            location,
-            reminder_minutes,
-            created_at,
-            updated_at
+        query = f"""
+        SELECT {_EXTRA_CLASS_COLUMNS}
         FROM extra_classes
         WHERE id = ?
           AND student_id = ?
         """
-        return await self._fetch_one(
-            query,
-            (extra_id, student_id),
-        )
+        row = await self._fetch_one(query, (extra_id, student_id))
+        return ExtraClassMapper.to_dto(row) if row is not None else None
 
     async def delete_extra_class(
         self,
@@ -186,16 +174,13 @@ class ExtraClassesRepository(BaseRepository):
         extra_id: int,
         student_id: int,
     ) -> bool:
-        """
-        Удаляет занятие только при совпадении extra id и student id.
-        """
-        query = """
-        DELETE FROM extra_classes
-        WHERE id = ?
-          AND student_id = ?
-        """
+        """Удаляет занятие только при совпадении extra id и student id."""
         rowcount = await self._execute(
-            query,
+            """
+            DELETE FROM extra_classes
+            WHERE id = ?
+              AND student_id = ?
+            """,
             (extra_id, student_id),
         )
         return rowcount > 0
@@ -209,18 +194,18 @@ class ExtraClassesRepository(BaseRepository):
         time_start: Optional[str] = None,
         time_end: Optional[str] = None,
         title: Optional[str] = None,
-        location: Optional[str] | object = _UNSET,
+        location: Optional[str] | object = UNSET,
         reminder_minutes: Optional[int] = None,
     ) -> bool:
         """
         Частично обновляет занятие конкретного ученика.
 
-        location использует _UNSET, чтобы различать:
-        - location не передан: не изменять поле;
-        - location=None: очистить место занятия.
+        None = «поле не передано, не изменять».
+        location дополнительно различает None (очистить) и UNSET
+        (не трогать) — сервис передаёт тот же сентинел-объект.
         """
         fields: list[str] = []
-        params: list[Any] = []
+        params: list[object] = []
 
         if day_of_week is not None:
             fields.append("day_of_week = ?")
@@ -234,7 +219,7 @@ class ExtraClassesRepository(BaseRepository):
         if title is not None:
             fields.append("title = ?")
             params.append(title)
-        if location is not _UNSET:
+        if location is not UNSET:
             fields.append("location = ?")
             params.append(location)
         if reminder_minutes is not None:
@@ -247,20 +232,13 @@ class ExtraClassesRepository(BaseRepository):
         # Time Governance: updated_at из приложения.
         fields.append("updated_at = ?")
         params.append(self._now_utc_str())
-        params.extend(
-            [
-                extra_id,
-                student_id,
-            ]
-        )
+        params.extend([extra_id, student_id])
+
         query = f"""
         UPDATE extra_classes
         SET {", ".join(fields)}
         WHERE id = ?
           AND student_id = ?
         """
-        rowcount = await self._execute(
-            query,
-            tuple(params),
-        )
+        rowcount = await self._execute(query, tuple(params))
         return rowcount > 0
