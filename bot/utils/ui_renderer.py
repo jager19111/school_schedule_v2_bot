@@ -1467,7 +1467,7 @@ class UIRenderer:
 # ==========================================================
     # Расписание дня (DayScheduleDTO)
     # ==========================================================
-
+# замените UIRenderer._get_field(l, "is_exchange", False) or ... на прямой доступ l.is_exchange or l.is_cancelled
     @staticmethod
     def render_day_schedule(
         dto: 'DayScheduleDTO',

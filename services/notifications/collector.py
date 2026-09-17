@@ -110,21 +110,6 @@ class NotificationCollector:
         self.extra_classes_service = extra_classes_service
         self.schedule_service = schedule_service
 
-    @staticmethod
-    def _get_equivalent_groups(group_id: str, groups_dict: dict) -> set[str]:
-        """Умный алиас: находит все ID групп, в которых фигурирует та же цифра (Группа 1 == 1 группа)."""
-        if not group_id or group_id == "ALL":
-            return {"ALL"}
-        equivs = {group_id}
-        name = groups_dict.get(group_id, str(group_id))
-        m = re.search(r'\d+', name)
-        if m:
-            digit = m.group(0)
-            for k, v in groups_dict.items():
-                if re.search(rf'\b{digit}\b', str(v)):
-                    equivs.add(str(k))
-        return equivs
-
     async def _get_metadata(self, ctx: NotificationTickContext):
         """Ленивая загрузка справочников: 1 запрос к БД на весь тик рассылки."""
         if ctx.metadata_cache is None:
@@ -167,50 +152,51 @@ class NotificationCollector:
                 child_group_id = task.group_id or "ALL"
 
                 lessons_dtos: list[MorningLessonDTO] = []
+                day_permutation = False  # ПАТЧ 3: Инициализация по умолчанию
 
                 if child_class_id:
-                    lessons = await self.schedule_repo.get_lessons_for_class(class_id=child_class_id, date_iso=today_iso)
-                    ctx.queries += 1
-                    day_permutation = self.schedule_service.detect_day_permutation(lessons)
-                    display_key = (child_class_id, today_iso)
-
-                    if display_key not in ctx.display_numbers_cache:
-                        ctx.display_numbers_cache[display_key] = await self.schedule_service.get_display_numbers_for_class_day(
-                            class_id=child_class_id, date_iso=today_iso
-                        )
-                    display_numbers = ctx.display_numbers_cache[display_key]
+                    # ПАТЧ 4: Решение проблемы N+1 через кэширование уроков класса в контексте тика
+                    cache_key = (child_class_id, today_iso)
+                    if cache_key not in ctx.lessons_cache:
+                        ctx.lessons_cache[cache_key] = await self.schedule_repo.get_lessons_for_class(class_id=child_class_id, date_iso=today_iso)
+                        ctx.queries += 1
                     
+                    lessons = ctx.lessons_cache[cache_key]
+                    day_permutation = self.schedule_service.detect_day_permutation(lessons)
+                    
+                    display_key = (child_class_id, today_iso)
+                    if display_key not in ctx.display_numbers_cache:
+                        ctx.display_numbers_cache[display_key] = await self.schedule_service.get_display_numbers_for_class_day(class_id=child_class_id, date_iso=today_iso)
+                    
+                    display_numbers = ctx.display_numbers_cache[display_key]
                     user_groups = [str(g).strip() for g in child_group_id.split(",")] if child_group_id != "ALL" else ["ALL"]
                     
-                    # Генерируем полный набор алиасов для групп пользователя
                     user_equivs = set()
                     for ug in user_groups:
-                        user_equivs.update(self._get_equivalent_groups(ug, groups))
+                        user_equivs.update(self.schedule_service.get_equivalent_groups(ug, groups))
 
                     for lesson in lessons:
                         lesson_group_id = str(lesson.group_id).strip() if lesson.group_id else "ALL"
                         
-                        # --- ЛОГИРОВАНИЕ ДЛЯ ОТЛАДКИ ---
+                        # --- ЛОГИРОВАНИЕ ДЛЯ ОТЛАДКИ --- оставить для отладки
                         # logger.warning выведет это в консоль желтым цветом, чтобы ты точно заметил!
-                        logger.warning(
-                            f"STUDENT FILTER CHECK | Recipient: {recipient_id} | "
-                            f"User wants: {user_groups} | Lesson has ID: '{lesson_group_id}', Name: '{lesson_group_id}' | "
-                            f"Subject: {lesson.subject_name}"
-                        )
+                        # logger.warning(
+                        #     f"STUDENT FILTER CHECK | Recipient: {recipient_id} | "
+                        #     f"User wants: {user_groups} | Lesson has ID: '{lesson_group_id}', Name: '{lesson_group_id}' | "
+                        #     f"Subject: {lesson.subject_name}"
+                        # )
                         
                         
                         # === УМНЫЙ ФИЛЬТР ПО АЛИАСАМ ===
                         if "ALL" not in user_groups and lesson_group_id != "ALL":
-                            lesson_equivs = self._get_equivalent_groups(lesson_group_id, groups)
+                            lesson_equivs = self.schedule_service.get_equivalent_groups(lesson_group_id, groups)
                             if not (user_equivs & lesson_equivs):
                                 continue
 
-                        group_name = None
-                        if lesson_group_id != "ALL":
-                            if child_group_id == "ALL" or len(user_groups) > 1:
-                                group_name = groups.get(lesson_group_id, f"Группа {lesson_group_id}")
+                        group_name = groups.get(lesson_group_id, f"Группа {lesson_group_id}") if lesson_group_id != "ALL" and (child_group_id == "ALL" or len(user_groups) > 1) else None
 
-                        lesson_display_num = display_numbers.get(
+                        # ПАТЧ 1: Используем .by_lesson_num.get() для DisplayNumbersDTO
+                        lesson_display_num = display_numbers.by_lesson_num.get(
                             lesson.lesson_num,
                             (str(lesson.lesson_num) if lesson.lesson_num is not None else "•")
                         )
@@ -230,16 +216,9 @@ class NotificationCollector:
 
                 lessons_dtos.sort(key=lambda item: (item.start_time.zfill(5) if item.start_time and item.start_time != "—" else "99:99", item.lesson_num if item.lesson_num is not None else 99))
                 
-                class_name = child_class_id
-                if child_class_id:
-                    # ИСПРАВЛЕНО: Ищем класс в словаре classes
-                    class_obj = classes.get(child_class_id)
-                    if class_obj is not None: class_name = class_obj.name
-                        
-                human_group_name = None
-                if child_group_id and child_group_id != "ALL":
-                    # ИСПРАВЛЕНО: Ищем группу в словаре groups, а не создаем Tuple
-                    human_group_name = groups.get(child_group_id, f"Группа {child_group_id}")
+                class_obj = classes.get(child_class_id) if child_class_id else None
+                class_name = class_obj.name if class_obj else child_class_id
+                human_group_name = groups.get(child_group_id, f"Группа {child_group_id}") if child_group_id and child_group_id != "ALL" else None
                     
                 summary_dto = MorningSummaryDTO(
                     date_iso=today_iso, lessons=lessons_dtos, child_name=(task.child_name if task.recipient_kind == "adult" else None),
@@ -279,16 +258,15 @@ class NotificationCollector:
 
     async def collect_teacher_morning_summaries(self, ctx: NotificationTickContext) -> list[NotificationSendDTO]:
         now = self.time_service.get_now_base()
-        current_time_str = now.strftime("%H:%M")
         today_iso = now.date().isoformat()
 
         try:
-            tasks = await self.repo.get_teacher_morning_summary_tasks(time_str=current_time_str)
+            tasks = await self.repo.get_teacher_morning_summary_tasks(time_str=now.strftime("%H:%M"))
             ctx.queries += 1
-            if not tasks: return []
         except Exception as e:
-            logger.exception("Infrastructure error: Failed to fetch teacher morning tasks: %s", e)
+            logger.exception("Infrastructure error: Failed to fetch tasks/lessons: %s", e)
             return []
+        if not tasks: return []
             
         ctx.processed_entities += len(tasks)
 
@@ -312,21 +290,18 @@ class NotificationCollector:
                 ctx.queries += 1
                 lessons_dtos: list[MorningLessonDTO] = []
 
-                # ... внутри collect_teacher_morning_summaries ...
                 for lesson in lessons:
-                    class_name = lesson.class_name
-                    if not class_name and lesson.class_id:
-                        class_obj = classes.get(lesson.class_id)
-                        class_name = class_obj.name if class_obj is not None else lesson.class_id
+                    class_obj = classes.get(lesson.class_id) if lesson.class_id else None
+                    class_name = lesson.class_name or (class_obj.name if class_obj else lesson.class_id)
 
                     lesson_group_id = str(lesson.group_id).strip() if lesson.group_id else "ALL"
                     
-                    # --- ЛОГИРОВАНИЕ ДЛЯ УЧИТЕЛЯ ---
-                    logger.warning(
-                        f"TEACHER GROUP CHECK | Teacher: {teacher_id} | "
-                        f"Subject: {lesson.subject_name} | Class: {class_name} | "
-                        f"NIKA group_id: '{lesson.group_id}' -> parsed as '{lesson_group_id}'"
-                    )
+                    # --- ЛОГИРОВАНИЕ ДЛЯ УЧИТЕЛЯ --- Оставить для отладки 
+                    # logger.warning(
+                    #     f"TEACHER GROUP CHECK | Teacher: {teacher_id} | "
+                    #     f"Subject: {lesson.subject_name} | Class: {class_name} | "
+                    #     f"NIKA group_id: '{lesson.group_id}' -> parsed as '{lesson_group_id}'"
+                    # )
 
                     group_name = groups.get(lesson_group_id, f"Группа {lesson_group_id}") if lesson_group_id != "ALL" else None
 
@@ -385,7 +360,6 @@ class NotificationCollector:
             
         ctx.processed_entities += len(changes)
 
-        # === ЗАГРУЖАЕМ СПРАВОЧНИКИ (Для расшифровки 004 -> 2б) ===
         try:
             metadata = await self._get_metadata(ctx)
             classes, groups = metadata.classes, metadata.groups
@@ -402,14 +376,15 @@ class NotificationCollector:
         for change in changes:
             try:
                 change_date = self.time_service.date_from_iso(change.date)
-                class_display_num = str(change.lesson_num)
 
                 display_key = (change.class_id, change.date)
                 if display_key not in ctx.display_numbers_cache:
                     ctx.display_numbers_cache[display_key] = await self.schedule_service.get_display_numbers_for_class_day(class_id=change.class_id, date_iso=change.date)
-                class_display_num = ctx.display_numbers_cache[display_key].get(change.lesson_num, str(change.lesson_num))
+                
+                display_numbers = ctx.display_numbers_cache[display_key]
+                # ПАТЧ 1: Используем .by_lesson_num.get()
+                class_display_num = display_numbers.by_lesson_num.get(change.lesson_num, str(change.lesson_num))
 
-                # === РАСШИФРОВКА КОДОВ КЛАССА И ГРУППЫ ===
                 class_obj = classes.get(change.class_id)
                 human_class_name = class_obj.name if class_obj is not None else change.class_id
                 
@@ -419,7 +394,7 @@ class NotificationCollector:
 
                 # === ГЕНЕРАЦИЯ АЛИАСОВ ДЛЯ ЗАПРОСА В БД ===
                 lesson_group_id = str(change.group_id).strip() if change.group_id else "ALL"
-                possible_groups = self._get_equivalent_groups(lesson_group_id, groups)
+                possible_groups = self.schedule_service.get_equivalent_groups(lesson_group_id, groups)
 
                 all_recipients = []
                 for pg in possible_groups:
@@ -472,14 +447,15 @@ class NotificationCollector:
             student_delivered, teacher_delivered = set(), set()
 
         def get_change_score(c: PendingChangeDTO) -> int:
-            """Оценивает 'качество' записи. Прямая замена > Добавление > Отмена."""
             return 3 if c.is_exchange and c.original_subject_name else (2 if c.is_exchange else 1)
 
         student_candidates_map, teacher_candidates_map = {}, {}
 
         for del_key, change, recipient, class_display_num, h_class, h_group in raw_student_candidates:
             if del_key in student_delivered: continue 
-            dedup_key = (recipient.recipient_id, change.date, change.lesson_num, change.group_id)
+            
+            # ПАТЧ 5: Дедупликация близнецов (добавлен recipient.child_name)
+            dedup_key = (recipient.recipient_id, recipient.child_name, change.date, change.lesson_num, change.group_id)
             score = get_change_score(change)
             
             if dedup_key not in student_candidates_map or score >= student_candidates_map[dedup_key][0]:
@@ -534,7 +510,7 @@ class NotificationCollector:
                 if delta_minutes <= 0: continue
 
                 lesson_group_id = str(lesson.group_id).strip() if lesson.group_id else "ALL"
-                possible_groups = self._get_equivalent_groups(lesson_group_id, groups)
+                possible_groups = self.schedule_service.get_equivalent_groups(lesson_group_id, groups)
 
                 all_recipients = []
                 for pg in possible_groups:
@@ -557,8 +533,7 @@ class NotificationCollector:
 
                     dto = LessonReminderDTO(
                         subject_name=lesson.subject_name or "—", start_time=lesson.start_time or "—",
-                        room_name=lesson.room_name or "—", is_extra=False,
-                        child_name=(recipient.child_name if recipient.recipient_kind == "adult" else None),
+                        room_name=lesson.room_name or "—", is_extra=False, child_name=(recipient.child_name if recipient.recipient_kind == "adult" else None),
                     )
 
                     try: text = UIRenderer.render_lesson_reminder(dto)

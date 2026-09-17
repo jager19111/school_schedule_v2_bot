@@ -12,7 +12,7 @@
 
 from dataclasses import dataclass, field
 from typing import Dict, Optional, List, Literal, Any, Protocol
-
+from datetime import datetime
 class ReplyMarkupProtocol(Protocol):
     """Маркерный протокол для UI-клавиатур, избавляющий DTO от зависимости aiogram."""
     pass
@@ -495,9 +495,13 @@ class DayScheduleDTO:
     в едином формате (доп. занятия отличаются is_extra=True).
     """
     date_iso: str
-    lessons: List[LessonDTO] = field(default_factory=list)
+    lessons: List['LessonDTO'] = field(default_factory=list)
     has_permutation: bool = False
-
+    
+    # === НОВЫЕ ПОЛЯ ДЛЯ КОНТЕКСТА РЕНДЕРА ===
+    origin: Literal["class", "teacher", "student"] = "student"
+    class_name: Optional[str] = None
+    group_name: Optional[str] = None
 
 # ==========================================================
 # DayChangesDetailDTO (только LessonDTO)
@@ -940,7 +944,7 @@ class NotificationSendDTO:
     """Модель кандидата на отправку (полностью заменяет PendingSend)."""
     notification_type: str
     notification_date: str
-    source_ids: str
+    source_ids: list[str]
     recipient_id: int
     text: str
     context: str = ""
@@ -951,7 +955,7 @@ class NotificationSendDTO:
     def __post_init__(self):
         if not self.notification_type or not str(self.notification_type).strip():
             raise ValueError("notification_type cannot be empty")
-        if not self.source_ids or not str(self.source_ids).strip():
+        if not self.source_ids:
             raise ValueError("source_id cannot be empty")
         if not self.text or not str(self.text).strip():
             raise ValueError("Notification text cannot be empty")
@@ -969,3 +973,62 @@ class PreLessonSourceDTO:
     teacher_id: str | None = None
     subject_name: str | None = None
     room_name: str | None = None
+    
+    
+    
+       
+    
+# ============================================================================
+# ДОБАВЛЕНИЯ В core/models/dto.py
+# Нужен импорт вверху файла: from datetime import datetime
+# ============================================================================
+
+
+@dataclass(frozen=True, slots=True)
+class NikaSourceStateDTO:
+    """
+    Типизированное состояние NIKA-источника (таблица nika_source_state).
+
+    Заменяет Dict[str, Any] из ScheduleRepository.get_nika_source_state().
+
+    Поля *_at приходят из BaseRepository._process_row как aware UTC datetime.
+    """
+    js_filename: str
+    raw_sha256: str
+    semantic_sha256: str
+    export_date: str | None = None
+    export_time: str | None = None
+    last_checked_at: datetime | None = None
+    last_changed_at: datetime | None = None
+    coverage_start_date: str | None = None
+    coverage_end_date: str | None = None
+    last_error: str | None = None
+    last_error_at: datetime | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class RawNikaCacheDTO:
+    """
+    Singleton-кеш сырого JS-файла NIKA (таблица raw_nika_cache).
+
+    Заменяет Dict[str, Any] из ScheduleRepository.get_cached_raw_nika().
+    """
+    js_filename: str
+    raw_sha256: str
+    content: str
+    fetched_at: datetime | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class DisplayNumbersDTO:
+    """
+    Результат расчёта display_num (номера уроков 2 смены) для дня класса.
+
+    Заменяет dict[int, str] из
+    ScheduleService.get_display_numbers_for_class_day().
+
+    by_lesson_num: lesson_num -> display_num ("2", "5*", "•").
+    """
+    date_iso: str
+    class_id: str
+    by_lesson_num: Dict[int, str]

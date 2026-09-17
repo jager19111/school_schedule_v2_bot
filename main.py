@@ -390,7 +390,6 @@ async def main():
 
         )
         cleanup_job = UserCleanupJob(user_repo, time_service=time_service, dormant_days=60)
-        students_service = StudentsService(student_repo, profile_service=profile_service)
         admin_service = AdminService(admin_repo=admin_repo, schedule_repo=schedule_repo, admin_ids=config.ADMIN_IDS)
        
         help_service = HelpService(public_help_url=config.HELP_PUBLIC_URL, author_contact_url=config.AUTHOR_CONTACT_URL, donation_url=config.DONATION_URL)

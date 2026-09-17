@@ -1,7 +1,7 @@
 from core.models.dto import (
     ClassListDTO,
     GroupListDTO,
-    TeacherListDTO,
+    TeacherListDTO, SchoolDictionariesDTO
 )
 from core.models.metadata import SchoolMetadata
 
@@ -35,4 +35,18 @@ class MetadataMapper:
     ) -> GroupListDTO:
         return GroupListDTO(
             groups=dict(metadata.groups)
+        )
+        
+
+    @staticmethod
+    def to_school_dictionaries(
+        metadata: SchoolMetadata,
+    ) -> SchoolDictionariesDTO:
+        """SchoolMetadata -> SchoolDictionariesDTO (справочники для клавиатур)."""
+        return SchoolDictionariesDTO(
+            classes={
+                class_id: school_class.name
+                for class_id, school_class in metadata.classes.items()
+            },
+            groups=dict(metadata.groups),
         )

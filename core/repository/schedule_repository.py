@@ -1,45 +1,45 @@
 # core/repository/schedule_repository.py
 #
-# ЭТАП 3 (фундамент → репозиторий): синхронизация с расширенным
-# LessonInstance (class_name, original_*, is_methodological,
-# original_group_*) и хранение расписания УЧИТЕЛЕЙ.
-#
-# ИСПРАВЛЕНИЯ P0:
-# 1. Убраны List[Dict] из публичных методов — только LessonInstance.
-# 2. Убран fallback пустыми SchoolMetadata — теперь исключение.
-# 3. _metadata_cache инвалидируется после _apply_new_nika_version.
-# 4. Удалены отладочные логи «Тест ... ← ДОБАВИТЬ ».
-# 5. Вынесен публичный parse_nika() вместо _extract_json_from_js.
+# РЕФАКТОРИНГ (этап «эталонный вид»):
+# 1. Публичные методы больше не возвращают Dict[str, Any]:
+#    get_nika_source_state() -> NikaSourceStateDTO,
+#    get_cached_raw_nika()  -> RawNikaCacheDTO,
+#    get_nika_health_status() -> NikaSourceHealthDTO (DTO уже существовал).
+# 2. parse_nika() больше не дергает приватный fetcher._extract_json_from_js —
+#    требуется публичный fetcher.extract_json_from_js() (однострочный ренейм
+#    в core/nika/fetcher.py, см. примечание в конце файла).
+# 3. SQL UPSERT nika_source_state и raw_nika_cache существовал в двух
+#    копиях (_update_revision_only / _apply_new_nika_version) — вынесен
+#    в единые приватные хелперы _upsert_raw_cache / _upsert_source_state.
+# 4. get_metadata() читает CLASS_SHIFT/SECOND_RELATIVE через normalizer,
+#    а не сырые .get() по dict NIKA.
 
 from __future__ import annotations
-
 
 import datetime
 import logging
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
-
+from typing import Any, List, Optional
 
 import aiohttp
 
-
 from core.models.domain import LessonInstance
-from core.nika.fetcher import (
-    NikaSourceDescriptor,
-    ScheduleFetcher,
+from core.models.dto import (
+    NikaSourceHealthDTO,
+    NikaSourceStateDTO,
+    RawNikaCacheDTO,
 )
+from core.nika.fetcher import NikaSourceDescriptor, ScheduleFetcher
 from core.nika.normalizer import NikaNormalizer
 from core.nika.exceptions import ScheduleDataError
 from core.repository.base_repository import BaseRepository
 from services.time_service import TimeService
-
-
 from core.models.metadata import SchoolMetadata
 
 logger = logging.getLogger(__name__)
 
 
-# Единый UPSERT: 32 колонки, включая origin и все original_* (Этап 3).
+# Единый UPSERT schedule_cache: 32 колонки, включая origin и все original_*.
 _SCHEDULE_UPSERT_SQL = """
     INSERT INTO schedule_cache (
         id,
@@ -113,9 +113,7 @@ _SCHEDULE_UPSERT_SQL = """
 
 @dataclass(frozen=True)
 class ScheduleRefreshResult:
-    """
-    Результат одной попытки синхронизации NIKA.
-    """
+    """Результат одной попытки синхронизации NIKA."""
     source_changed: bool
     schedule_changed: bool
     js_filename: Optional[str] = None
@@ -123,12 +121,20 @@ class ScheduleRefreshResult:
     reason: str = ""
 
 
+def _iso_or_none(value: datetime.datetime | str | None) -> Optional[str]:
+    """Aware UTC datetime -> ISO-строка для текстовых полей health DTO."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value
+    return value.isoformat(sep=" ")
+
+
 class ScheduleRepository(BaseRepository):
     """
     Репозиторий школьного расписания.
 
-
-    Основные правила:
+    Правила:
     - HTML schedule.html проверяется часто;
     - JS NIKA скачивается только при новом js_filename;
     - schedule_cache пересобирается только при semantic change NIKA
@@ -150,10 +156,7 @@ class ScheduleRepository(BaseRepository):
         history_days: int = 7,
         metadata_cache: Optional[SchoolMetadata] = None,
     ) -> None:
-        super().__init__(
-            db_path=db_path,
-            time_service=time_service,
-        )
+        super().__init__(db_path=db_path, time_service=time_service)
         self.fetcher = ScheduleFetcher(
             session=http_session,
             base_url=nika_base_url,
@@ -164,30 +167,20 @@ class ScheduleRepository(BaseRepository):
         self._metadata_cache = metadata_cache
 
     def is_ssl_degraded(self) -> bool:
-        """
-        True, если NIKA-фетчер работает в обход TLS-проверки.
-
-        Используется main.refresh_schedule_cache для админ-алерта.
-        Состояние обновляется фетчером при каждой попытке запроса.
-        """
+        """True, если NIKA-фетчер работает в обход TLS-проверки."""
         return self.fetcher.ssl_degraded
 
     # ==========================================================
-    # Public API: парсинг NIKA (вынесено из fetcher)
+    # Public API: парсинг NIKA
     # ==========================================================
 
     def parse_nika(self, content: str) -> dict[str, Any]:
-        """
-        Публичный метод для извлечения JSON из JS-файла NIKA.
-
-        Репозиторий не должен вызывать приватный _extract_json_from_js.
-        """
-        return self.fetcher._extract_json_from_js(content)
+        """Извлекает JSON из JS-файла NIKA (публичный метод фетчера)."""
+        return self.fetcher.extract_json_from_js(content)
 
     # ==========================================================
-    # Row <-> LessonInstance mapping (Этап 3)
+    # Row <-> LessonInstance mapping
     # ==========================================================
-
 
     @staticmethod
     def _lesson_to_row(
@@ -195,11 +188,10 @@ class ScheduleRepository(BaseRepository):
         origin: str,
         now_utc: str,
     ) -> tuple:
-        """
-        LessonInstance → кортеж для executemany (32 значения).
+        """LessonInstance -> кортеж для executemany (32 значения).
 
-        origin: 'class' | 'teacher'. Сам LessonInstance про origin не
-        знает — это характеристика источника записи, а не урока.
+        origin: 'class' | 'teacher' — характеристика источника записи,
+        не урока, поэтому живёт в параметре, а не в модели.
         """
         return (
             lesson.id,
@@ -236,20 +228,12 @@ class ScheduleRepository(BaseRepository):
             now_utc,
         )
 
-
     @staticmethod
-    def _row_to_lesson(row: Dict[str, Any]) -> LessonInstance:
-        """
-        Строка schedule_cache → LessonInstance (DTO для сервиса/рендерера).
-
-        weekday восстанавливается из даты, если колонка пуста
-        (строки, оставшиеся до применения миграции).
-        """
+    def _row_to_lesson(row: dict[str, Any]) -> LessonInstance:
+        """Строка schedule_cache -> LessonInstance."""
         weekday = row.get("weekday")
         if not weekday:
-            weekday = datetime.date.fromisoformat(
-                row["date"]
-            ).isoweekday()
+            weekday = datetime.date.fromisoformat(row["date"]).isoweekday()
 
         return LessonInstance(
             id=row["id"],
@@ -284,16 +268,12 @@ class ScheduleRepository(BaseRepository):
             is_methodological=bool(row.get("is_methodological")),
         )
 
-
     # ==========================================================
-    # NIKA source state
+    # NIKA source state (DTO, не dict)
     # ==========================================================
 
-
-    async def get_nika_source_state(
-        self,
-    ) -> Optional[Dict[str, Any]]:
-        return await self._fetch_one(
+    async def get_nika_source_state(self) -> Optional[NikaSourceStateDTO]:
+        row = await self._fetch_one(
             """
             SELECT
                 id,
@@ -312,12 +292,24 @@ class ScheduleRepository(BaseRepository):
             WHERE id = 1
             """
         )
+        if row is None:
+            return None
+        return NikaSourceStateDTO(
+            js_filename=row["js_filename"],
+            raw_sha256=row["raw_sha256"],
+            semantic_sha256=row["semantic_sha256"],
+            export_date=row.get("export_date"),
+            export_time=row.get("export_time"),
+            last_checked_at=row.get("last_checked_at"),
+            last_changed_at=row.get("last_changed_at"),
+            coverage_start_date=row.get("coverage_start_date"),
+            coverage_end_date=row.get("coverage_end_date"),
+            last_error=row.get("last_error"),
+            last_error_at=row.get("last_error_at"),
+        )
 
-
-    async def get_cached_raw_nika(
-        self,
-    ) -> Optional[Dict[str, Any]]:
-        return await self._fetch_one(
+    async def get_cached_raw_nika(self) -> Optional[RawNikaCacheDTO]:
+        row = await self._fetch_one(
             """
             SELECT
                 id,
@@ -329,16 +321,17 @@ class ScheduleRepository(BaseRepository):
             WHERE id = 1
             """
         )
+        if row is None:
+            return None
+        return RawNikaCacheDTO(
+            js_filename=row["js_filename"],
+            raw_sha256=row["raw_sha256"],
+            content=row["content"],
+            fetched_at=row.get("fetched_at"),
+        )
 
-
-    async def touch_nika_checked_at(
-        self,
-    ) -> None:
-        """
-        Записывает факт успешной HTML-проверки без изменения revision.
-        """
-        # Задача 1.3: время передаёт приложение, а не СУБД.
-        now_utc = self._now_utc_str()
+    async def touch_nika_checked_at(self) -> None:
+        """Фиксирует успешную HTML-проверку без изменения revision."""
         await self._execute(
             """
             UPDATE nika_source_state
@@ -347,31 +340,16 @@ class ScheduleRepository(BaseRepository):
                 last_error_at = NULL
             WHERE id = 1
             """,
-            (now_utc,),
+            (self._now_utc_str(),),
         )
 
-
-    async def record_nika_refresh_error(
-        self,
-        *,
-        error_message: str,
-    ) -> None:
-        """
-        Сохраняет последнюю ошибку обновления NIKA.
-
-        Не создаёт nika_source_state при первом bootstrap failure,
-        потому что в этом случае ещё неизвестны обязательные metadata:
-        js_filename, raw_sha256 и semantic_sha256.
-
-        Когда успешный snapshot уже существует, ошибка записывается
-        в текущую единственную строку id=1.
-        """
+    async def record_nika_refresh_error(self, *, error_message: str) -> None:
+        """Сохраняет последнюю ошибку обновления NIKA."""
         normalized_error = (
             error_message.strip()[:1500]
             if error_message
             else "Unknown NIKA refresh error"
         )
-        # Задача 1.3: явный таймстемп ошибки из Python.
         now_utc = self._now_utc_str()
         changed = await self._execute(
             """
@@ -380,10 +358,7 @@ class ScheduleRepository(BaseRepository):
                 last_error_at = ?
             WHERE id = 1
             """,
-            (
-                normalized_error,
-                now_utc,
-            ),
+            (normalized_error, now_utc),
         )
         if changed == 0:
             logger.warning(
@@ -391,37 +366,26 @@ class ScheduleRepository(BaseRepository):
                 normalized_error,
             )
 
-
-    async def clear_nika_refresh_error(
-        self,
-    ) -> None:
-        """
-        Очищает last_error после успешного refresh/probe.
-        """
+    async def clear_nika_refresh_error(self) -> None:
         await self._execute(
             """
             UPDATE nika_source_state
             SET last_error = NULL,
                 last_error_at = NULL
             WHERE id = 1
+              AND (last_error IS NOT NULL OR last_error_at IS NOT NULL)
             """
         )
 
-
-    async def get_nika_health_status(
-        self,
-    ) -> Dict[str, Any]:
+    async def get_nika_health_status(self) -> NikaSourceHealthDTO:
         """
-        Возвращает сохранённый статус NIKA source и schedule cache.
+        Сохранённый статус NIKA source и schedule cache.
 
-        Не делает HTTP-запросов.
-        Не запускает refresh.
-        Безопасен для admin diagnostics.
+        Без HTTP-запросов и refresh — безопасен для admin diagnostics.
+        Возвращает NikaSourceHealthDTO (раньше — dict).
         """
-        # получение текущей даты относительно часового пояса бота ---
         today_iso = self.time_service.get_now_base().date().isoformat()
         state = await self.get_nika_source_state()
-
 
         cache_info = await self._fetch_one(
             """
@@ -432,51 +396,24 @@ class ScheduleRepository(BaseRepository):
             FROM schedule_cache
             """
         )
-
-
-        lesson_count = int(
-            cache_info["lesson_count"]
-            if cache_info
-            else 0
-        )
-
-
-        first_date = (
-            cache_info.get("first_date")
-            if cache_info
-            else None
-        )
-        last_date = (
-            cache_info.get("last_date")
-            if cache_info
-            else None
-        )
-
+        lesson_count = int(cache_info["lesson_count"]) if cache_info else 0
+        first_date = cache_info.get("first_date") if cache_info else None
+        last_date = cache_info.get("last_date") if cache_info else None
 
         if state is None:
-            return {
-                "status": (
+            return NikaSourceHealthDTO(
+                status=(
                     "cache_empty"
                     if lesson_count == 0
                     else "cache_without_source_state"
                 ),
-                "lesson_count": lesson_count,
-                "coverage_start_date": first_date,
-                "coverage_end_date": last_date,
-                "today_date": today_iso,
-                "coverage_is_current": False,
-                "coverage_has_future": False,
-                "js_filename": None,
-                "export_date": None,
-                "export_time": None,
-                "last_checked_at": None,
-                "last_changed_at": None,
-                "last_error": None,
-                "last_error_at": None,
-            }
+                lesson_count=lesson_count,
+                coverage_start_date=first_date,
+                coverage_end_date=last_date,
+                today_date=today_iso,
+            )
 
-
-        if state.get("last_error"):
+        if state.last_error:
             status = (
                 "source_error_cache_available"
                 if lesson_count > 0
@@ -487,119 +424,84 @@ class ScheduleRepository(BaseRepository):
         else:
             status = "healthy"
 
+        coverage_end_date = state.coverage_end_date or last_date
 
-        coverage_end_date = (
-            state.get("coverage_end_date")
-            or last_date
-        )
-
-
-        coverage_is_current = bool(
-            coverage_end_date
-            and coverage_end_date >= today_iso
-        )
-
-
-        coverage_has_future = bool(
-            coverage_end_date
-            and coverage_end_date > today_iso
-        )
-
-
-        return {
-            "status": status,
-            "lesson_count": lesson_count,
-            "coverage_start_date": (
-                state.get("coverage_start_date")
-                or first_date
+        return NikaSourceHealthDTO(
+            status=status,
+            lesson_count=lesson_count,
+            coverage_start_date=state.coverage_start_date or first_date,
+            coverage_end_date=coverage_end_date,
+            today_date=today_iso,
+            coverage_is_current=bool(
+                coverage_end_date and coverage_end_date >= today_iso
             ),
-            "coverage_end_date": coverage_end_date,
-            "today_date": today_iso,
-            "coverage_is_current": coverage_is_current,
-            "coverage_has_future": coverage_has_future,
-            "js_filename": state.get("js_filename"),
-            "export_date": state.get("export_date"),
-            "export_time": state.get("export_time"),
-            "last_checked_at": state.get("last_checked_at"),
-            "last_changed_at": state.get("last_changed_at"),
-            "last_error": state.get("last_error"),
-            "last_error_at": state.get("last_error_at"),
-        }
-
+            coverage_has_future=bool(
+                coverage_end_date and coverage_end_date > today_iso
+            ),
+            js_filename=state.js_filename,
+            export_date=state.export_date,
+            export_time=state.export_time,
+            last_checked_at=_iso_or_none(state.last_checked_at),
+            last_changed_at=_iso_or_none(state.last_changed_at),
+            last_error=state.last_error,
+            last_error_at=_iso_or_none(state.last_error_at),
+        )
 
     @staticmethod
     def _coverage_needs_refresh(
-        state: Optional[Dict[str, Any]],
+        state: Optional[NikaSourceStateDTO],
         target_dates: List[datetime.date],
     ) -> bool:
-        """
-        Проверяет, требуется ли расширение rolling coverage.
-
-        Даже если NIKA revision не изменился, через неделю набор target_dates
-        сдвинется, и кэш должен получить новые будущие даты.
-        """
+        """True, если rolling coverage не совпадает с требуемым окном дат."""
         if not target_dates:
             return False
         if state is None:
             return True
 
-
         expected_start = min(target_dates).isoformat()
         expected_end = max(target_dates).isoformat()
 
-
         return (
-            state.get("coverage_start_date") != expected_start
-            or state.get("coverage_end_date") != expected_end
+            state.coverage_start_date != expected_start
+            or state.coverage_end_date != expected_end
         )
 
-
     # ==========================================================
-    # Public metadata / schedule reads (ИСПРАВЛЕНО P0)
+    # Metadata / schedule reads
     # ==========================================================
-
 
     async def get_metadata(self) -> SchoolMetadata:
-        """
-        Строит SchoolMetadata один раз и кэширует в оперативной памяти.
-
-        ИСПРАВЛЕНО P0: больше не возвращает пустые метаданные при ошибке.
-        """
+        """Строит SchoolMetadata один раз и кеширует в памяти."""
         if self._metadata_cache is not None:
             return self._metadata_cache
 
         raw = await self.get_cached_raw_nika()
-        if not raw or not raw.get("content"):
+        if raw is None or not raw.content:
             logger.error("NIKA raw cache is empty — cannot build metadata.")
             raise ScheduleDataError("NIKA raw cache is empty")
 
         try:
-            nika_data = self.parse_nika(raw["content"])
+            nika_data = self.parse_nika(raw.content)
             normalizer = NikaNormalizer(nika_data)
-            
+
             self._metadata_cache = SchoolMetadata(
                 classes=normalizer.classes,
                 groups=nika_data.get("CLASSGROUPS", {}),
                 teachers=normalizer.teachers,
                 class_shift=nika_data.get("CLASS_SHIFT", {}),
-                second_relative=nika_data.get("SECOND_RELATIVE", False)
+                second_relative=bool(nika_data.get("SECOND_RELATIVE", False)),
             )
             return self._metadata_cache
         except Exception as exc:
             logger.exception("Failed to build NIKA metadata from raw cache.")
             raise ScheduleDataError("Cannot build school metadata") from exc
 
-
     async def get_lessons_for_class(
         self,
         class_id: str,
         date_iso: str,
     ) -> list[LessonInstance]:
-        """
-        Расписание класса на дату (только class-origin строки).
-
-        ИСПРАВЛЕНО P0: возвращает List[LessonInstance], а не List[Dict].
-        """
+        """Расписание класса на дату (только class-origin строки)."""
         rows = await self._fetch_all(
             """
             SELECT *
@@ -613,18 +515,12 @@ class ScheduleRepository(BaseRepository):
         )
         return [self._row_to_lesson(r) for r in rows]
 
-
     async def get_lessons_for_teacher(
         self,
         teacher_id: str,
         date_iso: str,
     ) -> list[LessonInstance]:
-        """
-        Расписание учителя на дату (только teacher-origin строки:
-        включает методические часы и TEACH_EXCHANGE).
-
-        ИСПРАВЛЕНО P0: возвращает List[LessonInstance], а не List[Dict].
-        """
+        """Расписание учителя на дату (teacher-origin: методчасы + TEACH_EXCHANGE)."""
         rows = await self._fetch_all(
             """
             SELECT *
@@ -638,22 +534,12 @@ class ScheduleRepository(BaseRepository):
         )
         return [self._row_to_lesson(r) for r in rows]
 
-
-    # Убраны дубли get_lesson_instances_for_class/for_teacher —
-    # теперь это единственные публичные методы для выборки расписания.
-
-
     async def get_day_change_count(
         self,
         date_iso: str,
         origin: str = "class",
     ) -> int:
-        """
-        Количество изменённых/отменённых уроков за дату.
-
-        Используется для быстрой проверки «есть ли смысл показывать
-        кнопку изменений » без выгрузки всего дня.
-        """
+        """Количество изменённых/отменённых уроков за дату."""
         row = await self._fetch_one(
             """
             SELECT COUNT(*) AS cnt
@@ -671,7 +557,6 @@ class ScheduleRepository(BaseRepository):
     # NIKA source updates
     # ==========================================================
 
-
     async def refresh_if_changed(
         self,
         target_dates: List[datetime.date],
@@ -679,18 +564,9 @@ class ScheduleRepository(BaseRepository):
         """
         Проверяет NIKA и обновляет расписание только при реальной причине.
 
-
-        Возможные результаты:
-        - same_filename:
-            HTML указывает на уже известный JS, coverage актуален.
-        - coverage_extended:
-            JS тот же, но rolling date range изменился.
-            Расписание строится из локального raw cache без сетевого JS download.
-        - export_changed_semantics_same:
-            Имя JS изменилось, но semantic NIKA не изменился.
-            Обновляется только revision metadata + raw singleton.
-        - schedule_changed:
-            Semantic NIKA изменился, расписание пересобрано.
+        Причины:
+        - empty_target_dates / same_filename / coverage_extended /
+          export_changed_semantics_same / initial_bootstrap / schedule_changed.
         """
         if not target_dates:
             return ScheduleRefreshResult(
@@ -699,23 +575,15 @@ class ScheduleRepository(BaseRepository):
                 reason="empty_target_dates",
             )
 
-
         source = await self.fetcher.probe()
-
-
         state = await self.get_nika_source_state()
 
+        coverage_changed = self._coverage_needs_refresh(state, target_dates)
 
-        coverage_changed = self._coverage_needs_refresh(
-            state,
-            target_dates,
-        )
-
-        # Самый дешёвый нормальный путь:
-        # HTML проверен, filename прежний, coverage уже актуален.
+        # Дешёвый путь: HTML проверен, filename прежний, coverage актуален.
         if (
             state is not None
-            and state["js_filename"] == source.js_filename
+            and state.js_filename == source.js_filename
             and not coverage_changed
         ):
             await self.touch_nika_checked_at()
@@ -726,52 +594,37 @@ class ScheduleRepository(BaseRepository):
                 reason="same_filename",
             )
 
-        # Filename прежний, но rolling horizon сдвинулся.
-        # Используем локальный raw cache без повторной загрузки JS.
+        # Filename прежний, но rolling horizon сдвинулся:
+        # пересборка из локального raw cache без повторного скачивания JS.
         if (
             state is not None
-            and state["js_filename"] == source.js_filename
+            and state.js_filename == source.js_filename
             and coverage_changed
         ):
             raw = await self.get_cached_raw_nika()
-            if raw and raw.get("content"):
+            if raw is not None and raw.content:
                 return await self._refresh_from_cached_raw(
                     target_dates=target_dates,
                     state=state,
-                    raw_content=raw["content"],
+                    raw=raw,
                 )
             logger.warning(
                 "Coverage changed but raw NIKA cache is missing. "
                 "Downloading JS again."
             )
 
-        # Новый filename либо нет локального state.
-        js_content = await self.fetcher.fetch_js_content(
-            source,
-        )
-
-
-        nika_data = self.parse_nika(
-            js_content,
-        )
-
-
-        raw_sha256 = self.fetcher.calculate_raw_sha256(
-            js_content,
-        )
-        semantic_sha256 = self.fetcher.calculate_semantic_sha256(
-            nika_data,
-        )
-
-
+        # Новый filename либо первичный bootstrap.
+        js_content = await self.fetcher.fetch_js_content(source)
+        nika_data = self.parse_nika(js_content)
+        raw_sha256 = self.fetcher.calculate_raw_sha256(js_content)
+        semantic_sha256 = self.fetcher.calculate_semantic_sha256(nika_data)
         export_date = nika_data.get("EXPORT_DATE")
         export_time = nika_data.get("EXPORT_TIME")
 
-        # Новый filename, но содержательная часть NIKA не изменилась.
-        # Расписание не пишем; обновляем только revision и singleton raw cache.
+        # Новый filename, но semantics не изменились: только revision + raw.
         if (
             state is not None
-            and state["semantic_sha256"] == semantic_sha256
+            and state.semantic_sha256 == semantic_sha256
             and not coverage_changed
         ):
             await self._update_revision_only(
@@ -781,8 +634,9 @@ class ScheduleRepository(BaseRepository):
                 semantic_sha256=semantic_sha256,
                 export_date=export_date,
                 export_time=export_time,
+                state=state,  # <-- Передаем state
             )
-            self._metadata_cache = None
+
             return ScheduleRefreshResult(
                 source_changed=True,
                 schedule_changed=False,
@@ -809,42 +663,38 @@ class ScheduleRepository(BaseRepository):
             ),
         )
 
-
     async def _refresh_from_cached_raw(
         self,
         *,
         target_dates: List[datetime.date],
-        state: Dict[str, Any],
-        raw_content: str,
+        state: NikaSourceStateDTO,
+        raw: RawNikaCacheDTO,
     ) -> ScheduleRefreshResult:
         """
         Расширяет rolling coverage из локального raw NIKA cache.
 
-        Это не новое изменение расписания, поэтому schedule_changed=False:
-        immediate change notifications запускать не нужно.
+        schedule_changed=False: это не изменение расписания,
+        immediate change notifications не нужны.
         """
-        nika_data = self.parse_nika(
-            raw_content,
-        )
-
+        nika_data = self.parse_nika(raw.content)
 
         return await self._apply_new_nika_version(
             source=NikaSourceDescriptor(
-                js_filename=state["js_filename"],
+                js_filename=state.js_filename,
                 js_url="",
             ),
-            js_content=raw_content,
+            js_content=raw.content,
             nika_data=nika_data,
-            raw_sha256=state["raw_sha256"],
-            semantic_sha256=state["semantic_sha256"],
-            export_date=state.get("export_date"),
-            export_time=state.get("export_time"),
+            raw_sha256=state.raw_sha256,
+            semantic_sha256=state.semantic_sha256,
+            export_date=state.export_date,
+            export_time=state.export_time,
             target_dates=target_dates,
             source_changed=False,
             schedule_changed=False,
             reason="coverage_extended",
+            invalidate_metadata=False, # <-- : сохраняем кеш метаданных
         )
-
 
     async def _update_revision_only(
         self,
@@ -855,103 +705,42 @@ class ScheduleRepository(BaseRepository):
         semantic_sha256: str,
         export_date: Optional[str],
         export_time: Optional[str],
+        state: NikaSourceStateDTO,
     ) -> None:
-        """
-        Обновляет revision metadata и singleton raw NIKA cache.
+        """Обновляет revision metadata и singleton raw cache.
+
         schedule_cache не трогается: semantic hash не изменился.
+        Coverage сохраняется прежним (передаётся из текущего state).
         """
         now_utc = self._now_utc_str()
 
-
         async with self.transaction() as db:
-            await db.execute(
-                """
-                INSERT INTO raw_nika_cache (
-                    id, js_filename, raw_sha256, fetched_at, content
-                )
-                VALUES (1, ?, ?, ?, ?)
-                ON CONFLICT(id) DO UPDATE SET
-                    js_filename = excluded.js_filename,
-                    raw_sha256 = excluded.raw_sha256,
-                    fetched_at = excluded.fetched_at,
-                    content = excluded.content
-                """,
-                (
-                    source.js_filename,
-                    raw_sha256,
-                    now_utc,
-                    js_content,
-                ),
+            await self._upsert_raw_cache(
+                db,
+                js_filename=source.js_filename,
+                raw_sha256=raw_sha256,
+                now_utc=now_utc,
+                js_content=js_content,
             )
-
-
-            await db.execute(
-                """
-                INSERT INTO nika_source_state (
-                    id,
-                    js_filename,
-                    export_date,
-                    export_time,
-                    raw_sha256,
-                    semantic_sha256,
-                    last_checked_at,
-                    last_changed_at,
-                    coverage_start_date,
-                    coverage_end_date,
-                    last_error,
-                    last_error_at
-                )
-                VALUES (
-                    1,
-                    ?,
-                    ?,
-                    ?,
-                    ?,
-                    ?,
-                    ?,
-                    COALESCE(
-                        (SELECT last_changed_at
-                         FROM nika_source_state WHERE id = 1),
-                        ?
-                    ),
-                    (SELECT coverage_start_date
-                     FROM nika_source_state WHERE id = 1),
-                    (SELECT coverage_end_date
-                     FROM nika_source_state WHERE id = 1),
-                    NULL,
-                    NULL
-                )
-                ON CONFLICT(id) DO UPDATE SET
-                    js_filename = excluded.js_filename,
-                    export_date = excluded.export_date,
-                    export_time = excluded.export_time,
-                    raw_sha256 = excluded.raw_sha256,
-                    semantic_sha256 = excluded.semantic_sha256,
-                    last_checked_at = excluded.last_checked_at,
-                    last_changed_at = excluded.last_changed_at,
-                    coverage_start_date = excluded.coverage_start_date,
-                    coverage_end_date = excluded.coverage_end_date,
-                    last_error = NULL,
-                    last_error_at = NULL
-                """,
-                (
-                    source.js_filename,
-                    export_date,
-                    export_time,
-                    raw_sha256,
-                    semantic_sha256,
-                    now_utc,
-                    now_utc,
-                ),
+            await self._upsert_source_state(
+                db,
+                js_filename=source.js_filename,
+                export_date=export_date,
+                export_time=export_time,
+                raw_sha256=raw_sha256,
+                semantic_sha256=semantic_sha256,
+                now_utc=now_utc,
+                coverage_start_date=state.coverage_start_date,
+                coverage_end_date=state.coverage_end_date,
+                schedule_changed=False,
             )
-
 
     async def _apply_new_nika_version(
         self,
         *,
         source: NikaSourceDescriptor,
         js_content: str,
-        nika_data: Dict[str, Any],
+        nika_data: dict[str, Any],
         raw_sha256: str,
         semantic_sha256: str,
         export_date: Optional[str],
@@ -960,74 +749,31 @@ class ScheduleRepository(BaseRepository):
         source_changed: bool,
         schedule_changed: bool,
         reason: str,
+        invalidate_metadata: bool = True,
     ) -> ScheduleRefreshResult:
         """
         Применяет новый NIKA rolling snapshot атомарно:
-        - raw cache (singleton);
-        - nika_source_state;
-        - schedule_cache (очистка окна + массовый UPSERT);
-        - очистка history window.
-
-        Этап 3: строятся ОБА набора — build_class_lessons() и
-        build_teacher_lessons() (методические часы, TEACH_EXCHANGE).
-        Учительские ID обязаны иметь префикс T{teacher_id}_ (патч
-        normalizer), иначе они коллидируют с классовыми.
-
-        ИСПРАВЛЕНО P0: инвалидация _metadata_cache после успешного
-        применения новой версии NIKA.
+        raw cache -> nika_source_state -> очистка окна -> массовый UPSERT.
         """
-        normalizer = NikaNormalizer(
-            nika_data,
-        )
-
-        class_lessons: List[LessonInstance] = (
-            normalizer.build_class_lessons(target_dates)
-        )
-        teacher_lessons: List[LessonInstance] = (
-            normalizer.build_teacher_lessons(target_dates)
-        )
-
+        normalizer = NikaNormalizer(nika_data)
+        class_lessons = normalizer.build_class_lessons(target_dates)
+        teacher_lessons = normalizer.build_teacher_lessons(target_dates)
 
         target_date_values = sorted(
-            {
-                target_date.isoformat()
-                for target_date in target_dates
-            }
+            {d.isoformat() for d in target_dates}
         )
-
-
-        if not target_date_values:
-            self._metadata_cache = None
-            return ScheduleRefreshResult(
-                source_changed=source_changed,
-                schedule_changed=False,
-                js_filename=source.js_filename,
-                lesson_count=0,
-                reason="empty_target_dates",
-            )
-
 
         coverage_start_date = target_date_values[0]
         coverage_end_date = target_date_values[-1]
 
-
         history_cutoff = (
-            datetime.date.fromisoformat(
-                coverage_start_date
-            )
+            datetime.date.fromisoformat(coverage_start_date)
             - datetime.timedelta(days=self.history_days)
         ).isoformat()
 
+        placeholders = ",".join("?" for _ in target_date_values)
 
-        placeholders = ",".join(
-            "?"
-            for _ in target_date_values
-        )
-
-
-        # Единый таймстемп снапшота для всех строк батча.
         now_utc = self._now_utc_str()
-
 
         lesson_rows = [
             self._lesson_to_row(lesson, "class", now_utc)
@@ -1037,28 +783,14 @@ class ScheduleRepository(BaseRepository):
             for lesson in teacher_lessons
         ]
 
-
         async with self.transaction() as db:
-            await db.execute(
-                """
-                INSERT INTO raw_nika_cache (
-                    id, js_filename, raw_sha256, fetched_at, content
-                )
-                VALUES (1, ?, ?, ?, ?)
-                ON CONFLICT(id) DO UPDATE SET
-                    js_filename = excluded.js_filename,
-                    raw_sha256 = excluded.raw_sha256,
-                    fetched_at = excluded.fetched_at,
-                    content = excluded.content
-                """,
-                (
-                    source.js_filename,
-                    raw_sha256,
-                    now_utc,
-                    js_content,
-                ),
+            await self._upsert_raw_cache(
+                db,
+                js_filename=source.js_filename,
+                raw_sha256=raw_sha256,
+                now_utc=now_utc,
+                js_content=js_content,
             )
-
 
             await db.execute(
                 f"""
@@ -1068,7 +800,6 @@ class ScheduleRepository(BaseRepository):
                 tuple(target_date_values),
             )
 
-
             await db.execute(
                 """
                 DELETE FROM schedule_cache
@@ -1077,87 +808,30 @@ class ScheduleRepository(BaseRepository):
                 (history_cutoff,),
             )
 
-
             if lesson_rows:
-                await db.executemany(
-                    _SCHEDULE_UPSERT_SQL,
-                    lesson_rows,
-                )
+                await db.executemany(_SCHEDULE_UPSERT_SQL, lesson_rows)
 
-
-            await db.execute(
-                """
-                INSERT INTO nika_source_state (
-                    id,
-                    js_filename,
-                    export_date,
-                    export_time,
-                    raw_sha256,
-                    semantic_sha256,
-                    last_checked_at,
-                    last_changed_at,
-                    coverage_start_date,
-                    coverage_end_date,
-                    last_error,
-                    last_error_at
-                )
-                VALUES (
-                    1,
-                    ?,
-                    ?,
-                    ?,
-                    ?,
-                    ?,
-                    ?,
-                    ?,
-                    ?,
-                    ?,
-                    NULL,
-                    NULL
-                )
-                ON CONFLICT(id) DO UPDATE SET
-                    js_filename = excluded.js_filename,
-                    export_date = excluded.export_date,
-                    export_time = excluded.export_time,
-                    raw_sha256 = excluded.raw_sha256,
-                    semantic_sha256 = excluded.semantic_sha256,
-                    last_checked_at = excluded.last_checked_at,
-                    last_changed_at = CASE
-                        WHEN ? = 1 THEN ?
-                        ELSE nika_source_state.last_changed_at
-                    END,
-                    coverage_start_date = excluded.coverage_start_date,
-                    coverage_end_date = excluded.coverage_end_date,
-                    last_error = NULL,
-                    last_error_at = NULL
-                """,
-                (
-                    source.js_filename,
-                    export_date,
-                    export_time,
-                    raw_sha256,
-                    semantic_sha256,
-                    now_utc,
-                    now_utc,
-                    coverage_start_date,
-                    coverage_end_date,
-                    int(schedule_changed),
-                    now_utc,
-                ),
+            await self._upsert_source_state(
+                db,
+                js_filename=source.js_filename,
+                export_date=export_date,
+                export_time=export_time,
+                raw_sha256=raw_sha256,
+                semantic_sha256=semantic_sha256,
+                now_utc=now_utc,
+                coverage_start_date=coverage_start_date,
+                coverage_end_date=coverage_end_date,
+                schedule_changed=schedule_changed,
             )
 
-        # Обновление статистики query planner'а после массовой
-        # перезаписи кэша (дёшево, заметно ускоряет последующие SELECT).
         try:
             await self._execute("PRAGMA optimize")
         except Exception:
             logger.debug("PRAGMA optimize after snapshot failed.")
 
-
         logger.info(
             "NIKA snapshot applied: source_changed=%s, "
-            "schedule_changed=%s, lessons=%d "
-            "(class=%d, teacher=%d), "
+            "schedule_changed=%s, lessons=%d (class=%d, teacher=%d), "
             "coverage=%s..%s, revision=%s",
             source_changed,
             schedule_changed,
@@ -1169,10 +843,9 @@ class ScheduleRepository(BaseRepository):
             source.js_filename,
         )
 
-
-        # ИСПРАВЛЕНО P0: инвалидация кеша метаданных
-        self._metadata_cache = None
-
+        # Инвалидация кеша только если это реальное изменение семантики
+        if invalidate_metadata:
+            self._metadata_cache = None
 
         return ScheduleRefreshResult(
             source_changed=source_changed,
@@ -1181,55 +854,105 @@ class ScheduleRepository(BaseRepository):
             lesson_count=len(lesson_rows),
             reason=reason,
         )
-        
-        
-            
-    async def get_todays_lessons_for_pre_reminders(
-        self,
-        date_iso: str,
-    ) -> list[LessonInstance]:
-        rows = await self._fetch_all(
+
+    # ==========================================================
+    # Внутренние SQL-хелперы (раньше дублировались в двух методах)
+    # ==========================================================
+
+    @staticmethod
+    async def _upsert_raw_cache(
+        db,
+        *,
+        js_filename: str,
+        raw_sha256: str,
+        now_utc: str,
+        js_content: str,
+    ) -> None:
+        """Singleton raw NIKA cache (общий для обоих путей обновления)."""
+        await db.execute(
             """
-            SELECT
-                id,
-                period_id,
-                class_id,
-                class_name,
-                date,
-                weekday,
-                lesson_num,
-                start_time,
-                end_time,
-                subject_id,
-                subject_name,
-                teacher_id,
-                teacher_name,
-                room_id,
-                room_name,
-                original_subject_id,
-                original_subject_name,
-                original_teacher_id,
-                original_teacher_name,
-                original_room_id,
-                original_room_name,
-                original_class_id,
-                original_class_name,
-                original_group_id,
-                original_group_name,
-                group_id,
-                group_name,
-                is_exchange,
-                is_cancelled,
-                is_methodological
-            FROM schedule_cache
-            WHERE date = ?
-            AND is_cancelled = 0
-            ORDER BY start_time, lesson_num, id
+            INSERT INTO raw_nika_cache (
+                id, js_filename, raw_sha256, fetched_at, content
+            )
+            VALUES (1, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                js_filename = excluded.js_filename,
+                raw_sha256 = excluded.raw_sha256,
+                fetched_at = excluded.fetched_at,
+                content = excluded.content
             """,
-            (date_iso,),
+            (js_filename, raw_sha256, now_utc, js_content),
         )
 
-        return [
-            self._row_to_lesson(row)
-            for row in rows
-        ]
+    @staticmethod
+    async def _upsert_source_state(
+        db,
+        *,
+        js_filename: str,
+        export_date: Optional[str],
+        export_time: Optional[str],
+        raw_sha256: str,
+        semantic_sha256: str,
+        now_utc: str,
+        coverage_start_date: Optional[str],
+        coverage_end_date: Optional[str],
+        schedule_changed: bool,
+    ) -> None:
+        """
+        Единственный UPSERT nika_source_state.
+
+        last_changed_at обновляется только при schedule_changed=1;
+        при bootstrap (строки ещё нет) всегда берётся now_utc.
+        """
+        await db.execute(
+            """
+            INSERT INTO nika_source_state (
+                id,
+                js_filename,
+                export_date,
+                export_time,
+                raw_sha256,
+                semantic_sha256,
+                last_checked_at,
+                last_changed_at,
+                coverage_start_date,
+                coverage_end_date,
+                last_error,
+                last_error_at
+            )
+            VALUES (
+                1, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL
+            )
+            
+            ON CONFLICT(id) DO UPDATE SET
+                js_filename = excluded.js_filename,
+                export_date = excluded.export_date,
+                export_time = excluded.export_time,
+                raw_sha256 = excluded.raw_sha256,
+                semantic_sha256 = excluded.semantic_sha256,
+                last_checked_at = excluded.last_checked_at,
+                last_changed_at = CASE
+                    WHEN ? = 1 THEN ?
+                    ELSE COALESCE(nika_source_state.last_changed_at, ?)
+                END,
+                coverage_start_date = excluded.coverage_start_date,
+                coverage_end_date = excluded.coverage_end_date,
+                last_error = NULL,
+                last_error_at = NULL
+            """,
+            (
+                js_filename,
+                export_date,
+                export_time,
+                raw_sha256,
+                semantic_sha256,
+                now_utc,
+                now_utc,
+                coverage_start_date,
+                coverage_end_date,
+                int(schedule_changed),
+                now_utc,
+                now_utc,
+            ),
+        )
+

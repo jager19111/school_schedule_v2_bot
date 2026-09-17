@@ -419,7 +419,16 @@ class Database:
                 )
             """)
 
-            # --- Индексы ---
+
+            # --- Удалить после первой инициализации с новыми индексами ---
+# --- Индексы ---
+            # Очистка старых/неоптимальных индексов для миграции
+            await db.execute("DROP INDEX IF EXISTS idx_notification_delivery_log_date")
+            await db.execute("DROP INDEX IF EXISTS idx_schedule_class_day_origin")
+            await db.execute("DROP INDEX IF EXISTS idx_schedule_teacher_day_origin")
+            await db.execute("DROP INDEX IF EXISTS idx_schedule_pending_changes")
+            await db.execute("DROP INDEX IF EXISTS idx_schedule_original_group") # <-- Удалили балласт
+
             await db.execute("""
                 CREATE INDEX IF NOT EXISTS idx_users_family_role
                 ON users(family_id, role)
@@ -428,19 +437,14 @@ class Database:
                 CREATE INDEX IF NOT EXISTS idx_extra_classes_student_day
                 ON extra_classes(student_id, day_of_week, time_start);
             """)
-            await db.execute("""
-                CREATE INDEX IF NOT EXISTS idx_notification_delivery_log_date
-                ON notification_delivery_log(notification_date)
-            """)
             
-            # Обновленные индексы с учетом origin
             await db.execute("""
                 CREATE INDEX IF NOT EXISTS idx_schedule_class_day_origin
-                ON schedule_cache(date, class_id, origin)
+                ON schedule_cache(class_id, date, origin)
             """)
             await db.execute("""
                 CREATE INDEX IF NOT EXISTS idx_schedule_teacher_day_origin
-                ON schedule_cache(date, teacher_id, origin)
+                ON schedule_cache(teacher_id, date, origin)
             """)
             
             # Индекс для оптимизации поиска свободных кабинетов
@@ -449,21 +453,14 @@ class Database:
                 ON schedule_cache(date, room_id)
             """)
             
-            # Индекс для поиска по оригинальной группе
+            # ИСПРАВЛЕНО: Универсальный частичный индекс для get_pending_changes и get_day_change_count
             await db.execute("""
-                CREATE INDEX IF NOT EXISTS idx_schedule_original_group
-                ON schedule_cache(original_group_id)
-                WHERE original_group_id IS NOT NULL
+                CREATE INDEX IF NOT EXISTS idx_schedule_changes_by_date
+                ON schedule_cache(date)
+                WHERE is_exchange = 1 OR is_cancelled = 1
             """)
             
-            # Обновленный частичный индекс под get_pending_changes
-            await db.execute("""
-                CREATE INDEX IF NOT EXISTS idx_schedule_pending_changes
-                ON schedule_cache(date, class_id)
-                WHERE (is_exchange = 1 OR is_cancelled = 1) AND origin = 'class'
-            """)
             await db.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
-
             await db.commit()
 
         logger.info(

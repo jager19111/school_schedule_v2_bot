@@ -506,3 +506,5 @@ class ScheduleFetcher:
                 exc,
             )
             raise
+      # alias:      
+    extract_json_from_js = _extract_json_from_js
