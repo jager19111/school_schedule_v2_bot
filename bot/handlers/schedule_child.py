@@ -20,8 +20,7 @@ from bot.callbacks import (
     ScheduleDayCD,
     ScheduleFullWeekCD,
     ScheduleTargetCD,
-    ScheduleWatchCD, MorningStudentSummaryCD, MorningTeacherSummaryCD, ScheduleDayCD, TeacherScheduleDayCD,
-    ScheduleWeekCD, DayChangesCD
+    ScheduleWatchCD, MorningStudentSummaryCD, MorningTeacherSummaryCD, ScheduleWeekCD, DayChangesCD
 )
 
 from bot.keyboards.keyboard import Keyboards
@@ -268,8 +267,7 @@ async def _render_day(
         )
     # ← НОВОЕ: определяем, есть ли изменения
     has_changes = any(
-        UIRenderer._get_field(l, "is_exchange", False)
-        or UIRenderer._get_field(l, "is_cancelled", False)
+        (l.is_exchange or l.is_cancelled) and not l.is_extra
         for l in day_dto.lessons
     )
     

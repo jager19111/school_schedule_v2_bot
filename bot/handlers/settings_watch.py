@@ -17,10 +17,12 @@ from bot.callbacks import (
     WatchGroupCD,
     WatchToggleCD,
 )
+from core.mappers.watch_target_mapper import WatchTargetMapper
 from bot.utils.ui_renderer import UIRenderer
 from bot.keyboards.keyboard import Keyboards
 from services.watch_targets_service import WatchTargetsService
 from services.schedule_service import ScheduleService
+from services.time_service import TimeService
 from bot.utils.fsm_guard import validate_fsm_session
 from bot.utils.safe_send import _safe_edit_text, _safe_callback_answer
 from bot.handlers.settings import SettingsStates
@@ -45,7 +47,7 @@ async def show_watch_targets_menu(
     # 1. Запрашиваем справочники школы единым запросом
     dicts_dto = await schedule_service.get_school_dictionaries()
     
-    view_models = WatchTargetsService.build_view_models(
+    view_models = WatchTargetMapper.to_view_models(
         targets,
         dicts_dto,
     )
@@ -228,10 +230,8 @@ async def select_watch_target_group(
         owner_user_id=owner_user_id,
     )
     
-    # 1. Запрашиваем справочники школы единым запросом
-    dicts_dto = await schedule_service.get_school_dictionaries()
 
-    view_models = WatchTargetsService.build_view_models(
+    view_models = WatchTargetMapper.to_view_models(
         targets,
         dicts_dto,
     )
@@ -288,7 +288,7 @@ async def show_watch_target_details(
     # 1. Запрашиваем справочники школы единым запросом через новый сервис
     dicts_dto = await schedule_service.get_school_dictionaries()
 
-    vm = WatchTargetsService.build_view_model(target, dicts_dto)
+    vm = WatchTargetMapper.to_view_model(target, dicts_dto)
     text = UIRenderer.render_watch_target_details(vm)
     keyboard = Keyboards.get_watch_target_details_kb(vm)
 
@@ -307,7 +307,8 @@ async def toggle_watch_target(
     callback: CallbackQuery,
     callback_data: WatchToggleCD,
     watch_targets_service: WatchTargetsService,
-    schedule_service: ScheduleService
+    schedule_service: ScheduleService,
+    time_service: TimeService,
 ) -> None:
     target_id = callback_data.target_id
 
@@ -354,10 +355,11 @@ async def toggle_watch_target(
     refreshed_target = replace(
         target,
         is_enabled=not target.is_enabled,
+        updated_at=time_service.get_now_base(), # Обновляем время
     )
 
     dicts_dto = await schedule_service.get_school_dictionaries()
-    vm = WatchTargetsService.build_view_model(refreshed_target, dicts_dto)
+    vm = WatchTargetMapper.to_view_model(refreshed_target, dicts_dto)
     text = UIRenderer.render_watch_target_details(vm)
     keyboard = Keyboards.get_watch_target_details_kb(vm)
 
@@ -375,6 +377,7 @@ async def toggle_watch_target_schedule_changes(
     callback_data: WatchChangesCD,
     watch_targets_service: WatchTargetsService,
     schedule_service: ScheduleService,
+    time_service: TimeService,
 ) -> None:
     """
     Включает или выключает уведомления об изменениях
@@ -414,12 +417,13 @@ async def toggle_watch_target_schedule_changes(
     refreshed_target = replace(
         target,
         receive_schedule_changes=not target.receive_schedule_changes,
+        updated_at=time_service.get_now_base(), # Обновляем время
     )
 
     # 1. Запрашиваем справочники школы единым запросом через новый сервис
     dicts_dto = await schedule_service.get_school_dictionaries()
 
-    vm = WatchTargetsService.build_view_model(
+    vm = WatchTargetMapper.to_view_model(
         refreshed_target,
         dicts_dto,
     )
@@ -526,7 +530,7 @@ async def delete_watch_target(
     # 1. Запрашиваем справочники школы единым запросом
     dicts_dto = await schedule_service.get_school_dictionaries()
     
-    view_models = WatchTargetsService.build_view_models(
+    view_models = WatchTargetMapper.to_view_models(
         targets,
         dicts_dto,
     )

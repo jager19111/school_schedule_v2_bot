@@ -459,7 +459,20 @@ class Database:
                 ON schedule_cache(date)
                 WHERE is_exchange = 1 OR is_cancelled = 1
             """)
-            
+ 
+            # Индекс для быстрого подсчета (COUNT) и фильтрации по владельцу
+            await db.execute("""
+                CREATE INDEX IF NOT EXISTS idx_watch_targets_owner
+                ON schedule_watch_targets(owner_user_id)
+            """)
+
+            # Частичный индекс для быстрого получения только АКТИВНЫХ таргетов
+            await db.execute("""
+                CREATE INDEX IF NOT EXISTS idx_watch_targets_owner_enabled
+                ON schedule_watch_targets(owner_user_id, created_at, id)
+                WHERE is_enabled = 1
+            """)
+                       
             await db.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
             await db.commit()
 

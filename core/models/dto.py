@@ -267,8 +267,8 @@ class ScheduleWatchTargetDTO:
     title: Optional[str] = None
     is_enabled: bool = True
     receive_schedule_changes: bool = True
-    created_at: Optional[str] = None
-    updated_at: Optional[str] = None
+    created_at: datetime | None = None  # <-- ИСПРАВЛЕНО
+    updated_at: datetime | None = None  # <-- ИСПРАВЛЕНО
 
 
 @dataclass
