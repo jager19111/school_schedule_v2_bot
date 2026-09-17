@@ -1948,8 +1948,8 @@ class UIRenderer:
         is_teacher = dto.origin == "teacher"
         from collections import defaultdict
         
-        # Группируем уроки по номеру и времени
         grouped_lessons = defaultdict(list)
+        # Группируем уроки по номеру и времени начала
         for lesson in dto.lessons:
             key = (lesson.lesson_num, lesson.start_time)
             grouped_lessons[key].append(lesson)
@@ -1963,7 +1963,7 @@ class UIRenderer:
     @staticmethod
     def _render_morning_lesson_group(lessons: list['MorningLessonDTO'], *, is_teacher: bool) -> str:
         """
-        Рендер группы уроков (если класс делится, они будут под одним номером).
+        Рендер группы уроков (если класс делится, они сольются в один номер).
         """
         base_lesson = lessons[0]
         display_num = base_lesson.display_num or (str(base_lesson.lesson_num) if base_lesson.lesson_num is not None else "•")
@@ -1979,7 +1979,13 @@ class UIRenderer:
         # === СЦЕНАРИЙ 1: Обычный урок (без разделения на группы) ===
         if len(lessons) == 1:
             lesson = lessons[0]
-            subject = "ОТМЕНА" if lesson.is_cancelled else ("Методический час" if is_teacher and lesson.is_methodological else (lesson.subject_name or "—"))
+            if lesson.is_cancelled:
+                subject = "ОТМЕНА"
+            elif is_teacher and lesson.is_methodological:
+                subject = "Методический час"
+            else:
+                subject = lesson.subject_name or "—"
+
             safe_subject = UIRenderer.escape_html(subject)
             first_line = f"{icon} <b>{display_num}.</b> {time_text} · <b>{safe_subject}</b>"
 
@@ -1994,7 +2000,13 @@ class UIRenderer:
         details_lines = []
         
         for lesson in lessons:
-            subject = "ОТМЕНА" if lesson.is_cancelled else ("Методический час" if is_teacher and lesson.is_methodological else (lesson.subject_name or "—"))
+            if lesson.is_cancelled:
+                subject = "ОТМЕНА"
+            elif is_teacher and lesson.is_methodological:
+                subject = "Методический час"
+            else:
+                subject = lesson.subject_name or "—"
+                
             safe_subject = UIRenderer.escape_html(subject)
             
             if lesson.is_cancelled:
@@ -2083,9 +2095,10 @@ class UIRenderer:
 
         if lesson.room_name:
             parts.append(lesson.room_name)
-
-        if lesson.group_name and str(lesson.group_name).strip() not in ("Весь класс", "ALL", "None", "", "—"):
-            parts.append(lesson.group_name)
+        
+        # Вывод названия группы при просмотре сводке на весь класс
+        #if lesson.group_name and str(lesson.group_name).strip() not in ("Весь класс", "ALL", "None", "", "—"):
+        #    parts.append(lesson.group_name)
 
         safe_parts = [
             UIRenderer.escape_html(part)
