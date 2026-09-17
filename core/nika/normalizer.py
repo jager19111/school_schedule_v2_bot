@@ -106,7 +106,7 @@ class NikaNormalizer:
         return value[0].strip(), value[1].strip()
 
     @staticmethod
-    def _is_whole_class_lesson(raw_s: list, raw_g: list) -> bool:
+    def _is_whole_class_lesson(raw_s: list, raw_g: list, is_teacher_mode: bool) -> bool:
         """
         Определяет, весь ли это класс или урок с группами.
         
@@ -116,15 +116,17 @@ class NikaNormalizer:
         3. s содержит несколько непустых предметов → урок с группами
         """
         if not raw_g:
-            return True  # Нет g → точно весь класс
-        
-        # Считаем непустые предметы
+            return True  # Нет массива групп -> весь класс
+            
+        if is_teacher_mode:
+            return False # Учителя всегда ведут только свою группу, если массив g есть - это подгруппа!
+            
+        # Для классов: считаем непустые предметы
         non_empty_subjects = sum(1 for s in raw_s if s and str(s).strip())
-        
         if non_empty_subjects <= 1:
-            return True  # Только 1 предмет → весь класс
-        
-        return False  # Несколько предметов → урок с группами
+            return True  
+            
+        return False
 
     def _process_slot(
         self,
@@ -186,7 +188,9 @@ class NikaNormalizer:
         # P2 (финальная версия): ИСПРАВЛЕНО — логика max_len
         #
         # Определяем, весь ли это класс или урок с группами
-        is_whole_class = self._is_whole_class_lesson(raw_s, raw_g)
+        # Было: is_whole_class = self._is_whole_class_lesson(raw_s, raw_g)
+        # Стало:
+        is_whole_class = self._is_whole_class_lesson(raw_s, raw_g, is_teacher_mode)
         
         if is_whole_class:
             # Урок для всего класса → 1 LessonInstance

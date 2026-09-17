@@ -1855,7 +1855,9 @@ class UIRenderer:
     # Уведомления (MorningLessonDTO)
     # ==========================================================
     @staticmethod
-    def render_morning_summary(        dto: MorningSummaryDTO,    ) -> str:
+    def render_morning_summary(
+        dto: MorningSummaryDTO,
+    ) -> str:
         """
         Основной метод утренней сводки
         """
@@ -1874,11 +1876,15 @@ class UIRenderer:
         )
 
     @staticmethod
-    def _render_morning_header(        dto: MorningSummaryDTO,    ) -> str:
+    def _render_morning_header(
+        dto: MorningSummaryDTO,
+    ) -> str:
         """
         Рендер заголовка утренней сводки
         """
-        date_text = UIRenderer._format_short_date(            dto.date_iso,        )
+        date_text = UIRenderer._format_short_date(
+            dto.date_iso,
+        )
 
         if dto.origin == "teacher":
             teacher_name = UIRenderer.escape_html(
@@ -1893,16 +1899,20 @@ class UIRenderer:
 
         title = f"🌅 <b>Расписание на {date_text}</b>"
 
+        # Собираем суффикс класса и группы
+        suffix_parts = []
+        if dto.class_name:
+            suffix_parts.append(UIRenderer.escape_html(dto.class_name))
+        
+        if dto.group_name and str(dto.group_name).strip() not in ("Весь класс", "ALL", "None", "", "—"):
+            suffix_parts.append(UIRenderer.escape_html(dto.group_name))
+            
+        suffix = f" ({' · '.join(suffix_parts)})" if suffix_parts else ""
+
         if dto.child_name:
-            target_line = (
-                f"👤 {UIRenderer.escape_html(dto.child_name)}" 
-                #f"{UIRenderer.escape_html(dto.lessons.group_name)}" вывести группу одной строкой с классом
-            )
-        elif dto.class_name:
-            target_line = (
-                f"🎓 {UIRenderer.escape_html(dto.class_name)} "
-                #f"{UIRenderer.escape_html(dto.lessons.group_name)}" вывести группу одной строкой с классом
-            )
+            target_line = f"👤 {UIRenderer.escape_html(dto.child_name)}{suffix}"
+        elif suffix_parts:
+            target_line = f"🎓 {' · '.join(suffix_parts)}"
         else:
             target_line = ""
 
@@ -1916,7 +1926,9 @@ class UIRenderer:
         )
         
     @staticmethod
-    def _render_morning_status(        dto: MorningSummaryDTO,    ) -> str:
+    def _render_morning_status(
+        dto: MorningSummaryDTO,
+    ) -> str:
         """
         Рендер сообщения о перестановках утренней сводки
         """
@@ -1928,24 +1940,78 @@ class UIRenderer:
 
         return "🔀 <i>Есть перестановки в расписании</i>"
         
-        
     @staticmethod
-    def _render_morning_lessons(        dto: MorningSummaryDTO,    ) -> str:
+    def _render_morning_lessons(dto: MorningSummaryDTO) -> str:
         """
-        Рендер списка уроков утренней сводки
+        Рендер списка уроков утренней сводки с группировкой подгрупп.
         """
         is_teacher = dto.origin == "teacher"
-
-        return "\n\n".join(
-            UIRenderer._render_morning_lesson(
-                lesson,
-                is_teacher=is_teacher,
-            )
-            for lesson in dto.lessons
-        )
+        from collections import defaultdict
         
+        # Группируем уроки по номеру и времени
+        grouped_lessons = defaultdict(list)
+        for lesson in dto.lessons:
+            key = (lesson.lesson_num, lesson.start_time)
+            grouped_lessons[key].append(lesson)
+            
+        rendered_blocks = []
+        for key, group in grouped_lessons.items():
+            rendered_blocks.append(UIRenderer._render_morning_lesson_group(group, is_teacher=is_teacher))
+            
+        return "\n\n".join(rendered_blocks)
+
     @staticmethod
-    def _render_morning_lesson(        lesson: MorningLessonDTO,        *,        is_teacher: bool,    ) -> str:
+    def _render_morning_lesson_group(lessons: list['MorningLessonDTO'], *, is_teacher: bool) -> str:
+        """
+        Рендер группы уроков (если класс делится, они будут под одним номером).
+        """
+        base_lesson = lessons[0]
+        display_num = base_lesson.display_num or (str(base_lesson.lesson_num) if base_lesson.lesson_num is not None else "•")
+        time_text = f"{base_lesson.start_time}–{base_lesson.end_time}"
+
+        # Определяем общую иконку
+        if all(l.is_cancelled for l in lessons): icon = "❌"
+        elif any(l.is_exchange for l in lessons): icon = "🔄"
+        elif any(l.is_extra for l in lessons): icon = "🎨"
+        elif is_teacher and all(l.is_methodological for l in lessons): icon = "🧑‍🏫"
+        else: icon = "📚"
+
+        # === СЦЕНАРИЙ 1: Обычный урок (без разделения на группы) ===
+        if len(lessons) == 1:
+            lesson = lessons[0]
+            subject = "ОТМЕНА" if lesson.is_cancelled else ("Методический час" if is_teacher and lesson.is_methodological else (lesson.subject_name or "—"))
+            safe_subject = UIRenderer.escape_html(subject)
+            first_line = f"{icon} <b>{display_num}.</b> {time_text} · <b>{safe_subject}</b>"
+
+            if lesson.is_cancelled:
+                return first_line
+
+            details = UIRenderer._render_teacher_lesson_details(lesson) if is_teacher else UIRenderer._render_student_lesson_details(lesson)
+            return f"{first_line}\n   ↳ {details}" if details else first_line
+
+        # === СЦЕНАРИЙ 2: Расщепленный урок (две и более подгрупп) ===
+        first_line = f"{icon} <b>{display_num}.</b> {time_text}"
+        details_lines = []
+        
+        for lesson in lessons:
+            subject = "ОТМЕНА" if lesson.is_cancelled else ("Методический час" if is_teacher and lesson.is_methodological else (lesson.subject_name or "—"))
+            safe_subject = UIRenderer.escape_html(subject)
+            
+            if lesson.is_cancelled:
+                details_lines.append(f"   ↳ <b>{safe_subject}</b>")
+                continue
+                
+            details = UIRenderer._render_teacher_lesson_details(lesson) if is_teacher else UIRenderer._render_student_lesson_details(lesson)
+            details_lines.append(f"   ↳ <b>{safe_subject}</b> · {details}" if details else f"   ↳ <b>{safe_subject}</b>")
+
+        return first_line + "\n" + "\n".join(details_lines)
+    
+    @staticmethod
+    def _render_morning_lesson(
+        lesson: MorningLessonDTO,
+        *,
+        is_teacher: bool,
+    ) -> str:
         """
         Рендер одного урока утренней сводки
         """
@@ -1969,23 +2035,25 @@ class UIRenderer:
         else:
             icon = "📚"
 
-        if (
-            is_teacher
-            and lesson.is_methodological
-        ):
+        # При отмене выводим только статус
+        if lesson.is_cancelled:
+            subject = "ОТМЕНА"
+        elif is_teacher and lesson.is_methodological:
             subject = "Методический час"
         else:
             subject = lesson.subject_name or "—"
 
         safe_subject = UIRenderer.escape_html(subject)
-        time_text = (
-            f"{lesson.start_time}–{lesson.end_time}"
-        )
+        time_text = f"{lesson.start_time}–{lesson.end_time}"
 
         first_line = (
             f"{icon} <b>{display_num}.</b> "
             f"{time_text} · <b>{safe_subject}</b>"
         )
+
+        # Прерываем рендер, чтобы не выводить строку с ↳
+        if lesson.is_cancelled:
+            return first_line
 
         if is_teacher:
             details = UIRenderer._render_teacher_lesson_details(
@@ -2002,7 +2070,9 @@ class UIRenderer:
         return f"{first_line}\n   ↳ {details}"
 
     @staticmethod
-    def _render_student_lesson_details(        lesson: MorningLessonDTO,    ) -> str:
+    def _render_student_lesson_details(
+        lesson: MorningLessonDTO,
+    ) -> str:
         """
         Детали урока для ученика утренней сводки
         """
@@ -2014,7 +2084,7 @@ class UIRenderer:
         if lesson.room_name:
             parts.append(lesson.room_name)
 
-        if lesson.group_name:
+        if lesson.group_name and str(lesson.group_name).strip() not in ("Весь класс", "ALL", "None", "", "—"):
             parts.append(lesson.group_name)
 
         safe_parts = [
@@ -2025,20 +2095,25 @@ class UIRenderer:
         return " · ".join(safe_parts)
 
     @staticmethod
-    def _render_teacher_lesson_details(        lesson: MorningLessonDTO,    ) -> str:
+    def _render_teacher_lesson_details(
+        lesson: MorningLessonDTO,
+    ) -> str:
         """
         Детали урока для учителя утренней сводки
         """
         parts = []
 
+        # 1. Сначала класс (например: 6б)
         if lesson.class_name:
             parts.append(lesson.class_name)
 
+        # 2. Затем группа (например: 2 Группа)
+        if lesson.group_name and str(lesson.group_name).strip() not in ("Весь класс", "ALL", "None", "", "—"):
+            parts.append(lesson.group_name)
+
+        # 3. И в конце кабинет (например: 206а(Н))
         if lesson.room_name:
             parts.append(lesson.room_name)
-
-        if lesson.group_name:
-            parts.append(lesson.group_name)
 
         safe_parts = [
             UIRenderer.escape_html(part)
@@ -2048,7 +2123,9 @@ class UIRenderer:
         return " · ".join(safe_parts)
 
     @staticmethod
-    def _render_morning_footer(        dto: MorningSummaryDTO,    ) -> str:
+    def _render_morning_footer(
+        dto: MorningSummaryDTO,
+    ) -> str:
         """
         Кнопка деталей утренней сводки
         """
@@ -2063,7 +2140,7 @@ class UIRenderer:
 
         return (
             f"⚠️ Изменений: {changes_count}\n"
-            "Нажмите кнопку для подробностей."
+            "Нажмите кнопку ниже для подробностей."
         )
 # ==========================================================
     # Уведомления (MorningLessonDTO)

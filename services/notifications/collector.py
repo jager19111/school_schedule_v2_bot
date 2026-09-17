@@ -110,6 +110,21 @@ class NotificationCollector:
         self.extra_classes_service = extra_classes_service
         self.schedule_service = schedule_service
 
+    @staticmethod
+    def _get_equivalent_groups(group_id: str, groups_dict: dict) -> set[str]:
+        """Умный алиас: находит все ID групп, в которых фигурирует та же цифра (Группа 1 == 1 группа)."""
+        if not group_id or group_id == "ALL":
+            return {"ALL"}
+        equivs = {group_id}
+        name = groups_dict.get(group_id, str(group_id))
+        m = re.search(r'\d+', name)
+        if m:
+            digit = m.group(0)
+            for k, v in groups_dict.items():
+                if re.search(rf'\b{digit}\b', str(v)):
+                    equivs.add(str(k))
+        return equivs
+
     async def _get_metadata(self, ctx: NotificationTickContext):
         """Ленивая загрузка справочников: 1 запрос к БД на весь тик рассылки."""
         if ctx.metadata_cache is None:
@@ -142,7 +157,7 @@ class NotificationCollector:
             logger.error("Infrastructure error: Failed to load schedule metadata: %s", e)
             classes, groups = {}, {}
 
-        summaries_by_recipient: dict[int, list[tuple[MorningSummaryTaskDTO, MorningSummaryDTO]]] = {}
+        summaries_by_recipient = {}
 
         for task in tasks:
             try:
@@ -163,33 +178,37 @@ class NotificationCollector:
                         ctx.display_numbers_cache[display_key] = await self.schedule_service.get_display_numbers_for_class_day(
                             class_id=child_class_id, date_iso=today_iso
                         )
-
                     display_numbers = ctx.display_numbers_cache[display_key]
-                    # ... внутри collect_morning_summaries ...
+                    
                     user_groups = [str(g).strip() for g in child_group_id.split(",")] if child_group_id != "ALL" else ["ALL"]
+                    
+                    # Генерируем полный набор алиасов для групп пользователя
+                    user_equivs = set()
+                    for ug in user_groups:
+                        user_equivs.update(self._get_equivalent_groups(ug, groups))
 
                     for lesson in lessons:
                         lesson_group_id = str(lesson.group_id).strip() if lesson.group_id else "ALL"
-                        lesson_group_name = groups.get(lesson_group_id, f"Группа {lesson_group_id}")
                         
                         # --- ЛОГИРОВАНИЕ ДЛЯ ОТЛАДКИ ---
                         # logger.warning выведет это в консоль желтым цветом, чтобы ты точно заметил!
                         logger.warning(
                             f"STUDENT FILTER CHECK | Recipient: {recipient_id} | "
-                            f"User wants: {user_groups} | Lesson has ID: '{lesson_group_id}', Name: '{lesson_group_name}' | "
+                            f"User wants: {user_groups} | Lesson has ID: '{lesson_group_id}', Name: '{lesson_group_id}' | "
                             f"Subject: {lesson.subject_name}"
                         )
                         
-                        # УМНЫЙ ФИЛЬТР: Проверяем и по ID ("1"), и по имени ("1 группа")
+                        
+                        # === УМНЫЙ ФИЛЬТР ПО АЛИАСАМ ===
                         if "ALL" not in user_groups and lesson_group_id != "ALL":
-                            if lesson_group_id not in user_groups and lesson_group_name not in user_groups:
-                                logger.warning(f"🚫 DROPPED: {lesson.subject_name} (Group mismatch)")
+                            lesson_equivs = self._get_equivalent_groups(lesson_group_id, groups)
+                            if not (user_equivs & lesson_equivs):
                                 continue
 
                         group_name = None
                         if lesson_group_id != "ALL":
                             if child_group_id == "ALL" or len(user_groups) > 1:
-                                group_name = lesson_group_name
+                                group_name = groups.get(lesson_group_id, f"Группа {lesson_group_id}")
 
                         lesson_display_num = display_numbers.get(
                             lesson.lesson_num,
@@ -203,28 +222,19 @@ class NotificationCollector:
                         )
 
                 if target_student_id is not None:
-                    extra_items = await self.extra_classes_service.get_extra_classes_for_student(
-                        student_id=target_student_id, day_of_week=weekday
-                    )
+                    extra_items = await self.extra_classes_service.get_extra_classes_for_student(student_id=target_student_id, day_of_week=weekday)
                     ctx.queries += 1
                     lessons_dtos.extend(NotificationMapper.map_extra_to_morning_dto(extra) for extra in extra_items)
 
-                if not lessons_dtos:
-                    continue
+                if not lessons_dtos: continue
 
-                lessons_dtos.sort(
-                    key=lambda item: (
-                        item.start_time.zfill(5) if item.start_time and item.start_time != "—" else "99:99", 
-                        item.lesson_num if item.lesson_num is not None else 99
-                    )
-                )
+                lessons_dtos.sort(key=lambda item: (item.start_time.zfill(5) if item.start_time and item.start_time != "—" else "99:99", item.lesson_num if item.lesson_num is not None else 99))
                 
                 class_name = child_class_id
                 if child_class_id:
                     # ИСПРАВЛЕНО: Ищем класс в словаре classes
                     class_obj = classes.get(child_class_id)
-                    if class_obj is not None: 
-                        class_name = class_obj.name
+                    if class_obj is not None: class_name = class_obj.name
                         
                 human_group_name = None
                 if child_group_id and child_group_id != "ALL":
@@ -232,8 +242,7 @@ class NotificationCollector:
                     human_group_name = groups.get(child_group_id, f"Группа {child_group_id}")
                     
                 summary_dto = MorningSummaryDTO(
-                    date_iso=today_iso, lessons=lessons_dtos,
-                    child_name=(task.child_name if task.recipient_kind == "adult" else None),
+                    date_iso=today_iso, lessons=lessons_dtos, child_name=(task.child_name if task.recipient_kind == "adult" else None),
                     class_id=child_class_id, class_name=class_name, group_name=human_group_name,
                     has_permutation=day_permutation, origin="student",
                 )
@@ -254,24 +263,15 @@ class NotificationCollector:
                     continue
                     
                 has_changes = any((lesson.is_exchange or lesson.is_cancelled) for lesson in summary_dto.lessons if not lesson.is_extra)
-                action_type = None
-                action_payload = None
+                action_type, action_payload = None, None
 
                 if has_changes:
                     action_type = "day_changes"
-                    action_payload = {
-                        "target_kind": "student", "target_id": task.target_student_id,
-                        "class_id": str(task.class_id), "group_id": str(task.group_id or "ALL"),
-                        "date_iso": today_iso, "origin": "class", "return_to": "morning",
-                    }
+                    action_payload = {"target_kind": "student", "target_id": task.target_student_id, "class_id": str(task.class_id), "group_id": str(task.group_id or "ALL"), "date_iso": today_iso, "origin": "class", "return_to": "morning"}
 
                 candidates.append(NotificationSendDTO(
-                    notification_type="morning_summary",
-                    notification_date=today_iso,
-                    source_ids=[f"morning_summary:{task.target_student_id}"],
-                    recipient_id=recipient_id, text=text,
-                    action_type=action_type, action_payload=action_payload,
-                    context=f"student_id={task.target_student_id}"
+                    notification_type="morning_summary", notification_date=today_iso, source_ids=[f"morning_summary:{task.target_student_id}"],
+                    recipient_id=recipient_id, text=text, action_type=action_type, action_payload=action_payload, context=f"student_id={task.target_student_id}"
                 ))
 
         ctx.candidates += len(candidates)
@@ -328,59 +328,38 @@ class NotificationCollector:
                         f"NIKA group_id: '{lesson.group_id}' -> parsed as '{lesson_group_id}'"
                     )
 
-                    group_name = None
-                    if lesson_group_id != "ALL":
-                        group_name = groups.get(lesson_group_id, f"Группа {lesson_group_id}")
+                    group_name = groups.get(lesson_group_id, f"Группа {lesson_group_id}") if lesson_group_id != "ALL" else None
 
                     lessons_dtos.append(
                         NotificationMapper.map_school_lesson_to_morning_dto(
-                            lesson, 
-                            display_num=(str(lesson.lesson_num) if lesson.lesson_num is not None else "•"),
-                            class_name=class_name, 
-                            group_name=group_name,
-                            day_permutation=False,
+                            lesson, display_num=(str(lesson.lesson_num) if lesson.lesson_num is not None else "•"),
+                            class_name=class_name, group_name=group_name, day_permutation=False,
                         )
                     )
 
                 if not lessons_dtos: continue
-                
-                lessons_dtos.sort(
-                    key=lambda item: (
-                        item.start_time.zfill(5) if item.start_time and item.start_time != "—" else "99:99", 
-                        item.lesson_num if item.lesson_num is not None else 99
-                    )
-                )
+                lessons_dtos.sort(key=lambda item: (item.start_time.zfill(5) if item.start_time and item.start_time != "—" else "99:99", item.lesson_num if item.lesson_num is not None else 99))
                 
                 summary_dto = MorningSummaryDTO(                    
                     date_iso=today_iso, lessons=lessons_dtos, child_name=None, class_id=None,
                     class_name=None, teacher_name=teacher_name, has_permutation=False, origin="teacher",
                 )
 
-                try:
-                    text = UIRenderer.render_morning_summary(summary_dto)
+                try: text = UIRenderer.render_morning_summary(summary_dto)
                 except Exception as e:
                     logger.error("Render error: Failed to render teacher morning summary for %s: %s", teacher_id, e)
                     continue
-                    
+
                 has_changes = any((lesson.is_exchange or lesson.is_cancelled) for lesson in summary_dto.lessons if not lesson.is_extra)
-                action_type = None
-                action_payload = None
+                action_type, action_payload = None, None
 
                 if has_changes:
                     action_type = "day_changes"
-                    action_payload = {
-                        "target_kind": "teacher", "target_id": teacher_id,
-                        "class_id": "ALL", "group_id": "ALL",
-                        "date_iso": today_iso, "origin": "teacher", "return_to": "morning",
-                    }
+                    action_payload = {"target_kind": "teacher", "target_id": teacher_id, "class_id": "ALL", "group_id": "ALL", "date_iso": today_iso, "origin": "teacher", "return_to": "morning"}
 
                 candidates.append(NotificationSendDTO(
-                    notification_type="teacher_morning",
-                    notification_date=today_iso,
-                    source_ids=[f"teacher_morning:{teacher_id}"],
-                    recipient_id=recipient_id, text=text,
-                    action_type=action_type, action_payload=action_payload,
-                    context=f"teacher_id={teacher_id}"
+                    notification_type="teacher_morning", notification_date=today_iso, source_ids=[f"teacher_morning:{teacher_id}"],
+                    recipient_id=recipient_id, text=text, action_type=action_type, action_payload=action_payload, context=f"teacher_id={teacher_id}"
                 ))
 
             except (KeyError, ValueError, TypeError) as e:
@@ -409,8 +388,7 @@ class NotificationCollector:
         # === ЗАГРУЖАЕМ СПРАВОЧНИКИ (Для расшифровки 004 -> 2б) ===
         try:
             metadata = await self._get_metadata(ctx)
-            classes = metadata.classes
-            groups = metadata.groups
+            classes, groups = metadata.classes, metadata.groups
         except Exception as e:
             logger.error("Infrastructure error: Failed to load schedule metadata: %s", e)
             classes, groups = {}, {}
@@ -428,9 +406,7 @@ class NotificationCollector:
 
                 display_key = (change.class_id, change.date)
                 if display_key not in ctx.display_numbers_cache:
-                    ctx.display_numbers_cache[display_key] = await self.schedule_service.get_display_numbers_for_class_day(
-                        class_id=change.class_id, date_iso=change.date
-                    )
+                    ctx.display_numbers_cache[display_key] = await self.schedule_service.get_display_numbers_for_class_day(class_id=change.class_id, date_iso=change.date)
                 class_display_num = ctx.display_numbers_cache[display_key].get(change.lesson_num, str(change.lesson_num))
 
                 # === РАСШИФРОВКА КОДОВ КЛАССА И ГРУППЫ ===
@@ -441,14 +417,26 @@ class NotificationCollector:
                 if not human_group_name and change.group_id and change.group_id != "ALL":
                     human_group_name = groups.get(change.group_id, f"Группа {change.group_id}")
 
-                cache_key = (change.class_id, change.group_id)
-                if cache_key not in ctx.change_recipients_cache:
-                    ctx.change_recipients_cache[cache_key] = await self.repo.get_recipients_for_schedule_change(
-                        class_id=change.class_id, group_id=change.group_id
-                    )
-                    ctx.queries += 1
+                # === ГЕНЕРАЦИЯ АЛИАСОВ ДЛЯ ЗАПРОСА В БД ===
+                lesson_group_id = str(change.group_id).strip() if change.group_id else "ALL"
+                possible_groups = self._get_equivalent_groups(lesson_group_id, groups)
 
-                for recipient in ctx.change_recipients_cache[cache_key]:
+                all_recipients = []
+                for pg in possible_groups:
+                    cache_key = (change.class_id, pg)
+                    if cache_key not in ctx.change_recipients_cache:
+                        ctx.change_recipients_cache[cache_key] = await self.repo.get_recipients_for_schedule_change(class_id=change.class_id, group_id=pg)
+                        ctx.queries += 1
+                    all_recipients.extend(ctx.change_recipients_cache[cache_key])
+                
+                seen_recipients = set()
+                unique_recipients = []
+                for r in all_recipients:
+                    if r.recipient_id not in seen_recipients:
+                        seen_recipients.add(r.recipient_id)
+                        unique_recipients.append(r)
+
+                for recipient in unique_recipients:
                     window_days = recipient.changes_window_days
                     if window_days > 0 and (today <= change_date <= (today + datetime.timedelta(days=window_days))):
                         del_key = DeliveredKeyDTO(change.date, change.id, recipient.recipient_id)
@@ -485,44 +473,29 @@ class NotificationCollector:
 
         def get_change_score(c: PendingChangeDTO) -> int:
             """Оценивает 'качество' записи. Прямая замена > Добавление > Отмена."""
-            if c.is_exchange and c.original_subject_name: return 3
-            if c.is_exchange: return 2
-            return 1
+            return 3 if c.is_exchange and c.original_subject_name else (2 if c.is_exchange else 1)
 
-        student_candidates_map = {}
-        teacher_candidates_map = {}
+        student_candidates_map, teacher_candidates_map = {}, {}
 
-        # 3. Фильтруем (Delta) и применяем Quality Score
         for del_key, change, recipient, class_display_num, h_class, h_group in raw_student_candidates:
-            if del_key in student_delivered:
-                continue 
-                
+            if del_key in student_delivered: continue 
             dedup_key = (recipient.recipient_id, change.date, change.lesson_num, change.group_id)
             score = get_change_score(change)
             
             if dedup_key not in student_candidates_map or score >= student_candidates_map[dedup_key][0]:
                 dto = NotificationMapper.to_change_reminder_dto(
-                    change, display_num=class_display_num,
-                    child_name=(recipient.child_name if recipient.recipient_kind == "adult" else None),
-                    watch_target_title=(recipient.watch_target_title if recipient.recipient_kind == "watch" else None),
-                    class_name=h_class,
-                    group_name=h_group
+                    change, display_num=class_display_num, child_name=(recipient.child_name if recipient.recipient_kind == "adult" else None),
+                    watch_target_title=(recipient.watch_target_title if recipient.recipient_kind == "watch" else None), class_name=h_class, group_name=h_group
                 )
                 student_candidates_map[dedup_key] = (score, recipient.recipient_id, change.date, recipient, dto)
 
         for del_key, change, recipient, teacher_name, h_class, h_group in raw_teacher_candidates:
-            if del_key in teacher_delivered:
-                continue 
-                
+            if del_key in teacher_delivered: continue 
             dedup_key = (recipient.recipient_id, change.date, change.lesson_num, change.group_id)
             score = get_change_score(change)
             
             if dedup_key not in teacher_candidates_map or score >= teacher_candidates_map[dedup_key][0]:
-                dto = NotificationMapper.to_change_reminder_dto(
-                    change, display_num=str(change.lesson_num),
-                    class_name=h_class,
-                    group_name=h_group
-                )
+                dto = NotificationMapper.to_change_reminder_dto(change, display_num=str(change.lesson_num), class_name=h_class, group_name=h_group)
                 teacher_candidates_map[dedup_key] = (score, recipient.recipient_id, change.date, recipient, dto, teacher_name)
 
         student_records = [val[1:] for val in student_candidates_map.values()]
@@ -531,7 +504,6 @@ class NotificationCollector:
         candidates = []
         candidates.extend(DailyChangesAggregator.aggregate_student_changes(student_records))
         candidates.extend(DailyChangesAggregator.aggregate_teacher_changes(teacher_records))
-        
         ctx.candidates += len(candidates)
         return candidates
 
@@ -547,23 +519,39 @@ class NotificationCollector:
             return []
             
         ctx.processed_entities += len(lessons)
+        
+        try:
+            metadata = await self._get_metadata(ctx)
+            groups = metadata.groups
+        except Exception: groups = {}
+        
         candidates: list[NotificationSendDTO] = []
 
         for lesson in lessons:
             try:
                 lesson_start_at = datetime.datetime.strptime(f"{today_iso} {lesson.start_time}", "%Y-%m-%d %H:%M").replace(tzinfo=self.time_service.base_tz)
                 delta_minutes = (lesson_start_at - now).total_seconds() / 60.0
-
                 if delta_minutes <= 0: continue
 
-                cache_key = (lesson.class_id, lesson.group_id or "ALL")
-                if cache_key not in ctx.pre_lesson_recipients_cache:
-                    ctx.pre_lesson_recipients_cache[cache_key] = await self.repo.get_recipients_for_pre_lesson_reminder(
-                        class_id=lesson.class_id, group_id=lesson.group_id or "ALL"
-                    )
-                    ctx.queries += 1
+                lesson_group_id = str(lesson.group_id).strip() if lesson.group_id else "ALL"
+                possible_groups = self._get_equivalent_groups(lesson_group_id, groups)
 
-                for recipient in ctx.pre_lesson_recipients_cache[cache_key]:
+                all_recipients = []
+                for pg in possible_groups:
+                    cache_key = (lesson.class_id, pg)
+                    if cache_key not in ctx.pre_lesson_recipients_cache:
+                        ctx.pre_lesson_recipients_cache[cache_key] = await self.repo.get_recipients_for_pre_lesson_reminder(class_id=lesson.class_id, group_id=pg)
+                        ctx.queries += 1
+                    all_recipients.extend(ctx.pre_lesson_recipients_cache[cache_key])
+
+                seen_recipients = set()
+                unique_recipients = []
+                for r in all_recipients:
+                    if r.recipient_id not in seen_recipients:
+                        seen_recipients.add(r.recipient_id)
+                        unique_recipients.append(r)
+
+                for recipient in unique_recipients:
                     offset_minutes = recipient.offset_minutes
                     if offset_minutes <= 0 or delta_minutes > offset_minutes: continue
 
@@ -579,9 +567,8 @@ class NotificationCollector:
                         continue
 
                     candidates.append(NotificationSendDTO(
-                        notification_type="pre_lesson", notification_date=today_iso,
-                        source_ids=[lesson.id], recipient_id=recipient.recipient_id,
-                        text=text, context=f"lesson_id={lesson.id}, kind={recipient.recipient_kind}",
+                        notification_type="pre_lesson", notification_date=today_iso, source_ids=[lesson.id],
+                        recipient_id=recipient.recipient_id, text=text, context=f"lesson_id={lesson.id}, kind={recipient.recipient_kind}",
                     ))
 
                 teacher_id = lesson.teacher_id
@@ -607,9 +594,8 @@ class NotificationCollector:
                         continue
 
                     candidates.append(NotificationSendDTO(
-                        notification_type="teacher_pre_lesson", notification_date=today_iso,
-                        source_ids=[lesson.id], recipient_id=recipient.recipient_id,
-                        text=text, context=f"teacher_id={teacher_id}, lesson_id={lesson.id}",
+                        notification_type="teacher_pre_lesson", notification_date=today_iso, source_ids=[lesson.id],
+                        recipient_id=recipient.recipient_id, text=text, context=f"teacher_id={teacher_id}, lesson_id={lesson.id}",
                     ))
 
             except (KeyError, ValueError, TypeError) as e:
@@ -642,12 +628,10 @@ class NotificationCollector:
 
                 start_at = datetime.datetime.strptime(f"{today_iso} {extra.time_start}", "%Y-%m-%d %H:%M").replace(tzinfo=self.time_service.base_tz)
                 delta_minutes = (start_at - now).total_seconds() / 60.0
-
                 if delta_minutes <= 0 or delta_minutes > offset_minutes: continue
 
                 dto = LessonReminderDTO(
-                    subject_name=extra.title, start_time=extra.time_start,
-                    room_name=extra.location or "—", is_extra=True,
+                    subject_name=extra.title, start_time=extra.time_start, room_name=extra.location or "—", is_extra=True,
                     child_name=(extra.child_name if extra.recipient_kind == "adult" else None),
                 )
 
@@ -657,9 +641,8 @@ class NotificationCollector:
                     continue
 
                 candidates.append(NotificationSendDTO(
-                    notification_type="extra_class", notification_date=today_iso,
-                    source_ids=[str(extra.extra_id)], recipient_id=extra.recipient_id,
-                    text=text, context=f"extra_id={extra.extra_id}, kind={extra.recipient_kind}",
+                    notification_type="extra_class", notification_date=today_iso, source_ids=[str(extra.extra_id)],
+                    recipient_id=extra.recipient_id, text=text, context=f"extra_id={extra.extra_id}, kind={extra.recipient_kind}",
                 ))
 
             except (KeyError, ValueError, TypeError) as e:

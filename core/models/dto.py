@@ -682,6 +682,7 @@ class MorningSummaryDTO:
     child_name: str | None = None
     class_id: str | None = None     # Технический ID основного класса ученика
     class_name: str | None = None   # Человекочитаемое название класса для заголовка
+    group_name: str | None = None
     teacher_name: str | None = None
     
     has_permutation: bool = False
