@@ -138,11 +138,11 @@ class ScheduleService:
 
     @staticmethod
     def _filter_by_groups(
-        lessons: List[LessonInstance],
+        lessons: List['LessonInstance'],
         group_id: str,
         groups_dict: dict,
-    ) -> List[LessonInstance]:
-        """Фильтрует уроки класса по группам профиля ученика с учетом умных алиасов."""
+    ) -> List['LessonInstance']:
+        """Фильтрует уроки класса по группам профиля ученика с учетом умных алиасов и агрегации Труда."""
         user_groups = [g.strip() for g in group_id.split(",") if g.strip()] if group_id and group_id != "ALL" else ["ALL"]
         
         user_equivs = set()
@@ -152,12 +152,19 @@ class ScheduleService:
         filtered = []
         for lesson in lessons:
             lesson_group_id = str(lesson.group_id).strip() if lesson.group_id else "ALL"
-            if "ALL" in user_groups or lesson_group_id == "ALL":
+            subj_name = (lesson.subject_name or "").lower()
+            
+            # Делаем исключение для Труда/Технологии: 
+            # пропускаем все подгруппы этого предмета для склейки в рендерере
+            is_trud = "труд" in subj_name or "технологи" in subj_name
+            
+            if "ALL" in user_groups or lesson_group_id == "ALL" or is_trud:
                 filtered.append(lesson)
             else:
                 lesson_equivs = ScheduleService.get_equivalent_groups(lesson_group_id, groups_dict)
                 if user_equivs & lesson_equivs:
                     filtered.append(lesson)
+                    
         return filtered
     
     @staticmethod

@@ -1461,6 +1461,10 @@ class UIRenderer:
     # Расписание дня (DayScheduleDTO)
     # ==========================================================
     
+# ==========================================================
+    # Расписание дня (DayScheduleDTO)
+    # ==========================================================
+
     @staticmethod
     def render_day_schedule(
         dto: 'DayScheduleDTO',
@@ -1473,10 +1477,11 @@ class UIRenderer:
         header = UIRenderer._render_schedule_header(dto, name)
         status = UIRenderer._render_schedule_status(dto)
         lessons = UIRenderer._render_schedule_lessons(dto)
+        footer = UIRenderer._render_schedule_footer(dto)
 
         text = "\n\n".join(
             part
-            for part in (header, status, lessons)
+            for part in (header, status, lessons, footer)
             if part
         )
         return text, None
@@ -1600,14 +1605,11 @@ class UIRenderer:
 
         # === 1. ВНЕШНИЙ ВИД ДЛЯ УЧИТЕЛЯ ===
         if is_teacher:
-            # Предмет наверх
             first_line = f"{icon} <b>{num_str}.</b> {time_text}"
             
             top_subj = first.subject_name or ""
             if is_all_cancelled:
-                safe_subj = f"<s>{UIRenderer.escape_html(top_subj)}</s> <b>ОТМЕНА</b>"
-            elif len(lessons) == 1 and first.is_exchange and first.original_subject_name and first.original_subject_name != top_subj:
-                safe_subj = f"<s>{UIRenderer.escape_html(first.original_subject_name)}</s> ➔ <b>{UIRenderer.escape_html(top_subj)}</b>"
+                safe_subj = "<b>ОТМЕНА</b>"
             else:
                 safe_subj = f"<b>{UIRenderer.escape_html(top_subj)}</b>"
                 
@@ -1637,25 +1639,18 @@ class UIRenderer:
 
         # === 2. ВНЕШНИЙ ВИД ДЛЯ УЧЕНИКА / ПОИСКА ===
         else:
-            # Предмет всегда на второй строке
             first_line = f"{icon} <b>{num_str}.</b> {time_text}"
             details_lines = []
             
             for l in lessons:
                 if l.is_cancelled:
-                    orig = l.original_subject_name or l.subject_name
-                    if orig:
-                        details_lines.append(f"   ↳ <s>{UIRenderer.escape_html(orig)}</s> <b>ОТМЕНА</b>")
-                    else:
-                        details_lines.append("   ↳ <b>ОТМЕНА</b>")
+                    details_lines.append("   ↳ <b>ОТМЕНА</b>")
                     continue
 
                 parts = []
+                # Показываем только актуальный предмет
                 subj = l.subject_name or "—"
-                if l.is_exchange and l.original_subject_name and l.original_subject_name != subj:
-                    parts.append(f"<s>{UIRenderer.escape_html(l.original_subject_name)}</s> ➔ <b>{UIRenderer.escape_html(subj)}</b>")
-                else:
-                    parts.append(f"<b>{UIRenderer.escape_html(subj)}</b>")
+                parts.append(f"<b>{UIRenderer.escape_html(subj)}</b>")
 
                 if is_school_search and l.teacher_name:
                     parts.append(f"<i>{UIRenderer.escape_html(l.teacher_name)}</i>")
@@ -1667,6 +1662,25 @@ class UIRenderer:
                     details_lines.append(f"   ↳ {' · '.join(parts)}")
 
             return first_line + "\n" + "\n".join(details_lines)
+
+    @staticmethod
+    def _render_schedule_footer(dto: 'DayScheduleDTO') -> str:
+        """
+        Приписка о наличии изменений для основного расписания.
+        """
+        changes_count = sum(
+            getattr(lesson, 'is_exchange', False) or getattr(lesson, 'is_cancelled', False)
+            for lesson in dto.lessons
+            if not getattr(lesson, 'is_extra', False)
+        )
+
+        if not changes_count:
+            return ""
+
+        return (
+            f"⚠️ Изменений: {changes_count}\n"
+            "Нажмите кнопку «Изменения» для подробностей."
+        )
         
     # ==========================================================
     # Расписание дня (DayScheduleDTO)
