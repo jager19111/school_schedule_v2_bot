@@ -66,17 +66,54 @@ class NikaNormalizer:
 
 
     def _get_active_period(self, target_date: datetime.date) -> str | None:
-        """Поиск активного учебного периода для заданной даты."""
+        """
+        Поиск активного учебного периода.
+        Если дата находится в будущем (дальше всех заведенных в NIKA периодов),
+        экстраполируем на неё базовое расписание из последнего известного периода.
+        """
+        latest_period_id = None
+        latest_end_date = datetime.date.min
+
         for p_id, p_data in self.periods.items():
             try:
                 # В NIKA даты в формате "DD.MM.YYYY"
                 b_date = datetime.datetime.strptime(p_data["b"], "%d.%m.%Y").date()
                 e_date = datetime.datetime.strptime(p_data["e"], "%d.%m.%Y").date()
+                
+                # 1. Точное попадание в официально заданный период
                 if b_date <= target_date <= e_date:
                     return p_id
+                
+                # Запоминаем самый поздний период из всех существующих
+                if e_date > latest_end_date:
+                    latest_end_date = e_date
+                    latest_period_id = p_id
             except (ValueError, KeyError):
                 continue
+
+        # 2. Предиктивная экстраполяция в будущее
+        # Если запрашиваемая дата больше конца последнего периода (школа еще не продлила даты),
+        # мы предполагаем, что базовая сетка уроков продолжится.
+        # На даты из прошлого не экстраполируем, чтобы не портить историю.
+        if latest_end_date != datetime.date.min and target_date > latest_end_date:
+            return latest_period_id
+
         return None
+    
+    if False: # старый метод где расписание строго соответствует расписанию нан сайте. Оставить для возможного отката
+        def _get_active_period(self, target_date: datetime.date) -> str | None:
+            """Поиск активного учебного периода для заданной даты."""
+            for p_id, p_data in self.periods.items():
+                try:
+                    # В NIKA даты в формате "DD.MM.YYYY"
+                    b_date = datetime.datetime.strptime(p_data["b"], "%d.%m.%Y").date()
+                    e_date = datetime.datetime.strptime(p_data["e"], "%d.%m.%Y").date()
+                    if b_date <= target_date <= e_date:
+                        return p_id
+                except (ValueError, KeyError):
+                    continue
+            return None
+
 
 
     def _lesson_numbers_for_day(self, base_schedule: dict, exchanges: dict, weekday: int) -> list[int]:
