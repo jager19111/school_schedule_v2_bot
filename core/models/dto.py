@@ -596,7 +596,10 @@ class ChangeReminderDTO:
     
     original_class_name: Optional[str] = None
     new_class_name: Optional[str] = None
-
+    # --- УЧИТЕЛЯ ---
+    original_teacher_name: Optional[str] = None
+    new_teacher_name: Optional[str] = None
+    
     child_name: Optional[str] = None
     watch_target_title: Optional[str] = None
 

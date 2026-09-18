@@ -287,6 +287,9 @@ class NotificationMapper:
             original_class_name=orig_class,
             new_class_name=new_class,
             group_changed=(bool(change.original_group_id) and change.original_group_id != change.group_id),
+            # --- ДОБАВЛЕНО: Прокидываем учителей напрямую из БД (PendingChangeDTO) ---
+            original_teacher_name=change.original_teacher_name,
+            new_teacher_name=change.teacher_name,
             child_name=child_name,
             watch_target_title=watch_target_title,
         )

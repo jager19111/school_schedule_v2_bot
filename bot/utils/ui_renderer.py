@@ -2225,7 +2225,7 @@ class UIRenderer:
             f"🏫 Кабинет: {safe_room}"
         )
 
-# Склеенное изменение расписания
+    # Склеенное изменение расписания
     @staticmethod
     def render_daily_changes_summary(summary: 'DailyChangeSummaryDTO') -> str:
         lines = []
@@ -2269,6 +2269,10 @@ class UIRenderer:
             orig_room_fmt = f" ({orig_room})" if orig_room and orig_room != "—" else ""
             new_room_fmt = f" ({new_room})" if new_room and new_room != "—" else ""
             
+            # --- НОВЫЕ ПОЛЯ: Учителя из чистого DTO ---
+            orig_teacher = UIRenderer.escape_html(c.original_teacher_name or "")
+            new_teacher = UIRenderer.escape_html(c.new_teacher_name or "")
+            
             # --- СЦЕНАРИЙ А: ОТМЕНА ---
             if c.is_cancelled:
                 core_to_strike = orig_core if c.original_subject_name else get_core(c.subject_name, c.new_class_name, c.new_group_name)
@@ -2278,23 +2282,38 @@ class UIRenderer:
                 
             # --- СЦЕНАРИЙ Б: НОВЫЙ УРОК (БЫЛО ПУСТО) ---
             if orig_core == "—":
-                lines.append(f"🔄 <b>{num_str}.</b> <s>—</s> → {new_core}{new_room_fmt}")
+                teacher_fmt = f" {new_teacher}" if new_teacher and new_teacher != "—" else ""
+                lines.append(f"🔄 <b>{num_str}.</b> <s>—</s> → {new_core}{new_room_fmt}{teacher_fmt}")
                 continue
                 
             # --- СЦЕНАРИЙ В: ЗАМЕНА ПРЕДМЕТА, КЛАССА ИЛИ ГРУППЫ ---
             if orig_core != new_core:
                 lines.append(f"🔄 <b>{num_str}.</b> <s>{orig_core}{orig_room_fmt}</s> → {new_core}{new_room_fmt}")
                 
-            # --- СЦЕНАРИЙ Г: СМЕНА ТОЛЬКО КАБИНЕТА ---
+            # --- СЦЕНАРИЙ Г: СМЕНА ТОЛЬКО КАБИНЕТА ИЛИ УЧИТЕЛЯ ---
             else:
+                room_changed = (orig_room != new_room)
+                teacher_changed = (orig_teacher != new_teacher)
+
                 old_r = orig_room if orig_room and orig_room != "—" else "—"
                 new_r = new_room if new_room and new_room != "—" else "—"
-                lines.append(f"🔁 <b>{num_str}.</b> {orig_core} <s>({old_r})</s> → ({new_r})")
+                old_t = orig_teacher if orig_teacher and orig_teacher != "—" else "—"
+                new_t = new_teacher if new_teacher and new_teacher != "—" else "—"
+
+                if room_changed and not teacher_changed:
+                    # Только кабинет
+                    lines.append(f"🔁 <b>{num_str}.</b> {orig_core} <s>({old_r})</s> → ({new_r})")
+                elif teacher_changed and not room_changed:
+                    # Только учитель
+                    lines.append(f"🔁 <b>{num_str}.</b> {orig_core}{orig_room_fmt} <s>{old_t}</s> → {new_t}")
+                elif room_changed and teacher_changed:
+                    # И учитель, и кабинет
+                    lines.append(f"🔁 <b>{num_str}.</b> {orig_core} <s>({old_r}) {old_t}</s> → ({new_r}) {new_t}")
+                else:
+                    # Резервный фолбэк
+                    lines.append(f"🔁 <b>{num_str}.</b> {orig_core}{new_room_fmt}")
                 
         return "\n".join(lines)
-
-
-
 
 
 
