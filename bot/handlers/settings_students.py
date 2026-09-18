@@ -108,7 +108,7 @@ async def _show_student_telegram_settings(
 
     return True
 
-async def _show_family_students_menu(
+async def _show_family_management_menu(
     *,
     callback: CallbackQuery,
     profile_service: ProfileService,
@@ -116,26 +116,17 @@ async def _show_family_students_menu(
     schedule_service: ScheduleService,
 ) -> None:
     """
-    Рендерит список student_profiles, доступных текущему взрослому.
+    Рендерит единый хаб семьи: состав взрослых, детей и приглашения.
+    (Этот метод заменяет старый _show_family_students_menu)
     """
     user_dto = await profile_service.get_user_profile_dto(
         callback.from_user.id,
     )
 
-    if user_dto.role not in ("parent", "observer"):
-        await _safe_callback_answer(
-            callback,
-            "Раздел учеников доступен только взрослым.",
-            show_alert=True,
-        )
-        return
-
     if not user_dto.family_id:
-        await _safe_callback_answer(
-            callback,
-            "Вы не состоите в семье.",
-            show_alert=True,
-        )
+        text = UIRenderer.render_family_management_error()
+        kb = Keyboards.get_family_management_error_kb()
+        await _safe_edit_text(callback.message, text, reply_markup=kb)
         return
 
     is_family_admin = await profile_service.is_family_admin(
@@ -143,19 +134,33 @@ async def _show_family_students_menu(
         family_id=user_dto.family_id,
     )
 
+    # 1. Получаем взрослых
+    family_members = await profile_service.get_family_members(user_dto.family_id)
+    dicts_dto = await schedule_service.get_school_dictionaries()
+    member_vms = ProfileService.build_family_member_view_models(
+        family_members,
+        current_user_id=user_dto.user_id,
+        dicts_dto=dicts_dto,
+    )
+
+    # 2. Получаем детей
     students = await students_service.get_students_for_adult(
         adult_user_id=callback.from_user.id,
     )
-
-    dicts_dto = await schedule_service.get_school_dictionaries()
-    view_models = StudentsService.build_student_view_models(
+    student_vms = StudentsService.build_student_view_models(
         students,
         dicts_dto,
     )
-    text = UIRenderer.render_family_students(view_models)
-    keyboard = Keyboards.get_family_students_kb(
-        view_models,
+
+    # 3. Рендерим единый экран
+    text = UIRenderer.render_family_members_menu(
+        member_vms=member_vms,
+        student_vms=student_vms,
+    )
+    keyboard = Keyboards.get_family_management_kb(
+        current_role=user_dto.role,
         is_family_admin=is_family_admin,
+        student_view_models=student_vms,
     )
 
     await _safe_edit_text(
@@ -163,7 +168,7 @@ async def _show_family_students_menu(
         text,
         reply_markup=keyboard,
     )
-                            
+    
 @router.callback_query(F.data == callbacks.FAMILY_STUDENTS)
 async def show_family_students(
     callback: CallbackQuery,
@@ -171,7 +176,11 @@ async def show_family_students(
     students_service: StudentsService,
     schedule_service: ScheduleService,
 ) -> None:
-    await _show_family_students_menu(
+    """
+    Фолбэк для старых сообщений: если юзер нажмет старую кнопку 
+    «Ученики семьи», его бесшовно перекинет в единый хаб семьи.
+    """
+    await _show_family_management_menu(
         callback=callback,
         profile_service=profile_service,
         students_service=students_service,
@@ -372,7 +381,8 @@ async def create_virtual_student(
         )
         return
 
-    await _show_family_students_menu(
+    # ИСПРАВЛЕНИЕ: Вызываем новый хаб семьи вместо старого списка учеников
+    await _show_family_management_menu(
         callback=callback,
         profile_service=profile_service,
         schedule_service=schedule_service,
@@ -512,7 +522,7 @@ async def delete_virtual_student(
         )
         return
 
-    await _show_family_students_menu(
+    await _show_family_management_menu(
         callback=callback,
         profile_service=profile_service,
         students_service=students_service,

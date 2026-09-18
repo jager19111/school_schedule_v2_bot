@@ -304,7 +304,7 @@ class Keyboards:
             details_button = InlineKeyboardButton(text='🗓 Краткая неделя', callback_data=callbacks.ScheduleWeekCD(week_start_iso=week_start_iso).pack())
         else:
             details_button = InlineKeyboardButton(text='📋 Подробно всю неделю', callback_data=callbacks.ScheduleFullWeekCD(week_start_iso=week_start_iso).pack())
-        buttons = [day_buttons[:3], day_buttons[3:], [details_button], [InlineKeyboardButton(text='⬅️ Предыдущая неделя', callback_data=callbacks.ScheduleWeekCD(week_start_iso=previous_week).pack()), InlineKeyboardButton(text='Следующая неделя ➡️', callback_data=callbacks.ScheduleWeekCD(week_start_iso=next_week).pack())], [InlineKeyboardButton(text='📅 К ближайшему дню', callback_data=callbacks.SCHEDULE_SMART_DAY)]]
+        buttons = [day_buttons[:3], day_buttons[3:], [details_button], [InlineKeyboardButton(text='⬅️ Предыдущая', callback_data=callbacks.ScheduleWeekCD(week_start_iso=previous_week).pack()), InlineKeyboardButton(text='Следующая ➡️', callback_data=callbacks.ScheduleWeekCD(week_start_iso=next_week).pack())], [InlineKeyboardButton(text='📅 К ближайшему дню', callback_data=callbacks.SCHEDULE_SMART_DAY)]]
         if show_target_switch:
             buttons.append([InlineKeyboardButton(text='🎯 Сменить цель', callback_data=callbacks.SCHEDULE_TARGETS)])
         return InlineKeyboardMarkup(inline_keyboard=buttons)
@@ -442,23 +442,36 @@ class Keyboards:
         return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text='🔄 Перерегистрироваться', callback_data=callbacks.AUTH_RESTART)], [InlineKeyboardButton(text='⬅️ Назад', callback_data=callbacks.SETTINGS_MAIN)]])
 
     @staticmethod
-    def get_family_management_kb(*, current_role: str, is_family_admin: bool) -> InlineKeyboardMarkup:
+    def get_family_management_kb(
+        *, 
+        current_role: str, 
+        is_family_admin: bool,
+        student_view_models: list[StudentProfileViewModel] = None
+    ) -> InlineKeyboardMarkup:
         """
-        Клавиатура управления семьёй (Этап 5: упрощённая).
-
-        Не зависит от списка членов семьи — только от роли
-        текущего пользователя и флага администратора.
+        Единый хаб управления семьёй: список учеников + инвайты.
         """
         buttons = []
-        if current_role in ('parent', 'observer'):
-            buttons.append([InlineKeyboardButton(text='🧒 Ученики семьи', callback_data=callbacks.FAMILY_STUDENTS)])
+        
+        # 1. Сразу выводим кнопки профилей детей
+        if current_role in ('parent', 'observer') and student_view_models is not None:
+            for vm in student_view_models:
+                icon = '📱' if vm.telegram_connected else '🧒'
+                buttons.append([InlineKeyboardButton(text=f'{icon} {vm.name} · {vm.class_name} · {vm.group_name}', callback_data=callbacks.StudentDetailsCD(student_id=vm.student_id).pack())])
+                
+        # 2. Добавление ученика (только админу)
+        if is_family_admin:
+            buttons.append([InlineKeyboardButton(text='➕ Добавить ученика', callback_data=callbacks.STUDENT_ADD)])
+            
+        # 3. Блок инвайтов (только админу)
         if is_family_admin:
             buttons.append([InlineKeyboardButton(text='📨 Пригласить участника', callback_data=callbacks.FAMILY_INVITE_MENU)])
             buttons.append([InlineKeyboardButton(text='📬 Активные приглашения', callback_data=callbacks.FAMILY_INVITES)])
             buttons.append([InlineKeyboardButton(text="👑 Передать полномочия", callback_data=callbacks.FAMILY_TRANSFER)])
+            
         buttons.append([InlineKeyboardButton(text='⬅️ Назад к настройкам', callback_data=callbacks.SETTINGS_MAIN)])
         return InlineKeyboardMarkup(inline_keyboard=buttons)
-
+    
     @staticmethod
     def get_extra_students_select_kb(view_models: list[StudentProfileViewModel]) -> InlineKeyboardMarkup:
         """
@@ -675,22 +688,22 @@ class Keyboards:
     def get_watch_target_delete_confirmation_kb(target_id: int) -> InlineKeyboardMarkup:
         return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text='🗑 Да, удалить класс', callback_data=callbacks.WatchDeleteConfirmCD(target_id=target_id).pack())], [InlineKeyboardButton(text='⬅️ Отмена', callback_data=callbacks.WatchDetailsCD(target_id=target_id).pack())]])
 
-    @staticmethod
-    def get_family_students_kb(view_models: list[StudentProfileViewModel], *, is_family_admin: bool) -> InlineKeyboardMarkup:
-        """
-        Список student_profiles семьи (Этап 5: принимает ViewModel).
+        @staticmethod
+        def get_family_students_kb(view_models: list[StudentProfileViewModel], *, is_family_admin: bool) -> InlineKeyboardMarkup:
+            """
+            Список student_profiles семьи (Этап 5: принимает ViewModel).
 
-        Parent/observer видит учеников, доступных через
-        parent_student_settings. Family admin может добавить ученика.
-        """
-        buttons = []
-        for vm in view_models:
-            icon = '📱' if vm.telegram_connected else '🧒'
-            buttons.append([InlineKeyboardButton(text=f'{icon} {vm.name} · {vm.class_name} · {vm.group_name}', callback_data=callbacks.StudentDetailsCD(student_id=vm.student_id).pack())])
-        if is_family_admin:
-            buttons.append([InlineKeyboardButton(text='➕ Добавить ученика', callback_data=callbacks.STUDENT_ADD)])
-        buttons.append([InlineKeyboardButton(text='⬅️ К семье', callback_data=callbacks.SETTINGS_FAMILY)])
-        return InlineKeyboardMarkup(inline_keyboard=buttons)
+            Parent/observer видит учеников, доступных через
+            parent_student_settings. Family admin может добавить ученика.
+            """
+            buttons = []
+            for vm in view_models:
+                icon = '📱' if vm.telegram_connected else '🧒'
+                buttons.append([InlineKeyboardButton(text=f'{icon} {vm.name} · {vm.class_name} · {vm.group_name}', callback_data=callbacks.StudentDetailsCD(student_id=vm.student_id).pack())])
+            if is_family_admin:
+                buttons.append([InlineKeyboardButton(text='➕ Добавить ученика', callback_data=callbacks.STUDENT_ADD)])
+            buttons.append([InlineKeyboardButton(text='⬅️ К семье', callback_data=callbacks.SETTINGS_FAMILY)])
+            return InlineKeyboardMarkup(inline_keyboard=buttons)
 
     @staticmethod
     def get_student_details_kb(vm: StudentProfileViewModel, *, is_family_admin: bool) -> InlineKeyboardMarkup:
@@ -708,7 +721,7 @@ class Keyboards:
             buttons.append([InlineKeyboardButton(text='🗑 Удалить ученика', callback_data=callbacks.StudentDeleteCD(student_id=vm.student_id).pack())])
         if vm.telegram_connected:
             buttons.append([InlineKeyboardButton(text='📱 Telegram-профиль подключён', callback_data=callbacks.StudentDetailsCD(student_id=vm.student_id).pack())])
-        buttons.append([InlineKeyboardButton(text='⬅️ К ученикам', callback_data=callbacks.FAMILY_STUDENTS)])
+        buttons.append([InlineKeyboardButton(text='⬅️ К семье', callback_data=callbacks.SETTINGS_FAMILY)])
         return InlineKeyboardMarkup(inline_keyboard=buttons)
 
     @staticmethod
@@ -741,7 +754,7 @@ class Keyboards:
                 row = []
         if row:
             buttons.append(row)
-        buttons.append([InlineKeyboardButton(text='⬅️ К ученикам', callback_data=callbacks.FAMILY_STUDENTS)])
+        buttons.append([InlineKeyboardButton(text='⬅️ К семье', callback_data=callbacks.SETTINGS_FAMILY)])
         return InlineKeyboardMarkup(inline_keyboard=buttons)
 
     @staticmethod

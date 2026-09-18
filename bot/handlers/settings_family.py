@@ -20,6 +20,7 @@ from bot.utils.ui_renderer import UIRenderer
 from bot.keyboards.keyboard import Keyboards
 from services.profiles_service import ProfileService
 from services.schedule_service import ScheduleService
+from services.students_service import StudentsService
 from bot.utils.safe_send import _safe_edit_text, _safe_callback_answer
 from bot.handlers.settings import build_telegram_share_link
 
@@ -462,38 +463,55 @@ async def show_active_family_invites(
 async def show_family_management(
     callback: CallbackQuery, 
     profile_service: ProfileService, 
-    schedule_service: ScheduleService
+    schedule_service: ScheduleService,
+    students_service: StudentsService, # <-- ДОБАВЛЕН СЕРВИС УЧЕНИКОВ
 ):
     user_dto = await profile_service.get_user_profile_dto(callback.from_user.id)
     
     if not user_dto.family_id:
         text = UIRenderer.render_family_management_error()
-        kb = Keyboards.get_settings_main_kb(user_dto)
-        return await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+        kb = Keyboards.get_family_management_error_kb()
+        await _safe_edit_text(callback.message, text, reply_markup=kb)
+        await _safe_callback_answer(callback)
+        return
 
     is_family_admin = await profile_service.is_family_admin(
         user_id=callback.from_user.id,
         family_id=user_dto.family_id,
     )
     
-    # Получаем полный состав семьи
+    # 1. Получаем полный состав ВЗРОСЛЫХ семьи
     family_members = await profile_service.get_family_members(user_dto.family_id)
     dicts_dto = await schedule_service.get_school_dictionaries()
-    view_models = ProfileService.build_family_member_view_models(
+    member_vms = ProfileService.build_family_member_view_models(
         family_members,
         current_user_id=user_dto.user_id,
         dicts_dto=dicts_dto,
     )
-    text = UIRenderer.render_family_members_menu(view_models)
+    
+    # 2. Получаем состав ДЕТЕЙ семьи (ИСПРАВЛЕНИЕ)
+    students = await students_service.get_students_for_adult(
+        adult_user_id=callback.from_user.id,
+    )
+    student_vms = StudentsService.build_student_view_models(
+        students,
+        dicts_dto,
+    )
+
+    text = UIRenderer.render_family_members_menu(
+        member_vms=member_vms,
+        student_vms=student_vms,
+    )
+    
+    # 3. Передаем учеников в клавиатуру
     kb = Keyboards.get_family_management_kb(
         current_role=user_dto.role,
         is_family_admin=is_family_admin,
+        student_view_models=student_vms, # <-- ТЕПЕРЬ ДЕТИ ПЕРЕДАЮТСЯ
     )
 
-    
-    with contextlib.suppress(TelegramBadRequest):
-        await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
-    await callback.answer()
+    await _safe_edit_text(callback.message, text, reply_markup=kb)
+    await _safe_callback_answer(callback)
     
     
 # ================= 4. ПЕРЕДАЧА ПОЛНОМОЧИЙ =================

@@ -98,9 +98,14 @@ async def select_class_day(
     class_id = callback_data.class_id
     class_name = await schedule_service.get_class_name(class_id)
 
-    target_date = time_service.get_smart_view_datetime()
-    date_iso = target_date.date().isoformat()
+    # 1. Умная дата (запрашивает сервис с проверкой реальных уроков)
+    date_iso = await schedule_service.get_smart_target_date(
+        class_id=class_id,
+        group_id="ALL",
+    )
+    target_date = TimeService.date_from_iso(date_iso)
 
+    # 2. Получаем расписание на найденный день
     day_dto = await schedule_service.get_daily_schedule_for_class(
         class_id,
         date_iso,
@@ -109,14 +114,24 @@ async def select_class_day(
     text, _ = UIRenderer.render_day_schedule(day_dto)
     text = f"🎓 <b>Расписание: {class_name}</b>\n" + text
 
+    # 3. Проверяем наличие замен
+    has_changes = any(
+        lesson.is_exchange or lesson.is_cancelled
+        for lesson in day_dto.lessons
+    )
+
     monday = target_date - timedelta(
         days=target_date.isoweekday() - 1,
     )
 
+    # 4. ИСПРАВЛЕНИЕ: monday уже date, просто вызываем isoformat()
     kb = Keyboards.get_search_days_kb(
         target_id=class_id,
         is_teacher=False,
-        week_start_iso=monday.date().isoformat(),
+        week_start_iso=monday.isoformat(),
+        is_full=False,
+        has_changes=has_changes,
+        date_iso=date_iso,
     )
 
     await callback.message.edit_text(
@@ -126,7 +141,6 @@ async def select_class_day(
     )
     await callback.answer()
 
-
 @router.callback_query(SearchTeacherCD.filter())
 async def select_teacher_day(
     callback: CallbackQuery,
@@ -135,14 +149,16 @@ async def select_teacher_day(
     time_service: TimeService,
 ):
     teacher_id = callback_data.teacher_id
-    teacher_name = await schedule_service.get_teacher_name(
-        teacher_id
+    teacher_name = await schedule_service.get_teacher_name(teacher_id)
+
+    # 1. Умная дата: запрашиваем через специальный метод сервиса для учителя
+    date_iso = await schedule_service.get_smart_teacher_target_date(
+        teacher_id=teacher_id
     )
+    target_date = TimeService.date_from_iso(date_iso)
 
-    target_date = time_service.get_smart_view_datetime()
-    date_iso = target_date.date().isoformat()
-
-    day_dto: DayScheduleDTO = (
+    # 2. Получаем расписание на найденный день
+    day_dto = (
         await schedule_service.get_daily_schedule_for_teacher(
             teacher_id,
             date_iso,
@@ -152,14 +168,22 @@ async def select_teacher_day(
     text, _ = UIRenderer.render_day_schedule(day_dto)
     text = f"👨‍🏫 <b>Расписание: {teacher_name}</b>\n{text}"
 
-    monday = target_date - timedelta(
-        days=target_date.isoweekday() - 1
+    # 3. Проверяем наличие замен
+    has_changes = any(
+        lesson.is_exchange or lesson.is_cancelled
+        for lesson in day_dto.lessons
     )
 
+    monday = target_date - timedelta(days=target_date.isoweekday() - 1)
+
+    # 4. ИСПРАВЛЕНИЕ: monday уже date, просто вызываем isoformat()
     kb = Keyboards.get_search_days_kb(
         target_id=teacher_id,
         is_teacher=True,
-        week_start_iso=monday.date().isoformat(),
+        week_start_iso=monday.isoformat(),
+        is_full=False,
+        has_changes=has_changes,
+        date_iso=date_iso,
     )
 
     await callback.message.edit_text(
