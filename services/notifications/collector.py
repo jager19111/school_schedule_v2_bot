@@ -454,8 +454,8 @@ class NotificationCollector:
         for del_key, change, recipient, class_display_num, h_class, h_group in raw_student_candidates:
             if del_key in student_delivered: continue 
             
-            # ПАТЧ 5: Дедупликация близнецов (добавлен recipient.child_name)
-            dedup_key = (recipient.recipient_id, recipient.child_name, change.date, change.lesson_num, change.group_id)
+            # УБРАН change.group_id: теперь дедупликация идет строго по номеру урока на весь день
+            dedup_key = (recipient.recipient_id, recipient.child_name, change.date, change.lesson_num)
             score = get_change_score(change)
             
             if dedup_key not in student_candidates_map or score >= student_candidates_map[dedup_key][0]:
@@ -467,7 +467,9 @@ class NotificationCollector:
 
         for del_key, change, recipient, teacher_name, h_class, h_group in raw_teacher_candidates:
             if del_key in teacher_delivered: continue 
-            dedup_key = (recipient.recipient_id, change.date, change.lesson_num, change.group_id)
+            
+            # УБРАН change.group_id: теперь дедупликация идет строго по номеру урока на весь день
+            dedup_key = (recipient.recipient_id, change.date, change.lesson_num)
             score = get_change_score(change)
             
             if dedup_key not in teacher_candidates_map or score >= teacher_candidates_map[dedup_key][0]:

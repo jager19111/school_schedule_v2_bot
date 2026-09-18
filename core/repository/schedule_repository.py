@@ -38,8 +38,7 @@ from core.models.metadata import SchoolMetadata
 
 logger = logging.getLogger(__name__)
 
-
-# Единый UPSERT schedule_cache: 32 колонки, включая origin и все original_*.
+# Единый UPSERT schedule_cache: защита original_subject_name через COALESCE
 _SCHEDULE_UPSERT_SQL = """
     INSERT INTO schedule_cache (
         id,
@@ -92,16 +91,18 @@ _SCHEDULE_UPSERT_SQL = """
         teacher_name = excluded.teacher_name,
         room_id = excluded.room_id,
         room_name = excluded.room_name,
-        original_subject_id = excluded.original_subject_id,
-        original_subject_name = excluded.original_subject_name,
-        original_teacher_id = excluded.original_teacher_id,
-        original_teacher_name = excluded.original_teacher_name,
-        original_room_id = excluded.original_room_id,
-        original_room_name = excluded.original_room_name,
-        original_class_id = excluded.original_class_id,
-        original_class_name = excluded.original_class_name,
-        original_group_id = excluded.original_group_id,
-        original_group_name = excluded.original_group_name,
+        
+        original_subject_id = COALESCE(excluded.original_subject_id, schedule_cache.original_subject_id),
+        original_subject_name = COALESCE(excluded.original_subject_name, schedule_cache.original_subject_name),
+        original_teacher_id = COALESCE(excluded.original_teacher_id, schedule_cache.original_teacher_id),
+        original_teacher_name = COALESCE(excluded.original_teacher_name, schedule_cache.original_teacher_name),
+        original_room_id = COALESCE(excluded.original_room_id, schedule_cache.original_room_id),
+        original_room_name = COALESCE(excluded.original_room_name, schedule_cache.original_room_name),
+        original_class_id = COALESCE(excluded.original_class_id, schedule_cache.original_class_id),
+        original_class_name = COALESCE(excluded.original_class_name, schedule_cache.original_class_name),
+        original_group_id = COALESCE(excluded.original_group_id, schedule_cache.original_group_id),
+        original_group_name = COALESCE(excluded.original_group_name, schedule_cache.original_group_name),
+        
         start_time = excluded.start_time,
         end_time = excluded.end_time,
         is_exchange = excluded.is_exchange,
@@ -109,7 +110,6 @@ _SCHEDULE_UPSERT_SQL = """
         is_methodological = excluded.is_methodological,
         created_at = excluded.created_at
 """
-
 
 @dataclass(frozen=True)
 class ScheduleRefreshResult:
@@ -187,12 +187,22 @@ class ScheduleRepository(BaseRepository):
         lesson: LessonInstance,
         origin: str,
         now_utc: str,
+        history_map: dict[str, dict[str, str]] | None = None,
     ) -> tuple:
-        """LessonInstance -> кортеж для executemany (32 значения).
-
-        origin: 'class' | 'teacher' — характеристика источника записи,
-        не урока, поэтому живёт в параметре, а не в модели.
         """
+        LessonInstance -> кортеж.
+        Если передан history_map, мы восстанавливаем original_subject_name из памяти,
+        спасая его от стирания при DELETE/INSERT.
+        """
+        orig_sub = lesson.original_subject_name
+        orig_room = lesson.original_room_name
+        
+        if history_map and lesson.id in history_map:
+            if not orig_sub:
+                orig_sub = history_map[lesson.id].get("sub")
+            if not orig_room:
+                orig_room = history_map[lesson.id].get("room")
+
         return (
             lesson.id,
             lesson.date,
@@ -792,6 +802,24 @@ class ScheduleRepository(BaseRepository):
                 js_content=js_content,
             )
 
+            # 1. Спасаем историю (Python-level COALESCE для обхода DELETE)
+            cursor = await db.execute(
+                f"SELECT id, original_subject_name, original_room_name FROM schedule_cache WHERE date IN ({placeholders})",
+                tuple(target_date_values)
+            )
+            history_rows = await cursor.fetchall()
+            history_map = {row[0]: {"sub": row[1], "room": row[2]} for row in history_rows}
+
+            # 2. Формируем строки с учетом спасенной истории
+            lesson_rows = [
+                self._lesson_to_row(lesson, "class", now_utc, history_map)
+                for lesson in class_lessons
+            ] + [
+                self._lesson_to_row(lesson, "teacher", now_utc, history_map)
+                for lesson in teacher_lessons
+            ]
+
+            # 3. Удаляем старые записи
             await db.execute(
                 f"""
                 DELETE FROM schedule_cache
@@ -808,6 +836,7 @@ class ScheduleRepository(BaseRepository):
                 (history_cutoff,),
             )
 
+            # 4. Вставляем новые записи
             if lesson_rows:
                 await db.executemany(_SCHEDULE_UPSERT_SQL, lesson_rows)
 
