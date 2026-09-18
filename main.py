@@ -260,6 +260,10 @@ async def main():
             description="Начать работу с ботом",
         ),
         BotCommand(
+            command="menu",
+            description="Показать главное меню",
+        ),
+        BotCommand(
             command="help",
             description="Справка и возможности бота",
         ),

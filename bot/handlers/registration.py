@@ -43,6 +43,7 @@ logger = logging.getLogger(__name__)
 router = Router()
 
 
+
 async def _show_main_menu(
     message: Message,
     *,
@@ -63,6 +64,30 @@ async def _show_main_menu(
         parse_mode="HTML",
     )
 
+@router.message(Command("menu"))
+async def cmd_menu(
+    message: Message,
+    state: FSMContext,
+    profile_service: ProfileService,
+) -> None:
+    """
+    Вызов главного меню по команде /menu.
+    Полезно, если постоянная клавиатура скрылась или «залипла».
+    """
+    user_id = message.from_user.id
+    user_dto = await profile_service.get_user_profile_dto(user_id)
+
+    if not user_dto.is_fully_registered:
+        await message.answer(
+            "⚠️ Вы ещё не завершили регистрацию.\nПожалуйста, отправьте /start для выбора роли."
+        )
+        return
+
+    await state.clear()
+    await _show_main_menu(
+        message,
+        text="⬇️ <b>Главное меню</b>",
+    )
 
 class RegistrationStates(StatesGroup):
     waiting_for_role = State()
