@@ -146,22 +146,19 @@ class NikaNormalizer:
     def _is_whole_class_lesson(raw_s: list, raw_g: list, is_teacher_mode: bool) -> bool:
         """
         Определяет, весь ли это класс или урок с группами.
-        
-        Критерии:
-        1. Нет массива g → точно весь класс
-        2. s[0] не пустой, s[1:] пустые → весь класс (даже если g есть)
-        3. s содержит несколько непустых предметов → урок с группами
         """
         if not raw_g:
-            return True  # Нет массива групп -> весь класс
+            return True  # Нет массива групп -> точно весь класс
             
         if is_teacher_mode:
-            return False # Учителя всегда ведут только свою группу, если массив g есть - это подгруппа!
+            return False # Учителя ведут свою группу, если g есть - это подгруппа
             
-        # Для классов: считаем непустые предметы
-        non_empty_subjects = sum(1 for s in raw_s if s and str(s).strip())
-        if non_empty_subjects <= 1:
-            return True  
+        # ИСПРАВЛЕНИЕ: Убрана багованная логика (non_empty_subjects <= 1).
+        # Если NIKA прислала массив групп (например ["0", "1"]), это урок с подгруппами,
+        # даже если 1-я подгруппа отменена ("") и активна только вторая.
+        # Исключение: NIKA прислала номинальный пустой массив [""] или ["ALL"]
+        if len(raw_g) == 1 and str(raw_g[0]).strip() in ("", "ALL"):
+            return True
             
         return False
 
@@ -247,17 +244,15 @@ class NikaNormalizer:
         for idx in range(max_len):
             current_raw_s = raw_s[idx] if idx < len(raw_s) else None
             
-            # P2: Различаем отмену и отсутствие урока
-            is_full_cancel_pointwise = (current_raw_s == "F")
-            
-            # Если предмет пустой (но не "F") → пропускаем эту подгруппу
-            if current_raw_s is not None and str(current_raw_s).strip() == "" and not is_full_cancel_pointwise:
-                continue
+            # --- ИСПРАВЛЕНИЕ: Обработка отмен подгрупп ("" или "F") ---
+            # В NIKA пустая строка в массиве (например, s=["", "012"]) означает отмену 
+            # конкретной подгруппы. Если мы сделаем continue, подгруппа исчезнет из базы!
+            clean_s_temp = self._clean_val(current_raw_s)
+            is_full_cancel_pointwise = (clean_s_temp is None or clean_s_temp == "F")
             
             is_cancelled = is_full_cancel or is_full_cancel_pointwise
 
-
-            clean_s = self._clean_val(current_raw_s) if not is_cancelled else None
+            clean_s = clean_s_temp if not is_cancelled else None
             clean_t_c = self._clean_val(raw_t_or_c[idx]) if idx < len(raw_t_or_c) else None
             clean_r = self._clean_val(raw_r[idx]) if idx < len(raw_r) else None
             
