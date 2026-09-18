@@ -254,17 +254,9 @@ async def _render_day(
     text = rendered[0] if isinstance(rendered, tuple) else rendered
 
     if target.kind == "watch":
-        text = (
-            "🎓 <b>Отслеживаемый класс</b>\n"
-            f"📌 {UIRenderer.escape_html(target.title)}\n\n"
-            f"{text}"
-        )
+        text = ("🎓 <b>Отслеживаемый класс</b>\n\n"f"{text}")
     elif target.kind == "student" and target.telegram_user_id is None:
-        text = (
-            "🧒 <b>Ученик без Telegram</b>\n"
-            f"👤 {UIRenderer.escape_html(target.title)}\n\n"
-            f"{text}"
-        )
+        text = ("🧒 <b>Ученик без Telegram</b>\n\n"f"{text}")
     # ← НОВОЕ: определяем, есть ли изменения
     has_changes = any(
         (l.is_exchange or l.is_cancelled) and not l.is_extra
