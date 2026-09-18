@@ -454,11 +454,11 @@ async def main():
         # 8. Настройка планировщика задач (APScheduler)
         scheduler = AsyncIOScheduler(timezone=tz)
 
-        # Предурочные напоминания
+        # Предурочные напоминания: ровно в 00 секунд каждой минуты
         scheduler.add_job(
             notification_service.send_pre_lesson_reminders,
-            trigger="interval",
-            minutes=1,
+            trigger="cron",
+            second=0,
             id="pre_lesson_reminders",
             replace_existing=True,
             coalesce=True,
@@ -466,11 +466,11 @@ async def main():
             misfire_grace_time=90,
         )
 
-        # Напоминания о дополнительных занятиях.
+        # Напоминания о дополнительных занятиях: ровно в 15 секунд каждой минуты
         scheduler.add_job(
             notification_service.send_extra_class_reminders,
-            trigger="interval",
-            minutes=1,
+            trigger="cron",
+            second=15,
             id="extra_class_reminders",
             replace_existing=True,
             coalesce=True,
@@ -478,24 +478,25 @@ async def main():
             misfire_grace_time=90,
         )
 
-        # Оповещения об изменениях в N-дневном окне
+        # Утренняя сводка: ровно в 30 секунд каждой минуты
         scheduler.add_job(
-            notification_service.send_upcoming_changes,
-            trigger="interval",
-            #minutes=15,
-            minutes=10,
-            id="upcoming_changes",
+            notification_service.send_morning_reminders,
+            trigger="cron",
+            second=30,
+            id="morning_reminders",
             replace_existing=True,
             coalesce=True,
             max_instances=1,
-            misfire_grace_time=300,
+            misfire_grace_time=90,
         )
 
-        # Фоновое обновление кэша из NIKA
+
+        # Фоновое обновление кэша из NIKA: в 40 секунд, с интервалом из конфига
         scheduler.add_job(
             refresh_schedule_cache,
-            trigger="interval",
-            minutes=config.NIKA_REFRESH_INTERVAL_MINUTES,
+            trigger="cron",
+            minute=f"*/{config.NIKA_REFRESH_INTERVAL_MINUTES}",
+            second=40,
             kwargs={
                 "schedule_repo": schedule_repo,
                 "notification_service": notification_service,
@@ -509,7 +510,20 @@ async def main():
             misfire_grace_time=60,
         )
 
-        # Деактивация неактивных пользователей раз в сутки в 03:00
+        # Оповещения об изменениях: в 55 секунд, с интервалом из конфига
+        scheduler.add_job(
+            notification_service.send_upcoming_changes,
+            trigger="cron",
+            minute=f"*/{config.NIKA_REFRESH_INTERVAL_MINUTES}",
+            second=55,
+            id="upcoming_changes",
+            replace_existing=True,
+            coalesce=True,
+            max_instances=1,
+            misfire_grace_time=300,
+        )
+        
+        # Деактивация неактивных пользователей раз в сутки в 03:00:00
         scheduler.add_job(
             cleanup_job.deactivate_dormant_users,
             trigger="cron",
@@ -522,6 +536,7 @@ async def main():
             misfire_grace_time=3600,
         )
 
+        # Очистка лога доставок раз в сутки в 03:10:00
         scheduler.add_job(
             notification_delivery_cleanup_job.cleanup_old_deliveries,
             trigger="cron",
@@ -534,7 +549,7 @@ async def main():
             misfire_grace_time=3600,
         )
 
-        # Ночной WAL-checkpoint: усечение -wal файла (best practice).
+        # Ночной WAL-checkpoint раз в сутки в 03:20:00
         scheduler.add_job(
             run_wal_checkpoint,
             trigger="cron",
@@ -546,19 +561,6 @@ async def main():
             coalesce=True,
             max_instances=1,
             misfire_grace_time=3600,
-        )
-
-        # Утренняя сводка: проверяется каждую минуту, отправка при
-        # совпадении current_time_str с users.morning_summary_time.
-        scheduler.add_job(
-            notification_service.send_morning_reminders,
-            trigger="interval",
-            minutes=1,
-            id="morning_reminders",
-            replace_existing=True,
-            coalesce=True,
-            max_instances=1,
-            misfire_grace_time=90,
         )
 
         scheduler.start()
