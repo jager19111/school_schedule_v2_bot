@@ -186,12 +186,30 @@ class NikaNormalizer:
         is_full_cancel = (raw_s_from_exchange == ["F"])
         
         # 1. Сначала делаем Умное слияние (Merge) частичных замен и базового расписания
+        # 1. Сначала делаем Умное слияние (Merge) частичных замен и базового расписания
         if is_exchange and slot_exchange:
             raw_s = _ensure_list(slot_exchange.get("s")) if "s" in slot_exchange else _ensure_list(slot_base.get("s"))
             target_key = "c" if is_teacher_mode else "t"
             raw_t_or_c = _ensure_list(slot_exchange.get(target_key)) if target_key in slot_exchange else _ensure_list(slot_base.get(target_key))
             raw_r = _ensure_list(slot_exchange.get("r")) if "r" in slot_exchange else _ensure_list(slot_base.get("r"))
-            raw_g = _ensure_list(slot_exchange.get("g")) if "g" in slot_exchange else _ensure_list(slot_base.get("g"))
+            
+            if "g" in slot_exchange:
+                raw_g = _ensure_list(slot_exchange.get("g"))
+            else:
+                # ЖЕЛЕЗОБЕТОННАЯ ЗАЩИТА СЛИЯНИЯ ГРУПП:
+                # Если замена переопределяет урок как единый (max длина новых массивов = 1),
+                # а в базе урок был разделен на группы (длина старого массива g > 1),
+                # мы сбрасываем группы, так как класс снова объединили.
+                old_g = _ensure_list(slot_base.get("g"))
+                exch_s = _ensure_list(slot_exchange.get("s")) if "s" in slot_exchange else []
+                exch_t = _ensure_list(slot_exchange.get(target_key)) if target_key in slot_exchange else []
+                exch_r = _ensure_list(slot_exchange.get("r")) if "r" in slot_exchange else []
+                
+                max_exch_len = max(len(exch_s), len(exch_t), len(exch_r))
+                if max_exch_len == 1 and len(old_g) > 1:
+                    raw_g = []  # Урок сжался, старые группы недействительны
+                else:
+                    raw_g = old_g
         else:
             active_slot = slot_base
             target_key = "c" if is_teacher_mode else "t"
