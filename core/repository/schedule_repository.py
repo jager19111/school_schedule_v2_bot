@@ -14,6 +14,29 @@
 # 4. get_metadata() читает CLASS_SHIFT/SECOND_RELATIVE через normalizer,
 #    а не сырые .get() по dict NIKA.
 
+# ИСТОРИЯ ФИКСОВ _lesson_to_row:
+#
+# R1 (критично, v2): восстановленные orig_sub/orig_room вычислялись из
+#     history_map, но НЕ попадали в возвращаемый кортеж — там оставались
+#     lesson.original_subject_name / lesson.original_room_name. Механизм
+#     спасения истории был мёртвым кодом.
+#
+# R2 (v2): фолбэк "_0" для слитых в ALL уроков слеп к реальным id групп
+#     ("3"/"4" у классов 10-x). Заменён на prefix-scan по всем группам слота.
+#
+# БОМБА 3 (v3): у teacher-строк класс зашит в ID
+#     (T{teacher}_{period}_{class}_{date}_{lesson}_{group}). Если замена
+#     перевела учителя на ДРУГОЙ класс, prefix-scan с новым классом не
+#     находит вчерашнюю историю.
+#
+#     ВНИМАНИЕ: патч через parts[2] НЕКОРРЕКТЕН:
+#     1) триггер "lesson.original_class_id and ..." не срабатывает в
+#        заявленном же сценарии (при удалённой базе original_class_id=None);
+#     2) split('_')[2] ломается на fallback-классах TEACHER_{id}:
+#        "T038_109_TEACHER_038_..." -> parts[2]=='TEACHER', а не класс.
+#     Корректное решение — структурный поиск: голова T{teacher}_{period}_
+#     + хвост _{date}_{lesson}_, между ними — ЛЮБОЙ класс.
+
 from __future__ import annotations
 
 import datetime
@@ -205,8 +228,8 @@ class ScheduleRepository(BaseRepository):
     ) -> tuple:
         """
         LessonInstance -> кортеж.
-        Если передан history_map, восстанавливаем original_subject_name /
-        original_room_name из памяти, спасая их от стирания при DELETE/INSERT.
+        Восстанавливает original_subject_name / original_room_name из
+        history_map, спасая их от стирания при DELETE/INSERT.
 
         Отличия от прежней версии:
         1. Возвращаем ИМЕННО восстановленные orig_sub / orig_room (баг R1).
@@ -229,6 +252,18 @@ class ScheduleRepository(BaseRepository):
                 # - регруппировку: группа "1" наследует историю группы "0".
                 prefix = lesson.id.rsplit('_', 1)[0] + "_"
                 candidates = [(k, v) for k, v in history_map.items() if k.startswith(prefix)]
+
+                # 2) БОМБА 3: у teacher-строк класс зашит в ID. При смене
+                #    класса в замене ищем по структуре БЕЗ сегмента класса:
+                #    T{teacher}_{period}_{*}_{date}_{lesson}_{group}.
+                if not candidates and origin == "teacher" and lesson.teacher_id and lesson.id.startswith("T"):
+                    head = f"T{lesson.teacher_id}_{lesson.period_id}_"
+                    mid = f"_{lesson.date}_{lesson.lesson_num}_"
+                    candidates = [
+                        (k, v) for k, v in history_map.items()
+                        if k.startswith(head) and mid in k and k.find(mid) >= len(head)
+                    ]
+
                 if len(candidates) == 1:
                     hist_data = candidates[0][1]
                 elif candidates:
@@ -846,14 +881,22 @@ class ScheduleRepository(BaseRepository):
             if target_date_values:
                 placeholders = ",".join("?" for _ in target_date_values)
 
-                # 1. Спасаем историю (Python-level COALESCE для обхода DELETE)
+               # 1. Спасаем историю (Python-level COALESCE для обхода DELETE)
                 cursor = await db.execute(
-                    f"SELECT id, original_subject_name, original_room_name FROM schedule_cache WHERE date IN ({placeholders})",
+                    f"SELECT id, original_subject_name, original_room_name, "
+                    f"original_teacher_name, original_group_name "
+                    f"FROM schedule_cache WHERE date IN ({placeholders})",
                     tuple(target_date_values)
                 )
                 history_rows = await cursor.fetchall()
-                history_map = {row[0]: {"sub": row[1], "room": row[2]} for row in history_rows}
-
+                history_map = {
+                    row[0]: {
+                        "sub": row[1],
+                        "room": row[2],
+                        "teacher": row[3],
+                        "group_name": row[4]
+                    } for row in history_rows
+                }
                 # 2. Формируем строки с учетом спасенной истории
                 lesson_rows = [self._lesson_to_row(lesson, "class", now_utc, history_map) for lesson in class_lessons] + \
                               [self._lesson_to_row(lesson, "teacher", now_utc, history_map) for lesson in teacher_lessons]

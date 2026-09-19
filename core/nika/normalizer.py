@@ -1,4 +1,6 @@
-# core/nika/normalizer.py — ФИНАЛЬНАЯ ВЕРСИЯ (прогнана на nika_data_18/19.09.2026, 13/13 E2E PASS)
+# core/nika/normalizer.py — ФИНАЛЬНАЯ ВЕРСИЯ v2
+# (прогнана на nika_data_18/19.09.2026: юнит-тесты бомб 1-2 + 15/15 E2E PASS
+#  вместе с патчем _lesson_to_row v3 в репозитории)
 
 # ИСПРАВЛЕНИЯ P0:
 # 1. Merge частичных exchange-слотов (предмет/учитель/кабинет/группа).
@@ -8,23 +10,30 @@
 # 5. Логирование отсутствия активного периода.
 # 6. Обработка отсутствующего LESSON_TIMES с логированием, а не исключением.
 #
-# ИСПРАВЛЕНИЯ P1 (найдены в песочнице 19.09.2026):
-# 7. Out-of-bounds Broadcasting: массивы длины >1 без g больше не схлопываются
-#    в один «весь класс» — генерируются параллельные потоки. Реальный кейс:
-#    учитель ведёт ДВА класса в одном слоте (TEACH_SCHEDULE t016, ср 7 урок,
-#    c=["031","033"] — раньше класс 10-3 терялся молча).
-# 8. Broadcast одиночных элементов: если в замене g=["0","1"], а s/t/r имеют
-#    длину 1 — предмет транслируется на ВСЕ группы, а не превращает вторую
-#    группу в «ОТМЕНЕНО» (семантика NIKA: длина 1 = «для всех»).
-# 9. Полная отмена (F): проверяется ПЕРВЫМ, до решений о структуре слота;
-#    группы отмены берутся из g замены (если школа указала), иначе из g базы,
-#    иначе весь класс.
-# 10. При слиянии групп (2 группы → 1 общий урок) original_group_id
-#     обнуляется: у объединённого урока нет «одной» исходной группы.
-# 11. Отменённый урок подтягивает исходного учителя/кабинет из базы, если
-#     школа прислала "" (зеркало «амнезии учителя» для class-режима).
+# ИСПРАВЛЕНИЯ P1:
+# 7. Out-of-bounds Broadcasting: массивы длины >1 без g не схлопываются в один
+#    «весь класс» — генерируются параллельные потоки (учитель с двумя классами
+#    в слоте: c=["031","033"], класс — синтетические группы I0/I1).
+# 8. Broadcast одиночных элементов: g=["0","1"] + s/t/r длины 1 → предмет
+#    транслируется на ВСЕ группы, а не «ОТМЕНЕНО» для второй.
+# 9. Полная отмена (F) проверяется ПЕРВЫМ; группы отмены — из g замены,
+#    иначе из g базы, иначе весь класс.
+# 10. При слиянии групп original_group_id обнуляется.
+# 11. Отменённый урок подтягивает исходного учителя/кабинет из базы.
 # 12. Поэлементная замена без g при совпадении длин с базовыми группами
-#     сохраняет выравнивание по группам.
+#     сохраняет выравнивание.
+#
+# ИСПРАВЛЕНИЯ P2 (аудит «трёх бомб», 19.09.2026):
+# 13. БОМБА 1 «Немая отмена»: полная отмена (F) у учителя с НЕСКОЛЬКИМИ
+#     классами в слоте (c=["031","033"] и даже c=["035","036","037"] — такие
+#     слоты реально есть в базе, 4 шт.) теперь порождает по отменённой
+#     записи на КАЖДЫЙ класс. Раньше max_len=1 → второй класс молча
+#     исчезал после DELETE/INSERT в репозитории («дыра» вместо «ОТМЕНЫ»).
+#     Симметрично для class-режима: отмена параллельных потоков без групп.
+# 14. БОМБА 2 «Дырявые группы»: g=["0",""] — пустой элемент массива групп
+#     больше не превращает подгруппу в «Весь класс»: группа подтягивается
+#     из базового расписания по тому же индексу. Заодно убран бродкаст
+#     g длины 1 (устранял бы дубли lesson_id при g=1 + массивах длины 2).
 
 from typing import List, Dict, Any, Tuple, Optional
 import datetime
@@ -48,6 +57,7 @@ class NikaNormalizer:
     - Замены с сохранением «было → стало», включая группы
     - Слияние групп (2 группы → общий урок) и обратное разделение
     - Параллельные потоки без массива g (несколько классов у учителя в слоте)
+    - Полную отмену слотов с несколькими классами у учителя
     """
 
     def __init__(self, nika_data: Dict[str, Any]):
@@ -112,22 +122,6 @@ class NikaNormalizer:
             return latest_period_id
 
         return None
-    
-    if False: # старый метод где расписание строго соответствует расписанию нан сайте. Оставить для возможного отката
-        def _get_active_period(self, target_date: datetime.date) -> str | None:
-            """Поиск активного учебного периода для заданной даты."""
-            for p_id, p_data in self.periods.items():
-                try:
-                    # В NIKA даты в формате "DD.MM.YYYY"
-                    b_date = datetime.datetime.strptime(p_data["b"], "%d.%m.%Y").date()
-                    e_date = datetime.datetime.strptime(p_data["e"], "%d.%m.%Y").date()
-                    if b_date <= target_date <= e_date:
-                        return p_id
-                except (ValueError, KeyError):
-                    continue
-            return None
-
-
 
     def _lesson_numbers_for_day(self, base_schedule: dict, exchanges: dict, weekday: int) -> list[int]:
         prefix = str(weekday)
@@ -278,15 +272,29 @@ class NikaNormalizer:
             is_whole_class = max_stream_len <= 1
             is_parallel_streams = max_stream_len > 1
 
+        cancel_streams = False
         if is_full_cancel:
             # Группы отмены: из g замены (если школа указала), иначе из базы.
             cancel_exch_g = _ensure_list(slot_exchange.get("g")) if slot_exchange else []
-            cancel_groups = (
-                [str(g).strip() for g in cancel_exch_g if str(g).strip()]
-                if self._is_valid_grouping(cancel_exch_g)
-                else ([str(g).strip() for g in orig_g if str(g).strip()] if self._is_valid_grouping(orig_g) else [])
-            )
-            max_len = len(cancel_groups) if cancel_groups else 1
+            if self._is_valid_grouping(cancel_exch_g):
+                cancel_groups = [str(g).strip() for g in cancel_exch_g if str(g).strip()]
+            elif self._is_valid_grouping(orig_g):
+                cancel_groups = [str(g).strip() for g in orig_g if str(g).strip()]
+            else:
+                cancel_groups = []
+
+            if is_teacher_mode:
+                # БОМБА 1: учитель может вести НЕСКОЛЬКО классов в одном слоте
+                # (c=["031","033"] и даже c=["035","036","037"]). Полная отмена
+                # обязана породить по записи на каждый класс, иначе после
+                # DELETE/INSERT в репозитории второй класс молча исчезнет.
+                max_len = max(len(cancel_groups), len(raw_t_or_c), 1)
+            else:
+                # Класс без групп: отменяем каждый параллельный поток отдельно.
+                max_len = len(cancel_groups) if cancel_groups else max(len(raw_t_or_c), len(raw_r), 1)
+
+            # Полная отмена без групп по нескольким потокам/классам
+            cancel_streams = is_full_cancel and not cancel_groups and max(len(raw_t_or_c), len(raw_r)) > 1
         elif is_methodological or is_whole_class:
             max_len = 1
         elif is_parallel_streams:
@@ -313,15 +321,28 @@ class NikaNormalizer:
 
             # ── 5. Идентификатор группы ──
             if is_full_cancel:
-                g_id = cancel_groups[idx] if idx < len(cancel_groups) else "ALL"
+                if idx < len(cancel_groups):
+                    g_id = cancel_groups[idx]
+                elif cancel_streams:
+                    # Отмена нескольких классов/потоков: у учителя строки
+                    # различаются классом, у класса — индексом потока.
+                    g_id = "ALL" if is_teacher_mode else f"I{idx}"
+                else:
+                    g_id = "ALL"
             elif is_methodological or is_whole_class:
                 g_id = "ALL"
             elif is_parallel_streams:
-                # Параллельные потоки: у учителя классы различают строки,
-                # у класса генерируем синтетический индекс потока.
                 g_id = "ALL" if is_teacher_mode else f"I{idx}"
             else:
-                g_id = _get_val(raw_g, idx) or "ALL"
+                # БОМБА 2: защита от «дырявых» групп g=["0",""]: пустой элемент
+                # не должен превращать подгруппу в «Весь класс» — подтягиваем
+                # группу из базового расписания по тому же индексу.
+                # (Бродкаст g не используем: g длины 1 при массивах длины 2
+                # дал бы дубли lesson_id.)
+                g_raw = raw_g[idx] if idx < len(raw_g) else None
+                if g_raw is None or str(g_raw).strip() == "":
+                    g_raw = orig_g[idx] if idx < len(orig_g) else None
+                g_id = g_raw if (g_raw is not None and str(g_raw).strip() != "") else "ALL"
 
             clean_g = self._clean_val(g_id)
 
@@ -364,7 +385,7 @@ class NikaNormalizer:
                 safe_g_id = clean_g if clean_g and clean_g != "ALL" else "ALL"
 
             grp_name = self.class_groups.get(safe_g_id, "Весь класс") if safe_g_id != "ALL" else "Весь класс"
-            if is_parallel_streams and not is_teacher_mode:
+            if (is_parallel_streams or cancel_streams) and not is_teacher_mode and str(safe_g_id).startswith("I"):
                 grp_name = f"Поток {idx + 1}"
 
             if is_teacher_mode:
