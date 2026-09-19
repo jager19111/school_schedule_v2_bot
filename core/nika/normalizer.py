@@ -63,8 +63,25 @@ class NikaNormalizer:
     def __init__(self, nika_data: Dict[str, Any]):
         self.data = nika_data
         self.classes, self.teachers, self.rooms, self.subjects = self.build_metadata()
-        # Явно указываем типы, чтобы VS Code понимал, что это словари
-        self.class_groups: Dict[str, str] = self.data.get("CLASSGROUPS", {})
+        
+        # Словарь автосокращений для групп (экономим место в UI)
+        GROUP_CORRECTIONS = {
+            "Группа 1": "гр. 1",
+            "Группа 2": "гр. 2",
+            "Группа 3": "гр. 3",
+            "1 группа": "1 гр.",
+            "2 группа": "2 гр."
+        }
+        
+        # Перехватываем и форматируем названия групп
+        raw_groups = self.data.get("CLASSGROUPS", {})
+        self.class_groups: Dict[str, str] = {}
+        for g_id, g_name in raw_groups.items():
+            clean_name = str(g_name).strip()
+            if clean_name in GROUP_CORRECTIONS:
+                clean_name = GROUP_CORRECTIONS[clean_name]
+            self.class_groups[g_id] = clean_name
+            
         self.lesson_times: Dict[str, List[str]] = self.data.get("LESSON_TIMES", {})
 
     def _clean_val(self, val: Any) -> Optional[str]:
@@ -86,7 +103,27 @@ class NikaNormalizer:
 
         teachers = {t_id: Teacher(id=t_id, name=name) for t_id, name in self.data.get("TEACHERS", {}).items()}
         rooms = {r_id: Room(id=r_id, name=name) for r_id, name in self.data.get("ROOMS", {}).items()}
-        subjects = {s_id: Subject(id=s_id, name=name) for s_id, name in self.data.get("SUBJECTS", {}).items()}
+        # Словарь автоисправлений для "опечаток" администрации
+        SUBJECT_CORRECTIONS = {
+            "Литературное чтениечтение": "Литературное чтение",
+            "сложныезадачи ЕГЭ": "Сложные задачи ЕГЭ",
+            "Ин.яз": "Англ. язык",
+            "математика плюс": "Математика плюс",
+            "финансовая грамотность": "Фин. грамотность",
+            "Прогрммирование на Python": "Программирование на Python",
+            "Основы 3Д модедирования": "Основы 3Д моделирования",
+            "основы естественно-научных исследований": "Основы ест.-науч. исследований",
+            "Алгоритмы решения экономических задач": "Алгоритмы решения эконом. задач",
+            "Методы решения физических задач": "Методы решения физ. задач",
+        }
+
+        subjects = {}
+        for s_id, raw_name in self.data.get("SUBJECTS", {}).items():
+            clean_name = str(raw_name).strip()
+            # На лету заменяем кривое название на нормальное
+            if clean_name in SUBJECT_CORRECTIONS:
+                clean_name = SUBJECT_CORRECTIONS[clean_name]
+            subjects[s_id] = Subject(id=s_id, name=clean_name)
 
         return classes, teachers, rooms, subjects
 
@@ -352,7 +389,7 @@ class NikaNormalizer:
             o_clean_g = self._clean_val(_get_val(orig_g, idx)) if not groups_were_merged else None
 
             if is_methodological:
-                sub_name = "Методический час/день"
+                sub_name = "Методический час"
             else:
                 sub_name = (
                     self.subjects.get(clean_s).name
@@ -361,7 +398,7 @@ class NikaNormalizer:
                 )
 
             if o_clean_s == "M":
-                orig_sub_name = "Методический час/день"
+                orig_sub_name = "Методический час"
             else:
                 orig_sub_name = (
                     self.subjects.get(o_clean_s).name
