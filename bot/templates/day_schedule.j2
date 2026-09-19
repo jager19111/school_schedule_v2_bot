@@ -1,0 +1,208 @@
+{# {{ '\n' }} на {{ '\n\n' }} в строке {%- if not loop.first.... Это  главный рычаг управления межстрочным интервалом в Telegram.#}
+{# ================= ШАПКА ================= #}
+📅 <b>{{ formatted_date }}</b>{{ '\n' }}
+
+{%- if dto.origin == "teacher" and name -%}
+👨‍🏫 <b>{{ name }}</b>{{ '\n' }}
+{%- elif dto.origin == "student" and name -%}
+👤 <b>{{ name }}{% if dto.class_name %} · {{ dto.class_name }}{% endif %}{% if dto.group_name and dto.group_name not in ['Весь класс', 'ALL', 'None', '', '—'] %} · {{ dto.group_name }}{% endif %}</b>{{ '\n' }}
+{%- elif dto.origin == "class" and dto.class_name -%}
+🎓 <b>Класс: {{ dto.class_name }}</b>{{ '\n' }}
+{%- endif -%}
+
+
+{%- if dto.has_permutation %}
+{%- endif %}
+
+{# ================= УРОКИ ================= #}
+{%- if not slots -%}
+{{ '\n\n' }}🏖 <b>Занятий нет</b>
+{%- else -%}
+{%- for slot in slots -%}
+
+{#- ТЕСТОВЫЙ РЫЧАГ ПРОБЕЛОВ: Этот тег ставит ровно 1 перенос между уроками. 
+    Если нужно больше места, замени на {{ '\n\n' }} -#}
+{%- if not loop.first %}{{ '\n' }}{% endif -%}
+
+{%- set first = slot[0] -%}
+{%- set start = first.start_time.zfill(5) if first.start_time else "00:00" -%}
+{%- set end = first.end_time.zfill(5) if first.end_time else "00:00" -%}
+
+{%- if first.is_extra -%}
+{# --- ДОП. ЗАНЯТИЯ --- #}
+{%- for ex in slot -%}
+🎨 <code>{{ start }}–{{ end }}</code> | <b>{{ ex.subject_name }}</b>
+{%- if ex.room_name and ex.room_name != "—" %} · <b>{{ ex.room_name }}</b>{% endif -%}
+{%- if not loop.last %}{{ '\n' }}{% endif -%}
+{%- endfor -%}
+
+{%- else -%}
+{# --- ОСНОВНЫЕ УРОКИ --- #}
+{%- set is_all_cancelled = slot | rejectattr('is_cancelled') | list | length == 0 -%}
+
+{#- Высчитываем тип иконки (🔄 или 🔁) с помощью namespace -#}
+{%- set ns = namespace(has_subj_change=false, has_minor_change=false) -%}
+{%- for l in slot if l.is_exchange -%}
+    {%- if l.original_subject_name and l.original_subject_name != l.subject_name -%}
+        {%- set ns.has_subj_change = true -%}
+    {%- else -%}
+        {%- set ns.has_minor_change = true -%}
+    {%- endif -%}
+{%- endfor -%}
+
+{%- set is_methodological = is_teacher and (slot | rejectattr('is_methodological') | list | length == 0) -%}
+{%- set icon = '❌' if is_all_cancelled else ('🔄' if ns.has_subj_change else ('🔁' if ns.has_minor_change else ('🧑‍🏫' if is_methodological else '📚'))) -%}
+{%- set num_str = first.lesson_num if is_teacher else (first.display_num or first.lesson_num or '•') -%}
+
+{#- ШАПКА УРОКА -#}
+{%- if is_teacher -%}
+{{ icon }} <b>{{ num_str }} урок</b> | <code>{{ start }}–{{ end }}</code>{{ '\n' }}
+{%- else -%}
+{{ icon }} <b>{{ num_str }} урок</b> | <code>{{ start }}–{{ end }}</code>{{ '\n' }}
+{%- endif -%}
+
+<blockquote>
+{%- set subj_names = slot | map(attribute='subject_name') | reject('none') | join(' ') | lower -%}
+{%- set is_trud = not is_teacher and slot|length > 1 and ('труд' in subj_names or 'технологи' in subj_names) -%}
+
+{%- if is_trud -%}
+    {#- АГРЕГАЦИЯ ТРУДА -#}
+    {%- set valid_rooms = slot | map(attribute='room_name') | reject('none') | reject('equalto', '—') | unique | list -%}
+    {%- if is_all_cancelled -%}
+        <s>Труд(технология)</s>
+    {%- else -%}
+        <b>Труд(технология)</b>{% if valid_rooms %} · <b>{{ valid_rooms | join(', ') }}</b>{% endif -%}
+    {%- endif -%}
+{%- else -%}
+    {#- ОБЫЧНЫЕ УРОКИ И ПОДГРУППЫ (Только актуальная инфа, без <s>Было</s>) -#}
+    {%- for l in slot -%}
+        {%- set parts = [] -%}
+        {%- if is_teacher -%}
+            {#- УЧИТЕЛЬ: Предмет · Класс · Группа · Кабинет -#}
+            {%- if not l.is_cancelled -%}
+                {%- if l.class_name %}{% set _ = parts.append(l.class_name) %}{% endif -%}
+                {%- if l.group_name and l.group_name not in ['Весь класс', 'ALL', 'None', '', '—'] %}{% set _ = parts.append(l.group_name) %}{% endif -%}
+                {%- if l.room_name and l.room_name != '—' %}{% set _ = parts.append('<b>' ~ l.room_name ~ '</b>') %}{% endif -%}
+            {%- endif -%}
+            
+            {%- if l.is_cancelled -%}
+                {%- set old_subj = l.original_subject_name if l.original_subject_name and l.original_subject_name != 'ОТМЕНА' else 'Урок' -%}
+                <s>{{ old_subj }}</s>{% if parts %} · {{ parts | join(' · ') | safe }}{% endif -%}
+            {%- else -%}
+                <b>{{ l.subject_name }}</b>{% if parts %} · {{ parts | join(' · ') | safe }}{% endif -%}
+            {%- endif -%}
+        {%- else -%}
+            {#- УЧЕНИК / ПОИСК: Предмет · Кабинет -#}
+            {%- if not l.is_cancelled -%}
+                {%- if l.room_name and l.room_name != '—' %}{% set _ = parts.append('<b>' ~ l.room_name ~ '</b>') %}{% endif -%}
+            {%- endif -%}
+            
+            {%- if is_school_search and l.teacher_name %}{% set _ = parts.append('<tg-spoiler><i>' ~ l.teacher_name ~ '</i></tg-spoiler>') %}{% endif -%}
+            
+            {%- if l.is_cancelled -%}
+                {%- set old_subj = l.original_subject_name if l.original_subject_name and l.original_subject_name != 'ОТМЕНА' else 'Урок' -%}
+                <s>{{ old_subj }}</s>{% if parts %} · {{ parts | join(' · ') | safe }}{% endif -%}
+            {%- else -%}
+                <b>{{ l.subject_name }}</b>{% if parts %} · {{ parts | join(' · ') | safe }}{% endif -%}
+            {%- endif -%}
+        {%- endif -%}
+        {%- if not loop.last %}{{ '\n' }}{% endif -%}
+    {%- endfor -%}
+{%- endif -%}
+</blockquote>
+{%- endif -%}
+{%- endfor -%}
+{%- endif -%}
+
+{# ================= ФУТЕР (Приписка об изменениях) ================= #}
+{%- if changes_count > 0 %}
+{{ '\n' }}
+<blockquote expandable>
+⚠️ Изменения на сегодня: <b>{{ changes_count }}</b>
+
+{%- for slot in slots %}
+{%- if not slot[0].is_extra %}
+    {#- 1. Фильтруем: берем только уроки с изменениями в этом слоте -#}
+    {%- set changed_lessons = [] -%}
+    {%- for l in slot if l.is_cancelled or l.is_exchange -%}
+        {%- set _ = changed_lessons.append(l) -%}
+    {%- endfor -%}
+
+    {%- if changed_lessons|length > 0 %}
+        {%- set first = changed_lessons[0] %}
+        {%- set start = first.start_time.zfill(5) if first.start_time else "00:00" %}
+        {%- set end = first.end_time.zfill(5) if first.end_time else "00:00" %}
+        
+        {#- Если отменены ВСЕ подгруппы в слоте, ставим ❌, иначе 🔄 -#}
+        {%- set is_all_cancelled = changed_lessons | rejectattr('is_cancelled') | list | length == 0 %}
+        {%- set icon = '❌' if is_all_cancelled else '🔄' %}
+        {%- set num_str = first.lesson_num if is_teacher else (first.display_num or first.lesson_num or '•') %}
+        
+        {#- ШАПКА ВРЕМЕНИ ДЛЯ ИЗМЕНЕНИЙ -#}
+        {{ '\n' }}{{ icon }} <b>{{ num_str }} урок</b> | <code>{{ start }}–{{ end }}</code>
+        
+        {%- for l in changed_lessons %}
+            {%- set is_last = loop.last %}
+            {%- set prefix = "" if changed_lessons|length == 1 else ("  └ " if is_last else "  ├ ") %}
+            
+            {#- Извлекаем старые и новые значения безопасно (Jinja сама экранирует XSS!) -#}
+            {%- set orig_subj = l.original_subject_name if l.original_subject_name and l.original_subject_name != 'ОТМЕНА' else (l.subject_name if l.subject_name != 'ОТМЕНА' else 'Урок') -%}
+            {%- set new_subj = l.subject_name if l.subject_name else 'Урок' -%}
+            
+            {%- set orig_room = l.original_room_name if l.original_room_name and l.original_room_name != '—' else '' -%}
+            {%- set new_room = l.room_name if l.room_name and l.room_name != '—' else '' -%}
+            
+            {%- set orig_teacher = l.original_teacher_name if l.original_teacher_name and l.original_teacher_name != '—' else '' -%}
+            {%- set new_teacher = l.teacher_name if l.teacher_name and l.teacher_name != '—' else '' -%}
+            
+            {%- set orig_grp = l.original_group_name if l.original_group_name and l.original_group_name not in ['Весь класс', 'ALL', 'None', '', '—'] else '' -%}
+            {%- set new_grp = l.group_name if l.group_name and l.group_name not in ['Весь класс', 'ALL', 'None', '', '—'] else '' -%}
+            
+            {#- Вычисляем дельту изменений -#}
+            {%- set subj_changed = l.original_subject_name and l.original_subject_name != l.subject_name -%}
+            {%- set room_changed = l.original_room_name and l.original_room_name != l.room_name -%}
+            {%- set teacher_changed = l.original_teacher_name and l.original_teacher_name != l.teacher_name -%}
+            {%- set group_changed = (l|attr('group_changed') == true) and orig_grp and new_grp -%}
+            
+            {#- Форматируем скобки для кабинетов -#}
+            {%- set o_r = ' (' ~ orig_room ~ ')' if orig_room else '' -%}
+            {%- set n_r = ' (' ~ new_room ~ ')' if new_room else '' -%}
+            
+            {#- Форматируем метку группы -#}
+            {%- set grp_label = '' -%}
+            {%- if changed_lessons|length > 1 -%}
+                {%- if group_changed -%}
+                    {%- set grp_label = '👥 <s>' ~ orig_grp ~ '</s> ➔ <b>' ~ new_grp ~ '</b>: ' -%}
+                {%- else -%}
+                    {%- set grp_label = '👥 ' ~ (new_grp if new_grp else 'Весь класс') ~ ': ' -%}
+                {%- endif -%}
+            {%- elif group_changed -%}
+                {%- set grp_label = ' (👥 <s>' ~ orig_grp ~ '</s> ➔ <b>' ~ new_grp ~ '</b>)' -%}
+            {%- endif -%}
+            
+            {{ '\n' }}{{ prefix }}{% if changed_lessons|length > 1 %}{{ grp_label }}{% endif %}
+            
+            {#- СЦЕНАРИИ ОТРИСОВКИ "БЫЛО ➔ СТАЛО" -#}
+            {%- if l.is_cancelled -%}
+                <s>{{ orig_subj }}{{ o_r }}</s> ➔ <b>ОТМЕНЕНО</b>
+            {%- elif subj_changed -%}
+                <s>{{ orig_subj }}{{ o_r }}</s> ➔ <b>{{ new_subj }}{{ n_r }}</b>
+            {%- elif room_changed and not teacher_changed -%}
+                {{ new_subj }} (<s>{{ orig_room if orig_room else '—' }}</s> ➔ <b>{{ new_room if new_room else '—' }}</b>)
+            {%- elif teacher_changed and not room_changed -%}
+                {{ new_subj }}{{ n_r }} (<s>{{ orig_teacher if orig_teacher else '—' }}</s> ➔ <b>{{ new_teacher if new_teacher else '—' }}</b>)
+            {%- elif room_changed and teacher_changed -%}
+                {{ new_subj }} (<s>{{ orig_room if orig_room else '—' }} {{ orig_teacher if orig_teacher else '—' }}</s> ➔ <b>{{ new_room if new_room else '—' }} {{ new_teacher if new_teacher else '—' }}</b>)
+            {%- else -%}
+                {{ new_subj }}{{ n_r }} <i>(Замена)</i>
+            {%- endif -%}
+            
+            {#- Если урок одиночный, но группа сменилась, прилепляем метку в конец -#}
+            {%- if changed_lessons|length == 1 %}{{ grp_label }}{% endif -%}
+            
+        {%- endfor %}
+    {%- endif %}
+{%- endif %}
+{%- endfor %}
+</blockquote>
+{%- endif %}
