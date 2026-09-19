@@ -181,6 +181,20 @@ class ScheduleRepository(BaseRepository):
     # ==========================================================
     # Row <-> LessonInstance mapping
     # ==========================================================
+# НАЙДЕННЫЕ БАГИ в _lesson_to_row:
+#
+# R1 (КРИТИЧНО): восстановленные orig_sub/orig_room вычисляются из history_map,
+#     но НЕ попадают в возвращаемый кортеж — там остаются
+#     lesson.original_subject_name / lesson.original_room_name.
+#     Весь механизм спасения истории — мёртвый код. Доказано в песочнице:
+#     при удалении школой базового слота (крашеный день 3) оригиналы
+#     терялись (NULL) при живом history_map.
+#
+# R2: фолбэк "_0" для слитых в ALL уроков слеп к реальным id групп:
+#     в CLASSGROUPS существуют "3"/"4" ("1 группа"/"2 группа", классы 10-x),
+#     и для них base_id + "_0" не находит историю. Доказано: класс 031,
+#     слияние групп 3/4 → история не восстанавливалась.
+# В текущий момент баги пофикшены
 
     @staticmethod
     def _lesson_to_row(
@@ -191,17 +205,43 @@ class ScheduleRepository(BaseRepository):
     ) -> tuple:
         """
         LessonInstance -> кортеж.
-        Если передан history_map, мы восстанавливаем original_subject_name из памяти,
-        спасая его от стирания при DELETE/INSERT.
+        Если передан history_map, восстанавливаем original_subject_name /
+        original_room_name из памяти, спасая их от стирания при DELETE/INSERT.
+
+        Отличия от прежней версии:
+        1. Возвращаем ИМЕННО восстановленные orig_sub / orig_room (баг R1).
+        2. Смежную историю ищем prefix-scan'ом по всем группам слота,
+           а не угадыванием "_0" (баг R2: группы бывают "3"/"4"/...).
         """
         orig_sub = lesson.original_subject_name
         orig_room = lesson.original_room_name
-        
-        if history_map and lesson.id in history_map:
-            if not orig_sub:
-                orig_sub = history_map[lesson.id].get("sub")
-            if not orig_room:
-                orig_room = history_map[lesson.id].get("room")
+
+        if history_map:
+            hist_data = history_map.get(lesson.id)
+
+            if not hist_data:
+                # Ищем ЛЮБУЮ смежную историю того же слота (того же
+                # класса/учителя, даты и номера урока). Покрывает:
+                # - деление: строки групп ищут историю "ALL";
+                # - слияние: строка ALL ищет историю любой группы
+                #   (в т.ч. экзотические "3"/"4", которые старый
+                #   фолбэк "_0" не находил);
+                # - регруппировку: группа "1" наследует историю группы "0".
+                prefix = lesson.id.rsplit('_', 1)[0] + "_"
+                candidates = [(k, v) for k, v in history_map.items() if k.startswith(prefix)]
+                if len(candidates) == 1:
+                    hist_data = candidates[0][1]
+                elif candidates:
+                    # При слиянии предпочтём историю «весь класс»,
+                    # иначе — первую групповую.
+                    all_rows = [v for k, v in candidates if k.rsplit('_', 1)[-1] == "ALL"]
+                    hist_data = all_rows[0] if all_rows else candidates[0][1]
+
+            if hist_data:
+                if not orig_sub:
+                    orig_sub = hist_data.get("sub")
+                if not orig_room:
+                    orig_room = hist_data.get("room")
 
         return (
             lesson.id,
@@ -221,11 +261,11 @@ class ScheduleRepository(BaseRepository):
             lesson.room_id,
             lesson.room_name,
             lesson.original_subject_id,
-            lesson.original_subject_name,
+            orig_sub,                                # ФИКС R1: было lesson.original_subject_name
             lesson.original_teacher_id,
             lesson.original_teacher_name,
             lesson.original_room_id,
-            lesson.original_room_name,
+            orig_room,                               # ФИКС R1: было lesson.original_room_name
             lesson.original_class_id,
             lesson.original_class_name,
             lesson.original_group_id,
@@ -237,6 +277,28 @@ class ScheduleRepository(BaseRepository):
             int(lesson.is_methodological),
             now_utc,
         )
+
+
+# ДОПОЛНИТЕЛЬНАЯ РЕКОМЕНДАЦИЯ (не баг, а усиление):
+# в _apply_new_nika_version расширьте SELECT history_map, чтобы спасать
+# и учителя/группу исходного урока, а не только предмет и кабинет:
+#
+#   cursor = await db.execute(
+#       f"SELECT id, original_subject_name, original_room_name, "
+#       f"original_teacher_name, original_group_id "
+#       f"FROM schedule_cache WHERE date IN ({placeholders})",
+#       tuple(target_date_values)
+#   )
+#   history_map = {
+#       row[0]: {
+#           "sub": row[1], "room": row[2],
+#           "teacher": row[3], "group": row[4],
+#       } for row in history_rows
+#   }
+#
+# и в _lesson_to_row при пустых lesson.original_teacher_name /
+# lesson.original_group_name подтягивайте их аналогично orig_sub/orig_room.
+
 
     @staticmethod
     def _row_to_lesson(row: dict[str, Any]) -> LessonInstance:
