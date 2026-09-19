@@ -238,6 +238,8 @@ class ScheduleRepository(BaseRepository):
         """
         orig_sub = lesson.original_subject_name
         orig_room = lesson.original_room_name
+        orig_teacher = lesson.original_teacher_name
+        orig_group_name = lesson.original_group_name
 
         if history_map:
             hist_data = history_map.get(lesson.id)
@@ -277,6 +279,10 @@ class ScheduleRepository(BaseRepository):
                     orig_sub = hist_data.get("sub")
                 if not orig_room:
                     orig_room = hist_data.get("room")
+                if not orig_teacher:
+                    orig_teacher = hist_data.get("teacher")
+                if not orig_group_name:
+                    orig_group_name = hist_data.get("group_name")
 
         return (
             lesson.id,
@@ -296,15 +302,15 @@ class ScheduleRepository(BaseRepository):
             lesson.room_id,
             lesson.room_name,
             lesson.original_subject_id,
-            orig_sub,                                # ФИКС R1: было lesson.original_subject_name
+            orig_sub,                                # ФИКС R1 (Предмет)
             lesson.original_teacher_id,
-            lesson.original_teacher_name,
+            orig_teacher,                            # ФИКС: Восстановление учителя
             lesson.original_room_id,
-            orig_room,                               # ФИКС R1: было lesson.original_room_name
+            orig_room,                               # ФИКС R1 (Кабинет)
             lesson.original_class_id,
             lesson.original_class_name,
             lesson.original_group_id,
-            lesson.original_group_name,
+            orig_group_name,                         # ФИКС: Восстановление имени группы
             lesson.start_time,
             lesson.end_time,
             int(lesson.is_exchange),
@@ -312,7 +318,6 @@ class ScheduleRepository(BaseRepository):
             int(lesson.is_methodological),
             now_utc,
         )
-
 
 # ДОПОЛНИТЕЛЬНАЯ РЕКОМЕНДАЦИЯ (не баг, а усиление):
 # в _apply_new_nika_version расширьте SELECT history_map, чтобы спасать
@@ -927,147 +932,6 @@ class ScheduleRepository(BaseRepository):
             lesson_count=len(lesson_rows), reason=reason,
         )
         
-    if False: # прошлый рабочий метод который парсит строко с тем что выгружается на сайт расписания
-        async def _apply_new_nika_version(
-            self,
-            *,
-            source: NikaSourceDescriptor,
-            js_content: str,
-            nika_data: dict[str, Any],
-            raw_sha256: str,
-            semantic_sha256: str,
-            export_date: Optional[str],
-            export_time: Optional[str],
-            target_dates: List[datetime.date],
-            source_changed: bool,
-            schedule_changed: bool,
-            reason: str,
-            invalidate_metadata: bool = True,
-        ) -> ScheduleRefreshResult:
-            """
-            Применяет новый NIKA rolling snapshot атомарно:
-            raw cache -> nika_source_state -> очистка окна -> массовый UPSERT.
-            """
-            normalizer = NikaNormalizer(nika_data)
-            class_lessons = normalizer.build_class_lessons(target_dates)
-            teacher_lessons = normalizer.build_teacher_lessons(target_dates)
-
-            target_date_values = sorted(
-                {d.isoformat() for d in target_dates}
-            )
-
-            coverage_start_date = target_date_values[0]
-            coverage_end_date = target_date_values[-1]
-
-            history_cutoff = (
-                datetime.date.fromisoformat(coverage_start_date)
-                - datetime.timedelta(days=self.history_days)
-            ).isoformat()
-
-            placeholders = ",".join("?" for _ in target_date_values)
-
-            now_utc = self._now_utc_str()
-
-            lesson_rows = [
-                self._lesson_to_row(lesson, "class", now_utc)
-                for lesson in class_lessons
-            ] + [
-                self._lesson_to_row(lesson, "teacher", now_utc)
-                for lesson in teacher_lessons
-            ]
-
-            async with self.transaction() as db:
-                await self._upsert_raw_cache(
-                    db,
-                    js_filename=source.js_filename,
-                    raw_sha256=raw_sha256,
-                    now_utc=now_utc,
-                    js_content=js_content,
-                )
-
-                # 1. Спасаем историю (Python-level COALESCE для обхода DELETE)
-                cursor = await db.execute(
-                    f"SELECT id, original_subject_name, original_room_name FROM schedule_cache WHERE date IN ({placeholders})",
-                    tuple(target_date_values)
-                )
-                history_rows = await cursor.fetchall()
-                history_map = {row[0]: {"sub": row[1], "room": row[2]} for row in history_rows}
-
-                # 2. Формируем строки с учетом спасенной истории
-                lesson_rows = [
-                    self._lesson_to_row(lesson, "class", now_utc, history_map)
-                    for lesson in class_lessons
-                ] + [
-                    self._lesson_to_row(lesson, "teacher", now_utc, history_map)
-                    for lesson in teacher_lessons
-                ]
-
-                # 3. Удаляем старые записи
-                await db.execute(
-                    f"""
-                    DELETE FROM schedule_cache
-                    WHERE date IN ({placeholders})
-                    """,
-                    tuple(target_date_values),
-                )
-
-                await db.execute(
-                    """
-                    DELETE FROM schedule_cache
-                    WHERE date < ?
-                    """,
-                    (history_cutoff,),
-                )
-
-                # 4. Вставляем новые записи
-                if lesson_rows:
-                    await db.executemany(_SCHEDULE_UPSERT_SQL, lesson_rows)
-
-                await self._upsert_source_state(
-                    db,
-                    js_filename=source.js_filename,
-                    export_date=export_date,
-                    export_time=export_time,
-                    raw_sha256=raw_sha256,
-                    semantic_sha256=semantic_sha256,
-                    now_utc=now_utc,
-                    coverage_start_date=coverage_start_date,
-                    coverage_end_date=coverage_end_date,
-                    schedule_changed=schedule_changed,
-                )
-
-            try:
-                await self._execute("PRAGMA optimize")
-            except Exception:
-                logger.debug("PRAGMA optimize after snapshot failed.")
-
-            logger.info(
-                "NIKA snapshot applied: source_changed=%s, "
-                "schedule_changed=%s, lessons=%d (class=%d, teacher=%d), "
-                "coverage=%s..%s, revision=%s",
-                source_changed,
-                schedule_changed,
-                len(lesson_rows),
-                len(class_lessons),
-                len(teacher_lessons),
-                coverage_start_date,
-                coverage_end_date,
-                source.js_filename,
-            )
-
-            # Инвалидация кеша только если это реальное изменение семантики
-            if invalidate_metadata:
-                self._metadata_cache = None
-
-            return ScheduleRefreshResult(
-                source_changed=source_changed,
-                schedule_changed=schedule_changed,
-                js_filename=source.js_filename,
-                lesson_count=len(lesson_rows),
-                reason=reason,
-            )
-
-
     # ==========================================================
     # Внутренние SQL-хелперы (раньше дублировались в двух методах)
     # ==========================================================

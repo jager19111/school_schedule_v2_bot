@@ -1772,136 +1772,136 @@ class UIRenderer:
     # ==========================================================
     # Детализация изменений (LessonDTO)
     # ==========================================================
-        # удалить вместе с кнопкой. Переделан на рендер jinja2
-        @staticmethod
-        def render_day_changes_detail(
-            dto: 'DayChangesDetailDTO',
-        ) -> tuple[str, None]:
-            """
-            Детализация «было → стало» (только LessonDTO).
-            С умной группировкой подгрупп в дерево!
-            """
-            if not dto.lessons:
-                return (
-                    f"🔄 <b>Изменения на {dto.date_iso}</b>\n\n"
-                    f"Изменений нет.",
-                    None,
-                )
+        # удалить вместе с кнопкой. В расписании Переделан на рендер jinja2. Но используется еще в утренней сводке
+    @staticmethod
+    def render_day_changes_detail(
+        dto: 'DayChangesDetailDTO',
+    ) -> tuple[str, None]:
+        """
+        Детализация «было → стало» (только LessonDTO).
+        С умной группировкой подгрупп в дерево!
+        """
+        if not dto.lessons:
+            return (
+                f"🔄 <b>Изменения на {dto.date_iso}</b>\n\n"
+                f"Изменений нет.",
+                None,
+            )
 
-            text = f"🔄 <b>Изменения на {dto.date_iso}</b>\n\n"
+        text = f"🔄 <b>Изменения на {dto.date_iso}</b>\n\n"
 
-            if dto.origin == "teacher":
-                text += "<i>Расписание учителя</i>\n\n"
+        if dto.origin == "teacher":
+            text += "<i>Расписание учителя</i>\n\n"
 
-            # 1. Группируем по номеру урока и времени (чтобы склеить подгруппы)
-            from collections import defaultdict
-            grouped = defaultdict(list)
-            for l in dto.lessons:
-                key = (l.lesson_num, l.start_time, l.end_time)
-                grouped[key].append(l)
+        # 1. Группируем по номеру урока и времени (чтобы склеить подгруппы)
+        from collections import defaultdict
+        grouped = defaultdict(list)
+        for l in dto.lessons:
+            key = (l.lesson_num, l.start_time, l.end_time)
+            grouped[key].append(l)
 
-            # 2. Сортируем ключи (по номеру урока и времени)
-            sorted_keys = sorted(grouped.keys(), key=lambda k: (k[0] or 99, k[1] or "99:99"))
+        # 2. Сортируем ключи (по номеру урока и времени)
+        sorted_keys = sorted(grouped.keys(), key=lambda k: (k[0] or 99, k[1] or "99:99"))
 
-            for key in sorted_keys:
-                parallel_lessons = grouped[key]
-                
-                # --- ИСПРАВЛЕНИЕ: Сортируем параллельные уроки по имени группы ---
-                # Это гарантирует, что Группа 1 всегда будет выше Группы 2
-                parallel_lessons.sort(key=lambda x: str(x.group_name or ""))
+        for key in sorted_keys:
+            parallel_lessons = grouped[key]
+            
+            # --- ИСПРАВЛЕНИЕ: Сортируем параллельные уроки по имени группы ---
+            # Это гарантирует, что Группа 1 всегда будет выше Группы 2
+            parallel_lessons.sort(key=lambda x: str(x.group_name or ""))
 
-                first = parallel_lessons[0]
-                
-                num_str = f"{first.display_num or first.lesson_num}."
-                time_str = f"{first.start_time} - {first.end_time}"
+            first = parallel_lessons[0]
+            
+            num_str = f"{first.display_num or first.lesson_num}."
+            time_str = f"{first.start_time} - {first.end_time}"
 
-                # Заголовок блока (если ВСЕ уроки отменены -> ❌, иначе -> 🔄)
-                all_cancelled = all(l.is_cancelled for l in parallel_lessons)
-                icon = "❌" if all_cancelled else "🔄"
+            # Заголовок блока (если ВСЕ уроки отменены -> ❌, иначе -> 🔄)
+            all_cancelled = all(l.is_cancelled for l in parallel_lessons)
+            icon = "❌" if all_cancelled else "🔄"
 
-                text += f"{icon} {num_str} {time_str}\n"
+            text += f"{icon} {num_str} {time_str}\n"
 
-                for i, l in enumerate(parallel_lessons):
-                    safe_orig_subj = UIRenderer.escape_html(l.original_subject_name, "—")
-                    safe_new_subj = UIRenderer.escape_html(l.subject_name, "—")
-                    safe_orig_room = UIRenderer.escape_html(l.original_room_name, "—")
-                    safe_new_room = UIRenderer.escape_html(l.room_name, "—")
-                    safe_orig_teacher = UIRenderer.escape_html(l.original_teacher_name, "")
-                    safe_new_teacher = UIRenderer.escape_html(l.teacher_name, "")
-                    safe_orig_grp = UIRenderer.escape_html(l.original_group_name, "")
-                    safe_new_grp = UIRenderer.escape_html(l.group_name, "")
+            for i, l in enumerate(parallel_lessons):
+                safe_orig_subj = UIRenderer.escape_html(l.original_subject_name, "—")
+                safe_new_subj = UIRenderer.escape_html(l.subject_name, "—")
+                safe_orig_room = UIRenderer.escape_html(l.original_room_name, "—")
+                safe_new_room = UIRenderer.escape_html(l.room_name, "—")
+                safe_orig_teacher = UIRenderer.escape_html(l.original_teacher_name, "")
+                safe_new_teacher = UIRenderer.escape_html(l.teacher_name, "")
+                safe_orig_grp = UIRenderer.escape_html(l.original_group_name, "")
+                safe_new_grp = UIRenderer.escape_html(l.group_name, "")
 
-                    orig_room_str = f" ({safe_orig_room})" if safe_orig_room and safe_orig_room != "—" else ""
-                    new_room_str = f" ({safe_new_room})" if safe_new_room and safe_new_room != "—" else ""
+                orig_room_str = f" ({safe_orig_room})" if safe_orig_room and safe_orig_room != "—" else ""
+                new_room_str = f" ({safe_new_room})" if safe_new_room and safe_new_room != "—" else ""
 
-                    subject_changed = (l.original_subject_name != l.subject_name)
-                    room_changed = (l.original_room_name != l.room_name)
-                    teacher_changed = (l.original_teacher_name != l.teacher_name)
-                    group_changed = getattr(l, 'group_changed', False) and safe_orig_grp and safe_new_grp
+                subject_changed = (l.original_subject_name != l.subject_name)
+                room_changed = (l.original_room_name != l.room_name)
+                teacher_changed = (l.original_teacher_name != l.teacher_name)
+                group_changed = safe_orig_grp and safe_new_grp and (safe_orig_grp != safe_new_grp)
 
-                    if len(parallel_lessons) == 1:
-                        # === ОДИНОЧНЫЙ УРОК (Весь класс или только одна группа изменилась) ===
-                        single_grp_str = ""
-                        if safe_new_grp and safe_new_grp.lower() != "весь класс":
-                            single_grp_str = f"  👥 Группа: <b>{safe_new_grp}</b>\n"
+                if len(parallel_lessons) == 1:
+                    # === ОДИНОЧНЫЙ УРОК (Весь класс или только одна группа изменилась) ===
+                    single_grp_str = ""
+                    if safe_new_grp and safe_new_grp.lower() != "весь класс":
+                        single_grp_str = f"  👥 Группа: <b>{safe_new_grp}</b>\n"
 
-                        if l.is_cancelled:
-                            safe_subj = UIRenderer.escape_html(l.original_subject_name or l.subject_name, "Урок")
-                            text += (
-                                f"  <s>{safe_subj}{orig_room_str}</s>\n"
-                                f"  <b>ОТМЕНЕНО</b>\n"
-                                f"{single_grp_str}"
-                            )
-                        else:
-                            if subject_changed:
-                                text += f"  было: <s>{safe_orig_subj}{orig_room_str}</s>\n"
-                                text += f"  стало: <b>{safe_new_subj}{new_room_str}</b>\n"
-                            elif room_changed:
-                                text += f"  {safe_new_subj}\n"
-                                text += f"  было: ({safe_orig_room})\n"
-                                text += f"  стало: (<b>{safe_new_room}</b>)\n"
-                            elif teacher_changed:
-                                text += f"  {safe_new_subj}{new_room_str}\n"
-                                text += f"  было: {safe_orig_teacher}\n"
-                                text += f"  стало: <b>{safe_new_teacher}</b>\n"
-                            else:
-                                text += f"  {safe_new_subj}{new_room_str}\n"
-
-                            if group_changed:
-                                text += f"  👥 Группа: <s>{safe_orig_grp}</s> → <b>{safe_new_grp}</b>\n"
-                            elif single_grp_str:
-                                text += single_grp_str
+                    if l.is_cancelled:
+                        safe_subj = UIRenderer.escape_html(l.original_subject_name or l.subject_name, "Урок")
+                        text += (
+                            f"  <s>{safe_subj}{orig_room_str}</s>\n"
+                            f"  <b>ОТМЕНЕНО</b>\n"
+                            f"{single_grp_str}"
+                        )
                     else:
-                        # === МНОЖЕСТВЕННЫЕ ИЗМЕНЕНИЯ В ОДИН СЛОТ (ДЕРЕВО ПОДГРУПП) ===
-                        is_last = (i == len(parallel_lessons) - 1)
-                        prefix = "  └ " if is_last else "  ├ "
-                        
-                        # Формируем метку группы
+                        if subject_changed:
+                            text += f"  было: <s>{safe_orig_subj}{orig_room_str}</s>\n"
+                            text += f"  стало: <b>{safe_new_subj}{new_room_str}</b>\n"
+                        elif room_changed:
+                            text += f"  {safe_new_subj}\n"
+                            text += f"  было: ({safe_orig_room})\n"
+                            text += f"  стало: (<b>{safe_new_room}</b>)\n"
+                        elif teacher_changed:
+                            text += f"  {safe_new_subj}{new_room_str}\n"
+                            text += f"  было: {safe_orig_teacher}\n"
+                            text += f"  стало: <b>{safe_new_teacher}</b>\n"
+                        else:
+                            text += f"  {safe_new_subj}{new_room_str}\n"
+
                         if group_changed:
-                            grp_label = f"👥 <s>{safe_orig_grp}</s> → <b>{safe_new_grp}</b>: "
+                            text += f"  👥 Группа: <s>{safe_orig_grp}</s> → <b>{safe_new_grp}</b>\n"
+                        elif single_grp_str:
+                            text += single_grp_str
+                else:
+                    # === МНОЖЕСТВЕННЫЕ ИЗМЕНЕНИЯ В ОДИН СЛОТ (ДЕРЕВО ПОДГРУПП) ===
+                    is_last = (i == len(parallel_lessons) - 1)
+                    prefix = "  └ " if is_last else "  ├ "
+                    
+                    # Формируем метку группы
+                    if group_changed:
+                        grp_label = f"👥 <s>{safe_orig_grp}</s> → <b>{safe_new_grp}</b>: "
+                    else:
+                        grp_label = f"👥 {safe_new_grp or 'Весь класс'}: "
+                        
+                    # Добавляем иконку состояния конкретной подгруппы
+                    sub_icon = "❌ " if l.is_cancelled else ("🔄 " if not all_cancelled else "")
+
+                    if l.is_cancelled:
+                        safe_subj = UIRenderer.escape_html(l.original_subject_name or l.subject_name, "Урок")
+                        text += f"{prefix}{sub_icon}{grp_label}<s>{safe_subj}{orig_room_str}</s> ➔ <b>ОТМЕНЕНО</b>\n"
+                    else:
+                        if subject_changed:
+                            text += f"{prefix}{sub_icon}{grp_label}<s>{safe_orig_subj}{orig_room_str}</s> ➔ <b>{safe_new_subj}{new_room_str}</b>\n"
+                        elif room_changed:
+                            text += f"{prefix}{sub_icon}{grp_label}{safe_new_subj} (<s>{safe_orig_room}</s> ➔ <b>{safe_new_room}</b>)\n"
+                        elif teacher_changed:
+                            text += f"{prefix}{sub_icon}{grp_label}{safe_new_subj}{new_room_str} (<s>{safe_orig_teacher}</s> ➔ <b>{safe_new_teacher}</b>)\n"
                         else:
-                            grp_label = f"👥 {safe_new_grp or 'Весь класс'}: "
-                            
-                        # Добавляем иконку состояния конкретной подгруппы
-                        sub_icon = "❌ " if l.is_cancelled else ("🔄 " if not all_cancelled else "")
+                            text += f"{prefix}{sub_icon}{grp_label}{safe_new_subj}{new_room_str}\n"
 
-                        if l.is_cancelled:
-                            safe_subj = UIRenderer.escape_html(l.original_subject_name or l.subject_name, "Урок")
-                            text += f"{prefix}{sub_icon}{grp_label}<s>{safe_subj}{orig_room_str}</s> ➔ <b>ОТМЕНЕНО</b>\n"
-                        else:
-                            if subject_changed:
-                                text += f"{prefix}{sub_icon}{grp_label}<s>{safe_orig_subj}{orig_room_str}</s> ➔ <b>{safe_new_subj}{new_room_str}</b>\n"
-                            elif room_changed:
-                                text += f"{prefix}{sub_icon}{grp_label}{safe_new_subj} (<s>{safe_orig_room}</s> ➔ <b>{safe_new_room}</b>)\n"
-                            elif teacher_changed:
-                                text += f"{prefix}{sub_icon}{grp_label}{safe_new_subj}{new_room_str} (<s>{safe_orig_teacher}</s> ➔ <b>{safe_new_teacher}</b>)\n"
-                            else:
-                                text += f"{prefix}{sub_icon}{grp_label}{safe_new_subj}{new_room_str}\n"
+            text += "\n"
 
-                text += "\n"
+        return text, None
 
-            return text, None
-    
     # ==========================================================
     # Уведомления (MorningLessonDTO)
     # ==========================================================

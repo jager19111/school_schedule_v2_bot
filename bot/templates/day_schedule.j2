@@ -158,11 +158,11 @@
             {%- set orig_grp = l.original_group_name if l.original_group_name and l.original_group_name not in ['Весь класс', 'ALL', 'None', '', '—'] else '' -%}
             {%- set new_grp = l.group_name if l.group_name and l.group_name not in ['Весь класс', 'ALL', 'None', '', '—'] else '' -%}
             
-            {#- Вычисляем дельту изменений -#}
-            {%- set subj_changed = l.original_subject_name and l.original_subject_name != l.subject_name -%}
-            {%- set room_changed = l.original_room_name and l.original_room_name != l.room_name -%}
-            {%- set teacher_changed = l.original_teacher_name and l.original_teacher_name != l.teacher_name -%}
-            {%- set group_changed = (l|attr('group_changed') == true) and orig_grp and new_grp -%}
+            {#- Вычисляем дельту изменений (БЕЗОПАСНАЯ ПРОВЕРКА) -#}
+            {%- set subj_changed = orig_subj != new_subj -%}
+            {%- set room_changed = orig_room != new_room -%}
+            {%- set teacher_changed = orig_teacher != new_teacher -%}
+            {%- set group_changed = orig_grp and new_grp and (orig_grp != new_grp) -%}
             
             {#- Форматируем скобки для кабинетов -#}
             {%- set o_r = ' (' ~ orig_room ~ ')' if orig_room else '' -%}

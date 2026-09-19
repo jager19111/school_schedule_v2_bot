@@ -673,7 +673,6 @@ class MorningLessonDTO:
     display_num: Optional[str] = None
     group_id: Optional[str] = None
 
-
 @dataclass
 class MorningSummaryDTO:
     """
