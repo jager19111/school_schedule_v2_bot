@@ -1,12 +1,8 @@
-"""Формат расписания пользователя: картинка или текст (ТЗ v2.2, раздел 2.2).
+"""Настройки формата расписания: картинка или текст.
 
-Колонка users.prefer_image_schedule добавляется лениво через ALTER TABLE
-(ensure_schema): это позволяет врезать фичу без правки database/migrations.py.
-TECH DEBT: после финального мерджа перенести миграцию в migrations.py
-и оставить здесь только чтение/запись.
-
-Пользователи со слабым интернетом экономят трафик на текстовом формате;
-дефолт — картинка (image-first, раздел 1 ТЗ).
+Схема users.prefer_image_schedule создаётся штатной миграцией
+(database.migrations). ensure_schema оставлен как безопасный compatibility
+check для БД, обновлённых старым этапом 3: он НЕ выполняет ALTER TABLE.
 """
 
 from __future__ import annotations
@@ -25,20 +21,21 @@ class ImagePreferencesService:
         self._db = db
 
     async def ensure_schema(self) -> None:
-        """Добавляет колонку prefer_image_schedule, если её ещё нет. Идемпотентно."""
+        """Проверяет наличие колонки; миграции выполняются до DI-сборки."""
         async with self._db.execute("PRAGMA table_info(users)") as cursor:
             rows = await cursor.fetchall()
-        columns = {row[1] for row in rows} if rows else set()
-        if "prefer_image_schedule" in columns:
+        if not rows:
+            logger.warning("Таблица users не найдена при проверке image preferences")
             return
-        await self._db.execute(
-            "ALTER TABLE users ADD COLUMN prefer_image_schedule INTEGER NOT NULL DEFAULT 1"
-        )
-        await self._db.commit()
-        logger.info("Колонка users.prefer_image_schedule добавлена (ленивая миграция)")
+        columns = {row[1] for row in rows}
+        if "prefer_image_schedule" not in columns:
+            raise RuntimeError(
+                "users.prefer_image_schedule отсутствует: "
+                "запустите database.apply_migrations до сборки сервисов"
+            )
 
     async def prefers_image(self, user_id: int) -> bool:
-        """True = постер-картинка. Неизвестный пользователь — дефолт (True)."""
+        """True = постер-картинка. Неизвестный пользователь — дефолт True."""
         async with self._db.execute(
             "SELECT prefer_image_schedule FROM users WHERE user_id = ?", (user_id,)
         ) as cursor:
