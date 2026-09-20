@@ -1906,6 +1906,7 @@ class UIRenderer:
     # Уведомления (MorningLessonDTO)
     # ==========================================================
 
+
     @staticmethod
     def render_morning_summary(dto: "MorningSummaryDTO") -> str:
         """
