@@ -10,8 +10,10 @@ semaphore и circuit breaker. Пользователь, открывший бо�
 from __future__ import annotations
 
 import logging
-from datetime import date
+from datetime import date, datetime
+from zoneinfo import ZoneInfo
 
+from config import config
 from core.repository.schedule_repository import ScheduleRepository
 from services.image_render.exceptions import ImageRenderError
 from services.image_render.poster_factory import (
@@ -28,6 +30,11 @@ _WEEKDAYS_RU = {
     1: "Понедельник", 2: "Вторник", 3: "Среда", 4: "Четверг",
     5: "Пятница", 6: "Суббота", 7: "Воскресенье",
 }
+
+
+def _today_iso() -> str:
+    """Сегодня в таймзоне школы (нельзя смешивать с UTC-датой сервера)."""
+    return datetime.now(ZoneInfo(config.TIMEZONE)).date().isoformat()
 
 
 def _date_text(date_iso: str) -> str:
@@ -48,10 +55,9 @@ async def warmup_day_posters(
     из кэша/по file_id мгновенно. Ошибки отдельных классов не прерывают
     прогрев; сводка пишется в лог для калибровки констант.
     """
-    from config import config
-
     classes = await schedule_service.get_classes_list()
     version = await get_schedule_version(schedule_repo)
+    date_iso = _today_iso()
 
     rendered = 0
     skipped = 0
@@ -60,7 +66,7 @@ async def warmup_day_posters(
         try:
             day_dto = await schedule_service.get_daily_schedule_for_class(
                 class_id=class_id,
-                date_iso=_today_iso(),
+                date_iso=date_iso,
             )
         except Exception:  # noqa: BLE001 — сбой одного класса не роняет прогрев
             failed += 1
@@ -70,10 +76,10 @@ async def warmup_day_posters(
             skipped += 1
             continue
         request = build_poster_request(
-            request_id=build_global_request_id(version, class_id, "ALL", day_dto.date_iso),
+            request_id=build_global_request_id(version, class_id, "ALL", date_iso),
             dto=day_dto,
             title=f"Расписание · {day_dto.class_name or class_id}",
-            date_text=_date_text(day_dto.date_iso),
+            date_text=_date_text(date_iso),
             width=config.POSTER_WIDTH,
         )
         try:
@@ -91,18 +97,3 @@ async def warmup_day_posters(
         failed,
     )
     return {"rendered": rendered, "skipped": skipped, "failed": failed}
-
-
-def _today_iso() -> str:
-    from services.image_render.warmup import _now_date
-
-    return _now_date().isoformat()
-
-
-def _now_date() -> date:
-    from config import config
-    from zoneinfo import ZoneInfo
-
-    return date.today() if not config.TIMEZONE else __import__("datetime").datetime.now(
-        ZoneInfo(config.TIMEZONE)
-    ).date()
