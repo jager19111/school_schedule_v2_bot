@@ -1,0 +1,194 @@
+{%- filter trim %}
+{# ==========================================================
+   УВЕДОМЛЕНИЯ (MorningSummaryDTO) — перенос render_morning_summary в Jinja2
+   Принцип: показываем расписание "как есть", БЕЗ было/стало.
+   Замены/отмены видны только через иконку и зачёркнутый текст.
+   При отмене пишем предмет, который был до замены — слово "ОТМЕНА" не пишем.
+   Учителей показываем под tg-spoiler. Труд НЕ агрегируем — каждая
+   подгруппа рендерится отдельной строкой со своим учителем/кабинетом.
+   Контекст, который должен прийти в шаблон: dto, date_text
+   (dto — тот же MorningSummaryDTO/MorningLessonDTO, что и в исходном коде;
+   date_text — результат UIRenderer._format_short_date(dto.date_iso), т.к.
+   форматирование дат остаётся на стороне Python).
+   ========================================================== #}
+
+{# ---------- ХЕЛПЕР: список "Весь класс/ALL/None/—" для исключения группы ---------- #}
+{%- set HIDDEN_GROUP_VALUES = ['Весь класс', 'ALL', 'None', '', '—'] -%}
+
+{# ==========================================================
+   МАКРОС: детали урока (аналог _render_teacher_lesson_details /
+   _render_student_lesson_details). Порядок полей и их состав —
+   как в исходном Python-коде, оформление — как в шаблоне расписания
+   (класс — <b>, группа — <i>, кабинет — <b>[...]</b>, учитель — спойлер).
+   ========================================================== #}
+{%- macro lesson_details(lesson, is_teacher) -%}
+    {%- set parts = [] -%}
+    {%- if is_teacher -%}
+        {#- 1. Класс -#}
+        {%- if lesson.class_name %}{% set _ = parts.append(('<b>{}</b>' | safe).format(lesson.class_name)) %}{% endif -%}
+        {#- 2. Группа -#}
+        {%- if lesson.group_name and (lesson.group_name | string | trim) not in HIDDEN_GROUP_VALUES %}{% set _ = parts.append(('<i>{}</i>' | safe).format(lesson.group_name)) %}{% endif -%}
+        {#- 3. Кабинет -#}
+        {%- if lesson.room_name %}{% set _ = parts.append(('<b>[{}]</b>' | safe).format(lesson.room_name)) %}{% endif -%}
+    {%- else -%}
+        {#- ИЗМЕНЕНО: учитель теперь всегда под tg-spoiler -#}
+        {%- if lesson.teacher_name %}{% set _ = parts.append(('<tg-spoiler><i>{}</i></tg-spoiler>' | safe).format(lesson.teacher_name)) %}{% endif -%}
+        {%- if lesson.room_name %}{% set _ = parts.append(('<b>[{}]</b>' | safe).format(lesson.room_name)) %}{% endif -%}
+    {%- endif -%}
+    {{- parts | join(' · ') | safe -}}
+{%- endmacro -%}
+
+{# ==========================================================
+   МАКРОС: вычисление отображаемого предмета для одного урока.
+   При отмене — показываем предмет ДО замены (original_subject_name),
+   слово "ОТМЕНА" больше не пишем нигде.
+   ========================================================== #}
+{%- macro lesson_subject(lesson, is_teacher) -%}
+    {%- if lesson.is_cancelled -%}
+        {{- (lesson.original_subject_name if lesson.original_subject_name else (lesson.subject_name or '—')) | e -}}
+    {%- elif is_teacher and lesson.is_methodological -%}
+        Методический час
+    {%- else -%}
+        {{- (lesson.subject_name or '—') | e -}}
+    {%- endif -%}
+{%- endmacro -%}
+
+{# ==========================================================
+   МАКРОС: иконка для группы уроков (аналог блока if/elif в
+   _render_morning_lesson_group).
+   ========================================================== #}
+{%- macro group_icon(group, is_teacher) -%}
+    {%- if group | rejectattr('is_cancelled') | list | length == 0 -%}❌
+    {%- elif group | selectattr('is_exchange') | list | length > 0 -%}🔄
+    {%- elif group | selectattr('is_extra') | list | length > 0 -%}🎨
+    {%- elif is_teacher and (group | rejectattr('is_methodological') | list | length == 0) -%}🧑‍🏫
+    {%- else -%}📚
+    {%- endif -%}
+{%- endmacro -%}
+
+{# ==========================================================
+   МАКРОС: рендер группы уроков одного слота (номер + время).
+   СЦЕНАРИЙ 1 (len == 1): обычный одиночный урок.
+   СЦЕНАРИЙ 2 (len > 1): расщеплённый урок (несколько подгрупп).
+   ИЗМЕНЕНО: старый "СЦЕНАРИЙ 2" с агрегацией "Труд(технология)" в одну
+   строку убран по требованию — труд больше не объединяем, чтобы было
+   видно учителя каждой подгруппы (он всегда попадает в общий
+   "расщеплённый" сценарий наравне с любым другим предметом).
+   ========================================================== #}
+{%- macro render_lesson_group(group, is_teacher) -%}
+    {%- set base = group[0] -%}
+    {%- set display_num = base.display_num or (base.lesson_num | string if base.lesson_num is not none else '•') -%}
+    {%- set time_text = (base.start_time or '') ~ '–' ~ (base.end_time or '') -%}
+    {%- set icon = group_icon(group, is_teacher) | trim -%}
+
+    {%- if group | length == 1 -%}
+        {# --- СЦЕНАРИЙ 1: обычный урок --- #}
+        {%- set lesson = group[0] -%}
+        {%- set subject = lesson_subject(lesson, is_teacher) | trim -%}
+        {%- if lesson.is_cancelled -%}
+            {#- При отмене выводим только зачёркнутый предмет, без строки с деталями -#}
+            {{ icon }} <b>{{ display_num }}.</b> {{ time_text }} · <s><b>{{ subject }}</b></s>
+        {%- else -%}
+            {%- set details = lesson_details(lesson, is_teacher) | trim | safe -%}
+            {{ icon }} <b>{{ display_num }}.</b> {{ time_text }} · <b>{{ subject }}</b>{% if details %}{{ '\n' }}   ↳ {{ details }}{% endif %}
+        {%- endif -%}
+    {%- else -%}
+        {# --- СЦЕНАРИЙ 2: расщеплённый урок (2+ подгрупп), включая труд --- #}
+        {{ icon }} <b>{{ display_num }}.</b> {{ time_text }}
+        {%- for lesson in group -%}
+            {%- set subject = lesson_subject(lesson, is_teacher) | trim -%}
+            {%- if lesson.is_cancelled -%}
+                {{ '\n' }}   ↳ <s><b>{{ subject }}</b></s>
+            {%- else -%}
+                {%- set details = lesson_details(lesson, is_teacher) | trim | safe -%}
+                {{ '\n' }}   ↳ <b>{{ subject }}</b>{% if details %} · {{ details }}{% endif %}
+            {%- endif -%}
+        {%- endfor -%}
+    {%- endif -%}
+{%- endmacro -%}
+
+{# ==========================================================
+   ХЕДЕР (аналог _render_morning_header)
+   ========================================================== #}
+{%- set is_teacher = dto.origin == "teacher" -%}
+
+{%- if is_teacher -%}
+    {%- set header_text -%}
+👨‍🏫 <b>Расписание учителя на {{ date_text }}</b>
+👤 <b>{{ (dto.teacher_name or "Учитель") | e }}</b>
+    {%- endset -%}
+{%- else -%}
+    {%- set suffix_parts = [] -%}
+    {%- if dto.class_name %}{% set _ = suffix_parts.append(dto.class_name | e) %}{% endif -%}
+    {%- if dto.group_name and (dto.group_name | string | trim) not in HIDDEN_GROUP_VALUES %}{% set _ = suffix_parts.append(dto.group_name | e) %}{% endif -%}
+    {%- set suffix = (' (' ~ (suffix_parts | join(' · ')) ~ ')') | safe if suffix_parts else '' -%}
+
+    {%- set title = ('🌅 <b>Расписание на ' ~ date_text ~ '</b>') | safe -%}
+    {%- if dto.child_name -%}
+        {%- set target_line = ('👤 ' ~ (dto.child_name | e) ~ suffix) | safe -%}
+    {%- elif suffix_parts -%}
+        {%- set target_line = ('🎓 ' ~ (suffix_parts | join(' · '))) | safe -%}
+    {%- else -%}
+        {%- set target_line = '' -%}
+    {%- endif -%}
+
+    {%- set header_text = (title ~ ('\n' ~ target_line if target_line else '')) | safe -%}
+{%- endif -%}
+
+{# ==========================================================
+   СТАТУС ПЕРЕСТАНОВОК (аналог _render_morning_status).
+   ИЗМЕНЕНО: как и в исходном коде, этот блок посчитан, но НЕ включён в
+   финальную сборку — render_morning_summary его тоже не вызывал.
+   Оставлено для совместимости на случай, если понадобится подключить.
+   ========================================================== #}
+{%- set status_text = '' -%}
+{%- if dto.origin == "student" and dto.has_permutation -%}
+    {%- set status_text = '🔀 <i>Есть перестановки в расписании</i>' -%}
+{%- endif -%}
+
+{# ==========================================================
+   СПИСОК УРОКОВ (аналог _render_morning_lessons)
+   Группируем по (lesson_num, start_time), сохраняя порядок первого
+   появления ключа — как defaultdict(list) в Python.
+   ========================================================== #}
+{%- set ns = namespace(done_keys=[], blocks=[]) -%}
+{%- for lesson in dto.lessons -%}
+    {%- set key = (lesson.lesson_num, lesson.start_time) -%}
+    {%- if key not in ns.done_keys -%}
+        {%- set _ = ns.done_keys.append(key) -%}
+        {%- set group = dto.lessons
+            | selectattr('lesson_num', 'equalto', lesson.lesson_num)
+            | selectattr('start_time', 'equalto', lesson.start_time)
+            | list -%}
+        {%- set _ = ns.blocks.append(render_lesson_group(group, is_teacher) | trim | safe) -%}
+    {%- endif -%}
+{%- endfor -%}
+{%- set lessons_text = ns.blocks | join('\n\n') -%}
+
+{# ==========================================================
+   ФУТЕР (аналог _render_morning_footer)
+   ========================================================== #}
+{%- set ns2 = namespace(changes_count=0) -%}
+{%- for lesson in dto.lessons if not lesson.is_extra -%}
+    {%- if lesson.is_exchange or lesson.is_cancelled -%}
+        {%- set ns2.changes_count = ns2.changes_count + 1 -%}
+    {%- endif -%}
+{%- endfor -%}
+
+{%- set footer_text = '' -%}
+{%- if ns2.changes_count > 0 -%}
+    {%- set footer_text -%}
+⚠️ Изменений: {{ ns2.changes_count }}
+Нажмите кнопку ниже для подробностей.
+    {%- endset -%}
+{%- endif -%}
+
+{# ==========================================================
+   ФИНАЛЬНАЯ СБОРКА (аналог "\n\n".join(part for part in (header, lessons, footer) if part))
+   ========================================================== #}
+{%- set final_parts = [] -%}
+{%- if header_text | trim %}{% set _ = final_parts.append(header_text | trim | safe) %}{% endif -%}
+{%- if lessons_text | trim %}{% set _ = final_parts.append(lessons_text | trim | safe) %}{% endif -%}
+{%- if footer_text | trim %}{% set _ = final_parts.append(footer_text | trim | safe) %}{% endif -%}
+{{- (final_parts | join('\n\n')) | trim | safe -}}
+{%- endfilter %}
