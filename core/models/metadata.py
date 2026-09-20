@@ -6,7 +6,7 @@
 
 from dataclasses import dataclass
 from typing import Dict, Mapping
-from core.models.domain import Class, Teacher
+from core.models.domain import Class, Teacher, Room
 
 @dataclass(frozen=True, slots=True)
 class SchoolMetadata:
@@ -19,5 +19,6 @@ class SchoolMetadata:
     classes: Mapping[str, Class]
     groups: Mapping[str, str]
     teachers: Mapping[str, Teacher]
+    rooms: dict[str, 'Room']
     class_shift: Mapping[str, Mapping[str, int]]
     second_relative: bool

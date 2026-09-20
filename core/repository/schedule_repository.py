@@ -600,6 +600,7 @@ class ScheduleRepository(BaseRepository):
                 classes=normalizer.classes,
                 groups=nika_data.get("CLASSGROUPS", {}),
                 teachers=normalizer.teachers,
+                rooms=normalizer.rooms,
                 class_shift=nika_data.get("CLASS_SHIFT", {}),
                 second_relative=bool(nika_data.get("SECOND_RELATIVE", False)),
             )
@@ -664,6 +665,28 @@ class ScheduleRepository(BaseRepository):
         )
         return int(row["cnt"]) if row else 0
 
+    async def get_lessons_for_room(self, room_id: str, date_iso: str) -> list[LessonInstance]:
+        """Расписание конкретного кабинета на указанную дату."""
+        rows = await self._fetch_all(
+            """
+            SELECT * FROM schedule_cache
+            WHERE room_id = ? AND date = ? AND is_cancelled = 0
+            ORDER BY start_time, lesson_num, id
+            """,
+            (room_id, date_iso),
+        )
+        return [self._row_to_lesson(r) for r in rows]
+
+    async def get_active_lessons_for_date(self, date_iso: str) -> list[LessonInstance]:
+        """Все неудаленные уроки школы на день (нужно сервису для поиска пустых кабинетов)."""
+        rows = await self._fetch_all(
+            """
+            SELECT * FROM schedule_cache
+            WHERE date = ? AND is_cancelled = 0 AND room_id IS NOT NULL
+            """,
+            (date_iso,)
+        )
+        return [self._row_to_lesson(r) for r in rows]
 
     # ==========================================================
     # NIKA source updates

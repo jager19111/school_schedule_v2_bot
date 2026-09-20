@@ -44,7 +44,7 @@ from core.models.dto import (
     NikaSourceHealthDTO,
     SchoolDictionariesDTO,
     TeacherListDTO,
-    WeekSummaryDTO,
+    WeekSummaryDTO, RoomListDTO
 )
 from core.models.metadata import SchoolMetadata
 from core.repository.schedule_repository import ScheduleRepository
@@ -478,6 +478,120 @@ class ScheduleService:
             },
         )
 
+    # ==========================================================
+    # Поиск кабинетов
+    # ==========================================================
+
+    async def get_rooms_list(self) -> RoomListDTO:
+        """Справочник кабинетов (DTO для UI)."""
+        metadata = await self.schedule_repo.get_metadata()
+        rooms_dict = {str(k): room_obj.name for k, room_obj in metadata.rooms.items()}
+        return RoomListDTO(rooms=rooms_dict)
+
+    async def get_room_name(self, room_id: str, fallback: str = "Кабинет") -> str:
+        """Безопасное получение имени кабинета."""
+        metadata = await self.schedule_repo.get_metadata()
+        room_obj = metadata.rooms.get(str(room_id))
+        return room_obj.name if room_obj else fallback
+
+    async def get_currently_free_rooms(self) -> tuple[str, dict[str, str]]:
+        """
+        Вычисляет свободные кабинеты на текущую минуту.
+        Возвращает: (время, dict[room_id, room_name]) для генерации кнопок.
+        """
+        now = self.time_service.get_now_base()
+        date_iso = now.date().isoformat()
+        current_time_str = now.strftime("%H:%M")
+        current_time_obj = now.time()
+
+        metadata = await self.schedule_repo.get_metadata()
+        lessons_today = await self.schedule_repo.get_active_lessons_for_date(date_iso)
+        
+        occupied_ids = set()
+        for l in lessons_today:
+            if not l.start_time or not l.end_time:
+                continue
+            try:
+                start_t = self._parse_hhmm(l.start_time)
+                end_t = self._parse_hhmm(l.end_time)
+                if start_t <= current_time_obj <= end_t:
+                    occupied_ids.add(str(l.room_id))
+            except ValueError:
+                pass
+
+        free_rooms = {}
+        for r_id, room_obj in metadata.rooms.items():
+            if str(r_id) not in occupied_ids and room_obj.name.strip() and room_obj.name != "—":
+                free_rooms[str(r_id)] = room_obj.name
+
+        # Сортируем по названию кабинета
+        sorted_free_rooms = {k: v for k, v in sorted(free_rooms.items(), key=lambda item: item[1])}
+        return current_time_str, sorted_free_rooms
+
+    async def get_daily_schedule_for_room(self, room_id: str, date_iso: str) -> DayScheduleDTO:
+        """Сборка расписания кабинета в чистый DTO с дедубликацией подгрупп."""
+        lessons = await self.schedule_repo.get_lessons_for_room(room_id, date_iso)
+        day_permutation = self.detect_day_permutation(lessons)
+
+        # 1. Получаем сырые DTO
+        raw_dtos = LessonMapper.to_dto_list(lessons, day_permutation=day_permutation)
+
+        # 2. Дедубликация: сливаем подгруппы одного класса (без учета названия группы)
+        unique_dtos = []
+        seen = set()
+        for dto in raw_dtos:
+            # Уникальная сигнатура урока в кабинете
+            sig = (dto.start_time, dto.end_time, dto.subject_name, dto.class_name, dto.teacher_name)
+            if sig not in seen:
+                seen.add(sig)
+                unique_dtos.append(dto)
+
+        # 3. Сортировка по времени и номеру
+        unique_dtos.sort(key=self._sort_key)
+
+        # 4. Обогащение номерами уроков (со звездочками)
+        metadata = await self.schedule_repo.get_metadata()
+        self._enrich_display_numbers_dtos(unique_dtos, metadata)
+
+        # Безопасное получение названия кабинета
+        room_obj = metadata.rooms.get(str(room_id))
+        room_name = room_obj.name if room_obj else str(room_id)
+
+        return DayScheduleDTO(
+            date_iso=date_iso,
+            lessons=unique_dtos,
+            has_permutation=day_permutation,
+            origin="class",  # Системный origin
+            class_name=room_name
+        )
+
+    async def get_smart_room_target_date(self, room_id: str) -> str:
+        """Находит ближайший день с уроками для кабинета (горизонт 8 дней)."""
+        now = self.time_service.get_now_base()
+        today = now.date()
+
+        for offset in range(8):
+            candidate_date = today + timedelta(days=offset)
+            candidate_iso = candidate_date.isoformat()
+            lessons = await self.schedule_repo.get_lessons_for_room(room_id, candidate_iso)
+
+            if not lessons:
+                continue
+            if candidate_date != today:
+                return candidate_iso
+
+            end_times = []
+            for l in lessons:
+                if l.end_time:
+                    try:
+                        end_times.append(self._parse_hhmm(l.end_time))
+                    except ValueError:
+                        pass
+
+            if end_times and now.time() <= max(end_times):
+                return candidate_iso
+
+        return today.isoformat()
     # ==========================================================
     # Smart date: возвращает ГОТОВЫЙ день (без повторного запроса)
     # ==========================================================

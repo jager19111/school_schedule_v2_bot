@@ -1264,7 +1264,7 @@ class UIRenderer:
 # Меню
     @staticmethod
     def render_school_search_menu() -> str:
-        return "🏫 <b>Поиск по школе</b>\n\nВыберите нужный раздел:"
+        return "🏫 <b>Поиск по школе</b>\n\nВыберите нужный справочник:"
 
     @staticmethod
     def render_family_management_menu() -> str:
@@ -2832,3 +2832,96 @@ class UIRenderer:
             "Попробуйте повторить действие ещё раз. "
             "Если повторяется — /start."
         )
+
+# ==============================================================
+# Rooms search
+# ==============================================================
+
+ 
+    @staticmethod
+    def render_rooms_main_menu() -> str:
+        return "🚪 <b>Поиск кабинетов</b>\n\nВыберите нужный режим:"
+
+    @staticmethod
+    def render_free_rooms_now(time_str: str, free_rooms: dict[str, str]) -> str:
+        if not free_rooms:
+            return f"🔴 <b>Время {time_str}:</b> Сейчас все кабинеты заняты (или школа закрыта)."
+            
+        rooms_text = ", ".join(free_rooms.values())
+        return (
+            f"🟢 <b>Свободные кабинеты (на {time_str}):</b>\n\n"
+            f"{rooms_text}\n\n"
+            f"👇 <i>Нажмите на кабинет, чтобы проверить его занятость до конца дня:</i>"
+        )
+        
+    @staticmethod
+    def render_search_room_select() -> str:
+        return "🚪 <b>Выберите кабинет:</b>"
+
+    @staticmethod
+    def render_room_day_schedule(day_dto: 'DayScheduleDTO', target_date_str: str) -> str:
+        """Формат: [Урок] Время | Предмет · Класс · Учитель с показом свободных окон"""
+        r_name = UIRenderer.escape_html(day_dto.class_name)
+        lines = [f"🚪 <b>Занятость: {r_name} ({target_date_str})</b>\n"]
+        
+        if not day_dto.lessons:
+            lines.append("🏖 В этот день кабинет свободен!")
+            return "\n".join(lines)
+
+        # 1. Группируем уроки по системному номеру для поиска "окон"
+        lessons_by_num = {}
+        for l in day_dto.lessons:
+            num = l.lesson_num if l.lesson_num is not None else 99
+            lessons_by_num.setdefault(num, []).append(l)
+
+        # 2. Определяем диапазон: гарантированно с 1 по 12 урок
+        # Если есть нулевой или 13+ уроки, границы расширятся автоматически
+        known_nums = [n for n in lessons_by_num.keys() if n != 99]
+        start_num = min(known_nums + [1])
+        end_num = max(known_nums + [12])
+
+        # 3. Выводим сетку уроков
+        for current_num in range(start_num, end_num + 1):
+            if current_num not in lessons_by_num:
+                # Свободное окно
+                lines.append(f"📗 <b>{current_num}.</b> <i>Свободно</i>")
+            else:
+                # Занятый урок (может быть несколько подгрупп)
+                for l in lessons_by_num[current_num]:
+                    num_str = f"{l.lesson_num or '•'}."
+                    
+                    # Моноширинное время с ведущим нулем (8:15 -> 08:15)
+                    start = l.start_time.zfill(5) if l.start_time else "00:00"
+                    end = l.end_time.zfill(5) if l.end_time else "00:00"
+                    time_str = f"<code>{start}–{end}</code>"
+                    
+                    subj = UIRenderer.escape_html(l.subject_name)
+                    
+                    parts = [f"<b>{subj}</b>"]
+                    if l.class_name:
+                        parts.append(UIRenderer.escape_html(l.class_name))
+                    if l.teacher_name and l.teacher_name != "—":
+                        parts.append(f"<i>{UIRenderer.escape_html(l.teacher_name)}</i>")
+                    
+                    core_info = " · ".join(parts)
+                    lines.append(f"🔸 <b>{num_str}</b> {time_str} | {core_info}")
+
+        # 4. Обработка уроков без номера (например, баги расписания или доп. занятия)
+        if 99 in lessons_by_num:
+            for l in lessons_by_num[99]:
+                start = l.start_time.zfill(5) if l.start_time else "00:00"
+                end = l.end_time.zfill(5) if l.end_time else "00:00"
+                time_str = f"<code>{start}–{end}</code>"
+                
+                subj = UIRenderer.escape_html(l.subject_name)
+                
+                parts = [f"<b>{subj}</b>"]
+                if l.class_name:
+                    parts.append(UIRenderer.escape_html(l.class_name))
+                if l.teacher_name and l.teacher_name != "—":
+                    parts.append(f"<i>{UIRenderer.escape_html(l.teacher_name)}</i>")
+                
+                core_info = " · ".join(parts)
+                lines.append(f"🔹 <b>•.</b> {time_str} | {core_info}")
+                
+        return "\n".join(lines)

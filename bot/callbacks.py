@@ -86,6 +86,11 @@ SEARCH_TEACHERS = "qt"
 
 STUDENT_ADD = "sa"
 
+# Rooms search
+SEARCH_ROOMS_MENU = "search:rooms_menu"
+SEARCH_ROOMS_GRID = "search:rooms_grid"
+FREE_ROOMS_NOW = "search:free_now"
+
 # ==============================================================
 # Registration / onboarding
 # ==============================================================
@@ -396,6 +401,20 @@ class SearchClassFullWeekCD(CallbackData, prefix="qcf"):
 
 class SearchTeacherFullWeekCD(CallbackData, prefix="qtf"):
     teacher_id: str
+    week_start_iso: str
+
+# ==============================================================
+# Rooms search
+# ==============================================================
+class SearchRoomCD(CallbackData, prefix="srch_rm"):
+    room_id: str
+
+class SearchRoomDayCD(CallbackData, prefix="sch_r_d"): # <-- ДОБАВЛЕНО
+    room_id: str
+    date_iso: str
+
+class SearchRoomWeekCD(CallbackData, prefix="sch_r_w"):
+    room_id: str
     week_start_iso: str
 
 # ==============================================================

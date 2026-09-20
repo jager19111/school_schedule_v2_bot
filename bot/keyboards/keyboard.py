@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone, date
 from bot import callbacks
 from services.help_service import HelpLinksDTO
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
-from core.models.dto import ClassListDTO, GroupListDTO, UserProfileDTO, TeacherListDTO, FamilyMemberDTO, FamilyInviteDTO, ScheduleWatchTargetDTO, ScheduleViewTargetDTO, StudentProfileDTO, ParentStudentNotificationSettingsDTO, AdultStudentExtraClassesPermissionDTO, StudentTelegramSettingsDTO, StudentProfileViewModel, ScheduleTargetViewModel, WatchTargetViewModel
+from core.models.dto import ClassListDTO, GroupListDTO, UserProfileDTO, TeacherListDTO, FamilyMemberDTO, FamilyInviteDTO, RoomListDTO, ParentStudentNotificationSettingsDTO, AdultStudentExtraClassesPermissionDTO, StudentTelegramSettingsDTO, StudentProfileViewModel, ScheduleTargetViewModel, WatchTargetViewModel
 
 class Keyboards:
 
@@ -112,8 +112,12 @@ class Keyboards:
     @staticmethod
     def get_school_search_kb() -> InlineKeyboardMarkup:
         """Меню поиска по школе."""
-        return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text='🎓 Расписание классов', callback_data=callbacks.SEARCH_CLASSES)], [InlineKeyboardButton(text='👨\u200d🏫 Расписание учителей', callback_data=callbacks.SEARCH_TEACHERS)]])
-
+        return InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🎓 Расписание классов", callback_data=callbacks.SEARCH_CLASSES)],
+            [InlineKeyboardButton(text="👨‍🏫 Расписание учителей", callback_data=callbacks.SEARCH_TEACHERS)],
+            [InlineKeyboardButton(text="🚪 Занятость кабинетов", callback_data=callbacks.SEARCH_ROOMS_MENU)]
+        ])
+        
     @staticmethod
     def get_parent_settings_kb(user_dto: 'UserProfileDTO') -> InlineKeyboardMarkup:
         """Настройки родителя."""
@@ -335,9 +339,18 @@ class Keyboards:
         is_full: bool = False,
         *,
         has_changes: bool = False,
-        date_iso: str | None = None
+        date_iso: str | None = None,
+        is_room: bool = False
     ) -> InlineKeyboardMarkup:
         start_date = datetime.fromisoformat(week_start_iso).date()
+        # Определяем префиксы и кнопку назад кабинетов
+        if is_room:
+            back_cb = callbacks.SEARCH_ROOMS_GRID
+        elif is_teacher:
+            back_cb = callbacks.SEARCH_TEACHERS
+        else:
+            back_cb = callbacks.SEARCH_CLASSES
+            
         days = []
         for i in range(6):
             day_date_obj = start_date + timedelta(days=i)
@@ -345,7 +358,10 @@ class Keyboards:
             day_name = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'][i]
             btn_text = f"{day_name} {day_date_obj.strftime('%d.%m')}"
             
-            if is_teacher:
+            # Маршрутизация кнопок дней
+            if is_room:
+                day_cb = callbacks.SearchRoomDayCD(room_id=target_id, date_iso=day_date_iso).pack()
+            elif is_teacher:
                 day_cb = callbacks.SearchTeacherDayCD(teacher_id=target_id, date_iso=day_date_iso).pack()
             else:
                 day_cb = callbacks.SearchClassDayCD(class_id=target_id, date_iso=day_date_iso).pack()
@@ -376,34 +392,41 @@ class Keyboards:
             buttons.append([InlineKeyboardButton(text="🔄 Изменения", callback_data=chg_cb)])
         # ---------------------------------------------
         
-        if not is_full:
-            if is_teacher:
-                fw_cb = callbacks.SearchTeacherFullWeekCD(teacher_id=target_id, week_start_iso=week_start_iso).pack()
+        # 4. Навигация по неделям (детальная сводка скрыта для кабинетов)
+        if not is_room:
+            if not is_full:
+                if is_teacher:
+                    fw_cb = callbacks.SearchTeacherFullWeekCD(teacher_id=target_id, week_start_iso=week_start_iso).pack()
+                else:
+                    fw_cb = callbacks.SearchClassFullWeekCD(class_id=target_id, week_start_iso=week_start_iso).pack()
+                buttons.append([InlineKeyboardButton(text='📋 Все дни подробно', callback_data=fw_cb)])
             else:
-                fw_cb = callbacks.SearchClassFullWeekCD(class_id=target_id, week_start_iso=week_start_iso).pack()
-            buttons.append([InlineKeyboardButton(text='📋 Все дни подробно', callback_data=fw_cb)])
-        else:
-            if is_teacher:
-                w_cb = callbacks.SearchTeacherWeekCD(teacher_id=target_id, week_start_iso=week_start_iso).pack()
-            else:
-                w_cb = callbacks.SearchClassWeekCD(class_id=target_id, week_start_iso=week_start_iso).pack()
-            buttons.append([InlineKeyboardButton(text='🗓 По дням', callback_data=w_cb)])
-            
+                if is_teacher:
+                    w_cb = callbacks.SearchTeacherWeekCD(teacher_id=target_id, week_start_iso=week_start_iso).pack()
+                else:
+                    w_cb = callbacks.SearchClassWeekCD(class_id=target_id, week_start_iso=week_start_iso).pack()
+                buttons.append([InlineKeyboardButton(text='🗓 По дням', callback_data=w_cb)])
+
+        # Пагинация
         prev_week = (start_date - timedelta(days=7)).isoformat()
         next_week = (start_date + timedelta(days=7)).isoformat()
         
-        if is_teacher:
+        if is_room:
+            prev_cb = callbacks.SearchRoomWeekCD(room_id=target_id, week_start_iso=prev_week).pack()
+            next_cb = callbacks.SearchRoomWeekCD(room_id=target_id, week_start_iso=next_week).pack()
+        elif is_teacher:
             prev_cb = callbacks.SearchTeacherWeekCD(teacher_id=target_id, week_start_iso=prev_week).pack()
             next_cb = callbacks.SearchTeacherWeekCD(teacher_id=target_id, week_start_iso=next_week).pack()
         else:
             prev_cb = callbacks.SearchClassWeekCD(class_id=target_id, week_start_iso=prev_week).pack()
             next_cb = callbacks.SearchClassWeekCD(class_id=target_id, week_start_iso=next_week).pack()
             
-        buttons.append([InlineKeyboardButton(text='⬅️ Пред. нед', callback_data=prev_cb), InlineKeyboardButton(text='След. нед ➡️', callback_data=next_cb)])
+        buttons.append([
+            InlineKeyboardButton(text='⬅️ Пред. нед', callback_data=prev_cb), 
+            InlineKeyboardButton(text='След. нед ➡️', callback_data=next_cb)
+        ])
         
-        back_cb = callbacks.SEARCH_TEACHERS if is_teacher else callbacks.SEARCH_CLASSES
         buttons.append([InlineKeyboardButton(text='⬅️ Назад к списку', callback_data=back_cb)])
-        
         return InlineKeyboardMarkup(inline_keyboard=buttons)
 
     @staticmethod
@@ -1044,3 +1067,47 @@ class Keyboards:
                 ]
             ]
         )
+        
+        
+     # Поиск кабинета   
+    @staticmethod
+    def get_search_rooms_menu_kb() -> InlineKeyboardMarkup:
+        return InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🟢 Свободные прямо сейчас", callback_data=callbacks.FREE_ROOMS_NOW)],
+            [InlineKeyboardButton(text="🔍 Расписание конкретного кабинета", callback_data=callbacks.SEARCH_ROOMS_GRID)],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data=callbacks.SEARCH_BACK)]
+        ])
+
+    @staticmethod
+    def get_search_rooms_grid_kb(dto: 'RoomListDTO') -> InlineKeyboardMarkup:
+        buttons = []
+        row = []
+        sorted_rooms = sorted(dto.rooms.items(), key=lambda x: x[1])
+        for r_id, r_name in sorted_rooms:
+            if r_name == "—" or not r_name.strip(): continue
+            row.append(InlineKeyboardButton(text=r_name, callback_data=callbacks.SearchRoomCD(room_id=r_id).pack()))
+            if len(row) == 4:
+                buttons.append(row)
+                row = []
+        if row: buttons.append(row)
+        buttons.append([InlineKeyboardButton(text="⬅️ Назад", callback_data=callbacks.SEARCH_ROOMS_MENU)])
+        return InlineKeyboardMarkup(inline_keyboard=buttons)
+    
+    @staticmethod
+    def get_free_rooms_now_kb(free_rooms: dict[str, str]) -> InlineKeyboardMarkup:
+        """Сетка кнопок свободных кабинетов для быстрого перехода к их расписанию."""
+        buttons = []
+        row = []
+        for r_id, r_name in free_rooms.items():
+            # Используем уже существующий коллбэк!
+            row.append(InlineKeyboardButton(text=r_name, callback_data=callbacks.SearchRoomCD(room_id=r_id).pack()))
+            if len(row) == 4:
+                buttons.append(row)
+                row = []
+        if row: 
+            buttons.append(row)
+            
+        buttons.append([InlineKeyboardButton(text="🔄 Обновить", callback_data=callbacks.FREE_ROOMS_NOW)])
+        buttons.append([InlineKeyboardButton(text="⬅️ Назад", callback_data=callbacks.SEARCH_ROOMS_MENU)])
+        
+        return InlineKeyboardMarkup(inline_keyboard=buttons)

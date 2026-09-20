@@ -33,6 +33,9 @@ class ClassListDTO:
 class GroupListDTO:
     groups: Dict[str, str]  # id -> name
 
+@dataclass
+class RoomListDTO:
+    rooms: dict[str, str]  # id -> name
 
 @dataclass(frozen=True, slots=True)
 class TeacherListDTO:
