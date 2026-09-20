@@ -1,11 +1,13 @@
 """Тесты штатной миграции users.prefer_image_schedule."""
 
-import asyncio
 import os
 import sqlite3
 import tempfile
 
-from database.migrations import apply_migrations_sync
+from database.migrations import (
+    _add_image_schedule_preference,
+    apply_migrations_sync,
+)
 
 
 def _create_minimal_users_db(path: str, with_column: bool = False) -> None:
@@ -26,16 +28,10 @@ def test_prefer_image_migration_adds_column_with_default_one() -> None:
         path = os.path.join(tmp, "test.db")
         _create_minimal_users_db(path)
 
-        applied = apply_migrations_sync(path)
-        assert "users.prefer_image_schedule" in applied
-
         conn = sqlite3.connect(path)
         try:
-            column = conn.execute(
-                "PRAGMA table_info(users)"
-            ).fetchall()
-            names = {row[1] for row in column}
-            assert "prefer_image_schedule" in names
+            assert _add_image_schedule_preference(conn) == "users.prefer_image_schedule"
+            conn.commit()
             value = conn.execute(
                 "SELECT prefer_image_schedule FROM users WHERE user_id = 1"
             ).fetchone()[0]
@@ -47,14 +43,11 @@ def test_prefer_image_migration_adds_column_with_default_one() -> None:
 def test_prefer_image_migration_is_idempotent() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         path = os.path.join(tmp, "test.db")
-        _create_minimal_users_db(path, with_column=True)
+        _create_minimal_users_db(path)
 
-        # Миграции до image preference на минимальной БД не имеют таблиц
-        # family_invites/schedule_cache, поэтому проверяем саму миграцию напрямую.
         conn = sqlite3.connect(path)
         try:
-            from database.migrations import _add_image_schedule_preference
-
+            assert _add_image_schedule_preference(conn) == "users.prefer_image_schedule"
             assert _add_image_schedule_preference(conn) is None
             conn.commit()
         finally:
@@ -67,12 +60,35 @@ def test_prefer_image_migration_rolls_back_on_failure() -> None:
         _create_minimal_users_db(path)
         conn = sqlite3.connect(path)
         try:
-            from database.migrations import _add_image_schedule_preference
-
             _add_image_schedule_preference(conn)
             conn.execute("INSERT INTO users (user_id, name) VALUES (2, 'new')")
             conn.rollback()
             names = {row[1] for row in conn.execute("PRAGMA table_info(users)")}
             assert "prefer_image_schedule" not in names
+        finally:
+            conn.close()
+
+
+def test_full_migration_pipeline_adds_preference_when_legacy_tables_exist() -> None:
+    """Проверяет именно apply_migrations_sync на минимальной legacy-схеме."""
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "test.db")
+        conn = sqlite3.connect(path)
+        try:
+            conn.execute("CREATE TABLE users (user_id INTEGER PRIMARY KEY, name TEXT)")
+            conn.execute("CREATE TABLE family_invites (id INTEGER PRIMARY KEY)")
+            conn.execute("CREATE TABLE schedule_cache (id INTEGER PRIMARY KEY)")
+            conn.execute("INSERT INTO users (user_id, name) VALUES (1, 'existing')")
+            conn.commit()
+        finally:
+            conn.close()
+
+        applied = apply_migrations_sync(path)
+        assert "users.prefer_image_schedule" in applied
+
+        conn = sqlite3.connect(path)
+        try:
+            names = {row[1] for row in conn.execute("PRAGMA table_info(users)")}
+            assert "prefer_image_schedule" in names
         finally:
             conn.close()
