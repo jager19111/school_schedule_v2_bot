@@ -68,6 +68,7 @@
 
 {# ==========================================================
    МАКРОС: рендер группы уроков одного слота (номер + время).
+   СЦЕНАРИЙ 0: Дополнительные занятия (Без номера, с блочной цитатой).
    СЦЕНАРИЙ 1 (len == 1): обычный одиночный урок.
    СЦЕНАРИЙ 2 (len > 1): расщеплённый урок (несколько подгрупп).
    ИЗМЕНЕНО: старый "СЦЕНАРИЙ 2" с агрегацией "Труд(технология)" в одну
@@ -81,7 +82,17 @@
     {%- set time_text = (base.start_time or '') ~ '–' ~ (base.end_time or '') -%}
     {%- set icon = group_icon(group, is_teacher) | trim -%}
 
-    {%- if group | length == 1 -%}
+    {%- if base.is_extra -%}
+        {# --- СЦЕНАРИЙ 0: ДОП. ЗАНЯТИЯ --- #}
+        {%- for ex in group -%}
+            🎨 <code>{{ (ex.start_time or '') ~ '–' ~ (ex.end_time or '') }}</code>{{ '\n' }}
+            <blockquote>
+            <b>{{ (ex.subject_name or 'Занятие') | e }}</b>
+            {%- if ex.room_name and ex.room_name != "—" %}{{ '\n' }} ➔ <i>{{ ex.room_name | e }}</i>{% endif -%}
+            </blockquote>
+            {%- if not loop.last %}{{ '\n' }}{% endif -%}
+        {%- endfor -%}
+    {%- elif group | length == 1 -%}
         {# --- СЦЕНАРИЙ 1: обычный урок --- #}
         {%- set lesson = group[0] -%}
         {%- set subject = lesson_subject(lesson, is_teacher) | trim -%}
