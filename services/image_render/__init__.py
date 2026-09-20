@@ -9,7 +9,9 @@
 - ImageGenerationService — кэши L1/L2, single-flight, semaphore,
   rate limit, circuit breaker, общий таймаут;
 - poster_factory — DayScheduleDTO -> PosterRequest + версионированные
-  ключи кэша (schedule_version).
+  ключи кэша (schedule_version);
+- version — версия расписания (semantic-хэш NIKA) для ключей кэша;
+- setup/warmup — DI-сборка и утренний прогрев (этап 3).
 """
 
 from services.image_render.circuit_breaker import CircuitBreaker, CircuitState
@@ -36,6 +38,7 @@ from services.image_render.poster_factory import (
 from services.image_render.rate_limiter import SlidingWindowRateLimiter
 from services.image_render.service import ImageGenerationService, ImageServiceStats
 from services.image_render.settings import ImageRenderSettings
+from services.image_render.version import get_schedule_version
 
 __all__ = [
     "CircuitBreaker",
@@ -58,4 +61,5 @@ __all__ = [
     "build_personal_request_id",
     "build_poster_request",
     "extra_classes_hash",
+    "get_schedule_version",
 ]

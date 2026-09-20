@@ -1,41 +1,3 @@
-# main.py
-## РЕШЁННЫЕ ПРОБЛЕМЫ:
-#
-# 1. I/O (Задача 1.1): создаётся ЕДИНОЕ постоянное подключение к БД
-#    (db_connection = await database.connect()) и передаётся ВО ВСЕ
-#    репозитории вместо строки db_path. Раньше каждый запрос каждого
-#    репозитория открывал/закрывал собственное aiosqlite-соединение —
-#    при сотнях клиентов и 4 фоновых джобах это основной источник
-#    лишнего file I/O и SQLITE_BUSY. В finally — гарантированное
-#    закрытие соединения при остановке бота.
-#
-# 2. Дополнительно (best practice): ночная задача PRAGMA wal_checkpoint(TRUNCATE),
-#    чтобы -wal файл не рос бесконечно при постоянной записи.
-#
-# 3. Мелкий фикс: убран продублированный
-#    "except asyncio.CancelledError: raise" в refresh_schedule_cache.
-# ЭТАП 2. СЕТЕВОЙ СЛОЙ (Задача 2.1): персистентная aiohttp-сессия.
-#
-# ИЗМЕНЕНИЯ:
-# - В main() создаётся ЕДИНАЯ http_session на весь жизненный цикл:
-#     tcp-коннектор с keep-alive, лимитом пула (хост один, 5 слотов
-#     с запасом), кешем DNS на 5 минут (иначе резолвинг при каждом
-#     соединении) и очисткой закрытых SSL-сокетов (против
-#     ResourceWarning). Session-таймаут 15 сек — безопасный дефолт;
-#     probe() и fetch_js_content() переопределяют его per-request
-#     своими бюджетами (15с и 30с соответственно).
-# - http_session передаётся в ScheduleRepository -> ScheduleFetcher.
-#   Раньше каждый probe() (раз в NIKA_REFRESH_INTERVAL_MINUTES)
-#   поднимал новый TCP+TLS-сокет и закрывал его.
-# - В finally — гарантированное закрытие сессии (с проверкой closed),
-#   в порядке: scheduler -> БД -> HTTP-сессия -> bot.session.
-#
-# ПРОШЛЫЕ ЭТАПЫ (без изменений):
-# - Задача 1.1: единое shared-подключение SQLite на весь жизненный цикл.
-# - Дополнительно: ночная задача PRAGMA wal_checkpoint(TRUNCATE).
-# - Фиксы Этапа 2 сервисного слоя: notification_service в workflow_data
-#   (для админ-команды /stress).
-
 import asyncio
 import datetime
 import logging
@@ -71,6 +33,8 @@ from services.admin_service import AdminService
 from services.watch_targets_service import WatchTargetsService
 from services.students_service import StudentsService
 from services.help_service import HelpService
+from services.image_render.setup import setup_image_generation
+from services.image_render.warmup import warmup_day_posters
 from database.migrations import apply_migrations
 
 from bot.utils.ui_renderer import UIRenderer
@@ -97,7 +61,8 @@ from bot.handlers import (
     schedule_teacher,
     help,
     fallback,
-    debug_notifications
+    debug_notifications,
+    schedule_poster,
 )
 
 logging.basicConfig(
@@ -267,6 +232,10 @@ async def main():
             command="help",
             description="Справка и возможности бота",
         ),
+        BotCommand(
+            command="format",
+            description="Формат расписания: картинка или текст",
+        ),
 #        BotCommand(
 #            command="support",
 #            description="Связь с автором и поддержка проекта",
@@ -328,6 +297,9 @@ async def main():
     )
 
     scheduler: AsyncIOScheduler | None = None
+    # Этап 3 (ТЗ v2.2): сервис постеров. None до успешной сборки —
+    # finally-блок обязан переживать любой сценарий падения main.
+    image_service = None
 
     try:
         # 3. Сервисы времени
@@ -399,11 +371,31 @@ async def main():
         help_service = HelpService(public_help_url=config.HELP_PUBLIC_URL, author_contact_url=config.AUTHOR_CONTACT_URL, donation_url=config.DONATION_URL)
         notification_delivery_cleanup_job = NotificationDeliveryCleanupJob(notification_repo=notification_repo, time_service=time_service, retention_days=35)
 
+        # =====================================================================
+        # Этап 3 (ТЗ v2.2): генерация PNG-постеров расписания.
+        #
+        # setup_image_generation собирает:
+        # - ImageGenerationService: кэши L1/L2 + file_id, single-flight,
+        #   semaphore=2, rate limit 10/3 мин, circuit breaker, общий таймаут;
+        # - ImagePreferencesService: формат «картинка/текст» юзера
+        #   (лениво добавляет колонку users.prefer_image_schedule).
+        #
+        # Браузер стартует ЛЕНИВО — при первом рендере, а не сейчас:
+        # бот не платит RAM за неиспользуемую графику. При
+        # IMAGE_RENDER_ENGINE=pillow браузер не нужен вовсе.
+        # =====================================================================
+        image_service, image_prefs = await setup_image_generation(db_connection)
+
         # 6. Регистрация роутеров команд
         dp.include_router(registration.router)
         dp.include_router(help.router)
         # Teacher router содержит только teacher_sched:* callbacks.
         dp.include_router(schedule_teacher.router)
+
+        # Image-first расписание (ТЗ v2.2): перехватывает навигацию по дням
+        # ТОЛЬКО при ENABLE_IMAGE_GENERATION=True (иначе апдейт безусловно
+        # проходит в schedule_child ниже). Обязан стоять ВЫШЕ schedule_child.
+        dp.include_router(schedule_poster.router)
 
         # Единственная message entry point:
         # «📅 Моё расписание» для child / parent / observer / teacher.
@@ -444,6 +436,9 @@ async def main():
             notification_service=notification_service, # Для теста из админ хендлера
             antiflood=antiflood_middleware,
             config=config,
+            # Этап 3 (ТЗ v2.2): постеры расписания
+            image_service=image_service,
+            image_prefs=image_prefs,
         )
 
         # 7. Первоначальная синхронизация кэша при старте
@@ -523,7 +518,6 @@ async def main():
             id="upcoming_changes",
             replace_existing=True,
             coalesce=True,
-            max_instances=1,
             misfire_grace_time=300,
         )
         
@@ -567,6 +561,31 @@ async def main():
             misfire_grace_time=3600,
         )
 
+        # Этап 3 (ТЗ v2.2): утренний прогрев кэша постеров в 06:30.
+        #
+        # Системная задача: рендеры идут мимо per-user rate limiter
+        # (user_id=None), но через общий semaphore и circuit breaker.
+        # Осознанный трейд-офф v1: пользователь, открывший бот до
+        # завершения прогрева, встанет в общую очередь за системными
+        # рендерами (раннее утро, трафик минимален). Утренний пик 7:30
+        # будет отдаваться из кэша/по file_id мгновенно.
+        scheduler.add_job(
+            warmup_day_posters,
+            trigger="cron",
+            hour=6,
+            minute=30,
+            kwargs={
+                "image_service": image_service,
+                "schedule_service": schedule_service,
+                "schedule_repo": schedule_repo,
+            },
+            id="poster_warmup",
+            replace_existing=True,
+            coalesce=True,
+            max_instances=1,
+            misfire_grace_time=1800,
+        )
+
         scheduler.start()
         logger.info("Планировщик задач успешно запущен.")
 
@@ -575,11 +594,18 @@ async def main():
         await dp.start_polling(bot)
     finally:
         # Гарантированное освобождение ресурсов.
-        # Порядок: scheduler (без ожидания задач) -> БД -> HTTP-сессия
-        # -> aiogram session. HTTP-сессия закрывается с проверкой,
-        # чтобы двойное закрытие не падало.
+        # Порядок: scheduler (без ожидания задач) -> браузер постеров
+        # -> БД -> HTTP-сессия -> aiogram session. HTTP-сессия закрывается
+        # с проверкой, чтобы двойное закрытие не падало.
         if scheduler is not None:
             scheduler.shutdown(wait=False)
+        # Этап 3: корректное завершение Chromium — осиротевшие
+        # chrome-процессы после каждого деплоя недопустимы.
+        if image_service is not None:
+            try:
+                await image_service.shutdown()
+            except Exception:
+                logger.exception("Image service shutdown failed")
         await database.close()
         if not http_session.closed:
             await http_session.close()
