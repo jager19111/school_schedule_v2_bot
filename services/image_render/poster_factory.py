@@ -5,9 +5,8 @@
 - персональный: принадлежит профилю РЕБЁНКА, а не смотрящему —
   мама, папа и сам ребёнок шарят один постер с доп. занятиями.
 
-Версия расписания инкрементируется при semantic change NIKA
-(ScheduleRefreshResult.schedule_changed). Точечная инвалидация не
-нужна: новый version = новый ключ, старые записи умирают по TTL.
+Версия расписания — semantic-хэш NIKA (см. services/image_render/version.py):
+новая версия = новый ключ, инвалидация не нужна.
 """
 
 from __future__ import annotations
@@ -24,7 +23,7 @@ from services.image_render.models import (
 
 
 def build_global_request_id(
-    schedule_version: int,
+    schedule_version: str | int,
     class_id: str,
     group_id: str,
     date_iso: str,
@@ -34,7 +33,7 @@ def build_global_request_id(
 
 
 def build_personal_request_id(
-    schedule_version: int,
+    schedule_version: str | int,
     student_profile_id: int,
     date_iso: str,
     extra_hash: str,
