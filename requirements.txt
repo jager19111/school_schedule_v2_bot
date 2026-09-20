@@ -4,3 +4,5 @@ aiosqlite==0.22.1
 APScheduler==3.11.3
 python-dotenv==1.2.3
 jinja2==3.1.6
+playwright==1.58.2
+Pillow==12.3.0
