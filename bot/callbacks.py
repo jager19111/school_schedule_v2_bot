@@ -91,7 +91,6 @@ SEARCH_ROOMS_MENU = "srm"
 SEARCH_ROOMS_GRID = "srg"
 FREE_ROOMS_NOW = "sfn"
 
-
 # ==============================================================
 # Registration / onboarding
 # ==============================================================
