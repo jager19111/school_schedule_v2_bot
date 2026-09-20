@@ -87,9 +87,9 @@ SEARCH_TEACHERS = "qt"
 STUDENT_ADD = "sa"
 
 # Rooms search
-SEARCH_ROOMS_MENU = "search:rooms_menu"
-SEARCH_ROOMS_GRID = "search:rooms_grid"
-FREE_ROOMS_NOW = "search:free_now"
+SEARCH_ROOMS_MENU = "srm"
+SEARCH_ROOMS_GRID = "srg"
+FREE_ROOMS_NOW = "sfn"
 
 # ==============================================================
 # Registration / onboarding
