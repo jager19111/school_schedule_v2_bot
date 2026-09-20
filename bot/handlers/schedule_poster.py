@@ -40,7 +40,7 @@ from bot.callbacks import ScheduleDayCD
 from bot.handlers.schedule_child import (
     _get_fsm_schedule_target,
     _get_schedule_targets,
-    render_day,
+    _render_day,
 )
 from bot.keyboards.keyboard import Keyboards
 from bot.utils.poster_delivery import (
@@ -52,7 +52,7 @@ from bot.utils.poster_delivery import (
 from config import config
 from core.models.dto import DayScheduleDTO, ScheduleViewTargetDTO
 from core.repository.schedule_repository import ScheduleRepository
-from services.extraclasses_service import ExtraClassesService
+from services.extra_classes_service import ExtraClassesService
 from services.image_preferences import ImagePreferencesService
 from services.image_render.exceptions import ImageRenderError, RateLimitExceededError
 from services.image_render.models import RenderedPoster
@@ -195,7 +195,7 @@ async def _render_text_day(
     notice: str | None = None,
 ) -> None:
     """Текстовый вид дня — тот же конвейер, что в schedule_child."""
-    text, keyboard = await render_day(
+    text, keyboard = await _render_day(
         actor_user_id=actor_user_id,
         target=target,
         date_iso=date_iso,
@@ -377,7 +377,7 @@ async def toggle_poster_format(
         await send_poster(callback.message, image_service, poster, caption, keyboard)
         await callback.answer("Формат расписания: 🖼 картинка")
     else:
-        text, keyboard = await render_day(
+        text, keyboard = await _render_day(
             actor_user_id=actor_user_id,
             target=target,
             date_iso=date_iso,
