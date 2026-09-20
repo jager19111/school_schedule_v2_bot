@@ -32,8 +32,7 @@
 {# --- ДОП. ЗАНЯТИЯ --- #}
 {%- for ex in slot -%}
 🎨 <code>{{ start }}–{{ end }}</code>
-<blockquote>
-<b>{{ ex.subject_name }}</b> 
+<blockquote><b>{{ ex.subject_name }}</b> 
 {%- if ex.room_name and ex.room_name != "—" %} ➔ <i>{{ ex.room_name }}</i>{% endif -%}
 </blockquote>
 {%- if not loop.last %}{{ '\n' }}{% endif -%}
