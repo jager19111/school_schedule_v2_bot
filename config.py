@@ -59,6 +59,15 @@ class Config:
     IMAGE_BROWSER_RECYCLE_INTERVAL_MIN: int = int(os.getenv("IMAGE_BROWSER_RECYCLE_INTERVAL_MIN", "720"))
     # Ширина постера, px: 1080 переживает JPEG-компрессию Telegram.
     POSTER_WIDTH: int = int(os.getenv("POSTER_WIDTH", "1080"))
+    # Rate limit: N генераций на пользователя за окно (только фактические рендеры).
+    IMAGE_RATE_LIMIT_MAX: int = int(os.getenv("IMAGE_RATE_LIMIT_MAX", "10"))
+    IMAGE_RATE_LIMIT_WINDOW_SEC: float = float(os.getenv("IMAGE_RATE_LIMIT_WINDOW_SEC", "180"))
+    # L1/L2-кэши: TTL записей и предел числа записей.
+    IMAGE_CACHE_TTL_HOURS: float = float(os.getenv("IMAGE_CACHE_TTL_HOURS", "24"))
+    IMAGE_CACHE_MAXSIZE: int = int(os.getenv("IMAGE_CACHE_MAXSIZE", "200"))
+    # Circuit breaker: серия ошибок до размыкания и пауза перед пробой.
+    IMAGE_BREAKER_FAILURE_THRESHOLD: int = int(os.getenv("IMAGE_BREAKER_FAILURE_THRESHOLD", "5"))
+    IMAGE_BREAKER_COOLDOWN_SEC: float = float(os.getenv("IMAGE_BREAKER_COOLDOWN_SEC", "120"))
 
     HELP_PUBLIC_URL = os.getenv("HELP_PUBLIC_URL", "").strip() or None
     AUTHOR_CONTACT_URL = os.getenv("AUTHOR_CONTACT_URL", "").strip() or None
@@ -95,4 +104,10 @@ def build_image_render_settings():
         render_timeout_sec=config.IMAGE_RENDER_TIMEOUT_SEC,
         browser_recycle_renders=config.IMAGE_BROWSER_RECYCLE_RENDERS,
         browser_recycle_interval_min=config.IMAGE_BROWSER_RECYCLE_INTERVAL_MIN,
+        rate_limit_max=config.IMAGE_RATE_LIMIT_MAX,
+        rate_limit_window_sec=config.IMAGE_RATE_LIMIT_WINDOW_SEC,
+        cache_ttl_sec=config.IMAGE_CACHE_TTL_HOURS * 3600,
+        cache_maxsize=config.IMAGE_CACHE_MAXSIZE,
+        breaker_failure_threshold=config.IMAGE_BREAKER_FAILURE_THRESHOLD,
+        breaker_cooldown_sec=config.IMAGE_BREAKER_COOLDOWN_SEC,
     )
