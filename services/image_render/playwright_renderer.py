@@ -8,6 +8,10 @@
   перехватиться системным fallback-шрифтом;
 - скриншот обрезается по контейнеру #poster (динамическая высота).
 
+Шаблон конфигурируется (template_dir/template_name): DI может
+подключить дизайн из bot/templates/schedule_poster.html без правки
+этого модуля. Контекст шаблона см. services/image_render/templates/.
+
 ВНИМАНИЕ: только async API Playwright — sync-варианты из документации
 блокируют event loop бота и несовместимы с aiogram.
 """
@@ -27,15 +31,22 @@ from services.image_render.port import RendererPort
 logger = logging.getLogger(__name__)
 
 _TEMPLATE_DIR = Path(__file__).parent / "templates"
+_DEFAULT_TEMPLATE = "schedule_poster.html.j2"
 
 
 class PlaywrightRenderer(RendererPort):
     """Движок рендера через Chromium (Chrome for Testing с playwright 1.57+)."""
 
-    def __init__(self, lifecycle: BrowserLifecycleManager) -> None:
+    def __init__(
+        self,
+        lifecycle: BrowserLifecycleManager,
+        template_dir: Path | None = None,
+        template_name: str = _DEFAULT_TEMPLATE,
+    ) -> None:
         self._lifecycle = lifecycle
+        self._template_name = template_name
         self._jinja = Environment(
-            loader=FileSystemLoader(_TEMPLATE_DIR),
+            loader=FileSystemLoader(template_dir or _TEMPLATE_DIR),
             autoescape=select_autoescape(["html", "j2"]),
         )
 
@@ -50,7 +61,7 @@ class PlaywrightRenderer(RendererPort):
         return await self._lifecycle.is_healthy()
 
     async def render(self, request: PosterRequest) -> RenderedPoster:
-        html = self._jinja.get_template("schedule_poster.html.j2").render(
+        html = self._jinja.get_template(self._template_name).render(
             date_text=request.date_text,
             title=request.title,
             subtitle=request.subtitle,
