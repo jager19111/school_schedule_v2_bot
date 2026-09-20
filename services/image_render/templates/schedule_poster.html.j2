@@ -1,0 +1,91 @@
+{# ==========================================================
+   PNG-постер расписания на день (ТЗ v2.2, раздел 6).
+   Рендерится PlaywrightRenderer в PNG и обрезается по #poster.
+   Шрифты и стили строго локальные; внешних сетевых запросов нет
+   (см. _route_guard в playwright_renderer.py).
+   Цветовая кодировка статусов — левая граница карточки.
+   ========================================================== #}
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'DejaVu Sans', Arial, sans-serif; background: #f1f5f9; }
+  #poster { width: {{ width }}px; background: #f1f5f9; padding: 48px; }
+
+  .header { margin-bottom: 36px; }
+  .header .date { font-size: 34px; color: #64748b; }
+  .header .title { font-size: 56px; font-weight: 700; color: #0f172a; margin-top: 8px; }
+  .header .subtitle { font-size: 30px; color: #64748b; margin-top: 10px; }
+
+  .card {
+    display: flex; background: #ffffff; border-radius: 18px;
+    margin-bottom: 18px; overflow: hidden; min-height: 132px;
+  }
+  /* Цветовая кодировка статусов — левая граница карточки */
+  .card.normal         { border-left: 12px solid #3b82f6; }
+  .card.exchange       { border-left: 12px solid #ef4444; }
+  .card.cancelled      { border-left: 12px solid #9ca3af; }
+  .card.extra          { border-left: 12px solid #a855f7; }
+  .card.methodological { border-left: 12px solid #f59e0b; }
+
+  .time {
+    width: 180px; background: #f8fafc; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; font-size: 30px; color: #334155;
+  }
+  .time .num { font-size: 24px; color: #94a3b8; margin-bottom: 8px; }
+
+  .body { flex: 1; padding: 22px 30px; display: flex; flex-direction: column; justify-content: center; }
+  .subject { font-size: 36px; font-weight: 700; color: #0f172a; }
+  .subject s { color: #9ca3af; text-decoration: line-through; }
+  .meta { font-size: 27px; color: #64748b; margin-top: 12px; font-style: italic; }
+
+  .badge {
+    display: inline-block; font-size: 22px; font-weight: 700; border-radius: 10px;
+    padding: 4px 14px; margin-left: 14px; vertical-align: middle;
+  }
+  .badge.exchange { background: #fee2e2; color: #b91c1c; }
+  .badge.extra { background: #f3e8ff; color: #7e22ce; }
+
+  .empty { font-size: 34px; color: #64748b; padding: 60px 0; text-align: center; }
+</style>
+</head>
+<body>
+<div id="poster">
+  <div class="header">
+    <div class="date">{{ date_text }}</div>
+    <div class="title">{{ title }}{% if changes_count %} <span class="badge exchange">⚡ {{ changes_count }}</span>{% endif %}</div>
+    {% if subtitle %}<div class="subtitle">{{ subtitle }}</div>{% endif %}
+  </div>
+
+  {% if lessons %}
+    {% for lesson in lessons %}
+    <div class="card {{ lesson.status.value }}">
+      <div class="time">
+        <div class="num">{{ lesson.num }}</div>
+        <div>{{ lesson.time_start }}<br>{{ lesson.time_end }}</div>
+      </div>
+      <div class="body">
+        {% if lesson.status.value == 'cancelled' %}
+          <div class="subject"><s>{{ lesson.subject or lesson.original_subject or 'Урок' }}</s></div>
+        {% else %}
+          <div class="subject">{{ lesson.subject }}
+            {% if lesson.status.value == 'exchange' and lesson.original_subject %}<span class="badge exchange">было: {{ lesson.original_subject }}</span>{% endif %}
+            {% if lesson.status.value == 'extra' %}<span class="badge extra">Доп.</span>{% endif %}
+          </div>
+        {% endif %}
+        <div class="meta">
+          {%- if lesson.teacher %}{{ lesson.teacher }}{% endif %}
+          {%- if lesson.room %} · каб. {{ lesson.room }}{% endif %}
+          {%- if lesson.group %} · {{ lesson.group }}{% endif %}
+        </div>
+      </div>
+    </div>
+    {% endfor %}
+  {% else %}
+    <div class="empty">🏖 Занятий нет</div>
+  {% endif %}
+</div>
+</body>
+</html>
