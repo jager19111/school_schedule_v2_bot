@@ -62,7 +62,6 @@
     .item-row { display: flex; justify-content: space-between; align-items: center; width: 100%; gap: 15px; }
     .item-info { flex-grow: 1; min-width: 0; display: flex; flex-direction: column; justify-content: center; }
     
-    /* Добавлен line-height: 1.1 для всех предметов, чтобы срезать пустоты */
     .subject-text { font-size: 38px; font-weight: 700; white-space: nowrap; line-height: 1.1; }
     .subj-normal { color: #3182ce; } 
     .subj-exchange { color: #d97706; } 
@@ -70,7 +69,11 @@
     
     .teacher-text { font-size: 26px; font-style: italic; color: #718096; margin-top: 6px; font-weight: 500; white-space: nowrap; line-height: 1.1; }
     .teacher-subj { font-style: normal; font-weight: 600; color: #4a5568; font-size: 30px; }
-    .extra-label { color: #805ad5; font-style: normal; text-transform: uppercase; font-weight: 800; font-size: 22px; }
+    
+    /* Стили для доп. занятий */
+    .extra-details-row { display: flex; align-items: center; gap: 12px; margin-top: 6px; width: 100%; overflow: hidden; }
+    .extra-label { color: #805ad5; font-style: normal; text-transform: uppercase; font-weight: 800; font-size: 22px; flex-shrink: 0; }
+    .extra-loc { font-size: 24px; color: #718096; font-weight: 600; white-space: nowrap; min-width: 0; }
 
     /* КАБИНЕТ (ОБЩИЙ) */
     .room-badge {
@@ -82,26 +85,16 @@
        СПЕЦИАЛЬНЫЙ БЛОК ДЛЯ ТРУДА (Идеальный компактный столбик)
        ========================================================= */
     .trud-compact-list {
-        display: flex; flex-direction: column; 
-        gap: 4px; /* Компактно, но буквы больше не слипаются */
-        margin-top: 4px; width: 100%;
+        display: flex; flex-direction: column; gap: 4px; margin-top: 4px; width: 100%;
     }
-    .trud-row {
-        display: flex; justify-content: space-between; align-items: center; width: 100%; gap: 10px;
-    }
+    .trud-row { display: flex; justify-content: space-between; align-items: center; width: 100%; gap: 10px; }
     .trud-teacher { 
-        font-size: 26px; /* Вернули комфортный крупный размер */
-        line-height: 1; /* Жестко срезали пустой воздух сверху и снизу от текста */
-        font-style: italic; color: #718096; font-weight: 500; 
+        font-size: 26px; line-height: 1; font-style: italic; color: #718096; font-weight: 500; 
         white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
     .trud-room {
-        background: #edf2f7; color: #4a5568; 
-        padding: 4px 14px; /* Срезали высоту плашки до минимума, оставили воздух по бокам */
-        border-radius: 10px; 
-        font-size: 28px; /* Увеличили цифры, теперь кубики читаются отлично */
-        font-weight: 800; white-space: nowrap; flex-shrink: 0;
-        line-height: 1; /* Строго центрирует текст внутри сжатого кубика */
+        background: #edf2f7; color: #4a5568; padding: 4px 14px; border-radius: 10px; 
+        font-size: 28px; font-weight: 800; white-space: nowrap; flex-shrink: 0; line-height: 1; 
     }
 
     .empty {
@@ -180,8 +173,14 @@
                                         {% endif %}
                                     {% endif %}
                                     
+                                    <!-- ИЗМЕНЕНО: Строка с локацией кружка перемещена сюда -->
                                     {% if lesson.is_extra and loop.first %}
-                                        <div class="teacher-text extra-label">Доп. занятие</div>
+                                        <div class="extra-details-row">
+                                            <div class="teacher-text extra-label" style="margin-top: 0;">Доп. занятие</div>
+                                            {% if item.room and item.room != '—' %}
+                                                <div class="extra-loc scale-text">📍 {{ item.room }}</div>
+                                            {% endif %}
+                                        </div>
                                     {% endif %}
                                     
                                     {% if item.secondary_text and not item.is_cancelled %}
@@ -189,7 +188,8 @@
                                     {% endif %}
                                 </div>
                                 
-                                {% if item.room and not item.is_cancelled and item.primary_text != 'Нет занятий' %}
+                                <!-- ИЗМЕНЕНО: Запрещаем вывод правого кубика для кружков -->
+                                {% if item.room and not item.is_cancelled and item.primary_text != 'Нет занятий' and not lesson.is_extra %}
                                     <div class="room-badge">{{ item.room }}</div>
                                 {% endif %}
                             </div>
