@@ -7,6 +7,7 @@
 
 from typing import List
 from datetime import datetime, timedelta, timezone, date
+
 from bot import callbacks
 from services.help_service import HelpLinksDTO
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
@@ -126,7 +127,7 @@ class Keyboards:
         return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text='👨\u200d👩\u200d👧 Семья', callback_data=callbacks.SETTINGS_FAMILY)], [InlineKeyboardButton(text=f'⏰ Время моей утренней сводки: {summary_time}', callback_data=callbacks.SETTINGS_MY_SUMMARY_TIME)], [InlineKeyboardButton(text=f'🔔 Мои уведомления об изменениях: {changes_status}', callback_data=callbacks.SETTINGS_MY_NOTIFICATIONS)], [InlineKeyboardButton(text='🔄 Перерегистрироваться / Выйти', callback_data=callbacks.AUTH_RESTART)]])
 
     @staticmethod
-    def get_settings_main_kb(user_dto: UserProfileDTO) -> InlineKeyboardMarkup:
+    def get_settings_main_kb(user_dto: 'UserProfileDTO', prefer_image: bool = False, image_generation_enabled: bool = True) -> InlineKeyboardMarkup:
         """Главное меню настроек пользователя."""
         buttons = []
         if user_dto.role == 'child':
@@ -138,6 +139,16 @@ class Keyboards:
             buttons.append([InlineKeyboardButton(text='🎓 Мои отслеживаемые классы', callback_data=callbacks.WATCH_MENU)])
             buttons.append([InlineKeyboardButton(text='🔔 Уведомления по детям', callback_data=callbacks.SETTINGS_CHILDREN_NOTIFICATIONS)])
         buttons.append([InlineKeyboardButton(text='🔔 Мои уведомления', callback_data=callbacks.SETTINGS_NOTIFICATIONS)])
+        
+        # --- БЛОК ФОРМАТА РАСПИСАНИЯ С ПРОВЕРКОЙ ДОСТУПНОСТИ ---
+        if image_generation_enabled:
+            format_text = "🖼 Формат расписания: Картинка" if prefer_image else "📝 Формат расписания: Текст"
+        else:
+            format_text = "🚫 Формат расписания: Недоступно"
+            
+        buttons.append([InlineKeyboardButton(text=format_text, callback_data=callbacks.SETTINGS_TOGGLE_FORMAT)])
+        # --------------------------------------------------------
+        
         buttons.append([InlineKeyboardButton(text='ℹ️ Справка', callback_data=callbacks.HelpCD(section='main').pack())])
         buttons.append([InlineKeyboardButton(text='♻️ Перерегистрация/Выход', callback_data=callbacks.AUTH_RESTART)])
         return InlineKeyboardMarkup(inline_keyboard=buttons)

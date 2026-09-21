@@ -233,7 +233,7 @@ async def refresh_schedule_cache(
 
 async def run_wal_checkpoint(db_connection: aiosqlite.Connection) -> None:
     """
-    Ночной WAL-checkpoint (best practice).
+    Ночной WAL-checkpoint
 
     При WAL и постоянной записи -wal файл может расти долго; усечение
     ночью держит его компактным и ускоряет чтение. Безопасно: checkpoint

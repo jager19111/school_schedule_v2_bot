@@ -91,6 +91,9 @@ SEARCH_ROOMS_MENU = "srm"
 SEARCH_ROOMS_GRID = "srg"
 FREE_ROOMS_NOW = "sfn"
 
+# переключатель фото рендера
+SETTINGS_TOGGLE_FORMAT = "stg_f"
+
 # ==============================================================
 # Registration / onboarding
 # ==============================================================

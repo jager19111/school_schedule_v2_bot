@@ -32,6 +32,7 @@ from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
 
+from config import config
 from bot import callbacks
 from bot.callbacks import SelfEditClassCD, SelfEditGroupCD, TeacherChangeCD
 from bot.utils.ui_renderer import UIRenderer
@@ -39,6 +40,7 @@ from bot.keyboards.keyboard import Keyboards
 from services.profiles_service import ProfileService
 from services.schedule_service import ScheduleService
 from services.students_service import StudentsService
+from services.image_preferences import ImagePreferencesService
 from bot.utils.fsm_guard import validate_fsm_session
 from bot.utils.safe_send import _safe_edit_text, _safe_callback_answer
 
@@ -105,15 +107,24 @@ async def show_school_search(message: Message):
 # ================= 2. ГЛАВНЫЕ НАСТРОЙКИ =================
 
 @router.message(F.text == "⚙️ Настройки")
-async def settings_main_menu(message: Message, profile_service: ProfileService, schedule_service: ScheduleService):
+async def settings_main_menu(
+    message: Message, 
+    profile_service: ProfileService, 
+    schedule_service: ScheduleService,
+    image_prefs: ImagePreferencesService,
+):
     """Главное меню настроек. Вызывается из главного меню и после изменения настроек."""
-    await _show_settings_menu(message, message.from_user.id, profile_service, schedule_service, is_callback=False)
+    await _show_settings_menu(message, message.from_user.id, profile_service, schedule_service, image_prefs, is_callback=False)
 
-              
 @router.callback_query(F.data == callbacks.SETTINGS_MAIN)
-async def settings_main_menu_cb(callback: CallbackQuery, profile_service: ProfileService, schedule_service: ScheduleService):
+async def settings_main_menu_cb(
+    callback: CallbackQuery, 
+    profile_service: ProfileService, 
+    schedule_service: ScheduleService,
+    image_prefs: ImagePreferencesService,
+):
     """Главное меню настроек. Вызывается из коллбэка после изменения настроек."""
-    await _show_settings_menu(callback.message, callback.from_user.id, profile_service, schedule_service, is_callback=True)
+    await _show_settings_menu(callback.message, callback.from_user.id, profile_service, schedule_service, image_prefs, is_callback=True)
     await callback.answer()
 
 async def _show_settings_menu(
@@ -121,6 +132,7 @@ async def _show_settings_menu(
     user_id: int, 
     profile_service: ProfileService, 
     schedule_service: ScheduleService,
+    image_prefs: ImagePreferencesService,
     is_callback: bool
 ):
     user_dto = await profile_service.get_user_profile_dto(user_id)
@@ -152,26 +164,61 @@ async def _show_settings_menu(
     # 2. Формируем красивые имена через встроенные хелперы DTO (если ID есть)
     class_name = dicts_dto.get_readable_class(user_dto.class_id) if user_dto.class_id else None
     group_names = dicts_dto.get_readable_group(user_dto.group_id) if user_dto.group_id else None
+    
+    # Получаем формат расписания пользователя
+    prefer_image = await image_prefs.prefers_image(user_id)
             
-    # 3. Передаем чистые строки в рендерер
     text = UIRenderer.render_settings_main(
         user_dto=user_dto, 
         class_name=class_name, 
-        group_names=group_names
-    )
-    text = UIRenderer.render_settings_main(
-        user_dto,
-        class_name=class_name,
         group_names=group_names,
-        is_family_admin=is_family_admin,   # <-- новое
+        is_family_admin=is_family_admin,
     )
-    kb = Keyboards.get_settings_main_kb(user_dto)
+    # Передаем статус в клавиатуру
+    kb = Keyboards.get_settings_main_kb(
+        user_dto=user_dto,
+        prefer_image=prefer_image,
+        image_generation_enabled=config.ENABLE_IMAGE_GENERATION
+    )
     
     if is_callback:
         await message_obj.edit_text(text, reply_markup=kb, parse_mode="HTML")
     else:
         await message_obj.answer(text, reply_markup=kb, parse_mode="HTML")
 
+# --- НОВЫЙ ХЕНДЛЕР: Переключение формата расписания ---
+@router.callback_query(F.data == callbacks.SETTINGS_TOGGLE_FORMAT)
+async def toggle_schedule_format(
+    callback: CallbackQuery,
+    profile_service: ProfileService,
+    schedule_service: ScheduleService,
+    image_prefs: ImagePreferencesService,
+) -> None:
+    """Переключает формат расписания (Текст/Картинка) из главного меню настроек."""
+    
+    # ЗАЩИТА: Если сервис выключен глобально, не даем переключить
+    if not config.ENABLE_IMAGE_GENERATION:
+        await callback.answer(
+            "⚠️ Сервис генерации картинок временно отключен администратором. "
+            "Доступен только текстовый формат.", 
+            show_alert=True
+        )
+        return
+
+    # Обычная логика переключения
+    new_status = await image_prefs.toggle(callback.from_user.id)
+    
+    await _show_settings_menu(
+        message_obj=callback.message, 
+        user_id=callback.from_user.id, 
+        profile_service=profile_service, 
+        schedule_service=schedule_service, 
+        image_prefs=image_prefs, 
+        is_callback=True
+    )
+    
+    status_text = "🖼 картинка" if new_status else "📝 текст"
+    await callback.answer(f"Формат расписания изменен на: {status_text}")
 # ================= ПЕРЕРЕГИСТРАЦИЯ =================
 @router.callback_query(F.data == callbacks.AUTH_RESTART)
 async def process_restart(
@@ -476,6 +523,7 @@ async def cancel_self_edit_class_group(
     state: FSMContext,
     profile_service: ProfileService,
     schedule_service: ScheduleService,
+    image_prefs: ImagePreferencesService,
 ) -> None:
     """
     Отменяет изменение класса/группы ребёнка.
@@ -496,6 +544,7 @@ async def cancel_self_edit_class_group(
         user_id=callback.from_user.id,
         profile_service=profile_service,
         schedule_service=schedule_service,
+        image_prefs=image_prefs,
         is_callback=True,
     )
 
@@ -512,6 +561,7 @@ async def save_self_edit_group(
     profile_service: ProfileService,
     students_service: StudentsService,
     schedule_service: ScheduleService,
+    image_prefs: ImagePreferencesService,
 ) -> None:
     """
     Сохраняет новый class_id/group_id child и синхронизирует
@@ -588,6 +638,7 @@ async def save_self_edit_group(
         user_id=actor_user_id,
         profile_service=profile_service,
         schedule_service=schedule_service,
+        image_prefs=image_prefs,
         is_callback=True,
     )
 
@@ -667,6 +718,7 @@ async def save_teacher_change(
     state: FSMContext,
     profile_service: ProfileService,
     schedule_service: ScheduleService,
+    image_prefs: ImagePreferencesService,
 ) -> None:
     """
     Сохраняет новый NIKA teacher_id для теку Telegram teacher.
@@ -728,6 +780,7 @@ async def save_teacher_change(
         user_id=callback.from_user.id,
         profile_service=profile_service,
         schedule_service=schedule_service,
+        image_prefs=image_prefs,
         is_callback=True,
     )
 
