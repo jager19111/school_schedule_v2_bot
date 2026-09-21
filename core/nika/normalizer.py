@@ -349,11 +349,23 @@ class NikaNormalizer:
         for idx in range(max_len):
             current_raw_s = _get_val(raw_s, idx)
             clean_s_temp = self._clean_val(current_raw_s)
+            
+            o_clean_s = self._clean_val(_get_val(orig_s, idx))
+            
             is_full_cancel_pointwise = (clean_s_temp is None or clean_s_temp == "F")
 
-            is_cancelled = is_full_cancel or is_full_cancel_pointwise
+            # --- ИСПРАВЛЕНИЕ: Детектирование окон (NO_LESSONS) ---
+            # Если предмет пустой, И в оригинальном расписании он тоже был пустой,
+            # значит урока здесь никогда и не было. Это окно, а не отмена.
+            if clean_s_temp is None and o_clean_s is None and not is_full_cancel:
+                is_window = True
+                is_cancelled = False
+            else:
+                is_window = False
+                is_cancelled = is_full_cancel or is_full_cancel_pointwise
+            # -----------------------------------------------------
 
-            clean_s = clean_s_temp if not is_cancelled else None
+            clean_s = clean_s_temp if not is_cancelled and not is_window else None
             clean_t_c = self._clean_val(_get_val(raw_t_or_c, idx))
             clean_r = self._clean_val(_get_val(raw_r, idx))
 
@@ -391,6 +403,8 @@ class NikaNormalizer:
 
             if is_methodological:
                 sub_name = "Методический час"
+            elif is_window:
+                sub_name = "Нет занятий" # Маркер окна для БД
             else:
                 sub_name = (
                     self.subjects.get(clean_s).name
@@ -400,6 +414,8 @@ class NikaNormalizer:
 
             if o_clean_s == "M":
                 orig_sub_name = "Методический час"
+            elif is_window:
+                orig_sub_name = "Нет занятий" # Маркер окна для БД
             else:
                 orig_sub_name = (
                     self.subjects.get(o_clean_s).name
