@@ -119,6 +119,8 @@ class Database:
                         CHECK (global_extra_reminder BETWEEN 0 AND 180),
                     can_manage_own_extra_classes INTEGER NOT NULL DEFAULT 1
                         CHECK (can_manage_own_extra_classes IN (0, 1)),
+                    prefer_image_schedule INTEGER NOT NULL DEFAULT 1
+                        CHECK (prefer_image_schedule IN (0, 1)),
                     last_active_at TEXT,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
