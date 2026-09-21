@@ -1,0 +1,4 @@
+"""ImageGenerationService — публичный API слоя постеров (ТЗ v2.2)."""
+
+# patch target: services/image_render/service.py
+# Добавлены свойства bytes_cache_size/file_id_cache_size для /img_stats.

@@ -1,0 +1,3 @@
+# Регистрируется отдельным роутером в main.py:
+# from bot.handlers import image_admin
+# dp.include_router(image_admin.router)  # рядом с admin.router
