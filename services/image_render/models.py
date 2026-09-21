@@ -6,48 +6,44 @@
 """
 
 from __future__ import annotations
-
 from dataclasses import dataclass
 from enum import Enum
 
-
 class LessonStatus(str, Enum):
-    """Статус карточки урока — определяет цвет левой границы (раздел 6 ТЗ)."""
-
     NORMAL = "normal"              # синий — обычный урок
-    EXCHANGE = "exchange"          # красный — замена предмета или кабинета
-    CANCELLED = "cancelled"        # серый — отменённый урок
-    EXTRA = "extra"                # фиолетовый — дополнительное занятие
-    METHODICAL = "methodological"  # оранжевый — методический час/день
+    EXCHANGE = "exchange"          # оранжевый — замена предмета или кабинета
+    CANCELLED = "cancelled"        # красный — отменённый урок
+    EXTRA = "extra"                # фиолетовый — доп. занятие
+    METHODICAL = "methodological"  # серый — методический час
 
+@dataclass(frozen=True, slots=True)
+class PosterItem:
+    """Один элемент внутри временного слота (предмет + препод + кабинет)."""
+    primary_text: str          # Ученик: Предмет / Учитель: Класс · Группа
+    secondary_text: str | None # Ученик: Учитель / Учитель: Предмет
+    room: str | None           # Кабинет
+    is_cancelled: bool = False
+    original_primary: str | None = None # Для зачеркивания старого значения
 
 @dataclass(frozen=True, slots=True)
 class PosterLessonCard:
-    """Одна карточка урока на постере."""
-
-    num: str                             # отображаемый номер: "2", "2*", "Доп."
+    """Карточка урока на постере (один блок времени)."""
+    num: str                             
     time_start: str
     time_end: str
-    subject: str
-    status: LessonStatus = LessonStatus.NORMAL
-    teacher: str | None = None
-    room: str | None = None
-    group: str | None = None
-    original_subject: str | None = None  # при замене: что было до неё
-
+    status: LessonStatus
+    items: tuple[PosterItem, ...]
+    is_extra: bool = False
 
 @dataclass(frozen=True, slots=True)
 class PosterRequest:
-    """Запрос на рендер постера; request_id = ключ кэшей L1/L2."""
-
     request_id: str
-    date_text: str                        # "Понедельник, 21.09"
-    title: str                            # "Расписание · 5А"
+    date_text: str                        
+    title: str                            
     lessons: tuple[PosterLessonCard, ...]
-    subtitle: str | None = None           # "Иван · Группа 1"
-    changes_count: int = 0                # для бейджа в шапке
-    width: int = 1080                     # переживает JPEG-компрессию Telegram
-
+    subtitle: str | None = None           
+    changes_count: int = 0                
+    width: int = 1080                     
 
 @dataclass(frozen=True, slots=True)
 class RenderedPoster:

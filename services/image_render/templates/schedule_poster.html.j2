@@ -1,178 +1,219 @@
-{# ==========================================================
-   PNG-постер расписания на день (ТЗ v2.2, раздел 6).
-
-   Дизайн: авторский макет из bot/templates/schedule_poster.html,
-   перенесённый на контекст рендерера и масштаб 1080px (переживает
-   JPEG-компрессию Telegram; исходный макет был 800px, масштаб x1.35).
-
-   Шрифты СТРОГО локальные: внешний @import (Google Fonts) блокируется
-   _route_guard — рендер не ходит в интернет. Для Inter установи шрифт
-   в систему (пакет fonts-inter или ~/.fonts), иначе будет DejaVu Sans.
-
-   Контекст (PlaywrightRenderer.render):
-     date_text, title, subtitle, lessons (PosterLessonCard),
-     changes_count, width. Скриншот обрезается по #poster.
-   ========================================================== #}
 <!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8">
 <style>
+    /* Подключение локального шрифта Variable */
+    @font-face {
+        font-family: 'Inter';
+        src: url('https://local.app/InterVariable.woff2') format('woff2'); 
+        font-weight: 100 900;
+        font-display: block;
+        font-style: normal;
+    }
+
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
-        font-family: 'Inter', 'Segoe UI', 'DejaVu Sans', Arial, sans-serif;
+        font-family: 'Inter', 'Segoe UI', 'Roboto', 'DejaVu Sans', sans-serif;
         background-color: #f4f6f9;
+        -webkit-font-smoothing: antialiased;
     }
-    #poster {
-        width: {{ width }}px;
-        background-color: #f4f6f9;
-        padding: 40px;
-    }
+    #poster { width: {{ width }}px; background-color: #f4f6f9; padding: 40px; }
 
+    /* ШАПКА */
     .header {
-        background-color: #1a365d;
-        color: white;
-        padding: 34px 40px;
-        border-radius: 26px;
-        margin-bottom: 32px;
-        box-shadow: 0 10px 25px rgba(26, 54, 93, 0.2);
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
+        background-color: #1a365d; color: white; padding: 30px 40px;
+        border-radius: 24px; margin-bottom: 35px; box-shadow: 0 10px 25px rgba(26, 54, 93, 0.15);
+        display: flex; flex-direction: column; gap: 20px;
     }
-    .header-title { font-size: 44px; font-weight: 700; }
-    .header-subtitle { font-size: 30px; color: #a0aec0; margin-top: 10px; }
-    .changes-marker {
-        background: #e53e3e; color: white; padding: 10px 22px;
-        border-radius: 16px; font-size: 24px; font-weight: 600;
-        white-space: nowrap;
+    .header-top { display: flex; justify-content: center; width: 100%; overflow: hidden; }
+    .header-title { font-size: 40px; font-weight: 800; letter-spacing: -0.5px; white-space: nowrap; text-align: center; }
+    .header-bottom { display: flex; justify-content: space-between; align-items: center; width: 100%; }
+    .header-subtitle { font-size: 30px; color: #a0aec0; display: flex; align-items: center; gap: 10px; }
+    .changes-badge {
+        background: #e53e3e; color: white; padding: 10px 22px; border-radius: 16px; 
+        font-size: 26px; font-weight: 700; display: inline-flex; align-items: center; gap: 8px; 
+        white-space: nowrap; flex-shrink: 0;
     }
 
+    /* КАРТОЧКА */
     .lesson-card {
-        background: white;
-        border-radius: 20px;
-        padding: 27px 34px;
-        margin-bottom: 20px;
-        display: flex;
-        align-items: center;
-        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.03);
-        border-left: 10px solid transparent;
+        background: white; border-radius: 24px; padding: 25px 35px; margin-bottom: 20px;
+        display: flex; align-items: center; box-shadow: 0 6px 16px rgba(0, 0, 0, 0.04);
+        border-left: 12px solid #cbd5e0; overflow: hidden;
     }
-    /* Цветовые маркеры статуса — левая граница карточки (раздел 6 ТЗ) */
-    .status-normal         { border-left-color: #3182ce; }  <!-- синий -->
-    .status-exchange       { border-left-color: #e53e3e; }  <!-- красный -->
-    .status-cancelled      { border-left-color: #cbd5e0; opacity: 0.85; }  <!-- серый -->
-    .status-extra          { border-left-color: #805ad5; }  <!-- фиолетовый -->
-    .status-methodological { border-left-color: #dd6b20; }  <!-- оранжевый -->
+    .status-normal         { border-left-color: #3182ce; } 
+    .status-exchange       { border-left-color: #d97706; } 
+    .status-cancelled      { border-left-color: #e53e3e; background: #fff5f5; } 
+    .status-extra          { border-left-color: #805ad5; } 
+    .status-methodological { border-left-color: #718096; } 
 
-    /* Время столбиком */
-    .time-col {
-        display: flex;
-        flex-direction: column;
-        width: 165px;
-        font-size: 34px;
-        font-weight: 700;
-        color: #2d3748;
+    /* ВРЕМЯ */
+    .time-col { display: flex; flex-direction: column; width: 140px; flex-shrink: 0; }
+    .time-start { font-size: 32px; font-weight: 700; color: #1a202c; line-height: 1; }
+    .time-end { font-size: 24px; font-weight: 600; color: #a0aec0; margin-top: 6px; line-height: 1; }
+    .lesson-num { font-size: 24px; font-weight: 800; color: #4a5568; margin-top: 10px; text-transform: uppercase; letter-spacing: 1px; line-height: 1; }
+
+    /* СПИСОК ПРЕДМЕТОВ (ОБЩИЙ) */
+    .items-col {
+        flex-grow: 1; padding-left: 30px; border-left: 2px solid #edf2f7; 
+        margin-left: 10px; display: flex; flex-direction: column; gap: 15px; overflow: hidden;
     }
-    .time-end { font-size: 24px; font-weight: 600; color: #a0aec0; margin-top: 6px; }
-    .lesson-num {
-        font-size: 20px; font-weight: 600; color: #cbd5e0;
-        margin-top: 6px; text-transform: uppercase;
-    }
+    .item-row { display: flex; justify-content: space-between; align-items: center; width: 100%; gap: 15px; }
+    .item-info { flex-grow: 1; min-width: 0; display: flex; flex-direction: column; justify-content: center; }
+    
+    /* Добавлен line-height: 1.1 для всех предметов, чтобы срезать пустоты */
+    .subject-text { font-size: 38px; font-weight: 700; white-space: nowrap; line-height: 1.1; }
+    .subj-normal { color: #3182ce; } 
+    .subj-exchange { color: #d97706; } 
+    .subj-cancelled { color: #a0aec0; text-decoration: line-through; text-decoration-color: #e53e3e; text-decoration-thickness: 3px; }
+    
+    .teacher-text { font-size: 26px; font-style: italic; color: #718096; margin-top: 6px; font-weight: 500; white-space: nowrap; line-height: 1.1; }
+    .teacher-subj { font-style: normal; font-weight: 600; color: #4a5568; font-size: 30px; }
+    .extra-label { color: #805ad5; font-style: normal; text-transform: uppercase; font-weight: 800; font-size: 22px; }
 
-    /* Предмет и преподаватель */
-    .info-col { flex-grow: 1; padding-left: 27px; }
-    .subject { font-size: 38px; font-weight: 700; margin-bottom: 8px; }
-
-    /* Логика цветов предмета из авторского макета */
-    .subj-normal { color: #3182ce; }    <!-- синий: неизменный урок -->
-    .subj-new    { color: #e53e3e; }    <!-- красный: новый/заменённый -->
-    .subj-cancelled {
-        color: #a0aec0;                 <!-- серый текст -->
-        text-decoration: line-through;
-        text-decoration-color: #e53e3e; <!-- красная линия зачёркивания -->
-        text-decoration-thickness: 4px;
-    }
-
-    .badge {
-        display: inline-block; background: #f3e8ff; color: #6b46c1;
-        padding: 5px 16px; border-radius: 12px; font-size: 22px;
-        font-weight: 700; margin-left: 14px; vertical-align: middle;
-    }
-
-    .teacher { font-size: 25px; font-style: italic; color: #718096; }
-    .teacher-cancelled {
-        color: #e53e3e; font-style: normal; font-weight: 600;
-    }
-
-    /* Кабинет */
+    /* КАБИНЕТ (ОБЩИЙ) */
     .room-badge {
-        background: #edf2f7; color: #4a5568;
-        padding: 14px 27px; border-radius: 16px;
-        font-size: 30px; font-weight: 700;
-        white-space: nowrap;
+        background: #edf2f7; color: #4a5568; padding: 15px 25px; 
+        border-radius: 16px; font-size: 32px; font-weight: 800; white-space: nowrap; line-height: 1;
+    }
+
+    /* =========================================================
+       СПЕЦИАЛЬНЫЙ БЛОК ДЛЯ ТРУДА (Идеальный компактный столбик)
+       ========================================================= */
+    .trud-compact-list {
+        display: flex; flex-direction: column; 
+        gap: 4px; /* Компактно, но буквы больше не слипаются */
+        margin-top: 4px; width: 100%;
+    }
+    .trud-row {
+        display: flex; justify-content: space-between; align-items: center; width: 100%; gap: 10px;
+    }
+    .trud-teacher { 
+        font-size: 26px; /* Вернули комфортный крупный размер */
+        line-height: 1; /* Жестко срезали пустой воздух сверху и снизу от текста */
+        font-style: italic; color: #718096; font-weight: 500; 
+        white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .trud-room {
+        background: #edf2f7; color: #4a5568; 
+        padding: 4px 14px; /* Срезали высоту плашки до минимума, оставили воздух по бокам */
+        border-radius: 10px; 
+        font-size: 28px; /* Увеличили цифры, теперь кубики читаются отлично */
+        font-weight: 800; white-space: nowrap; flex-shrink: 0;
+        line-height: 1; /* Строго центрирует текст внутри сжатого кубика */
     }
 
     .empty {
-        font-size: 36px; color: #718096;
-        padding: 80px 0; text-align: center;
-        background: white; border-radius: 20px;
+        font-size: 36px; color: #718096; font-weight: 600; padding: 80px 0; text-align: center;
+        background: white; border-radius: 24px; box-shadow: 0 4px 15px rgba(0, 0, 0, 0.03);
     }
 </style>
 </head>
 <body>
 <div id="poster">
     <div class="header">
-        <div>
-            <div class="header-title">📅 {{ title }} · {{ date_text }}</div>
-            {% if subtitle %}<div class="header-subtitle">👤 {{ subtitle }}</div>{% endif %}
+        <div class="header-top">
+            <div class="header-title scale-text">📅 Расписание · {{ date_text }}</div>
         </div>
-        {% if changes_count %}
-            <div class="changes-marker">⚠️ Изменений: {{ changes_count }}</div>
-        {% endif %}
+        <div class="header-bottom">
+            {% if title or subtitle %}
+                <div class="header-subtitle">
+                    👤 {{ title|replace('Расписание · ', '') }}
+                    {% if subtitle %} · {{ subtitle }}{% endif %}
+                </div>
+            {% else %}
+                <div></div>
+            {% endif %}
+            
+            {% if changes_count %}
+                <div class="changes-badge">⚠️ Изменений: {{ changes_count }}</div>
+            {% endif %}
+        </div>
     </div>
 
     {% if lessons %}
         {% for lesson in lessons %}
             <div class="lesson-card status-{{ lesson.status.value }}">
-
-                <!-- Время столбиком -->
                 <div class="time-col">
-                    <div>{{ lesson.time_start }}</div>
+                    <div class="time-start">{{ lesson.time_start }}</div>
                     <div class="time-end">{{ lesson.time_end }}</div>
-                    <div class="lesson-num">
-                        {% if lesson.status.value == 'extra' %}Доп.{% else %}Урок {{ lesson.num }}{% endif %}
-                    </div>
+                    <div class="lesson-num">{% if lesson.status.value == 'extra' %}ДОП.{% else %}УРОК {{ lesson.num|replace('*', '') }}{% endif %}</div>
                 </div>
 
-                <!-- Информация о предмете -->
-                <div class="info-col">
-                    {% if lesson.status.value == 'cancelled' %}
-                        <!-- Серый предмет с красным зачёркиванием -->
-                        <div class="subject subj-cancelled">
-                            {{ lesson.subject or lesson.original_subject or 'Урок' }}
+                <div class="items-col">
+                    {% set is_trud_block = lesson.items|length > 1 and lesson.items[0].primary_text and 'Труд' in lesson.items[0].primary_text %}
+                    
+                    {% if is_trud_block %}
+                        <!-- СПЕЦИАЛЬНЫЙ СВЕРХКОМПАКТНЫЙ ВЫВОД ДЛЯ ТРУДА -->
+                        <div class="item-info" style="width: 100%;">
+                            <div class="subject-text scale-text {% if lesson.status.value == 'cancelled' %}subj-cancelled{% elif lesson.status.value == 'exchange' %}subj-exchange{% else %}subj-normal{% endif %}">
+                                {{ lesson.items[0].original_primary or lesson.items[0].primary_text if lesson.items[0].is_cancelled else lesson.items[0].primary_text }}
+                            </div>
+                            
+                            <div class="trud-compact-list">
+                                {% for item in lesson.items %}
+                                    <div class="trud-row">
+                                        <div class="trud-teacher">
+                                            {{ item.secondary_text if item.secondary_text else '' }}
+                                        </div>
+                                        
+                                        {% if item.room and not item.is_cancelled %}
+                                            <div class="trud-room">{{ item.room }}</div>
+                                        {% endif %}
+                                    </div>
+                                {% endfor %}
+                            </div>
                         </div>
-                        <div class="teacher teacher-cancelled">Отменено</div>
                     {% else %}
-                        <div class="subject {{ 'subj-new' if lesson.status.value != 'normal' else 'subj-normal' }}">
-                            {{ lesson.subject }}
-                            {% if lesson.status.value == 'extra' %}<span class="badge">Доп. занятие</span>{% endif %}
-                        </div>
-                        {% if lesson.teacher %}
-                            <div class="teacher">{{ lesson.teacher }}</div>
-                        {% endif %}
+                        <!-- СТАНДАРТНЫЙ ВЫВОД ДЛЯ ОСТАЛЬНЫХ УРОКОВ -->
+                        {% for item in lesson.items %}
+                            <div class="item-row">
+                                <div class="item-info">
+                                    {% if item.primary_text %}
+                                        {% if item.primary_text == 'Нет занятий' %}
+                                            <div class="subject-text scale-text" style="color: #a0aec0; font-weight: 500;">Нет занятий</div>
+                                        {% else %}
+                                            <div class="subject-text scale-text {% if item.is_cancelled %}subj-cancelled{% elif lesson.status.value == 'exchange' %}subj-exchange{% else %}subj-normal{% endif %}">
+                                                {{ item.original_primary or item.primary_text if item.is_cancelled else item.primary_text }}
+                                            </div>
+                                        {% endif %}
+                                    {% endif %}
+                                    
+                                    {% if lesson.is_extra and loop.first %}
+                                        <div class="teacher-text extra-label">Доп. занятие</div>
+                                    {% endif %}
+                                    
+                                    {% if item.secondary_text and not item.is_cancelled %}
+                                        <div class="teacher-text scale-text {% if is_teacher %}teacher-subj{% endif %}">{{ item.secondary_text }}</div>
+                                    {% endif %}
+                                </div>
+                                
+                                {% if item.room and not item.is_cancelled and item.primary_text != 'Нет занятий' %}
+                                    <div class="room-badge">{{ item.room }}</div>
+                                {% endif %}
+                            </div>
+                        {% endfor %}
                     {% endif %}
                 </div>
-
-                <!-- Кабинет (скрываем при отмене) -->
-                {% if lesson.status.value != 'cancelled' and lesson.room and lesson.room != '—' %}
-                    <div class="room-badge">{{ lesson.room }}</div>
-                {% endif %}
             </div>
         {% endfor %}
     {% else %}
         <div class="empty">🏖 Занятий нет</div>
     {% endif %}
 </div>
+
+<script>
+    document.addEventListener("DOMContentLoaded", () => {
+        document.querySelectorAll('.scale-text').forEach(el => {
+            let currentSize = parseInt(window.getComputedStyle(el).fontSize);
+            const minSize = 22;
+            while (el.scrollWidth > el.clientWidth && currentSize > minSize) {
+                currentSize--;
+                el.style.fontSize = currentSize + 'px';
+            }
+        });
+    });
+</script>
 </body>
 </html>

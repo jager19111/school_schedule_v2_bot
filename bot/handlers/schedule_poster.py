@@ -152,11 +152,28 @@ async def _build_day_poster(
             request_id = build_personal_request_id(
                 version, target.target_id, date_iso, extra_classes_hash(extras)
             )
-
+    # --- УМНАЯ СБОРКА КЛАССА И ГРУППЫ ---
+    class_str = day_dto.class_name or target.class_id
+    group_str = str(day_dto.group_name).strip() if day_dto.group_name else ""
+    
+    # Фолбэк: если NIKA не отдала группу в корне DTO, берем её из настроек профиля
+    if not group_str and target.group_id and target.group_id not in ("ALL", "0", "None", "", "—"):
+        if str(target.group_id).isdigit():
+            group_str = f"{target.group_id} группа"
+        else:
+            group_str = str(target.group_id)
+            
+    title_parts = [class_str]
+    if group_str and group_str not in ("Весь класс", "ALL", "None", "", "—"):
+        title_parts.append(group_str)
+        
+    title = f"Расписание · {' · '.join(title_parts)}"
+    # ------------------------------------
+    
     request = build_poster_request(
         request_id=request_id,
         dto=day_dto,
-        title=f"Расписание · {day_dto.class_name or target.class_id}",
+        title=title,
         date_text=_format_date_text(date_iso),
         subtitle=_child_subtitle(target, actor_user_id),
         width=config.POSTER_WIDTH,
