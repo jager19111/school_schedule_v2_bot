@@ -871,7 +871,7 @@ async def show_schedule_week(
         text,
         keyboard,
     )
-    await callback.answer()
+    await callback.answer("🗓 Неделя выводится текстом для удобства чтения")
 
 
 @router.callback_query(ScheduleFullWeekCD.filter())
@@ -923,7 +923,7 @@ async def show_full_schedule_week(
             week_start_iso,
         )
 
-    await callback.answer()
+    await callback.answer("📋 Подробная неделя выводится текстом")
 
 # ==========================================================
 # ХЕНДЛЕР «🔄 ИЗМЕНЕНИЯ」
