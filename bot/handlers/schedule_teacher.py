@@ -18,6 +18,7 @@ from bot.utils.ui_renderer import UIRenderer
 from services.profiles_service import ProfileService
 from services.schedule_service import ScheduleService
 from bot.utils.safe_send import send_or_edit_long
+from bot.utils.poster_delivery import fallback_to_text
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -35,10 +36,11 @@ async def _safe_edit_teacher_schedule(
             parse_mode="HTML",
         )
     except TelegramBadRequest as exc:
-        logger.debug(
-            "Teacher schedule edit skipped: %s",
-            exc,
-        )
+        if "there is no text" in str(exc).lower(): # <--- ИСПРАВЛЕНО
+            # Если мы пытаемся наложить текст на картинку — удаляем фото и шлем текст
+            await fallback_to_text(callback, text, keyboard)
+        else:
+            logger.debug("Teacher schedule edit skipped: %s", exc)
 
 
 async def _get_teacher_profile(

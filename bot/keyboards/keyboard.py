@@ -257,7 +257,8 @@ class Keyboards:
         target_id: int | str | None = None,
         class_id: str | None = None,
         group_id: str | None = None,
-        origin: str = "class"
+        origin: str = "class",
+        is_image: bool = False,
     ) -> InlineKeyboardMarkup:
         """Навигация дневного расписания в Schedule Hub."""
         current_date = datetime.fromisoformat(current_date_iso).date()
@@ -296,7 +297,11 @@ class Keyboards:
             buttons.append([
                 InlineKeyboardButton(text='🎯 Сменить цель', callback_data=callbacks.SCHEDULE_TARGETS)
             ])
-            
+        # --- ФОЛБЭК ДЛЯ КАРТИНОК ---
+        if is_image:
+            buttons.append([
+                InlineKeyboardButton(text='📝 Текстовый вид', callback_data=callbacks.ScheduleForceTextCD().pack())
+            ])    
         return InlineKeyboardMarkup(inline_keyboard=buttons)
 
     @staticmethod
@@ -917,7 +922,8 @@ class Keyboards:
         *, 
         current_date_iso: str, 
         teacher_id: str, 
-        has_changes: bool = False
+        has_changes: bool = False,
+        is_image: bool = False,
     ) -> InlineKeyboardMarkup:
         current_date = datetime.fromisoformat(current_date_iso).date()
         previous_date = (current_date - timedelta(days=1)).isoformat()
@@ -952,10 +958,13 @@ class Keyboards:
         # ---------------------------------------------
             
         buttons.extend([
-            [InlineKeyboardButton(text='📅 К ближайшему дню', callback_data=callbacks.TEACHER_SCHEDULE_SMART_DAY)], 
-            [InlineKeyboardButton(text='⚙️ Настройки', callback_data=callbacks.SETTINGS_MAIN)]
+            [InlineKeyboardButton(text='📅 К ближайшему дню', callback_data=callbacks.TEACHER_SCHEDULE_SMART_DAY)]
         ])
-        
+        # --- ФОЛБЭК ДЛЯ КАРТИНОК ---
+        if is_image:
+            buttons.append([
+                InlineKeyboardButton(text='📝 Текстовый вид', callback_data=callbacks.TeacherForceTextCD().pack())
+            ])
         return InlineKeyboardMarkup(inline_keyboard=buttons)
     @staticmethod
     def get_teacher_schedule_week_kb(*, week_start_iso: str, is_full: bool=False) -> InlineKeyboardMarkup:
@@ -1122,3 +1131,21 @@ class Keyboards:
         buttons.append([InlineKeyboardButton(text="⬅️ Назад", callback_data=callbacks.SEARCH_ROOMS_MENU)])
         
         return InlineKeyboardMarkup(inline_keyboard=buttons)
+    
+    
+    # кнопка переключения рендера картинка/текст
+    @staticmethod
+    def get_format_toggle_kb(prefer_image: bool) -> InlineKeyboardMarkup:
+        """Клавиатура для команды /format."""
+        from bot.handlers.schedule_poster import ScheduleFormatToggleCD
+        other = "📝 текст" if prefer_image else "🖼 картинка"
+        return InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text=f"Переключить на {other}",
+                        callback_data=ScheduleFormatToggleCD().pack(),
+                    )
+                ]
+            ]
+        )

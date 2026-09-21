@@ -32,6 +32,7 @@ from services.watch_targets_service import WatchTargetsService
 from services.students_service import StudentsService
 from bot.handlers.schedule_teacher import open_teacher_schedule_for_message
 from bot.utils.safe_send import send_or_edit_long
+from bot.utils.poster_delivery import fallback_to_text
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -52,11 +53,11 @@ async def _safe_edit_schedule_message(
             parse_mode="HTML",
         )
     except TelegramBadRequest as exc:
-        logger.debug(
-            "Schedule message edit skipped: %s",
-            exc,
-        )
-
+        if "there is no text" in str(exc).lower(): # <--- ИСПРАВЛЕНО
+            await fallback_to_text(callback, text, keyboard)
+        else:
+            logger.debug("Schedule message edit skipped: %s", exc)
+            
 
 async def _get_schedule_targets(
     *,
@@ -974,8 +975,14 @@ async def show_day_changes(
         # Делегируем создание клавиатуры слою Keyboards
         kb = Keyboards.get_day_changes_back_kb(callback_data)
 
-        # Используем edit_text для бесшовного обновления экрана
-        await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+        # Бесшовный фолбэк: если сообщение было картинкой, меняем на текст
+        try:
+            await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+        except TelegramBadRequest as exc:
+            if "there is no text" in str(exc).lower(): # <--- ИСПРАВЛЕНО
+                await fallback_to_text(callback, text, kb)
+            else:
+                raise
         await callback.answer()
 
     except Exception as e:

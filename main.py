@@ -427,14 +427,15 @@ async def main():
         # 6. Регистрация роутеров команд
         dp.include_router(registration.router)
         dp.include_router(help.router)
-        # Teacher router содержит только teacher_sched:* callbacks.
-        dp.include_router(schedule_teacher.router)
+        
 
         # Image-first расписание (ТЗ v2.2): перехватывает навигацию по дням
         # ТОЛЬКО при ENABLE_IMAGE_GENERATION=True (иначе апдейт безусловно
-        # проходит в schedule_child ниже). Обязан стоять ВЫШЕ schedule_child.
+        # проходит в schedule_child и schedule_teacher ниже). Обязан стоять ВЫШЕ schedule_child и schedule_teacher.
         dp.include_router(schedule_poster.router)
-
+        
+        # Teacher router содержит только teacher_sched:* callbacks.
+        dp.include_router(schedule_teacher.router)
         # Единственная message entry point:
         # «📅 Моё расписание» для child / parent / observer / teacher.
         dp.include_router(schedule_child.router)

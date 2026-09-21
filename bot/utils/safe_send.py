@@ -202,8 +202,9 @@ async def send_or_edit_long(
     """
     from aiogram.exceptions import TelegramBadRequest
 
+    from bot.utils.poster_delivery import fallback_to_text
+
     if len(text) <= SAFETY_LIMIT:
-        # Короткий текст — обычное редактирование
         try:
             await callback.message.edit_text(
                 text,
@@ -212,6 +213,9 @@ async def send_or_edit_long(
             )
             return True
         except TelegramBadRequest as exc:
+            if "there is no text" in str(exc).lower():
+                await fallback_to_text(callback, text, keyboard)
+                return True
             logger.debug("edit_text skipped: %s", exc)
             return False
 

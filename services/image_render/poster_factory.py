@@ -63,6 +63,7 @@ def build_poster_request(
     title: str,
     date_text: str,
     subtitle: str | None = None,
+    is_teacher: bool = False,  # <-- НОВЫЙ ФЛАГ
     width: int = 1080,
 ) -> PosterRequest:
     """DayScheduleDTO -> PosterRequest (маппинг статусов раздела 6 ТЗ)."""
@@ -84,7 +85,20 @@ def build_poster_request(
             num = "Доп."
         else:
             num = str(lesson.display_num or lesson.lesson_num or "•")
-
+            
+        # --- НОВАЯ ЛОГИКА ДЛЯ УЧИТЕЛЯ ---
+        if is_teacher:
+            meta_parts = []
+            if lesson.class_name:
+                meta_parts.append(lesson.class_name)
+            # Защита от дефолтных пустых групп
+            if lesson.group_name and str(lesson.group_name).strip() not in ("Весь класс", "ALL", "None", "", "—"):
+                meta_parts.append(str(lesson.group_name).strip())
+            teacher_display = " · ".join(meta_parts) if meta_parts else None
+        else:
+            teacher_display = lesson.teacher_name
+        # ---------------------------------
+        
         cards.append(
             PosterLessonCard(
                 num=num,
@@ -92,7 +106,7 @@ def build_poster_request(
                 time_end=lesson.end_time or "—",
                 subject=lesson.subject_name or lesson.original_subject_name or "Урок",
                 status=status,
-                teacher=lesson.teacher_name,
+                teacher=teacher_display,
                 room=lesson.room_name,
                 group=lesson.group_name,
                 original_subject=(

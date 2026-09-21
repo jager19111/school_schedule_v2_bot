@@ -461,3 +461,13 @@ class MorningTeacherSummaryCD(
 ):
     teacher_id: str
     date_iso: str
+    
+# ==============================================================
+# Рендер картинок. Текущее преобразование в текст
+# ==============================================================
+
+class ScheduleForceTextCD(CallbackData, prefix="sh_ftxt"):
+    pass
+
+class TeacherForceTextCD(CallbackData, prefix="th_ftxt"):
+    pass
