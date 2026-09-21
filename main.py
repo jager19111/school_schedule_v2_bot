@@ -592,6 +592,7 @@ async def main():
             trigger="cron",
             hour=3,
             minute=20,
+            second=10,
             kwargs={"db_connection": db_connection},
             id="wal_checkpoint",
             replace_existing=True,

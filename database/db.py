@@ -23,6 +23,8 @@
 import aiosqlite
 import logging
 from typing import Optional
+import asyncio
+import sqlite3
 
 logger = logging.getLogger(__name__)
 
@@ -64,13 +66,32 @@ class Database:
     async def checkpoint_wal(db: aiosqlite.Connection) -> str:
         """
         Ручной WAL-checkpoint с усечением -wal файла.
-
-        Запускается ночью из main.py: без него -wal файл может
-        неограиченно расти при постоянной записи.
+        Если база занята, ждет ее освобождения (до 30 секунд).
         """
-        async with db.execute("PRAGMA wal_checkpoint(TRUNCATE)") as cursor:
-            row = await cursor.fetchone()
-            return str(row)
+        
+        max_retries = 30
+        for attempt in range(max_retries):
+            try:
+                async with db.execute("PRAGMA wal_checkpoint(TRUNCATE)") as cursor:
+                    row = await cursor.fetchone()
+                    
+                    # SQLite возвращает кортеж (is_busy, log_size, checkpointed)
+                    # Если is_busy == 1, значит сжатие прошло не полностью
+                    if row and row[0] == 1:
+                        logger.warning(f"WAL Checkpoint: база занята, ждем... (попытка {attempt + 1}/{max_retries})")
+                        await asyncio.sleep(1)
+                        continue
+                        
+                    return str(row)
+            except sqlite3.OperationalError as e:
+                if "locked" in str(e).lower() or "busy" in str(e).lower():
+                    logger.warning(f"WAL Checkpoint: таблица заблокирована, ждем... (попытка {attempt + 1}/{max_retries})")
+                    await asyncio.sleep(1)
+                else:
+                    raise
+                    
+        logger.error("WAL Checkpoint не смог дождаться освобождения БД.")
+        return "Failed: database is locked"
 
     async def init_db(self) -> None:
         """
