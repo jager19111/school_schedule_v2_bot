@@ -67,7 +67,7 @@ class Keyboards:
 
     @staticmethod
     def get_parent_family_action() -> InlineKeyboardMarkup:
-        return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text='🆕 Создать новую семью', callback_data=callbacks.FAMILY_CREATE)], [InlineKeyboardButton(text='🔗 Присоединиться по коду', callback_data=callbacks.FAMILY_JOIN)]])
+        return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text='🆕 Добавить семейную группу', callback_data=callbacks.FAMILY_CREATE)], [InlineKeyboardButton(text='🔗 Присоединиться по коду', callback_data=callbacks.FAMILY_JOIN)]])
 
     @staticmethod
     def get_child_family_action() -> InlineKeyboardMarkup:

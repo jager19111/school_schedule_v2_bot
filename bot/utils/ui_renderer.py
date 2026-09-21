@@ -336,7 +336,7 @@ class UIRenderer:
         return UIRenderer.render_registration_success(
             name=name,
             role="parent",
-            title="Семья создана",
+            title="Семейная группа создана",
             is_family_admin=True,
             additional_block=additional_block,
             next_step=(
@@ -654,7 +654,7 @@ class UIRenderer:
 
     @staticmethod
     def render_parent_family_action() -> str:
-        return "Вы хотите создать новую семью или присоединиться к уже существующей?"
+        return "Вы хотите создать новую семейную группу или присоединиться к уже существующей?"
 
     @staticmethod
     def render_child_family_action() -> str:
