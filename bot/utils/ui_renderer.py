@@ -2288,8 +2288,10 @@ class UIRenderer:
         text += "\n\n".join(days_texts)
         return text, None
 
+
+
     # ==========================================================
-    # Уведомления (ChangeReminderDTO, LessonReminderDTO)
+    # Уведомления (LessonReminderDTO)
     # ==========================================================
 
     @staticmethod
@@ -2298,26 +2300,19 @@ class UIRenderer:
         safe_subj = UIRenderer.escape_html(dto.subject_name)
         safe_room = UIRenderer.escape_html(dto.room_name, "—")
 
-        child_line = f"👤 Ребёнок: <b>{safe_child}</b>\n" if dto.child_name else ""
+        target = f" у ребёнка <b>{safe_child}</b>" if dto.child_name else ""
 
         if dto.is_extra:
-            return (
-                "🎨 <b>Скоро дополнительное занятие</b>\n"
-                f"{child_line}"
-                f"🕐 Начало: <b>{dto.start_time}</b>\n"
-                f"📝 Занятие: <b>{safe_subj}</b>\n"
-                f"📍 Место: {safe_room}"
-            )
+            room_text = f" в {safe_room}" if safe_room != "—" else ""
+            return f"🎨 В {dto.start_time}{target} начнётся дополнительное занятие <b>{safe_subj}</b>{room_text}."
 
-        return (
-            "⏰ <b>Скоро урок</b>\n"
-            f"{child_line}"
-            f"🕐 Начало: <b>{dto.start_time}</b>\n"
-            f"📚 Предмет: <b>{safe_subj}</b>\n"
-            f"🏫 Кабинет: {safe_room}"
-        )
-
-    # Склеенное изменение расписания
+        room_text = f" в кабинете {safe_room}" if safe_room != "—" else ""
+        return f"⏰ В {dto.start_time}{target} начнётся урок <b>{safe_subj}</b>{room_text}."
+        
+    # ==========================================================
+    # Уведомления ChangeReminderDTO. # Склеенное изменение расписания
+    # ==========================================================
+    
     @staticmethod
     def render_daily_changes_summary(summary: 'DailyChangeSummaryDTO') -> str:
         lines = []

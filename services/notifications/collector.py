@@ -545,7 +545,9 @@ class NotificationCollector:
             groups = metadata.groups
         except Exception: groups = {}
         
-        candidates: list[NotificationSendDTO] = []
+        # 1. Словари для семантической дедупликации
+        student_candidates_map = {}
+        teacher_candidates_map = {}
 
         for lesson in lessons:
             try:
@@ -575,20 +577,26 @@ class NotificationCollector:
                     offset_minutes = recipient.offset_minutes
                     if offset_minutes <= 0 or delta_minutes > offset_minutes: continue
 
-                    dto = LessonReminderDTO(
-                        subject_name=lesson.subject_name or "—", start_time=lesson.start_time or "—",
-                        room_name=lesson.room_name or "—", is_extra=False, child_name=(recipient.child_name if recipient.recipient_kind == "adult" else None),
-                    )
-
-                    try: text = UIRenderer.render_lesson_reminder(dto)
-                    except Exception as e:
-                        logger.error("Render error for lesson reminder %s: %s", lesson.id, e)
-                        continue
-
-                    candidates.append(NotificationSendDTO(
-                        notification_type="pre_lesson", notification_date=today_iso, source_ids=[lesson.id],
-                        recipient_id=recipient.recipient_id, text=text, context=f"lesson_id={lesson.id}, kind={recipient.recipient_kind}",
-                    ))
+                    # Дедупликация для учеников и родителей
+                    dedup_key = (recipient.recipient_id, lesson.lesson_num)
+                    
+                    if dedup_key not in student_candidates_map:
+                        dto = LessonReminderDTO(
+                            subject_name=lesson.subject_name or "—", start_time=lesson.start_time or "—",
+                            room_name=lesson.room_name or "—", is_extra=False, child_name=(recipient.child_name if recipient.recipient_kind == "adult" else None),
+                        )
+                        try: 
+                            text = UIRenderer.render_lesson_reminder(dto)
+                            student_candidates_map[dedup_key] = NotificationSendDTO(
+                                notification_type="pre_lesson", notification_date=today_iso, 
+                                source_ids=[lesson.id], # Начинаем копить ID
+                                recipient_id=recipient.recipient_id, text=text, context=f"lesson_id={lesson.id}, kind={recipient.recipient_kind}",
+                            )
+                        except Exception as e:
+                            logger.error("Render error for lesson reminder %s: %s", lesson.id, e)
+                    else:
+                        # Схлопываем фантомный дубль, добавляя его ID
+                        student_candidates_map[dedup_key].source_ids.append(lesson.id)
 
                 teacher_id = lesson.teacher_id
                 if not teacher_id: continue
@@ -601,27 +609,34 @@ class NotificationCollector:
                     offset_minutes = recipient.offset_minutes
                     if offset_minutes <= 0 or delta_minutes > offset_minutes: continue
 
-                    dto = LessonReminderDTO(
-                        subject_name=lesson.subject_name or "—", start_time=lesson.start_time or "—",
-                        room_name=lesson.room_name or "—", is_extra=False, child_name=None,
-                    )
+                    # Дедупликация для учителей
+                    dedup_key = (recipient.recipient_id, lesson.lesson_num)
                     
-                    try:
-                        text = "👨‍🏫 <b>Напоминание об уроке</b>\n\n" + UIRenderer.render_lesson_reminder(dto)
-                    except Exception as e:
-                        logger.error("Render error for teacher lesson reminder %s: %s", lesson.id, e)
-                        continue
-
-                    candidates.append(NotificationSendDTO(
-                        notification_type="teacher_pre_lesson", notification_date=today_iso, source_ids=[lesson.id],
-                        recipient_id=recipient.recipient_id, text=text, context=f"teacher_id={teacher_id}, lesson_id={lesson.id}",
-                    ))
+                    if dedup_key not in teacher_candidates_map:
+                        dto = LessonReminderDTO(
+                            subject_name=lesson.subject_name or "—", start_time=lesson.start_time or "—",
+                            room_name=lesson.room_name or "—", is_extra=False, child_name=None,
+                        )
+                        try:
+                            text = UIRenderer.render_lesson_reminder(dto)
+                            teacher_candidates_map[dedup_key] = NotificationSendDTO(
+                                notification_type="teacher_pre_lesson", notification_date=today_iso, 
+                                source_ids=[lesson.id], # Начинаем копить ID
+                                recipient_id=recipient.recipient_id, text=text, context=f"teacher_id={teacher_id}, lesson_id={lesson.id}",
+                            )
+                        except Exception as e:
+                            logger.error("Render error for teacher lesson reminder %s: %s", lesson.id, e)
+                    else:
+                        # Схлопываем фантомный дубль учителя
+                        teacher_candidates_map[dedup_key].source_ids.append(lesson.id)
 
             except (KeyError, ValueError, TypeError) as e:
                 logger.error("Data prep error for pre-lesson reminder lesson=%s: %s", getattr(lesson, 'id', 'unknown'), e)
             except Exception as e:
                 logger.exception("Infrastructure error during pre-lesson collection: %s", e)
 
+        # 2. Выгружаем очищенные списки
+        candidates = list(student_candidates_map.values()) + list(teacher_candidates_map.values())
         ctx.candidates += len(candidates)
         return candidates
 
