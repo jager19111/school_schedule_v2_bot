@@ -41,7 +41,7 @@ from core.models.dto import (ClassListDTO, AdminStatsDTO, DayScheduleDTO, ExtraC
                              WeekSummaryDTO, FullWeekScheduleDTO, UserProfileDTO, FamilyMemberDTO,
                              MorningSummaryDTO, ChangeReminderDTO, LessonReminderDTO, ProfileResetImpactDTO, FamilyInviteDTO, 
                             ScheduleWatchTargetDTO, StudentProfileDTO, ParentStudentNotificationSettingsDTO,
-                            AdultStudentExtraClassesPermissionDTO, StudentTelegramSettingsDTO, NikaSourceHealthDTO,  
+                            AdultStudentExtraClassesPermissionDTO, StudentTelegramSettingsDTO, NikaSourceHealthDTO, FreeRoomsStatusDTO,  
                             StudentProfileViewModel, WatchTargetViewModel, ExtraClassViewModel, FamilyMemberViewModel, StudentTelegramSettingsViewModel,
                             ParentStudentNotificationSettingsViewModel, DayChangesDetailDTO, LessonDTO, MorningLessonDTO, DailyChangeSummaryDTO
 )
@@ -2843,13 +2843,21 @@ class UIRenderer:
         return "🚪 <b>Поиск кабинетов</b>\n\nВыберите нужный режим:"
 
     @staticmethod
-    def render_free_rooms_now(time_str: str, free_rooms: dict[str, str]) -> str:
+    def render_free_rooms_now(status: 'FreeRoomsStatusDTO', free_rooms: dict[str, str]) -> str:
+        # Инкапсулируем сборку строки времени в рендерере
+        if status.is_finished:
+            display_time = f"{status.current_time_str} (уроки завершены)"
+        else:
+            num_str = f"{status.target_num} " if status.target_num else ""
+            state_str = "следующий" if status.is_break else "идет"
+            display_time = f"{status.current_time_str} ({state_str} {num_str}урок {status.start_time}–{status.end_time})"
+
         if not free_rooms:
-            return f"🔴 <b>Время {time_str}:</b> Сейчас все кабинеты заняты (или школа закрыта)."
+            return f"🔴 <b>Время {display_time}:</b> Сейчас все кабинеты заняты (или школа закрыта)."
             
         rooms_text = ", ".join(free_rooms.values())
         return (
-            f"🟢 <b>Свободные кабинеты (на {time_str}):</b>\n\n"
+            f"🟢 <b>Свободные кабинеты на {display_time}:</b>\n\n"
             f"{rooms_text}\n\n"
             f"👇 <i>Нажмите на кабинет, чтобы проверить его занятость до конца дня:</i>"
         )

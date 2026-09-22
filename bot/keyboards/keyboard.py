@@ -356,12 +356,14 @@ class Keyboards:
         *,
         has_changes: bool = False,
         date_iso: str | None = None,
-        is_room: bool = False
+        is_room: bool = False,
+        return_to: str = "grid"
     ) -> InlineKeyboardMarkup:
         start_date = datetime.fromisoformat(week_start_iso).date()
-        # Определяем префиксы и кнопку назад кабинетов
+        # 1. Умный возврат назад
         if is_room:
-            back_cb = callbacks.SEARCH_ROOMS_GRID
+            # Если пришли из свободных кабинетов - возвращаем туда!
+            back_cb = callbacks.FREE_ROOMS_NOW if return_to == "free_now" else callbacks.SEARCH_ROOMS_GRID
         elif is_teacher:
             back_cb = callbacks.SEARCH_TEACHERS
         else:
@@ -376,7 +378,8 @@ class Keyboards:
             
             # Маршрутизация кнопок дней
             if is_room:
-                day_cb = callbacks.SearchRoomDayCD(room_id=target_id, date_iso=day_date_iso).pack()
+                # Прокидываем return_to при переключении дней
+                day_cb = callbacks.SearchRoomDayCD(room_id=target_id, date_iso=day_date_iso, return_to=return_to).pack()
             elif is_teacher:
                 day_cb = callbacks.SearchTeacherDayCD(teacher_id=target_id, date_iso=day_date_iso).pack()
             else:
@@ -428,8 +431,8 @@ class Keyboards:
         next_week = (start_date + timedelta(days=7)).isoformat()
         
         if is_room:
-            prev_cb = callbacks.SearchRoomWeekCD(room_id=target_id, week_start_iso=prev_week).pack()
-            next_cb = callbacks.SearchRoomWeekCD(room_id=target_id, week_start_iso=next_week).pack()
+            prev_cb = callbacks.SearchRoomWeekCD(room_id=target_id, week_start_iso=prev_week, return_to=return_to).pack()
+            next_cb = callbacks.SearchRoomWeekCD(room_id=target_id, week_start_iso=next_week, return_to=return_to).pack()
         elif is_teacher:
             prev_cb = callbacks.SearchTeacherWeekCD(teacher_id=target_id, week_start_iso=prev_week).pack()
             next_cb = callbacks.SearchTeacherWeekCD(teacher_id=target_id, week_start_iso=next_week).pack()
@@ -1120,7 +1123,8 @@ class Keyboards:
         row = []
         for r_id, r_name in free_rooms.items():
             # Используем уже существующий коллбэк!
-            row.append(InlineKeyboardButton(text=r_name, callback_data=callbacks.SearchRoomCD(room_id=r_id).pack()))
+            # ДОБАВЛЕН return_to="free_now"
+            row.append(InlineKeyboardButton(text=r_name, callback_data=callbacks.SearchRoomCD(room_id=r_id, return_to="free_now").pack()))
             if len(row) == 4:
                 buttons.append(row)
                 row = []

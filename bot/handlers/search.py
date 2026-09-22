@@ -440,11 +440,9 @@ async def search_rooms_menu(callback: CallbackQuery):
 
 @router.callback_query(F.data == callbacks.FREE_ROOMS_NOW)
 async def show_free_rooms_now(callback: CallbackQuery, schedule_service: ScheduleService):
-    # Получаем словарь вместо списка
-    time_str, free_rooms = await schedule_service.get_currently_free_rooms()
-    text = UIRenderer.render_free_rooms_now(time_str, free_rooms)
+    status_dto, free_rooms = await schedule_service.get_currently_free_rooms()
+    text = UIRenderer.render_free_rooms_now(status_dto, free_rooms)
     
-    # Строим клавиатуру
     kb = Keyboards.get_free_rooms_now_kb(free_rooms)
     
     with contextlib.suppress(TelegramBadRequest):
@@ -483,7 +481,8 @@ async def select_room_day(
         target_id=room_id, 
         is_teacher=False, 
         week_start_iso=monday.isoformat(),
-        is_room=True
+        is_room=True,
+        return_to=callback_data.return_to
     )
     
     with contextlib.suppress(TelegramBadRequest):
@@ -508,7 +507,8 @@ async def show_room_schedule(
         target_id=room_id, 
         is_teacher=False, 
         week_start_iso=monday.isoformat(),
-        is_room=True
+        is_room=True,
+        return_to=callback_data.return_to
     )
     with contextlib.suppress(TelegramBadRequest):
         await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
@@ -528,7 +528,8 @@ async def nav_room_week(
         target_id=room_id, 
         is_teacher=False, 
         week_start_iso=callback_data.week_start_iso,
-        is_room=True
+        is_room=True,
+        return_to=callback_data.return_to
     )
     with contextlib.suppress(TelegramBadRequest):
         await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")

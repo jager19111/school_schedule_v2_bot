@@ -44,7 +44,7 @@ from core.models.dto import (
     NikaSourceHealthDTO,
     SchoolDictionariesDTO,
     TeacherListDTO,
-    WeekSummaryDTO, RoomListDTO
+    WeekSummaryDTO, RoomListDTO, FreeRoomsStatusDTO
 )
 from core.models.metadata import SchoolMetadata
 from core.repository.schedule_repository import ScheduleRepository
@@ -494,39 +494,81 @@ class ScheduleService:
         room_obj = metadata.rooms.get(str(room_id))
         return room_obj.name if room_obj else fallback
 
-    async def get_currently_free_rooms(self) -> tuple[str, dict[str, str]]:
+    async def get_currently_free_rooms(self) -> tuple['FreeRoomsStatusDTO', dict[str, str]]:
         """
-        Вычисляет свободные кабинеты на текущую минуту.
-        Возвращает: (время, dict[room_id, room_name]) для генерации кнопок.
+        Вычисляет свободные кабинеты на текущую минуту ИЛИ на следующий урок.
+        Возвращает сухие данные: (FreeRoomsStatusDTO, dict[room_id, room_name]).
         """
         now = self.time_service.get_now_base()
         date_iso = now.date().isoformat()
-        current_time_str = now.strftime("%H:%M")
         current_time_obj = now.time()
 
         metadata = await self.schedule_repo.get_metadata()
         lessons_today = await self.schedule_repo.get_active_lessons_for_date(date_iso)
         
-        occupied_ids = set()
+        # 1. Собираем уникальные интервалы уроков
+        slots_map = {}
         for l in lessons_today:
-            if not l.start_time or not l.end_time:
-                continue
+            if l.start_time and l.end_time:
+                slot = (l.start_time, l.end_time)
+                if slot not in slots_map and l.lesson_num:
+                    slots_map[slot] = l.lesson_num
+                
+        sorted_slots = sorted(list(slots_map.keys()), key=lambda x: self._parse_hhmm(x[0]))
+        
+        # 2. Ищем целевой слот
+        target_slot = None
+        target_num = None
+        is_break = False
+        
+        for start_str, end_str in sorted_slots:
             try:
-                start_t = self._parse_hhmm(l.start_time)
-                end_t = self._parse_hhmm(l.end_time)
-                if start_t <= current_time_obj <= end_t:
-                    occupied_ids.add(str(l.room_id))
+                start_t = self._parse_hhmm(start_str)
+                end_t = self._parse_hhmm(end_str)
+                
+                if current_time_obj <= end_t:
+                    target_slot = (start_str, end_str)
+                    target_num = slots_map.get(target_slot)
+                    if current_time_obj < start_t:
+                        is_break = True
+                    break
             except ValueError:
-                pass
+                continue
+
+        # 3. Вычисляем занятые кабинеты
+        occupied_ids = set()
+        if target_slot:
+            t_start_obj = self._parse_hhmm(target_slot[0])
+            t_end_obj = self._parse_hhmm(target_slot[1])
+            
+            for l in lessons_today:
+                if not l.start_time or not l.end_time:
+                    continue
+                try:
+                    l_start = self._parse_hhmm(l.start_time)
+                    l_end = self._parse_hhmm(l.end_time)
+                    if l_start < t_end_obj and l_end > t_start_obj:
+                        occupied_ids.add(str(l.room_id))
+                except ValueError:
+                    pass
+
+        # 4. Формируем DTO состояния
+        status_dto = FreeRoomsStatusDTO(
+            current_time_str=now.strftime("%H:%M"),
+            is_finished=not bool(target_slot),
+            is_break=is_break,
+            target_num=target_num,
+            start_time=target_slot[0] if target_slot else None,
+            end_time=target_slot[1] if target_slot else None
+        )
 
         free_rooms = {}
         for r_id, room_obj in metadata.rooms.items():
             if str(r_id) not in occupied_ids and room_obj.name.strip() and room_obj.name != "—":
                 free_rooms[str(r_id)] = room_obj.name
 
-        # Сортируем по названию кабинета
         sorted_free_rooms = {k: v for k, v in sorted(free_rooms.items(), key=lambda item: item[1])}
-        return current_time_str, sorted_free_rooms
+        return status_dto, sorted_free_rooms
 
     async def get_daily_schedule_for_room(self, room_id: str, date_iso: str) -> DayScheduleDTO:
         """Сборка расписания кабинета в чистый DTO с дедубликацией подгрупп."""
@@ -566,32 +608,23 @@ class ScheduleService:
         )
 
     async def get_smart_room_target_date(self, room_id: str) -> str:
-        """Находит ближайший день с уроками для кабинета (горизонт 8 дней)."""
+        """
+        Умная дата для кабинета.
+        Для кабинетов пустой день — это полезная информация ("свободен весь день"),
+        поэтому мы не ищем следующий день с уроками, а просто откидываем вечер и выходные.
+        """
         now = self.time_service.get_now_base()
-        today = now.date()
-
-        for offset in range(8):
-            candidate_date = today + timedelta(days=offset)
-            candidate_iso = candidate_date.isoformat()
-            lessons = await self.schedule_repo.get_lessons_for_room(room_id, candidate_iso)
-
-            if not lessons:
-                continue
-            if candidate_date != today:
-                return candidate_iso
-
-            end_times = []
-            for l in lessons:
-                if l.end_time:
-                    try:
-                        end_times.append(self._parse_hhmm(l.end_time))
-                    except ValueError:
-                        pass
-
-            if end_times and now.time() <= max(end_times):
-                return candidate_iso
-
-        return today.isoformat()
+        target = now
+        
+        # Если время после 19:00, переключаем на завтра
+        if target.hour >= 19:
+            target += timedelta(days=1)
+            
+        # Если попадаем на воскресенье, переключаем на понедельник
+        if target.isoweekday() == 7:
+            target += timedelta(days=1)
+            
+        return target.date().isoformat()
     # ==========================================================
     # Smart date: возвращает ГОТОВЫЙ день (без повторного запроса)
     # ==========================================================

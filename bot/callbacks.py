@@ -411,14 +411,17 @@ class SearchTeacherFullWeekCD(CallbackData, prefix="qtf"):
 # ==============================================================
 class SearchRoomCD(CallbackData, prefix="srch_rm"):
     room_id: str
+    return_to: str = "grid"
 
 class SearchRoomDayCD(CallbackData, prefix="sch_r_d"): # <-- ДОБАВЛЕНО
     room_id: str
     date_iso: str
+    return_to: str = "grid"
 
 class SearchRoomWeekCD(CallbackData, prefix="sch_r_w"):
     room_id: str
     week_start_iso: str
+    return_to: str = "grid"
 
 # ==============================================================
 # Schedule
