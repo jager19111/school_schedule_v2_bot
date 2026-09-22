@@ -68,3 +68,7 @@ class AdminService:
 
     async def get_nika_source_health(self) -> NikaSourceHealthDTO:
         return await self.schedule_repo.get_nika_health_status()
+    
+    async def get_all_users_csv(self) -> str:
+        """Генерирует CSV отчет по всем пользователям."""
+        return await self.admin_repo.get_all_users_csv()

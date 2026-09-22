@@ -22,10 +22,13 @@ import logging
 
 
 from aiogram import Router, F
-from aiogram.filters import Command
-from aiogram.types import Message, CallbackQuery
 from datetime import datetime
 
+from aiogram import Bot
+from aiogram.exceptions import TelegramBadRequest
+from aiogram.filters import Command, CommandObject
+from aiogram.types import Message, CallbackQuery, BufferedInputFile
+from services.profiles_service import ProfileService
 
 from bot.utils.ui_renderer import UIRenderer
 from services.admin_service import AdminService
@@ -90,6 +93,8 @@ async def cmd_admin_help(message: Message, admin_service: AdminService) -> None:
         "🛠 <b>Панель администратора</b>\n\n"
         "<b>Доступные команды:</b>\n"
         "🔸 /stats — Статистика пользователей, ролей и антифлуда\n"
+        "🔸 /user <i>[id]</i> — Подробная информация о конкретном пользователе (Telegram + БД)\n"
+        "🔸 /users — Скачать CSV-отчет со всеми пользователями бота\n"
         "🔸 /source_status — Состояние кэша NIKA (актуальность расписания, здоровье парсера)\n"
         "🔸 /img_stats — Статистика графического движка (рендер картинок, circuit breaker)\n"
         "🔸 /stress <i>[кол-во] [chat_id]</i> — Стресс-тест боевого пайплайна уведомлений\n"
@@ -316,3 +321,83 @@ def _render_image_stats_section(
         f"L2 (file_id): {state['cached_file_ids']} записей"
     )
     return "\n".join(lines)
+
+@router.message(Command("user"))
+async def cmd_admin_user_info(
+    message: Message,
+    command: CommandObject,
+    admin_service: AdminService,
+    profile_service: ProfileService,
+    bot: Bot,
+) -> None:
+    """Точечный запрос информации по конкретному юзеру (интеграция вашего скрипта)."""
+    if not await _require_admin(message=message, admin_service=admin_service):
+        return
+
+    if not command.args or not command.args.isdigit():
+        await message.answer("⚠️ <b>Использование:</b>\n<code>/user 123456789</code>", parse_mode="HTML")
+        return
+
+    target_id = int(command.args)
+    text_lines = [f"👤 <b>Профиль пользователя <code>{target_id}</code></b>\n"]
+
+    # 1. Запрашиваем актуальные данные из Telegram (Ваш скрипт)
+    try:
+        chat_info = await bot.get_chat(target_id)
+        text_lines.append("<b>🌐 Данные Telegram API:</b>")
+        text_lines.append(f"├ Имя: {chat_info.first_name}")
+        if chat_info.last_name:
+            text_lines.append(f"├ Фамилия: {chat_info.last_name}")
+        if chat_info.username:
+            text_lines.append(f"├ Username: @{chat_info.username}")
+        if chat_info.bio:
+            text_lines.append(f"└ Био: {chat_info.bio}")
+        else:
+            text_lines.append("└ Био: <i>пусто</i>")
+    except TelegramBadRequest:
+        text_lines.append("❌ <i>Пользователь не найден в Telegram (никогда не запускал бота).</i>")
+    except Exception as e:
+        text_lines.append(f"❌ <i>Ошибка API: {e}</i>")
+
+    # 2. Запрашиваем состояние в нашей базе данных
+    text_lines.append("\n<b>💾 Данные Базы Бота:</b>")
+    user_dto = await profile_service.get_user_profile_dto(target_id)
+
+    if not user_dto or not user_dto.role:
+        text_lines.append("└ <i>Никогда не проходил регистрацию.</i>")
+    else:
+        text_lines.append(f"├ Внутреннее имя: {user_dto.name or 'Не указано'}")
+        text_lines.append(f"├ Роль: {user_dto.role}")
+        text_lines.append(f"├ Регистрация завершена: {'Да ✅' if user_dto.is_fully_registered else 'Нет ❌'}")
+        text_lines.append(f"├ Уведомления: {'ВКЛ 🔔' if user_dto.is_notifications_enabled else 'ВЫКЛ 🔕'}")
+        
+        if user_dto.family_id:
+            text_lines.append(f"├ Семья ID: {user_dto.family_id}")
+        if user_dto.class_id:
+            text_lines.append(f"├ Класс ID: {user_dto.class_id}")
+        if user_dto.group_id:
+            text_lines.append(f"└ Группа ID: {user_dto.group_id}")
+
+    await message.answer("\n".join(text_lines), parse_mode="HTML")
+
+
+@router.message(Command("users"))
+async def cmd_admin_users_list(
+    message: Message,
+    admin_service: AdminService,
+) -> None:
+    """Генерация файла со списком всех пользователей."""
+    if not await _require_admin(message=message, admin_service=admin_service):
+        return
+
+    csv_data = await admin_service.get_all_users_csv()
+    
+    # Отправляем строковые данные как документ в чат
+    # Используем utf-8-sig, который автоматически добавляет BOM-маркер для Excel
+    file = BufferedInputFile(csv_data.encode('utf-8-sig'), filename="users_report.csv")
+    
+    await message.answer_document(
+        document=file,
+        caption="👥 <b>Полная выгрузка базы пользователей</b>\nФормат CSV. Можно открыть в Excel.",
+        parse_mode="HTML"
+    )
