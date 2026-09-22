@@ -190,6 +190,7 @@ class ScheduleService:
     def _enrich_display_numbers_dtos(
         lessons: List[LessonDTO],
         metadata: SchoolMetadata,
+        origin: str = "student",
     ) -> None:
         """
         Обогащает LessonDTO.display_num с учётом 2 смены.
@@ -198,6 +199,10 @@ class ScheduleService:
         уроки до shift_start идут «как есть» (w_flag), последующие
         сдвигаются на shift_start-1 и помечаются '*'.
         """
+        if origin == "teacher":
+            for l in lessons:
+                l.display_num = str(l.lesson_num) if l.lesson_num is not None else "•"
+            return
         class_shifts = metadata.class_shift
         second_relative = metadata.second_relative
 
@@ -311,7 +316,7 @@ class ScheduleService:
         dtos.sort(key=self._sort_key)
 
         metadata = await self.schedule_repo.get_metadata()
-        self._enrich_display_numbers_dtos(dtos, metadata)
+        self._enrich_display_numbers_dtos(dtos, metadata, origin=origin)
 
         # Извлекаем красивые названия для заголовка рендерера
         class_name = None
@@ -437,7 +442,7 @@ class ScheduleService:
         )
 
         metadata = await self.schedule_repo.get_metadata()
-        self._enrich_display_numbers_dtos(lesson_dtos, metadata)
+        self._enrich_display_numbers_dtos(lesson_dtos, metadata, origin=origin)
 
         return DayChangesDetailDTO(
             date_iso=date_iso,

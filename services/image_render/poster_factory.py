@@ -46,9 +46,13 @@ def build_poster_request(
         first = group[0]
         
         # Определяем статус всей карточки
-        if first.is_cancelled: status = LessonStatus.CANCELLED
+        # Определяем статус всей карточки
+        is_all_cancelled = all(l.is_cancelled for l in group)
+        has_changes = any(l.is_exchange or l.is_cancelled for l in group)
+
+        if is_all_cancelled: status = LessonStatus.CANCELLED
         elif first.is_extra: status = LessonStatus.EXTRA
-        elif any(l.is_exchange for l in group): status = LessonStatus.EXCHANGE
+        elif has_changes: status = LessonStatus.EXCHANGE
         elif first.is_methodological: status = LessonStatus.METHODICAL
         else: status = LessonStatus.NORMAL
 
@@ -109,8 +113,12 @@ def build_poster_request(
             is_trud = len(group) > 1 and any("труд" in s or "технологи" in s for s in subj_names)
 
             if is_trud:
-                # Агрегация Труда
-                for idx, l in enumerate(group):
+                # Агрегация Труда: оставляем только активные группы (дети идут к оставшимся учителям)
+                active_trud = [l for l in group if not l.is_cancelled]
+                # Если отменили вообще у всех — оставляем исходную группу для вывода зачеркивания
+                trud_to_render = active_trud if active_trud else group
+
+                for idx, l in enumerate(trud_to_render):
                     is_window = (l.subject_name == "Нет занятий")
                     items.append(PosterItem(
                         primary_text="Нет занятий" if is_window else ("Труд (технология)" if idx == 0 else ""),

@@ -70,7 +70,7 @@
 
 {%- if is_trud -%}
     {#- АГРЕГАЦИЯ ТРУДА -#}
-    {%- set valid_rooms = slot | map(attribute='room_name') | reject('none') | reject('equalto', '—') | unique | list -%}
+        {%- set valid_rooms = slot | rejectattr('is_cancelled') | map(attribute='room_name') | reject('none') | reject('equalto', '—') | unique | list -%}
     {%- if is_all_cancelled -%}
         <s>Труд(технология)</s>
     {%- else -%}
