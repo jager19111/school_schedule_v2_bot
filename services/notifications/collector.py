@@ -235,9 +235,17 @@ class NotificationCollector:
             except Exception as e:
                 logger.exception("Infrastructure error during morning summary assembly: %s", e)
 
-        candidates: list[NotificationSendDTO] = []
+        # Словарь вместо простого списка
+        candidates_map = {}
+        
         for recipient_id, entries in summaries_by_recipient.items():
             for task, summary_dto in entries:
+                
+                # Уникальный ключ: Получатель + Ребенок + Класс
+                dedup_key = (recipient_id, task.target_student_id, task.class_id)
+                if dedup_key in candidates_map:
+                    continue
+                    
                 try:
                     text = UIRenderer.render_morning_summary(summary_dto)
                 except Exception as e:
@@ -251,11 +259,12 @@ class NotificationCollector:
                     action_type = "day_changes"
                     action_payload = {"target_kind": "student", "target_id": task.target_student_id, "class_id": str(task.class_id), "group_id": str(task.group_id or "ALL"), "date_iso": today_iso, "origin": "class", "return_to": "morning"}
 
-                candidates.append(NotificationSendDTO(
+                candidates_map[dedup_key] = NotificationSendDTO(
                     notification_type="morning_summary", notification_date=today_iso, source_ids=[f"morning_summary:{task.target_student_id}"],
                     recipient_id=recipient_id, text=text, action_type=action_type, action_payload=action_payload, context=f"student_id={task.target_student_id}"
-                ))
+                )
 
+        candidates = list(candidates_map.values())
         ctx.candidates += len(candidates)
         return candidates
 
@@ -281,13 +290,17 @@ class NotificationCollector:
             logger.error("Infrastructure error: Failed to load schedule metadata: %s", e)
             classes, groups = {}, {}
         
-        candidates: list[NotificationSendDTO] = []
+        candidates_map = {}
 
         for task in tasks:
             try:
                 recipient_id = task.recipient_id
                 teacher_id = task.teacher_id
                 teacher_name = task.teacher_name or "Учитель"
+                # Уникальный ключ: Получатель + Учитель
+                dedup_key = (recipient_id, teacher_id)
+                if dedup_key in candidates_map:
+                    continue
 
                 lessons = await self.schedule_repo.get_lessons_for_teacher(teacher_id=teacher_id, date_iso=today_iso)
                 ctx.queries += 1
@@ -335,16 +348,17 @@ class NotificationCollector:
                     action_type = "day_changes"
                     action_payload = {"target_kind": "teacher", "target_id": teacher_id, "class_id": "ALL", "group_id": "ALL", "date_iso": today_iso, "origin": "teacher", "return_to": "morning"}
 
-                candidates.append(NotificationSendDTO(
+                candidates_map[dedup_key] = NotificationSendDTO(
                     notification_type="teacher_morning", notification_date=today_iso, source_ids=[f"teacher_morning:{teacher_id}"],
                     recipient_id=recipient_id, text=text, action_type=action_type, action_payload=action_payload, context=f"teacher_id={teacher_id}"
-                ))
+                )
 
             except (KeyError, ValueError, TypeError) as e:
                 logger.error("Data prep error: Teacher morning summary failed for %s: %s", getattr(task, 'teacher_id', 'unknown'), e)
             except Exception as e:
                 logger.exception("Infrastructure error during teacher morning summary: %s", e)
 
+        candidates = list(candidates_map.values())
         ctx.candidates += len(candidates)
         return candidates
 
@@ -567,7 +581,8 @@ class NotificationCollector:
                     if offset_minutes <= 0 or delta_minutes > offset_minutes: continue
 
                     # Дедупликация для учеников и родителей
-                    dedup_key = (recipient.recipient_id, lesson.start_time)
+                    # Добавлен child_name и class_id для изоляции детей в одной семье
+                    dedup_key = (recipient.recipient_id, recipient.child_name, lesson.class_id, lesson.start_time)
                     
                     if dedup_key not in student_candidates_map:
                         dto = LessonReminderDTO(
@@ -599,7 +614,8 @@ class NotificationCollector:
                     if offset_minutes <= 0 or delta_minutes > offset_minutes: continue
 
                     # Дедупликация для учителей
-                    dedup_key = (recipient.recipient_id, lesson.start_time)
+                    # Добавлен teacher_id для изоляции подписок
+                    dedup_key = (recipient.recipient_id, teacher_id, lesson.start_time)
                     
                     if dedup_key not in teacher_candidates_map:
                         dto = LessonReminderDTO(
@@ -642,7 +658,8 @@ class NotificationCollector:
             return []
             
         ctx.processed_entities += len(extras)
-        candidates: list[NotificationSendDTO] = []
+        # Внедрен словарь для In-Memory дедупликации
+        candidates_map: dict[tuple[int, int], NotificationSendDTO] = {}
 
         for extra in extras:
             try:
@@ -653,25 +670,32 @@ class NotificationCollector:
                 delta_minutes = (start_at - now).total_seconds() / 60.0
                 if delta_minutes <= 0 or delta_minutes > offset_minutes: continue
 
+                # Уникальный ключ: Получатель + ID доп. занятия
+                dedup_key = (extra.recipient_id, extra.extra_id)
+                if dedup_key in candidates_map:
+                    continue
+
                 dto = LessonReminderDTO(
                     subject_name=extra.title, start_time=extra.time_start, room_name=extra.location or "—", is_extra=True,
                     child_name=(extra.child_name if extra.recipient_kind == "adult" else None),
                 )
 
-                try: text = UIRenderer.render_lesson_reminder(dto)
+                try: 
+                    text = UIRenderer.render_lesson_reminder(dto)
                 except Exception as e:
                     logger.error("Render error for extra class %s: %s", extra.extra_id, e)
                     continue
 
-                candidates.append(NotificationSendDTO(
+                candidates_map[dedup_key] = NotificationSendDTO(
                     notification_type="extra_class", notification_date=today_iso, source_ids=[str(extra.extra_id)],
                     recipient_id=extra.recipient_id, text=text, context=f"extra_id={extra.extra_id}, kind={extra.recipient_kind}",
-                ))
+                )
 
             except (KeyError, ValueError, TypeError) as e:
                 logger.error("Data prep error for extra class=%s: %s", getattr(extra, 'extra_id', 'unknown'), e)
             except Exception as e:
                 logger.exception("Infrastructure error during extra class collect: %s", e)
 
+        candidates = list(candidates_map.values())
         ctx.candidates += len(candidates)
         return candidates
