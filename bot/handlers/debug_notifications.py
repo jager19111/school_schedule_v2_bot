@@ -59,6 +59,9 @@ def _lesson(
     exchange: bool = False,
     extra: bool = False,
     group: str | None = None,
+    orig_subj: str | None = None,
+    orig_room: str | None = None,
+    is_methodological: bool = False,
 ) -> MorningLessonDTO:
     return MorningLessonDTO(
         lesson_num=lesson_num,
@@ -70,95 +73,80 @@ def _lesson(
         is_exchange=exchange,
         is_extra=extra,
         group_name=group,
+        original_subject_name=orig_subj,
+        original_room_name=orig_room,
+        is_methodological=is_methodological,
+        day_permutation=False,
     )
 
 
 def _morning_variants() -> list[tuple[str, str]]:
-    """(подпись, отрендеренный текст) для утренних сводок."""
     lessons = [
         _lesson(1, "08:30", "09:15", "Математика", "204"),
-        _lesson(2, "09:25", "10:10", "Физика", "112", cancelled=True),
-        _lesson(3, "10:25", "11:10", "Английский (подгр. 2)", "305", exchange=True, group="2"),
+        _lesson(2, "09:25", "10:10", "Физика", "112", cancelled=True, orig_subj="Физика"),
+        _lesson(3, "10:25", "11:10", "Английский", "305", exchange=True, group="2", orig_subj="История", orig_room="101"),
+        _lesson(4, "11:25", "12:10", "Методический час", "—", is_methodological=True),
         _lesson(None, "16:00", "17:00", "Плавание", "Бассейн", extra=True),
     ]
-    child_view = MorningSummaryDTO(
-        date_iso="2026-09-11",
-        lessons=lessons,
-        child_name=None,
-        class_id="9А",
-    )
-    parent_view = MorningSummaryDTO(
-        date_iso="2026-09-11",
-        lessons=lessons,
-        child_name="Маша",
-        class_id="9А",
-    )
-    empty_day = MorningSummaryDTO(
-        date_iso="2026-09-11",
-        lessons=[],
-        child_name="Маша",
-        class_id="9А",
-    )
+    
+    child_view = MorningSummaryDTO(date_iso="2026-09-11", lessons=lessons, child_name=None, class_id="9А", has_permutation=False)
+    parent_view = MorningSummaryDTO(date_iso="2026-09-11", lessons=lessons, child_name="Маша", class_id="9А", has_permutation=False)
+    empty_day = MorningSummaryDTO(date_iso="2026-09-11", lessons=[], child_name="Маша", class_id="9А", has_permutation=False)
+    
     rendered_parent = UIRenderer.render_morning_summary(parent_view)
     rendered_child = UIRenderer.render_morning_summary(child_view)
     rendered_empty = UIRenderer.render_morning_summary(empty_day)
-    # Мульти-ребёнок: как в prod, сводки детей склеиваются через \n.
     rendered_multi = "\n".join([rendered_parent, rendered_child])
+    
     return [
-        ("Сводка: вид родителя (имя ребёнка)", rendered_parent),
-        ("Сводка: вид самого ребёнка", rendered_child),
-        ("Сводка: два ребёнка в одном сообщении", rendered_multi),
-        ("Сводка: день без уроков", rendered_empty),
+        ("Сводка: вид родителя (полная)", rendered_parent),
+        ("Сводка: вид ребёнка (без имени)", rendered_child),
+        ("Сводка: мульти-дети", rendered_multi),
+        ("Сводка: пустой день", rendered_empty),
     ]
 
 
 def _change_variants() -> list[tuple[str, str]]:
     dtos = [
-        ("Замена урока (родитель, имя ребёнка)", ChangeReminderDTO(
-            date="2026-09-11", lesson_num=2, subject_name="Физика",
-            is_cancelled=False, child_name="Маша", watch_target_title=None,
+        ("Замена урока и кабинета (родитель)", ChangeReminderDTO(
+            change_id=1, date="2026-09-11", lesson_num=2, subject_name="Физика", is_cancelled=False, 
+            child_name="Маша", watch_target_title=None,
+            original_subject_name="Литература", new_subject_name="Физика",
+            original_room_name="101", new_room_name="204", group_changed=False
         )),
-        ("Отмена урока (ребёнок)", ChangeReminderDTO(
-            date="2026-09-11", lesson_num=3, subject_name="Химия",
-            is_cancelled=True, child_name=None, watch_target_title=None,
+        ("Отмена урока (класс)", ChangeReminderDTO(
+            change_id=2, date="2026-09-11", lesson_num=3, subject_name="Химия", is_cancelled=True, 
+            child_name=None, watch_target_title="8Б", original_subject_name="Химия", group_changed=False
         )),
-        ("Замена по watch-target (класс)", ChangeReminderDTO(
-            date="2026-09-11", lesson_num=4, subject_name="Биология",
-            is_cancelled=False, child_name=None, watch_target_title="5Б",
-        )),
-        ("Замена у учителя", ChangeReminderDTO(
-            date="2026-09-11", lesson_num=1, subject_name="Информатика",
-            is_cancelled=False, child_name=None, watch_target_title=None,
+        ("Смена учителя (ребёнок)", ChangeReminderDTO(
+            change_id=3, date="2026-09-11", lesson_num=4, subject_name="Информатика", is_cancelled=False, 
+            child_name=None, watch_target_title=None, original_teacher_name="Иванова А.П.", 
+            new_teacher_name="Петров В.В.", new_subject_name="Информатика", new_room_name="303", group_changed=False
         )),
     ]
+    
     result = []
     for caption, dto in dtos:
-        text = UIRenderer.render_change_reminder(dto)
-        if caption == "Замена у учителя":
-            text = f"<b>Иванова А.П.</b>\n{text}"
-        result.append((caption, text))
+        result.append((caption, UIRenderer.render_change_reminder(dto)))
     return result
 
 
 def _lesson_variants() -> list[tuple[str, str]]:
     dtos = [
-        ("Начало урока (ребёнок)", LessonReminderDTO(
-            subject_name="Математика", start_time="08:30",
-            room_name="204", is_extra=False, child_name=None,
+        ("Урок: ребёнок/учитель", LessonReminderDTO(
+            subject_name="Математика", start_time="08:30", room_name="204", is_extra=False, child_name=None,
         )),
-        ("Начало урока (родитель, имя ребёнка)", LessonReminderDTO(
-            subject_name="Математика", start_time="08:30",
-            room_name="204", is_extra=False, child_name="Маша",
+        ("Урок: родитель", LessonReminderDTO(
+            subject_name="Математика", start_time="08:30", room_name="204", is_extra=False, child_name="Маша",
         )),
-        ("Доп. занятие (родитель)", LessonReminderDTO(
-            subject_name="Плавание", start_time="16:00",
-            room_name="Бассейн", is_extra=True, child_name="Маша",
+        ("Доп: ребёнок", LessonReminderDTO(
+            subject_name="Робототехника", start_time="15:00", room_name="Лаборатория", is_extra=True, child_name=None,
+        )),
+        ("Доп: родитель", LessonReminderDTO(
+            subject_name="Плавание", start_time="16:00", room_name="Бассейн", is_extra=True, child_name="Маша",
         )),
     ]
-    return [
-        (caption, UIRenderer.render_lesson_reminder(dto))
-        for caption, dto in dtos
-    ]
+    return [(caption, UIRenderer.render_lesson_reminder(dto)) for caption, dto in dtos]
 
 
 async def _send_variants(message: Message, variants: list[tuple[str, str]]) -> None:
@@ -170,16 +158,9 @@ async def _send_variants(message: Message, variants: list[tuple[str, str]]) -> N
 
 
 @router.message(Command("debug_ui"))
-async def cmd_debug_ui(
-    message: Message,
-    command: CommandObject,
-    admin_service: AdminService,
-) -> None:
-    """Превью всех вариантов уведомлений в чат админа."""
+async def cmd_debug_ui(message: Message, command: CommandObject, admin_service: AdminService) -> None:
     if not admin_service.is_admin(user_id=message.from_user.id):
-        logger.warning(
-            "Debug UI denied: user_id=%s", message.from_user.id,
-        )
+        logger.warning("Debug UI denied: user_id=%s", message.from_user.id)
         await message.answer("⛔ Команда доступна только администратору.")
         return
 
@@ -191,9 +172,7 @@ async def cmd_debug_ui(
     }
 
     if section and section not in sections:
-        await message.answer(
-            "Использование: /debug_ui [morning|change|lesson] — без аргумента присылаю всё."
-        )
+        await message.answer("Использование: /debug_ui [morning|change|lesson] — без аргумента присылаю всё.")
         return
 
     if section:
@@ -202,4 +181,5 @@ async def cmd_debug_ui(
 
     for builder in (_morning_variants, _change_variants, _lesson_variants):
         await _send_variants(message, builder())
+        
     await message.answer("✅ Превью отправлено.")

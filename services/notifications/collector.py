@@ -24,7 +24,7 @@ from core.models.dto import (
     PendingChangeDTO,
     ScheduleChangeRecipientDTO,
     TeacherChangeRecipientDTO,
-    DeliveredKeyDTO,
+    DeliveredKeyDTO, PreLessonRecipientDTO
 )
 from core.mappers.notification_mapper import NotificationMapper
 from .context import NotificationTickContext
@@ -546,8 +546,8 @@ class NotificationCollector:
         except Exception: groups = {}
         
         # 1. Словари для семантической дедупликации
-        student_candidates_map = {}
-        teacher_candidates_map = {}
+        student_candidates_map: dict[tuple[int, str], NotificationSendDTO] = {}
+        teacher_candidates_map: dict[tuple[int, str], NotificationSendDTO] = {}
 
         for lesson in lessons:
             try:
@@ -558,7 +558,7 @@ class NotificationCollector:
                 lesson_group_id = str(lesson.group_id).strip() if lesson.group_id else "ALL"
                 possible_groups = self.schedule_service.get_equivalent_groups(lesson_group_id, groups)
 
-                all_recipients = []
+                all_recipients: list[PreLessonRecipientDTO] = []
                 for pg in possible_groups:
                     cache_key = (lesson.class_id, pg)
                     if cache_key not in ctx.pre_lesson_recipients_cache:
@@ -567,7 +567,7 @@ class NotificationCollector:
                     all_recipients.extend(ctx.pre_lesson_recipients_cache[cache_key])
 
                 seen_recipients = set()
-                unique_recipients = []
+                unique_recipients: list[PreLessonRecipientDTO] = []
                 for r in all_recipients:
                     if r.recipient_id not in seen_recipients:
                         seen_recipients.add(r.recipient_id)
@@ -578,7 +578,7 @@ class NotificationCollector:
                     if offset_minutes <= 0 or delta_minutes > offset_minutes: continue
 
                     # Дедупликация для учеников и родителей
-                    dedup_key = (recipient.recipient_id, lesson.lesson_num)
+                    dedup_key = (recipient.recipient_id, lesson.start_time)
                     
                     if dedup_key not in student_candidates_map:
                         dto = LessonReminderDTO(
@@ -610,7 +610,7 @@ class NotificationCollector:
                     if offset_minutes <= 0 or delta_minutes > offset_minutes: continue
 
                     # Дедупликация для учителей
-                    dedup_key = (recipient.recipient_id, lesson.lesson_num)
+                    dedup_key = (recipient.recipient_id, lesson.start_time)
                     
                     if dedup_key not in teacher_candidates_map:
                         dto = LessonReminderDTO(

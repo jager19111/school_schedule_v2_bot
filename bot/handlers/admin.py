@@ -80,6 +80,24 @@ async def _require_admin(
     return False
 
 
+@router.message(Command("admin"))
+async def cmd_admin_help(message: Message, admin_service: AdminService) -> None:
+    """Выводит список всех доступных команд администратора."""
+    if not await _require_admin(message=message, admin_service=admin_service):
+        return
+
+    text = (
+        "🛠 <b>Панель администратора</b>\n\n"
+        "<b>Доступные команды:</b>\n"
+        "🔸 /stats — Статистика пользователей, ролей и антифлуда\n"
+        "🔸 /source_status — Состояние кэша NIKA (актуальность расписания, здоровье парсера)\n"
+        "🔸 /img_stats — Статистика графического движка (рендер картинок, circuit breaker)\n"
+        "🔸 /stress <i>[кол-во] [chat_id]</i> — Стресс-тест боевого пайплайна уведомлений\n"
+        "🔸 /debug_ui <i>[morning|change|lesson]</i> — Тестовый рендер всех видов уведомлений в чат\n\n"
+        "<i>Все команды работают в режиме read-only и безопасны для production (кроме направленного /stress).</i>"
+    )
+    await message.answer(text, parse_mode="HTML")
+    
 
 @router.message(Command("stats"))
 async def cmd_stats(
