@@ -948,10 +948,15 @@ async def show_day_changes(
         # ЗАПОМИНАЕМ СОСТОЯНИЕ УТРЕННЕЙ СВОДКИ
         if callback_data.return_to == "morning":
             cache_key = f"morning_cache_{callback_data.target_id}"
+            is_photo = bool(callback.message.photo)  # Проверяем, фото ли это
+            
             await state.update_data({
                 cache_key: {
-                    "text": callback.message.html_text, 
-                    "button": callback_data.pack()      
+                    "text": callback.message.html_text or callback.message.caption or "", 
+                    "button": callback_data.pack(),
+                    "is_photo": is_photo,
+                    # Сохраняем file_id самой крупной версии фото
+                    "photo_file_id": callback.message.photo[-1].file_id if is_photo else None
                 }
             })
 
@@ -1005,18 +1010,26 @@ async def return_to_morning_student(
     cache = data.get(f"morning_cache_{callback_data.student_id}")
 
     if cache:
-        # Восстанавливаем 1-в-1 как было!
         kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🔄 Изменения", callback_data=cache["button"])]
+            [InlineKeyboardButton(text="📋 Изменения", callback_data=cache["button"])]
         ])
-        await callback.message.edit_text(cache["text"], reply_markup=kb, parse_mode="HTML")
+        
+        if cache.get("is_photo") and cache.get("photo_file_id"):
+            # Удаляем текстовое сообщение и шлем сохраненное фото
+            await callback.message.answer_photo(
+                photo=cache["photo_file_id"],
+                caption=cache["text"],
+                reply_markup=kb,
+                parse_mode="HTML"
+            )
+            await callback.message.delete()
+        else:
+            # Классический текстовый возврат
+            await callback.message.edit_text(cache["text"], reply_markup=kb, parse_mode="HTML")
+            
         await callback.answer()
     else:
-        # Фолбэк: если бот перезагружался и память стерлась
-        await callback.answer(
-            "⏳ Сводка устарела.\nОткройте актуальное расписание через меню.", 
-            show_alert=True
-        )
+        await callback.answer("⏳ Сводка устарела.\nОткройте актуальное расписание через меню.", show_alert=True)
         await callback.message.delete()
 
 
@@ -1032,13 +1045,21 @@ async def return_to_morning_teacher(
 
     if cache:
         kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🔄 Изменения", callback_data=cache["button"])]
+            [InlineKeyboardButton(text="📋 Изменения", callback_data=cache["button"])]
         ])
-        await callback.message.edit_text(cache["text"], reply_markup=kb, parse_mode="HTML")
+        
+        if cache.get("is_photo") and cache.get("photo_file_id"):
+            await callback.message.answer_photo(
+                photo=cache["photo_file_id"],
+                caption=cache["text"],
+                reply_markup=kb,
+                parse_mode="HTML"
+            )
+            await callback.message.delete()
+        else:
+            await callback.message.edit_text(cache["text"], reply_markup=kb, parse_mode="HTML")
+            
         await callback.answer()
     else:
-        await callback.answer(
-            "⏳ Сводка устарела.\nОткройте актуальное расписание через меню.", 
-            show_alert=True
-        )
+        await callback.answer("⏳ Сводка устарела.\nОткройте актуальное расписание через меню.", show_alert=True)
         await callback.message.delete()

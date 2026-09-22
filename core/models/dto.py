@@ -980,13 +980,6 @@ class PreLessonSourceDTO:
     room_name: str | None = None
     
     
-    
-       
-    
-# ============================================================================
-# ДОБАВЛЕНИЯ В core/models/dto.py
-# Нужен импорт вверху файла: from datetime import datetime
-# ============================================================================
 
 
 @dataclass(frozen=True, slots=True)
@@ -1037,3 +1030,14 @@ class DisplayNumbersDTO:
     date_iso: str
     class_id: str
     by_lesson_num: Dict[int, str]
+
+
+@dataclass
+class FreeRoomsStatusDTO:
+    """ Поиск свободных кабинетов """
+    current_time_str: str
+    is_finished: bool
+    is_break: bool
+    target_num: Optional[int]
+    start_time: Optional[str]
+    end_time: Optional[str]

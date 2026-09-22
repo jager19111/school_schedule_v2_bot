@@ -296,7 +296,7 @@ async def _deliver_student_poster(
     await _record_delivery(
         notification_repo,
         notification_type="morning_summary",
-        source_id=f"morning_summary_{task.target_student_id}",
+        source_id=f"morning_summary:{task.target_student_id}",
         recipient_id=task.recipient_id,
         today_iso=today_iso,
     )
@@ -335,7 +335,7 @@ async def _deliver_teacher_poster(
         dto=day_dto,
         title=f"Расписание · {task.teacher_name or 'учитель'}",
         date_text=_date_text(today_iso),
-        subtitle=task.teacher_name,
+        subtitle="Учитель",
         is_teacher=True,
         width=config.POSTER_WIDTH,
     )
@@ -381,7 +381,7 @@ async def _deliver_teacher_poster(
     await _record_delivery(
         notification_repo,
         notification_type="teacher_morning",
-        source_id=f"teacher_morning_{task.teacher_id}",
+        source_id=f"teacher_morning:{task.teacher_id}",
         recipient_id=task.recipient_id,
         today_iso=today_iso,
     )

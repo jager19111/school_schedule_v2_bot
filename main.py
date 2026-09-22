@@ -516,6 +516,29 @@ async def main():
             misfire_grace_time=90,
         )
 
+        from services.image_render.morning_posters import send_morning_posters
+
+        scheduler.add_job(
+            send_morning_posters,
+            trigger="cron",
+            second=20,  # ДО текстовой сводки (second=30) — дедупликация срабатывает
+            kwargs=dict(
+                bot=bot,
+                time_service=time_service,
+                notification_repo=notification_repo,
+                schedule_repo=schedule_repo,
+                schedule_service=schedule_service,
+                extra_classes_service=extra_classes_service,
+                image_service=image_service,
+                image_prefs=image_prefs,
+            ),
+            id="morning_posters",
+            replace_existing=True,
+            coalesce=True,
+            max_instances=1,
+            misfire_grace_time=90,
+        )
+
         # Утренняя сводка: ровно в 30 секунд каждой минуты
         scheduler.add_job(
             notification_service.send_morning_reminders,
