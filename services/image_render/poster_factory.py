@@ -161,6 +161,46 @@ def build_poster_request(
         if status in (LessonStatus.EXCHANGE, LessonStatus.CANCELLED) and not first.is_extra:
             changes_count += 1
 
+    # === НОВАЯ ЛОГИКА: Достраиваем сетку 1-12 для учителя ===
+    if is_teacher and cards:
+        teacher_cards_map = {}
+        extra_cards = []
+        for c in cards:
+            if c.is_extra:
+                extra_cards.append(c)
+            else:
+                try:
+                    # Извлекаем чистое число урока
+                    n = int(str(c.num).replace('*', ''))
+                    teacher_cards_map[n] = c
+                except ValueError:
+                    extra_cards.append(c)
+        
+        full_cards = []
+        # Если вдруг уроков больше 12 (вечерняя смена), сетка расширится
+        max_num = max(teacher_cards_map.keys()) if teacher_cards_map else 12
+        grid_end = max(12, max_num)
+        
+        for i in range(1, grid_end + 1):
+            if i in teacher_cards_map:
+                full_cards.append(teacher_cards_map[i])
+            else:
+                # Генерируем компактное "окно"
+                full_cards.append(PosterLessonCard(
+                    num=str(i),
+                    time_start="—",
+                    time_end="—",
+                    status=LessonStatus.NORMAL,
+                    items=(PosterItem(
+                        primary_text="Окно", 
+                        secondary_text=None, room=None, 
+                        is_cancelled=False, original_primary=None
+                    ),),
+                    is_extra=False
+                ))
+        cards = full_cards + extra_cards
+    # =========================================================
+
     return PosterRequest(
         request_id=request_id, date_text=date_text, title=title,
         lessons=tuple(cards), subtitle=subtitle, changes_count=changes_count, width=width,

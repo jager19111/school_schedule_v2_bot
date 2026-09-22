@@ -48,6 +48,17 @@
     .status-extra          { border-left-color: #805ad5; } 
     .status-methodological { border-left-color: #718096; } 
 
+    /* =========================================================
+       ОКНА В СЕТКЕ УЧИТЕЛЯ (Сверхкомпактный вид)
+       ========================================================= */
+    .lesson-window {
+        padding: 12px 35px; /* Сильно поджали высоту карточки */
+        margin-bottom: 12px;
+        background: #f8fafc; /* Легкий серый фон */
+        border-left: 8px solid #e2e8f0; /* Серая левая граница */
+        box-shadow: none; /* Убрали тень (плоский вид) */
+    }
+
     /* ВРЕМЯ */
     .time-col { display: flex; flex-direction: column; width: 140px; flex-shrink: 0; }
     .time-start { font-size: 32px; font-weight: 700; color: #1a202c; line-height: 1; }
@@ -127,76 +138,91 @@
 
     {% if lessons %}
         {% for lesson in lessons %}
-            <div class="lesson-card status-{{ lesson.status.value }}">
-                <div class="time-col">
-                    <div class="time-start">{{ lesson.time_start }}</div>
-                    <div class="time-end">{{ lesson.time_end }}</div>
-                    <div class="lesson-num">{% if lesson.status.value == 'extra' %}ДОП.{% else %}УРОК {{ lesson.num|replace('*', '') }}{% endif %}</div>
+            {% set is_window_slot = lesson.items|length == 1 and lesson.items[0].primary_text == 'Окно' %}
+            
+            {% if is_window_slot %}
+                <!-- СВЕРХКОМПАКТНЫЙ БЛОК ДЛЯ ОКНА (Выравнивается по сетке) -->
+                <div class="lesson-card lesson-window">
+                    <div class="time-col" style="justify-content: center;">
+                        <div class="lesson-num" style="margin-top: 0; color: #a0aec0;">УРОК {{ lesson.num }}</div>
+                    </div>
+                    <!-- Прозрачная левая граница сохраняет ширину отступа, чтобы текст "Свободно" встал ровно под предметами -->
+                    <div class="items-col" style="border-left-color: transparent;">
+                        <div class="subject-text" style="color: #cbd5e0; font-size: 30px;">Свободно</div>
+                    </div>
                 </div>
+            {% else %}
+                <div class="lesson-card status-{{ lesson.status.value }}">
+                    <div class="time-col">
+                        <div class="time-start">{{ lesson.time_start }}</div>
+                        <div class="time-end">{{ lesson.time_end }}</div>
+                        <div class="lesson-num">{% if lesson.status.value == 'extra' %}ДОП.{% else %}УРОК {{ lesson.num|replace('*', '') }}{% endif %}</div>
+                    </div>
 
-                <div class="items-col">
-                    {% set is_trud_block = lesson.items|length > 1 and lesson.items[0].primary_text and 'Труд' in lesson.items[0].primary_text %}
-                    
-                    {% if is_trud_block %}
+                    <div class="items-col">
+                        {% set is_trud_block = lesson.items|length > 1 and lesson.items[0].primary_text and 'Труд' in lesson.items[0].primary_text %}
+                        
+                        {% if is_trud_block %}
                         <!-- СПЕЦИАЛЬНЫЙ СВЕРХКОМПАКТНЫЙ ВЫВОД ДЛЯ ТРУДА -->
-                        <div class="item-info" style="width: 100%;">
-                            <div class="subject-text scale-text {% if lesson.status.value == 'cancelled' %}subj-cancelled{% elif lesson.status.value == 'exchange' %}subj-exchange{% else %}subj-normal{% endif %}">
-                                {{ lesson.items[0].original_primary or lesson.items[0].primary_text if lesson.items[0].is_cancelled else lesson.items[0].primary_text }}
-                            </div>
-                            
-                            <div class="trud-compact-list">
-                                {% for item in lesson.items %}
-                                    <div class="trud-row">
-                                        <div class="trud-teacher">
-                                            {{ item.secondary_text if item.secondary_text else '' }}
-                                        </div>
-                                        
-                                        {% if item.room and not item.is_cancelled %}
-                                            <div class="trud-room">{{ item.room }}</div>
-                                        {% endif %}
-                                    </div>
-                                {% endfor %}
-                            </div>
-                        </div>
-                    {% else %}
-                        <!-- СТАНДАРТНЫЙ ВЫВОД ДЛЯ ОСТАЛЬНЫХ УРОКОВ -->
-                        {% for item in lesson.items %}
-                            <div class="item-row">
-                                <div class="item-info">
-                                    {% if item.primary_text %}
-                                        {% if item.primary_text == 'Нет занятий' %}
-                                            <div class="subject-text scale-text" style="color: #a0aec0; font-weight: 500;">Нет занятий</div>
-                                        {% else %}
-                                            <div class="subject-text scale-text {% if item.is_cancelled %}subj-cancelled{% elif lesson.status.value == 'exchange' %}subj-exchange{% else %}subj-normal{% endif %}">
-                                                {{ item.original_primary or item.primary_text if item.is_cancelled else item.primary_text }}
-                                            </div>
-                                        {% endif %}
-                                    {% endif %}
-                                    
-                                    <!-- ИЗМЕНЕНО: Строка с локацией кружка перемещена сюда -->
-                                    {% if lesson.is_extra and loop.first %}
-                                        <div class="extra-details-row">
-                                            <div class="teacher-text extra-label" style="margin-top: 0;">Доп. занятие</div>
-                                            {% if item.room and item.room != '—' %}
-                                                <div class="extra-loc scale-text">📍 {{ item.room }}</div>
-                                            {% endif %}
-                                        </div>
-                                    {% endif %}
-                                    
-                                    {% if item.secondary_text and not item.is_cancelled %}
-                                        <div class="teacher-text scale-text {% if is_teacher %}teacher-subj{% endif %}">{{ item.secondary_text }}</div>
-                                    {% endif %}
+                            <div class="item-info" style="width: 100%;">
+                                <div class="subject-text scale-text {% if lesson.status.value == 'cancelled' %}subj-cancelled{% elif lesson.status.value == 'exchange' %}subj-exchange{% else %}subj-normal{% endif %}">
+                                    {{ lesson.items[0].original_primary or lesson.items[0].primary_text if lesson.items[0].is_cancelled else lesson.items[0].primary_text }}
                                 </div>
                                 
-                                <!-- ИЗМЕНЕНО: Запрещаем вывод правого кубика для кружков -->
-                                {% if item.room and not item.is_cancelled and item.primary_text != 'Нет занятий' and not lesson.is_extra %}
-                                    <div class="room-badge">{{ item.room }}</div>
-                                {% endif %}
+                                <div class="trud-compact-list">
+                                    {% for item in lesson.items %}
+                                        <div class="trud-row">
+                                            <div class="trud-teacher">
+                                                {{ item.secondary_text if item.secondary_text else '' }}
+                                            </div>
+                                            
+                                            {% if item.room and not item.is_cancelled %}
+                                                <div class="trud-room">{{ item.room }}</div>
+                                            {% endif %}
+                                        </div>
+                                    {% endfor %}
+                                </div>
                             </div>
-                        {% endfor %}
-                    {% endif %}
+                        {% else %}
+                        <!-- СТАНДАРТНЫЙ ВЫВОД ДЛЯ ОСТАЛЬНЫХ УРОКОВ -->
+                            {% for item in lesson.items %}
+                                <div class="item-row">
+                                    <div class="item-info">
+                                        {% if item.primary_text %}
+                                            {% if item.primary_text == 'Нет занятий' %}
+                                                <div class="subject-text scale-text" style="color: #a0aec0; font-weight: 500;">Нет занятий</div>
+                                            {% else %}
+                                                <div class="subject-text scale-text {% if item.is_cancelled %}subj-cancelled{% elif lesson.status.value == 'exchange' %}subj-exchange{% else %}subj-normal{% endif %}">
+                                                    {{ item.original_primary or item.primary_text if item.is_cancelled else item.primary_text }}
+                                                </div>
+                                            {% endif %}
+                                        {% endif %}
+                                        
+                                    <!-- ИЗМЕНЕНО: Строка с локацией кружка перемещена сюда -->
+                                        {% if lesson.is_extra and loop.first %}
+                                            <div class="extra-details-row">
+                                                <div class="teacher-text extra-label" style="margin-top: 0;">Доп. занятие</div>
+                                                {% if item.room and item.room != '—' %}
+                                                    <div class="extra-loc scale-text">📍 {{ item.room }}</div>
+                                                {% endif %}
+                                            </div>
+                                        {% endif %}
+                                        
+                                        {% if item.secondary_text and not item.is_cancelled %}
+                                            <div class="teacher-text scale-text {% if is_teacher %}teacher-subj{% endif %}">{{ item.secondary_text }}</div>
+                                        {% endif %}
+                                    </div>
+                                    
+                                <!-- ИЗМЕНЕНО: Запрещаем вывод правого кубика для кружков -->
+                                    {% if item.room and not item.is_cancelled and item.primary_text != 'Нет занятий' and not lesson.is_extra %}
+                                        <div class="room-badge">{{ item.room }}</div>
+                                    {% endif %}
+                                </div>
+                            {% endfor %}
+                        {% endif %}
+                    </div>
                 </div>
-            </div>
+            {% endif %}
         {% endfor %}
     {% else %}
         <div class="empty">🏖 Занятий нет</div>

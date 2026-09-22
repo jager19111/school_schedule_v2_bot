@@ -16,7 +16,7 @@
 
 {# ================= УРОКИ ================= #}
 {%- if not slots -%}
-{{ '\n\n' }}🏖 <b>Занятий нет</b>
+🏖 <b>Занятий нет</b>
 {%- else -%}
 {%- for slot in slots -%}
 
@@ -129,7 +129,7 @@
 {%- if changes_count > 0 %}
 {{ '\n' }}
 <blockquote expandable>
-⚠️ Изменений на сегодня: <b>{{ changes_count }}</b>{{ '\n' }}
+🔄 Изменений на сегодня: <b>{{ changes_count }}</b>{{ '\n' }}
 
 {%- for slot in slots %}
 {%- if not slot[0].is_extra %}

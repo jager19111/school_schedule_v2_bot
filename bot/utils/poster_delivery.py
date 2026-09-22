@@ -49,7 +49,7 @@ def build_day_caption(date_text: str, changes_count: int, subtitle: str | None =
     if subtitle:
         lines.append(f"👤 {subtitle}")
     if changes_count:
-        lines.append(f"⚠️ Изменений: {changes_count}")
+        lines.append(f"🔄 Изменений: {changes_count}")
     return "\n".join(lines)[:1000]
 
 

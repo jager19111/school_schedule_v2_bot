@@ -138,6 +138,11 @@ async def _build_day_poster(
         date_iso=date_iso,
         student_id=target.target_id if target.kind == "student" else None,
     )
+    # Защита от рендера пустых дней
+    if not day_dto.lessons:
+        from aiogram.dispatcher.event.bases import SkipHandler
+        raise SkipHandler()
+
     version = await get_schedule_version(schedule_repo)
 
     # Персональный ключ — только если у ребёнка есть доп. занятия на этот
@@ -226,6 +231,11 @@ async def _build_teacher_day_poster(
     day_dto = await schedule_service.get_daily_schedule_for_teacher(
         teacher_id=teacher_id, date_iso=date_iso
     )
+    # Защита от рендера пустых дней ===
+    if not day_dto.lessons:
+        from aiogram.dispatcher.event.bases import SkipHandler
+        raise SkipHandler()
+
     version = await get_schedule_version(schedule_repo)
     request_id = build_global_request_id(version, teacher_id, "TEACHER", date_iso)
     
