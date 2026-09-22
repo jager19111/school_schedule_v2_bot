@@ -42,7 +42,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class ImageServiceStats:
-    """Счётчики для калибровки констант и будущей /img_stats."""
+    """Счётчики для калибровки констант и /img_stats."""
 
     renders: int = 0
     cache_hits: int = 0
@@ -141,6 +141,20 @@ class ImageGenerationService:
     def stats(self) -> ImageServiceStats:
         return self._stats
 
+    def snapshot(self) -> dict[str, object]:
+        """Сводное runtime-состояние для /img_stats (админ).
+
+        Состояние breaker'а, число идущих рендеров, ждущих в очереди
+        и размеры кэшей L1/L2.
+        """
+        return {
+            "breaker_state": self._breaker.state.value,
+            "inflight": len(self._inflight),
+            "waiting": self._waiting,
+            "cached_posters": len(self._bytes_cache),
+            "cached_file_ids": len(self._file_id_cache),
+        }
+
     # ---------------- L2: file_id ----------------
 
     def get_file_id(self, request_id: str) -> str | None:
@@ -168,9 +182,9 @@ class ImageGenerationService:
     ) -> RenderedPoster:
         """Возвращает постер из кэша или рендерит его.
 
-        user_id=None — системный вызов (warm-up): rate limiter
-        обходится, но semaphore/таймаут/circuit breaker действуют
-        как для всех остальных.
+        user_id=None — системный вызов (warm-up, утренняя рассылка):
+        rate limiter обходится, но semaphore/таймаут/circuit breaker
+        действуют как для всех остальных.
         """
         cached = self._bytes_cache.get(request.request_id)
         if cached is not None:
