@@ -1,0 +1,125 @@
+{# ==========================================================
+   ШАПКА
+   ИЗМЕНЕНО: раньше {%- endif %} обрезал перевод строки ЛЮБОЙ из веток
+   (триминг Jinja работает по сырому тексту шаблона, а не по тому, какая
+   ветка реально сработала в рантайме) — из-за этого заголовок склеивался
+   со следующей строкой "Дата: ...". Теперь заголовок собирается в
+   переменную через {% set %}...{% endset %}, а перенос строки после него
+   ставится явно, одним местом.
+   ========================================================== #}
+{%- set header_title -%}
+    {%- if summary.recipient_kind == "adult" and summary.child_name -%}
+        Изменения в расписании ({{ summary.child_name | e }})
+    {%- elif summary.recipient_kind == "watch" and summary.watch_target_title -%}
+        Изменения в расписании ({{ summary.watch_target_title | e }})
+    {%- else -%}
+        Изменения в расписании
+    {%- endif -%}
+{%- endset -%}
+🔄 <b>{{ header_title | trim | safe }}</b>
+{%- set date_parts = summary.date.split('-') -%}
+{%- set formatted_date = date_parts[2] ~ '.' ~ date_parts[1] ~ '.' ~ date_parts[0] if date_parts|length == 3 else summary.date -%}
+{{ '\n' }}📅 <b>Дата:</b> {{ formatted_date }}
+{%- set is_teacher = (summary.recipient_kind == "teacher") -%}
+
+{#- Группируем по номеру урока на стороне Jinja -#}
+{%- set grouped = {} -%}
+{%- for c in summary.changes -%}
+    {%- set _ = grouped.setdefault(c.lesson_num, []).append(c) -%}
+{%- endfor -%}
+
+{# ИЗМЕНЕНО: раньше перед КАЖДЫМ элементом (включая первый) безусловно
+   ставился разделитель '\n\n' — отсюда лишняя пустая строка сразу после
+   даты. Теперь первый элемент получает два переноса, остальные — один. #}
+{%- set ns = namespace(first=true) -%}
+{%- macro sep() -%}
+    {%- if ns.first -%}
+        {%- set ns.first = false -%}
+        {{ '\n\n' }}
+    {%- else -%}
+        {{ '\n' }}
+    {%- endif -%}
+{%- endmacro -%}
+
+{%- for lesson_num, changes in grouped.items() | sort(attribute='0') -%}
+    {%- set sorted_changes = changes | sort(attribute='new_group_name') -%}
+    {%- set first = sorted_changes[0] -%}
+    {%- set num_str = first.lesson_num if is_teacher else (first.display_num or first.lesson_num) -%}
+
+    {%- set is_multiple = sorted_changes | length > 1 -%}
+    {%- set all_cancelled = sorted_changes | rejectattr('is_cancelled') | list | length == 0 -%}
+    {#- ДОБАВЛЕНО: если у ВСЕХ подгрупп в слоте нет original_subject_name — это добавленный урок целиком -#}
+    {%- set all_added = sorted_changes | selectattr('original_subject_name') | list | length == 0 -%}
+    {%- set group_icon = '🚫' if all_cancelled else ('➕' if all_added else '🔄') -%}
+
+    {%- if is_multiple -%}
+        {{ sep() }}{{ group_icon }} <b>{{ num_str }}.</b>
+    {%- endif -%}
+
+    {%- for c in sorted_changes -%}
+        {%- set safe_orig_subj = c.original_subject_name | e if c.original_subject_name else '—' -%}
+        {%- set safe_new_subj = c.new_subject_name | e if c.new_subject_name else '—' -%}
+        {%- set safe_orig_room = c.original_room_name | e if c.original_room_name else '' -%}
+        {%- set safe_new_room = c.new_room_name | e if c.new_room_name else '' -%}
+        {%- set safe_orig_teacher = c.original_teacher_name | e if c.original_teacher_name else '' -%}
+        {%- set safe_new_teacher = c.new_teacher_name | e if c.new_teacher_name else '' -%}
+        {%- set safe_orig_grp = c.original_group_name | e if c.original_group_name else '' -%}
+        {%- set safe_new_grp = c.new_group_name | e if c.new_group_name else '' -%}
+        {%- set safe_cls = c.new_class_name | e if c.new_class_name else (c.original_class_name | e if c.original_class_name else '') -%}
+
+        {#- ДОБАВЛЕНО: урока не было в базе вообще (нет original_subject_name) -#}
+        {%- set is_added = not c.original_subject_name -%}
+        {%- set subj_changed = (c.original_subject_name != c.new_subject_name) -%}
+        {%- set room_changed = (c.original_room_name != c.new_room_name) -%}
+        {%- set teacher_changed = (c.original_teacher_name != c.new_teacher_name) -%}
+        {%- set group_changed = (c.original_group_name and c.new_group_name and c.original_group_name != c.new_group_name) -%}
+
+        {%- set ctx_parts = [] -%}
+        {%- if is_teacher and safe_cls %}{% set _ = ctx_parts.append(safe_cls) %}{% endif -%}
+        {%- if group_changed %}{% set _ = ctx_parts.append('<s>' ~ safe_orig_grp ~ '</s> ➔ <b>' ~ safe_new_grp ~ '</b>') %}{% elif safe_new_grp and safe_new_grp.lower() not in ['весь класс', 'all', 'none', '', '—'] %}{% set _ = ctx_parts.append(safe_new_grp) %}{% endif -%}
+        {%- set ctx_str = ' · ' ~ (ctx_parts | join(' · ') | safe) if ctx_parts else '' -%}
+
+        {%- if c.is_cancelled -%}
+            {%- set icon = '🚫' -%}
+        {%- elif is_added -%}
+            {%- set icon = '➕' -%}
+        {%- elif subj_changed -%}
+            {%- set icon = '🔄' -%}
+        {%- else -%}
+            {%- set icon = '🔁' -%}
+        {%- endif -%}
+
+        {%- if is_multiple -%}
+            {{ '\n  ' ~ ('└ ' if loop.last else '├ ') ~ icon ~ ' ' }}
+        {%- else -%}
+            {{ sep() }}{{ icon }} <b>{{ num_str }}.</b>{{ ' ' }}
+        {%- endif -%}
+
+        {%- set orig_r_fmt = ' (' ~ safe_orig_room ~ ')' if safe_orig_room and safe_orig_room != '—' else '' -%}
+        {%- set new_r_fmt = ' (' ~ safe_new_room ~ ')' if safe_new_room and safe_new_room != '—' else '' -%}
+
+        {%- if c.is_cancelled -%}
+            {%- set subj_to_strike = safe_orig_subj if c.original_subject_name else safe_new_subj -%}
+            <s>{{ subj_to_strike }}{{ ctx_str | safe }}{{ orig_r_fmt }}</s>
+        {%- elif is_added -%}
+            {#- ИЗМЕНЕНО: без "<s>—</s> ➔", это не замена, а появление нового урока -#}
+            ➔ <b>{{ safe_new_subj }}</b>{{ ctx_str | safe }}{{ new_r_fmt }}
+        {%- elif subj_changed -%}
+            <s>{{ safe_orig_subj }}{{ orig_r_fmt }}</s> ➔ <b>{{ safe_new_subj }}</b>{{ ctx_str | safe }}{{ new_r_fmt }}
+        {%- else -%}
+            {#- ИЗМЕНЕНО: предмет тот же. Для учителя контекст (класс·группа) уже
+               показан выше через ctx_str. Кабинет и учитель диффятся
+               НЕЗАВИСИМО друг от друга и только если реально изменились —
+               раньше учитель попадал в вывод, даже если менялся только кабинет. #}
+            {%- if room_changed and teacher_changed -%}
+                <b>{{ safe_orig_subj }}</b>{{ ctx_str | safe }} <s>{{ safe_orig_room or '—' }} {{ safe_orig_teacher or '—' }}</s> ➔ <b>{{ safe_new_room or '—' }} {{ safe_new_teacher or '—' }}</b>
+            {%- elif room_changed -%}
+                <b>{{ safe_orig_subj }}</b>{{ ctx_str | safe }} <s>{{ safe_orig_room or '—' }}</s> ➔ <b>{{ safe_new_room or '—' }}</b>
+            {%- elif teacher_changed -%}
+                <b>{{ safe_orig_subj }}</b>{{ ctx_str | safe }}{{ new_r_fmt }} (<s>{{ safe_orig_teacher or '—' }}</s> ➔ <b>{{ safe_new_teacher or '—' }}</b>)
+            {%- else -%}
+                <b>{{ safe_orig_subj }}</b>{{ ctx_str | safe }}{{ new_r_fmt }}
+            {%- endif -%}
+        {%- endif -%}
+    {%- endfor -%}
+{%- endfor -%}

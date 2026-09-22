@@ -1506,7 +1506,7 @@ class UIRenderer:
     # ==========================================================
     # Детализация изменений (LessonDTO)
     # ==========================================================
-        # удалить вместе с кнопкой. В расписании Переделан на рендер jinja2. Но используется еще в утренней сводке
+        
     @staticmethod
     def render_day_changes_detail(
         dto: 'DayChangesDetailDTO',
@@ -1719,100 +1719,15 @@ class UIRenderer:
     # ==========================================================
     # Уведомления ChangeReminderDTO. # Склеенное изменение расписания
     # ==========================================================
-    
     @staticmethod
     def render_daily_changes_summary(summary: 'DailyChangeSummaryDTO') -> str:
-        lines = []
-        
-        # 1. Заголовок
-        if summary.recipient_kind == "adult" and summary.child_name:
-            lines.append(f"🔄 <b>Изменения в расписании ({UIRenderer.escape_html(summary.child_name)})</b>")
-        elif summary.recipient_kind == "watch" and summary.watch_target_title:
-            lines.append(f"🔄 <b>Изменения в расписании ({UIRenderer.escape_html(summary.watch_target_title)})</b>")
-        else:
-            lines.append("🔄 <b>Изменения в расписании</b>")
-            
-        # 2. Дата
-        date_parts = summary.date.split("-")
-        formatted_date = f"{date_parts[2]}.{date_parts[1]}.{date_parts[0]}" if len(date_parts) == 3 else summary.date
-        lines.append(f"📅 <b>Дата:</b> {formatted_date}\n")
-        
-        sorted_changes = sorted(summary.changes, key=lambda c: c.lesson_num)
-        is_teacher = summary.recipient_kind == "teacher"
-        
-        # Хелпер сборки Предмет + Класс (для учителей) + Группа
-        def get_core(subj: str | None, cls_name: str | None, grp_name: str | None) -> str:
-            if not subj or subj == "—":
-                return "—"
-            parts = [UIRenderer.escape_html(subj)]
-            if is_teacher and cls_name:
-                parts.append(UIRenderer.escape_html(cls_name))
-            if grp_name and str(grp_name).strip() not in ("Весь класс", "ALL", "None", "", "—"):
-                parts.append(UIRenderer.escape_html(grp_name))
-            return " · ".join(parts)
-        
-        # 3. Список уроков
-        for c in sorted_changes:
-            num_str = str(c.lesson_num) if is_teacher else (c.display_num or str(c.lesson_num))
-            
-            orig_core = get_core(c.original_subject_name, c.original_class_name, c.original_group_name)
-            new_core = get_core(c.new_subject_name, c.new_class_name, c.new_group_name)
-            
-            orig_room = UIRenderer.escape_html(c.original_room_name or "")
-            new_room = UIRenderer.escape_html(c.new_room_name or "")
-            orig_room_fmt = f" ({orig_room})" if orig_room and orig_room != "—" else ""
-            new_room_fmt = f" ({new_room})" if new_room and new_room != "—" else ""
-            
-            # --- НОВЫЕ ПОЛЯ: Учителя из чистого DTO ---
-            orig_teacher = UIRenderer.escape_html(c.original_teacher_name or "")
-            new_teacher = UIRenderer.escape_html(c.new_teacher_name or "")
-            
-            # --- СЦЕНАРИЙ А: ОТМЕНА ---
-            if c.is_cancelled:
-                core_to_strike = orig_core if c.original_subject_name else get_core(c.subject_name, c.new_class_name, c.new_group_name)
-                room_to_strike = orig_room_fmt if c.original_subject_name else (f" ({orig_room})" if orig_room and orig_room != "—" else "")
-                lines.append(f"🚫 <b>{num_str}.</b> <s>{core_to_strike}{room_to_strike}</s>")
-                continue
-                
-            # --- СЦЕНАРИЙ Б: НОВЫЙ УРОК (БЫЛО ПУСТО) ---
-            if orig_core == "—":
-                teacher_fmt = f" {new_teacher}" if new_teacher and new_teacher != "—" else ""
-                lines.append(f"🔄 <b>{num_str}.</b> <s>—</s> → {new_core}{new_room_fmt}{teacher_fmt}")
-                continue
-                
-            # --- СЦЕНАРИЙ В: ЗАМЕНА ПРЕДМЕТА, КЛАССА ИЛИ ГРУППЫ ---
-            if orig_core != new_core:
-                lines.append(f"🔄 <b>{num_str}.</b> <s>{orig_core}{orig_room_fmt}</s> → {new_core}{new_room_fmt}")
-                
-            # --- СЦЕНАРИЙ Г: СМЕНА ТОЛЬКО КАБИНЕТА ИЛИ УЧИТЕЛЯ ---
-            else:
-                room_changed = (orig_room != new_room)
-                teacher_changed = (orig_teacher != new_teacher)
-
-                old_r = orig_room if orig_room and orig_room != "—" else "—"
-                new_r = new_room if new_room and new_room != "—" else "—"
-                old_t = orig_teacher if orig_teacher and orig_teacher != "—" else "—"
-                new_t = new_teacher if new_teacher and new_teacher != "—" else "—"
-
-                if room_changed and not teacher_changed:
-                    # Только кабинет
-                    lines.append(f"🔁 <b>{num_str}.</b> {orig_core} <s>({old_r})</s> → ({new_r})")
-                elif teacher_changed and not room_changed:
-                    # Только учитель
-                    lines.append(f"🔁 <b>{num_str}.</b> {orig_core}{orig_room_fmt} <s>{old_t}</s> → {new_t}")
-                elif room_changed and teacher_changed:
-                    # И учитель, и кабинет
-                    lines.append(f"🔁 <b>{num_str}.</b> {orig_core} <s>({old_r}) {old_t}</s> → ({new_r}) {new_t}")
-                else:
-                    # Резервный фолбэк
-                    lines.append(f"🔁 <b>{num_str}.</b> {orig_core}{new_room_fmt}")
-                
-        return "\n".join(lines)
-
-
-
-
-
+        """
+        «Глупый» рендер: просто передает готовый DTO в Jinja2 шаблон.
+        Вся бизнес-логика (дедупликация, каскады, скоринг) работает в сервисе collector.py.
+        """
+        template = template_env.get_template('daily_changes_summary.j2')
+        return template.render(summary=summary).strip()
+    
 
 
     # методы для формирования расписания для поиска

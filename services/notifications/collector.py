@@ -34,83 +34,71 @@ MAX_CHANGES_WINDOW_DAYS = 31
 
 
 class DailyChangesAggregator:
-        """Хелпер для склеивания Delta-изменений расписания в дневные сводки."""
+    """Хелпер для агрегации подготовленных DTO."""
 
-        @staticmethod
-        def aggregate_student_changes(
-            student_records: list[tuple[int, str, 'ScheduleChangeRecipientDTO', 'ChangeReminderDTO', list[str]]]
-        ) -> list['NotificationSendDTO']:
-            from collections import defaultdict
-            groups = defaultdict(list)
-            for rec_id, date, rec, dto, source_ids in student_records:
-                groups[(rec_id, date, rec)].append((dto, source_ids))
+    @staticmethod
+    def aggregate_student_changes(student_records: list) -> list['NotificationSendDTO']:
+        from collections import defaultdict
+        groups = defaultdict(list)
+        
+        # ДОБАВЛЕН class_id в распаковку и ключ словаря
+        for rec_id, date, rec, class_id, dto, source_ids in student_records:
+            groups[(rec_id, date, rec, class_id)].append((dto, source_ids))
 
-            candidates = []
-            for (rec_id, date, rec), items in groups.items():
-                dtos = [item[0] for item in items]
+        candidates = []
+        for (rec_id, date, rec, class_id), items in groups.items():
+            dtos = [item[0] for item in items]
+            all_source_ids = [s for item in items for s in item[1]]
                 
-                # Собираем все отброшенные и принятые ID в единый список
-                all_source_ids = []
-                for item in items:
-                    all_source_ids.extend(item[1])
-                    
-                summary = DailyChangeSummaryDTO(
-                    date=date, recipient_kind=rec.recipient_kind, changes=dtos,
-                    child_name=rec.child_name, watch_target_title=rec.watch_target_title
-                )
-                try:
-                    text = UIRenderer.render_daily_changes_summary(summary)
-                except Exception as e:
-                    logger.error("Render error for aggregated schedule changes: %s", e)
-                    continue
+            summary = DailyChangeSummaryDTO(
+                date=date, recipient_kind=rec.recipient_kind, changes=dtos,
+                child_name=rec.child_name, watch_target_title=rec.watch_target_title
+            )
+            
+            try:
+                text = UIRenderer.render_daily_changes_summary(summary)
+            except Exception as e:
+                logger.error("Render error for aggregated schedule changes: %s", e)
+                continue
 
-                candidates.append(NotificationSendDTO(
-                    notification_type="schedule_change",
-                    notification_date=date,
-                    source_ids=list(set(all_source_ids)), # Убираем дубли, передаем полный пакет ID
-                    recipient_id=rec_id,
-                    text=text,
-                    context=f"aggregated_changes={len(dtos)}"
-                ))
-            return candidates
+            candidates.append(NotificationSendDTO(
+                notification_type="schedule_change", notification_date=date,
+                source_ids=list(set(all_source_ids)), recipient_id=rec_id, text=text,
+                context=f"aggregated_changes={len(dtos)}"
+            ))
+        return candidates
 
-        @staticmethod
-        def aggregate_teacher_changes(
-            teacher_records: list[tuple[int, str, 'TeacherChangeRecipientDTO', 'ChangeReminderDTO', str, list[str]]]
-        ) -> list['NotificationSendDTO']:
-            from collections import defaultdict
-            groups = defaultdict(list)
-            for rec_id, date, rec, dto, teacher_name, source_ids in teacher_records:
-                groups[(rec_id, date, rec, teacher_name)].append((dto, source_ids))
+    @staticmethod
+    def aggregate_teacher_changes(teacher_records: list) -> list['NotificationSendDTO']:
+        from collections import defaultdict
+        groups = defaultdict(list)
+        
+        # ДОБАВЛЕН teacher_id в распаковку и ключ словаря
+        for rec_id, date, rec, teacher_id, dto, teacher_name, source_ids in teacher_records:
+            groups[(rec_id, date, rec, teacher_id, teacher_name)].append((dto, source_ids))
 
-            candidates = []
-            for (rec_id, date, rec, teacher_name), items in groups.items():
-                dtos = [item[0] for item in items]
-                all_source_ids = []
-                for item in items:
-                    all_source_ids.extend(item[1])
+        candidates = []
+        for (rec_id, date, rec, teacher_id, teacher_name), items in groups.items():
+            dtos = [item[0] for item in items]
+            all_source_ids = [s for item in items for s in item[1]]
 
-                summary = DailyChangeSummaryDTO(
-                    date=date, recipient_kind="teacher", changes=dtos,
-                    teacher_name=teacher_name
-                )
-                try:
-                    text = UIRenderer.render_daily_changes_summary(summary)
-                except Exception as e:
-                    logger.error("Render error for aggregated teacher changes: %s", e)
-                    continue
+            summary = DailyChangeSummaryDTO(
+                date=date, recipient_kind="teacher", changes=dtos, teacher_name=teacher_name
+            )
+            
+            try:
+                text = UIRenderer.render_daily_changes_summary(summary)
+            except Exception as e:
+                logger.error("Render error for aggregated teacher changes: %s", e)
+                continue
 
-                candidates.append(NotificationSendDTO(
-                    notification_type="teacher_change",
-                    notification_date=date,
-                    source_ids=list(set(all_source_ids)),
-                    recipient_id=rec_id,
-                    text=text,
-                    context=f"aggregated_changes={len(dtos)}"
-                ))
-            return candidates
-
-
+            candidates.append(NotificationSendDTO(
+                notification_type="teacher_change", notification_date=date,
+                source_ids=list(set(all_source_ids)), recipient_id=rec_id, text=text,
+                context=f"aggregated_changes={len(dtos)}"
+            ))
+        return candidates
+    
 class NotificationCollector:
     """Сборщик кандидатов. Превращает данные базы в готовые NotificationSendDTO."""
 
@@ -452,7 +440,6 @@ class NotificationCollector:
             except Exception as e:
                 logger.error("Data prep error for schedule change=%s: %s", getattr(change, 'id', 'unknown'), e)
 
-        # 2. Получаем списки УЖЕ доставленных изменений (Delta-оповещение)
         try:
             student_delivered = await self.repo.get_delivered_keys(notification_type="schedule_change", candidate_keys=student_candidate_keys)
             teacher_delivered = await self.repo.get_delivered_keys(notification_type="teacher_change", candidate_keys=teacher_candidate_keys)
@@ -464,69 +451,71 @@ class NotificationCollector:
         def get_change_score(c: PendingChangeDTO) -> int:
             return 3 if c.is_exchange and c.original_subject_name else (2 if c.is_exchange else 1)
 
-        student_candidates_map, teacher_candidates_map = {}, {}
+        def resolve_cascades(lesson_group_items):
+            """БИЗНЕС-ЛОГИКА: Разрешает конфликты подгрупп внутри одного номера урока."""
+            all_group_changes = [it for it in lesson_group_items if str(it[1].group_id).strip() in ("ALL", "Весь класс")]
+            if all_group_changes:
+                best_item = max(all_group_changes, key=lambda it: get_change_score(it[1]))
+                discarded_ids = [it[1].id for it in lesson_group_items]
+                return [best_item], discarded_ids
+            else:
+                subgroup_map = {}
+                for it in lesson_group_items:
+                    grp = str(it[1].group_id).strip()
+                    score = get_change_score(it[1])
+                    if grp not in subgroup_map or score >= subgroup_map[grp]["score"]:
+                        subgroup_map[grp] = {"item": it, "score": score}
+                final_items = [v["item"] for v in subgroup_map.values()]
+                discarded_ids = [it[1].id for it in lesson_group_items]
+                return final_items, discarded_ids
 
-        for del_key, change, recipient, class_display_num, h_class, h_group in raw_student_candidates:
+        # Семантическая группировка (ОБРАТИ ВНИМАНИЕ: change.class_id добавлен в ключ!)
+        student_lesson_groups = defaultdict(list)
+        for item in raw_student_candidates:
+            del_key, change, recipient, class_display_num, h_class, h_group = item
             if del_key in student_delivered: continue 
-            
-            # ИСПРАВЛЕНИЕ 1: Возвращаем change.group_id в ключ, чтобы не склеивать параллельные подгруппы
-            dedup_key = (recipient.recipient_id, recipient.child_name, change.date, change.lesson_num, change.group_id)
-            score = get_change_score(change)
-            
-            if dedup_key not in student_candidates_map:
+            slot_key = (recipient.recipient_id, change.class_id, recipient.child_name, change.date, change.lesson_num)
+            student_lesson_groups[slot_key].append(item)
+
+        teacher_lesson_groups = defaultdict(list)
+        for item in raw_teacher_candidates:
+            del_key, change, recipient, teacher_name, h_class, h_group = item
+            if del_key in teacher_delivered: continue 
+            slot_key = (recipient.recipient_id, change.class_id, change.date, change.lesson_num)
+            teacher_lesson_groups[slot_key].append(item)
+
+        student_candidates_map = {}
+        for slot_key, items in student_lesson_groups.items():
+            final_items, all_slot_ids = resolve_cascades(items)
+            for i, item in enumerate(final_items):
+                del_key, change, recipient, class_display_num, h_class, h_group = item
                 dto = NotificationMapper.to_change_reminder_dto(
                     change, display_num=class_display_num, child_name=(recipient.child_name if recipient.recipient_kind == "adult" else None),
                     watch_target_title=(recipient.watch_target_title if recipient.recipient_kind == "watch" else None), class_name=h_class, group_name=h_group
                 )
-                student_candidates_map[dedup_key] = {
-                    "score": score, "rec_id": recipient.recipient_id, "date": change.date, 
-                    "rec": recipient, "dto": dto, "source_ids": [change.id] # Начинаем копить ID
-                }
-            else:
-                # ИСПРАВЛЕНИЕ 2: Обязательно сохраняем ID отброшенного дубля!
-                student_candidates_map[dedup_key]["source_ids"].append(change.id)
-                if score >= student_candidates_map[dedup_key]["score"]:
-                    dto = NotificationMapper.to_change_reminder_dto(
-                        change, display_num=class_display_num, child_name=(recipient.child_name if recipient.recipient_kind == "adult" else None),
-                        watch_target_title=(recipient.watch_target_title if recipient.recipient_kind == "watch" else None), class_name=h_class, group_name=h_group
-                    )
-                    student_candidates_map[dedup_key]["score"] = score
-                    student_candidates_map[dedup_key]["dto"] = dto
-
-        for del_key, change, recipient, teacher_name, h_class, h_group in raw_teacher_candidates:
-            if del_key in teacher_delivered: continue 
-            
-            dedup_key = (recipient.recipient_id, change.date, change.lesson_num, change.group_id)
-            score = get_change_score(change)
-            
-            if dedup_key not in teacher_candidates_map:
+                map_key = (*slot_key, change.group_id)
+                # ПРОКИНУТ change.class_id пятым аргументом в кортеж
+                student_candidates_map[map_key] = (recipient.recipient_id, change.date, recipient, change.class_id, dto, all_slot_ids if i == 0 else [])
+                
+        teacher_candidates_map = {}
+        for slot_key, items in teacher_lesson_groups.items():
+            final_items, all_slot_ids = resolve_cascades(items)
+            for i, item in enumerate(final_items):
+                del_key, change, recipient, teacher_name, h_class, h_group = item
                 dto = NotificationMapper.to_change_reminder_dto(change, display_num=str(change.lesson_num), class_name=h_class, group_name=h_group)
-                teacher_candidates_map[dedup_key] = {
-                    "score": score, "rec_id": recipient.recipient_id, "date": change.date, 
-                    "rec": recipient, "dto": dto, "teacher_name": teacher_name, "source_ids": [change.id]
-                }
-            else:
-                teacher_candidates_map[dedup_key]["source_ids"].append(change.id)
-                if score >= teacher_candidates_map[dedup_key]["score"]:
-                    dto = NotificationMapper.to_change_reminder_dto(change, display_num=str(change.lesson_num), class_name=h_class, group_name=h_group)
-                    teacher_candidates_map[dedup_key]["score"] = score
-                    teacher_candidates_map[dedup_key]["dto"] = dto
-
-        # Извлекаем данные, включая собранные массивы source_ids
-        student_records = [
-            (v["rec_id"], v["date"], v["rec"], v["dto"], v["source_ids"]) 
-            for v in student_candidates_map.values()
-        ]
-        teacher_records = [
-            (v["rec_id"], v["date"], v["rec"], v["dto"], v["teacher_name"], v["source_ids"]) 
-            for v in teacher_candidates_map.values()
-        ]
+                map_key = (*slot_key, change.group_id)
+                # ПРОКИНУТ change.teacher_id пятым аргументом в кортеж
+                teacher_candidates_map[map_key] = (recipient.recipient_id, change.date, recipient, change.teacher_id, dto, teacher_name, all_slot_ids if i == 0 else [])
+        # Выгружаем значения из словарей (они теперь содержат class_id/teacher_id внутри кортежей)
+        student_records = list(student_candidates_map.values())
+        teacher_records = list(teacher_candidates_map.values())
 
         candidates = []
         candidates.extend(DailyChangesAggregator.aggregate_student_changes(student_records))
         candidates.extend(DailyChangesAggregator.aggregate_teacher_changes(teacher_records))
         ctx.candidates += len(candidates)
         return candidates
+    
     async def collect_pre_lesson_reminders(self, ctx: NotificationTickContext) -> list[NotificationSendDTO]:
         now = self.time_service.get_now_base()
         today_iso = now.date().isoformat()
