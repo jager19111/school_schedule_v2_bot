@@ -16,6 +16,7 @@ from bot.keyboards.keyboard import Keyboards
 from services.profiles_service import ProfileService
 from services.schedule_service import ScheduleService
 from services.students_service import StudentsService
+from services.image_preferences import ImagePreferencesService
 from services.time_service import TimeService
 from bot.utils.fsm_guard import validate_fsm_session
 from bot.utils.safe_send import _safe_edit_text, _safe_callback_answer
@@ -125,6 +126,7 @@ async def toggle_my_notifications(
     callback: CallbackQuery,
     profile_service: ProfileService,
     schedule_service: ScheduleService,
+    image_prefs: ImagePreferencesService,
 ) -> None:
     """
     Пользователь меняет собственный глобальный флаг уведомлений.
@@ -150,6 +152,7 @@ async def toggle_my_notifications(
         profile_service=profile_service,
         schedule_service=schedule_service,
         is_callback=True,
+        image_prefs=image_prefs, 
     )
 
     await callback.answer("Настройки уведомлений обновлены.")
@@ -205,6 +208,7 @@ async def disable_my_summary_time(
     state: FSMContext,
     profile_service: ProfileService,
     schedule_service: ScheduleService,
+    image_prefs: ImagePreferencesService,
 ) -> None:
     """
     Выключает личную утреннюю сводку пользователя.
@@ -248,6 +252,7 @@ async def disable_my_summary_time(
         profile_service=profile_service,
         schedule_service=schedule_service,
         is_callback=True,
+        image_prefs=image_prefs, 
     )
 
     await _safe_callback_answer(
@@ -264,6 +269,7 @@ async def cancel_my_summary_time_input(
     state: FSMContext,
     profile_service: ProfileService,
     schedule_service: ScheduleService,
+    image_prefs: ImagePreferencesService,
 ) -> None:
     """
     Отменяет ввод времени утренней сводки.
@@ -285,6 +291,7 @@ async def cancel_my_summary_time_input(
         profile_service=profile_service,
         schedule_service=schedule_service,
         is_callback=True,
+        image_prefs=image_prefs, 
     )
 
     await _safe_callback_answer(callback)
@@ -296,6 +303,7 @@ async def process_my_time(
     time_service: TimeService,
     profile_service: ProfileService,
     schedule_service: ScheduleService,
+    image_prefs: ImagePreferencesService,
 ) -> None:
     """
     Сохраняет личное время утренней сводки пользователя.
@@ -337,6 +345,8 @@ async def process_my_time(
         profile_service=profile_service,
         schedule_service=schedule_service,
         is_callback=False,
+        image_prefs=image_prefs,
+        
     )
         
 
