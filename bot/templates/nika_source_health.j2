@@ -1,0 +1,31 @@
+{%- set status_info = {
+    'healthy': ('🟢 <b>NIKA source: работает</b>', 'Последняя проверка прошла успешно.'),
+    'source_error_cache_available': ('🟡 <b>NIKA source: недоступен</b>', 'Bot использует последнее сохранённое расписание.'),
+    'source_error_cache_empty': ('🔴 <b>NIKA source: недоступен</b>', 'Локальное расписание ещё не загружено.'),
+    'source_healthy_cache_empty': ('🟠 <b>NIKA source: cache пуст</b>', 'Источник доступен, но расписание пока не сохранено.'),
+    'cache_empty': ('🔴 <b>NIKA source: нет данных</b>', 'Источник ещё не был успешно загружен.'),
+    'cache_without_source_state': ('🟠 <b>NIKA source: неполный state</b>', 'Cache существует, но metadata источника отсутствует.')
+} -%}
+{%- set s_header, s_desc = status_info.get(dto.status, ('⚪ <b>NIKA source: неизвестный статус</b>', 'Не удалось определить состояние источника.')) -%}
+{{ s_header | safe }}
+
+{{ s_desc }}
+
+<b>Источник</b>
+{{ 'JS: <code>' ~ dto.js_filename|e ~ '</code>' if dto.js_filename else 'JS: —' }}
+{{ 'Экспорт: <code>' ~ dto.export_date|e ~ '</code> <code>' ~ dto.export_time|e ~ '</code>' if dto.export_date or dto.export_time else 'Экспорт: —' }}
+{{ 'Последняя проверка: <code>' ~ format_dt(dto.last_checked_at)|e ~ '</code>' if dto.last_checked_at else 'Последняя проверка: —' }}
+{{ 'Последнее изменение: <code>' ~ format_dt(dto.last_changed_at)|e ~ '</code>' if dto.last_changed_at else 'Последнее изменение: —' }}
+
+<b>Локальный cache</b>
+Уроков: <b>{{ dto.lesson_count }}</b>
+{{ 'Coverage: <code>' ~ dto.coverage_start_date|e ~ '</code> — <code>' ~ dto.coverage_end_date|e ~ '</code>' if dto.coverage_start_date and dto.coverage_end_date else 'Coverage: —' }}
+{% if dto.coverage_end_date %}
+{{ '🟢 Coverage включает будущие дни' if dto.coverage_has_future else ('🟡 Coverage заканчивается сегодня' if dto.coverage_is_current else '🔴 Coverage cache уже устарел') }}
+{%- endif %}
+{%- if dto.last_error %}
+
+<b>Последняя ошибка</b>
+<code>{{ dto.last_error | e }}</code>
+{{ 'Время ошибки: <code>' ~ format_dt(dto.last_error_at)|e ~ '</code>' if dto.last_error_at else 'Время ошибки: —' }}
+{%- endif %}
