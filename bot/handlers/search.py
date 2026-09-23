@@ -99,18 +99,14 @@ async def select_class_day(
 
     # 3. Проверяем наличие замен
     has_changes = any(lesson.is_exchange or lesson.is_cancelled for lesson in day_dto.lessons)
-    monday = target_date - timedelta(days=target_date.isoweekday() - 1)
 
     # 4. ИСПРАВЛЕНИЕ: monday уже date, просто вызываем isoformat()
-    kb = Keyboards.get_search_days_kb(
+    kb = Keyboards.get_search_day_kb(
         target_id=class_id,
         is_teacher=False,
-        week_start_iso=monday.isoformat(),
-        is_full=False,
+        current_date_iso=date_iso,
         has_changes=has_changes,
-        date_iso=date_iso,
     )
-
     await send_or_edit_long(callback=callback, text=text, keyboard=kb)
     await callback.answer()
 
@@ -133,17 +129,13 @@ async def select_teacher_day(
     text = f"👨‍🏫 <b>Расписание: {teacher_name}</b>\n{text}"
 
     has_changes = any(lesson.is_exchange or lesson.is_cancelled for lesson in day_dto.lessons)
-    monday = target_date - timedelta(days=target_date.isoweekday() - 1)
 
-    kb = Keyboards.get_search_days_kb(
+    kb = Keyboards.get_search_day_kb(
         target_id=teacher_id,
         is_teacher=True,
-        week_start_iso=monday.isoformat(),
-        is_full=False,
+        current_date_iso=date_iso,
         has_changes=has_changes,
-        date_iso=date_iso,
     )
-
     await send_or_edit_long(callback=callback, text=text, keyboard=kb)
     await callback.answer()
 
@@ -162,7 +154,11 @@ async def nav_class_week(
     week_start_iso = callback_data.week_start_iso
     class_name = await schedule_service.get_class_name(class_id)
 
-    text = UIRenderer.render_search_day_select(class_name)
+    # Запрашиваем сводку и рендерим
+    summary_dto = await schedule_service.get_class_week_schedule_summary(class_id, week_start_iso)
+    text, _ = UIRenderer.render_week_summary(summary_dto)
+    text = f"🎓 <b>{class_name}</b>\n{text}"
+    
     kb = Keyboards.get_search_days_kb(
         target_id=class_id,
         is_teacher=False,
@@ -182,8 +178,12 @@ async def nav_teacher_week(
     teacher_id = callback_data.teacher_id
     week_start_iso = callback_data.week_start_iso
     teacher_name = await schedule_service.get_teacher_name(teacher_id)
-
-    text = UIRenderer.render_search_day_select(teacher_name)
+    # Запрашиваем сводку и рендерим
+    summary_dto = await schedule_service.get_teacher_week_schedule_summary(
+        teacher_id=teacher_id, week_start_iso=week_start_iso
+    )
+    text, _ = UIRenderer.render_week_summary(summary_dto)
+    text = f"👨‍🏫 <b>{teacher_name}</b>\n{text}"
     kb = Keyboards.get_search_days_kb(
         target_id=teacher_id,
         is_teacher=True,
@@ -216,17 +216,13 @@ async def show_class_schedule(
 
     has_changes = any(lesson.is_exchange or lesson.is_cancelled for lesson in day_dto.lessons)
     date_obj = time_service.date_from_iso(date_iso)
-    monday = date_obj - timedelta(days=date_obj.isoweekday() - 1)
 
-    kb = Keyboards.get_search_days_kb(
+    kb = Keyboards.get_search_day_kb(
         target_id=class_id,
         is_teacher=False,
-        week_start_iso=monday.isoformat(),
-        is_full=False,
+        current_date_iso=date_iso,
         has_changes=has_changes,
-        date_iso=date_iso,
     )
-
     await send_or_edit_long(callback=callback, text=text, keyboard=kb)
     await callback.answer()
 
@@ -249,17 +245,13 @@ async def show_teacher_schedule(
 
     has_changes = any(lesson.is_exchange or lesson.is_cancelled for lesson in day_dto.lessons)
     date_obj = time_service.date_from_iso(date_iso)
-    monday = date_obj - timedelta(days=date_obj.isoweekday() - 1)
 
-    kb = Keyboards.get_search_days_kb(
+    kb = Keyboards.get_search_day_kb(
         target_id=teacher_id,
         is_teacher=True,
-        week_start_iso=monday.isoformat(),
-        is_full=False,
+        current_date_iso=date_iso,
         has_changes=has_changes,
-        date_iso=date_iso,
     )
-
     await send_or_edit_long(callback=callback, text=text, keyboard=kb)
     await callback.answer()
 
@@ -367,15 +359,13 @@ async def select_room_day(
 
     text = UIRenderer.render_room_day_schedule(day_dto, target_date.strftime('%d.%m'))
 
-    monday = target_date - timedelta(days=target_date.isoweekday() - 1)
-    kb = Keyboards.get_search_days_kb(
+    kb = Keyboards.get_search_day_kb(
         target_id=room_id, 
         is_teacher=False, 
-        week_start_iso=monday.isoformat(),
-        is_room=True,
+        is_room=True, 
+        current_date_iso=date_iso,
         return_to=callback_data.return_to
     )
-    
     await send_or_edit_long(callback=callback, text=text, keyboard=kb)
     await callback.answer()
 
@@ -393,15 +383,13 @@ async def show_room_schedule(
     day_dto = await schedule_service.get_daily_schedule_for_room(room_id, date_iso)
     text = UIRenderer.render_room_day_schedule(day_dto, target_date.strftime('%d.%m'))
     
-    monday = target_date - timedelta(days=target_date.isoweekday() - 1)
-    kb = Keyboards.get_search_days_kb(
+    kb = Keyboards.get_search_day_kb(
         target_id=room_id, 
         is_teacher=False, 
-        week_start_iso=monday.isoformat(),
-        is_room=True,
+        is_room=True, 
+        current_date_iso=date_iso,
         return_to=callback_data.return_to
     )
-    
     await send_or_edit_long(callback=callback, text=text, keyboard=kb)
     await callback.answer()
 
@@ -415,7 +403,10 @@ async def nav_room_week(
     room_id = callback_data.room_id
     room_name = await schedule_service.get_room_name(room_id)
 
-    text = UIRenderer.render_search_day_select(room_name)
+    # Запрашиваем сводку и рендерим
+    summary_dto = await schedule_service.get_room_week_schedule_summary(room_id, callback_data.week_start_iso)
+    text, _ = UIRenderer.render_week_summary(summary_dto)
+    text = f"🚪 <b>Кабинет {room_name}</b>\n{text}"
     kb = Keyboards.get_search_days_kb(
         target_id=room_id, 
         is_teacher=False, 

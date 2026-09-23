@@ -789,13 +789,11 @@ async def _render_and_send_search_class_poster(
     value = date_type.fromisoformat(date_iso)
     monday = value - timedelta(days=value.isoweekday() - 1)
     
-    kb = Keyboards.get_search_days_kb(
+    kb = Keyboards.get_search_day_kb(
         target_id=class_id,
         is_teacher=False,
-        week_start_iso=monday.isoformat(),
-        is_full=False,
+        current_date_iso=date_iso,
         has_changes=_changes_count(day_dto) > 0,
-        date_iso=date_iso,
     )
     caption = build_day_caption(_format_date_text(date_iso), _changes_count(day_dto))
     
@@ -839,13 +837,11 @@ async def _render_and_send_search_teacher_poster(
     value = date_type.fromisoformat(date_iso)
     monday = value - timedelta(days=value.isoweekday() - 1)
     
-    kb = Keyboards.get_search_days_kb(
+    kb = Keyboards.get_search_day_kb(
         target_id=teacher_id,
         is_teacher=True,
-        week_start_iso=monday.isoformat(),
-        is_full=False,
+        current_date_iso=date_iso,
         has_changes=_changes_count(day_dto) > 0,
-        date_iso=date_iso,
     )
     caption = build_day_caption(_format_date_text(date_iso), _changes_count(day_dto))
     

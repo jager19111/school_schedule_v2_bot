@@ -870,6 +870,40 @@ class ScheduleService:
             count_distinct_nums=False,
         )
 
+    async def get_class_week_schedule_summary(
+        self,
+        class_id: str,
+        week_start_iso: str,
+    ) -> WeekSummaryDTO:
+        """Сводка недели класса (уроки/замены)."""
+        async def get_daily(date_iso: str) -> DayScheduleDTO:
+            return await self.get_daily_schedule_for_class(
+                class_id=class_id,
+                date_iso=date_iso,
+            )
+        return await self._build_week_summary(
+            get_daily,
+            week_start_iso,
+            count_distinct_nums=True,
+        )
+
+    async def get_room_week_schedule_summary(
+        self,
+        room_id: str,
+        week_start_iso: str,
+    ) -> WeekSummaryDTO:
+        """Сводка недели кабинета."""
+        async def get_daily(date_iso: str) -> DayScheduleDTO:
+            return await self.get_daily_schedule_for_room(
+                room_id=room_id,
+                date_iso=date_iso,
+            )
+        return await self._build_week_summary(
+            get_daily,
+            week_start_iso,
+            count_distinct_nums=True,
+        )
+        
     # ==========================================================
     # Справочники и имена (кеш метаданных, 0 лишних SQL)
     # ==========================================================

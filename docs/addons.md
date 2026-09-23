@@ -18,7 +18,7 @@ for class_id in classes.classes:
         chunk.clear()
 if chunk:
     await asyncio.gather(*chunk, return_exceptions=True)
-2. Функциональный разрыв: Постеры только для Учеников
+2. Функциональный разрыв: Постеры только для Учеников и учителей
 Роутер schedule_poster.py перехватывает только ScheduleDayCD.filter(). и (TeacherScheduleDayCD)
 Проблема: Вся мощь генерации картинок сейчас доступна только для личного расписания ученика/наблюдателя и учителя. Если кто-то воспользуется поиском по школе (SearchClassDayCD, SearchTeacherDayCD), постер сгенерирован не будет. Они получат обычный текст.
 Как исправить: В schedule_poster.py нужно добавить перехват дополнительных коллбеков из search.py адаптировав маппинг Target и сборку PosterRequest.  

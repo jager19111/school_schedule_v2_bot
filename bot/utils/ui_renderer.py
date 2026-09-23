@@ -1739,11 +1739,6 @@ class UIRenderer:
     def render_search_teacher_select() -> str:
         return "👨‍🏫 <b>Выберите преподавателя:</b>"
 
-    @staticmethod
-    def render_search_day_select(name: str) -> str:
-        # ЭКРАНИРОВАНИЕ
-        safe_name = UIRenderer.escape_html(name)
-        return f"📅 Выберите день недели для: <b>{safe_name}</b>"
 
     # Выбор групп
     @staticmethod

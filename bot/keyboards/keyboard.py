@@ -305,6 +305,76 @@ class Keyboards:
         return InlineKeyboardMarkup(inline_keyboard=buttons)
 
     @staticmethod
+    def get_search_day_kb(
+        target_id: str, 
+        is_teacher: bool, 
+        current_date_iso: str, 
+        *,
+        has_changes: bool = False,
+        is_room: bool = False,
+        return_to: str = "grid"
+    ) -> InlineKeyboardMarkup:
+        """Навигация дневного расписания для поиска по школе (аналог личного расписания)."""
+        current_date = datetime.fromisoformat(current_date_iso).date()
+        previous_date = (current_date - timedelta(days=1)).isoformat()
+        next_date = (current_date + timedelta(days=1)).isoformat()
+        week_start_iso = Keyboards._week_start_for_date(current_date_iso)
+
+        # 1. Формируем коллбэки для перелистывания дней и недели
+        if is_room:
+            prev_cb = callbacks.SearchRoomDayCD(room_id=target_id, date_iso=previous_date, return_to=return_to).pack()
+            next_cb = callbacks.SearchRoomDayCD(room_id=target_id, date_iso=next_date, return_to=return_to).pack()
+            week_cb = callbacks.SearchRoomWeekCD(room_id=target_id, week_start_iso=week_start_iso, return_to=return_to).pack()
+            back_cb = callbacks.FREE_ROOMS_NOW if return_to == "free_now" else callbacks.SEARCH_ROOMS_GRID
+        elif is_teacher:
+            prev_cb = callbacks.SearchTeacherDayCD(teacher_id=target_id, date_iso=previous_date).pack()
+            next_cb = callbacks.SearchTeacherDayCD(teacher_id=target_id, date_iso=next_date).pack()
+            week_cb = callbacks.SearchTeacherWeekCD(teacher_id=target_id, week_start_iso=week_start_iso).pack()
+            back_cb = callbacks.SEARCH_TEACHERS
+        else:
+            prev_cb = callbacks.SearchClassDayCD(class_id=target_id, date_iso=previous_date).pack()
+            next_cb = callbacks.SearchClassDayCD(class_id=target_id, date_iso=next_date).pack()
+            week_cb = callbacks.SearchClassWeekCD(class_id=target_id, week_start_iso=week_start_iso).pack()
+            back_cb = callbacks.SEARCH_CLASSES
+
+        buttons = [
+            [
+                InlineKeyboardButton(text='⬅️ Предыдущий', callback_data=prev_cb),
+                InlineKeyboardButton(text='Следующий ➡️', callback_data=next_cb)
+            ],
+            [
+                InlineKeyboardButton(text='📆 Показать неделю', callback_data=week_cb)
+            ]
+        ]
+
+        # 2. Кнопка «Изменения» (кабинетам не нужна)
+        if has_changes and not is_room:
+            if is_teacher:
+                chg_cb = callbacks.DayChangesCD(
+                    target_kind="search_teacher",
+                    target_id=target_id,
+                    class_id="ALL",
+                    group_id="ALL",
+                    date_iso=current_date_iso,
+                    origin="teacher",
+                ).pack()
+            else:
+                chg_cb = callbacks.DayChangesCD(
+                    target_kind="search_class",
+                    target_id=target_id,
+                    class_id=target_id,
+                    group_id="ALL",
+                    date_iso=current_date_iso,
+                    origin="class",
+                ).pack()
+            buttons.append([InlineKeyboardButton(text="🔄 Изменения", callback_data=chg_cb)])
+
+        # 3. Кнопка возврата
+        buttons.append([InlineKeyboardButton(text='⬅️ Назад к списку', callback_data=back_cb)])
+
+        return InlineKeyboardMarkup(inline_keyboard=buttons)
+    
+    @staticmethod
     def get_schedule_week_kb(week_start_iso: str, *, show_target_switch: bool, is_full: bool=False) -> InlineKeyboardMarkup:
         """
         Навигация недельного расписания.
