@@ -2,19 +2,15 @@
 
 Обязанности:
 - L1: TTL-кэш PNG-байтов по request_id (версионированный ключ);
-- single-flight: параллельные запросы одного постера = один рендер
-  (защита от thundering herd утром и после смены версии расписания);
+- single-flight: параллельные запросы одного постера = один рендер;
 - semaphore + кап очереди + общий таймаут «ожидание слота + рендер»;
-- rate limit (10/3 мин на пользователя) — расходуется только на
-  фактический запуск рендера; кэш-хиты и системные вызовы
-  (warm-up, user_id=None) лимит не расходуют;
-- circuit breaker: серия ошибок -> мгновенный отказ вместо того,
-  чтобы каждый пользователь платил полным таймаутом;
-- L2: кэш Telegram file_id поверх байтов; протухший file_id
-  инвалидируется (invalidate_file_id), хендлер перезаливает постер.
+- rate limit на пользователя — только на фактический запуск рендера;
+- circuit breaker: серия ошибок -> мгновенный отказ;
+- L2: кэш Telegram file_id поверх байтов; раздельный лимит записей;
+- метрики латентности (этап 5): p50/p95/p99 ожидания очереди и рендера
+  для калибровки констант в /img_stats.
 
-Слой не знает про Telegram/aiogram: отправка и file_id-фолбэк —
-в хендлерах (этап 3).
+Слой не знает про Telegram/aiogram: отправка и file_id-фолбэк — в хендлерах.
 """
 
 from __future__ import annotations
@@ -32,6 +28,7 @@ from services.image_render.exceptions import (
     RenderTimeoutError,
     RendererUnavailableError,
 )
+from services.image_render.metrics import LatencyTracker
 from services.image_render.models import PosterRequest, RenderedPoster
 from services.image_render.port import RendererPort
 from services.image_render.rate_limiter import SlidingWindowRateLimiter
@@ -119,8 +116,10 @@ class ImageGenerationService:
         self._waiting = 0  # ждущих в очереди на semaphore
         self._inflight: dict[str, asyncio.Task[RenderedPoster]] = {}
         self._inflight_lock = asyncio.Lock()
+        # L1 (PNG-байты, RAM) и L2 (file_id, строки) — раздельные лимиты:
+        # file_id-записи почти бесплатны, байты — нет.
         self._bytes_cache = _TTLCache(settings.cache_maxsize, settings.cache_ttl_sec)
-        self._file_id_cache = _TTLCache(settings.cache_maxsize, settings.cache_ttl_sec)
+        self._file_id_cache = _TTLCache(settings.file_id_cache_maxsize, settings.cache_ttl_sec)
         self._rate_limiter = SlidingWindowRateLimiter(
             settings.rate_limit_max, settings.rate_limit_window_sec
         )
@@ -128,6 +127,9 @@ class ImageGenerationService:
             settings.breaker_failure_threshold, settings.breaker_cooldown_sec
         )
         self._stats = ImageServiceStats()
+        # Метрики этапа 5: латентность очереди и самого рендера
+        self._queue_waits = LatencyTracker(maxlen=200)
+        self._render_times = LatencyTracker(maxlen=200)
 
     async def startup(self) -> None:
         await self._renderer.startup()
@@ -144,8 +146,8 @@ class ImageGenerationService:
     def snapshot(self) -> dict[str, object]:
         """Сводное runtime-состояние для /img_stats (админ).
 
-        Состояние breaker'а, число идущих рендеров, ждущих в очереди
-        и размеры кэшей L1/L2.
+        Состояние breaker'а, число идущих рендеров, ждущих в очереди,
+        размеры кэшей L1/L2 и перцентили латентности (этап 5).
         """
         return {
             "breaker_state": self._breaker.state.value,
@@ -153,6 +155,8 @@ class ImageGenerationService:
             "waiting": self._waiting,
             "cached_posters": len(self._bytes_cache),
             "cached_file_ids": len(self._file_id_cache),
+            "queue_wait": self._queue_waits.percentiles(),
+            "render_time": self._render_times.percentiles(),
         }
 
     # ---------------- L2: file_id ----------------
@@ -165,11 +169,7 @@ class ImageGenerationService:
         self._file_id_cache.set(request_id, file_id)
 
     def invalidate_file_id(self, request_id: str) -> None:
-        """Протухший file_id (чистка Telegram / новый токен): удаляем запись.
-
-        Хендлер после этого повторно отправит постер байтами из L1
-        и сохранит новый file_id через store_file_id.
-        """
+        """Протухший file_id (чистка Telegram / новый токен): удаляем запись."""
         self._file_id_cache.pop(request_id)
 
     # ---------------- основной путь ----------------
@@ -231,17 +231,27 @@ class ImageGenerationService:
                 self._inflight.pop(request.request_id, None)
 
     async def _render_with_limits(self, request: PosterRequest) -> RenderedPoster:
-        """Очередь + semaphore + общий таймаут «ожидание слота + рендер»."""
+        """Очередь + semaphore + общий таймаут «ожидание слота + рендер».
+
+        Замеряет отдельно ожидание слота и сам рендер (этап 5) —
+        из этих перцентилей калибруются IMAGE_RENDER_TIMEOUT_SEC и
+        IMAGE_QUEUE_CAPACITY.
+        """
         if self._waiting >= self._settings.queue_capacity:
             self._stats.queue_rejections += 1
             raise QueueOverflowError("Очередь рендера переполнена — попробуйте позже")
 
         self._waiting += 1
+        queue_started = time.monotonic()
         try:
 
             async def _render() -> RenderedPoster:
                 async with self._semaphore:
-                    return await self._renderer.render(request)
+                    self._queue_waits.record(time.monotonic() - queue_started)
+                    render_started = time.monotonic()
+                    poster = await self._renderer.render(request)
+                    self._render_times.record(time.monotonic() - render_started)
+                    return poster
 
             try:
                 poster = await asyncio.wait_for(
