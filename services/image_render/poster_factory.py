@@ -119,9 +119,9 @@ def build_poster_request(
                 trud_to_render = active_trud if active_trud else group
 
                 for idx, l in enumerate(trud_to_render):
-                    is_window = (l.subject_name == "Нет занятий")
+                    is_window = (l.subject_name == "нет занятий")
                     items.append(PosterItem(
-                        primary_text="Нет занятий" if is_window else ("Труд (технология)" if idx == 0 else ""),
+                        primary_text="нет занятий" if is_window else ("Труд (технология)" if idx == 0 else ""),
                         secondary_text=l.teacher_name if not is_window else None,
                         room=(l.room_name if l.room_name != "—" else None) if not is_window else None,
                         is_cancelled=l.is_cancelled,
@@ -130,11 +130,11 @@ def build_poster_request(
             else:
                 for l in group:
                     # --- ОБРАБОТКА ОКОН ---
-                    is_window = (l.subject_name == "Нет занятий")
+                    is_window = (l.subject_name == "нет занятий")
                     
                     if is_window:
                         items.append(PosterItem(
-                            primary_text="Нет занятий",
+                            primary_text="нет занятий",
                             # Выводим номер группы, чтобы родитель точно знал, у кого окно
                             secondary_text=l.group_name if l.group_name and l.group_name not in ("ALL", "Весь класс", "—") else None,
                             room=None,

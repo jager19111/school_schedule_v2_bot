@@ -189,8 +189,8 @@
                                 <div class="item-row">
                                     <div class="item-info">
                                         {% if item.primary_text %}
-                                            {% if item.primary_text == 'Нет занятий' %}
-                                                <div class="subject-text scale-text" style="color: #a0aec0; font-weight: 500;">Нет занятий</div>
+                                            {% if item.primary_text == 'нет занятий' %}
+                                                <div class="subject-text scale-text" style="color: #a0aec0; font-weight: 500;">нет занятий</div>
                                             {% else %}
                                                 <div class="subject-text scale-text {% if item.is_cancelled %}subj-cancelled{% elif lesson.status.value == 'exchange' %}subj-exchange{% else %}subj-normal{% endif %}">
                                                     {{ item.original_primary or item.primary_text if item.is_cancelled else item.primary_text }}
@@ -214,7 +214,7 @@
                                     </div>
                                     
                                 <!-- ИЗМЕНЕНО: Запрещаем вывод правого кубика для кружков -->
-                                    {% if item.room and not item.is_cancelled and item.primary_text != 'Нет занятий' and not lesson.is_extra %}
+                                    {% if item.room and not item.is_cancelled and item.primary_text != 'нет занятий' and not lesson.is_extra %}
                                         <div class="room-badge">{{ item.room }}</div>
                                     {% endif %}
                                 </div>

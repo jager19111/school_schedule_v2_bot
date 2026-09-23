@@ -9,7 +9,7 @@
       исчерпывающе передают статус.
    3. Нумерация урока role-aware: display_num у ученика, lesson_num
       у учителя (в оригинале — "display_num or lesson_num" для ОБЕИХ).
-   4. Добавлен кейс "новый урок вместо окна" (➕, нет original_subject_name)
+   4. Добавлен кейс "новый урок вместо окна" (➕, original_subject_name пусто или "нет занятий")
       — в оригинале такого кейса не было вовсе.
    5. Если отменены ВСЕ подгруппы слота — рендерим одной строкой без
       дерева ├/└, а не по подгруппам отдельно.
@@ -48,7 +48,7 @@
     {%- set num_str = (first.lesson_num if is_teacher else (first.display_num or first.lesson_num)) ~ '.' -%}
     {%- set time_str = (first.start_time or '') ~ ' - ' ~ (first.end_time or '') -%}
     {%- set all_cancelled = parallel | rejectattr('is_cancelled') | list | length == 0 -%}
-    {%- set all_added = parallel | selectattr('original_subject_name') | list | length == 0 -%}
+    {%- set all_added = parallel | rejectattr('original_subject_name', 'in', [none, '', 'нет занятий']) | list | length == 0 -%}
     {%- set group_icon = '🚫' if all_cancelled else ('➕' if all_added else '🔄') -%}
     {{ '\n\n' ~ group_icon ~ ' ' ~ num_str ~ ' ' ~ time_str }}
     {%- if all_cancelled and parallel | length > 1 -%}
@@ -68,7 +68,7 @@
         {%- set orig_room_str = ' (' ~ safe_orig_room ~ ')' if safe_orig_room and safe_orig_room != '—' else '' -%}
         {%- set new_room_str = ' (' ~ safe_new_room ~ ')' if safe_new_room and safe_new_room != '—' else '' -%}
         {%- set cls_line = ('\n  👤 ' ~ safe_cls) if is_teacher and safe_cls else '' -%}
-        {%- set is_added = not l.original_subject_name -%}
+        {%- set is_added = not l.original_subject_name or l.original_subject_name == 'нет занятий' -%}
         {%- set subject_changed = (l.original_subject_name != l.subject_name) -%}
         {%- set room_changed = (l.original_room_name != l.room_name) -%}
         {%- set teacher_changed = (l.original_teacher_name != l.teacher_name) -%}
@@ -105,7 +105,7 @@
             {%- set safe_cls = (l.class_name or '') | e -%}
             {%- set orig_room_str = ' (' ~ safe_orig_room ~ ')' if safe_orig_room and safe_orig_room != '—' else '' -%}
             {%- set new_room_str = ' (' ~ safe_new_room ~ ')' if safe_new_room and safe_new_room != '—' else '' -%}
-            {%- set is_added = not l.original_subject_name -%}
+            {%- set is_added = not l.original_subject_name or l.original_subject_name == 'нет занятий' -%}
             {%- set subject_changed = (l.original_subject_name != l.subject_name) -%}
             {%- set room_changed = (l.original_room_name != l.room_name) -%}
             {%- set teacher_changed = (l.original_teacher_name != l.teacher_name) -%}

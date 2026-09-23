@@ -443,7 +443,19 @@ class ScheduleService:
 
         metadata = await self.schedule_repo.get_metadata()
         self._enrich_display_numbers_dtos(lesson_dtos, metadata, origin=origin)
-
+        # Обогащаем названия классов для учителя ===
+        if origin == "teacher":
+            for dto in lesson_dtos:
+                # Текущий класс
+                if dto.class_id:
+                    cls_obj = metadata.classes.get(str(dto.class_id))
+                    dto.class_name = cls_obj.name if cls_obj else str(dto.class_id)
+                
+                # Оригинальный класс (на случай, если учителю перекинули урок с одного класса на другой)
+                if dto.original_class_id:
+                    orig_cls_obj = metadata.classes.get(str(dto.original_class_id))
+                    dto.original_class_name = orig_cls_obj.name if orig_cls_obj else str(dto.original_class_id)
+                                                           
         return DayChangesDetailDTO(
             date_iso=date_iso,
             origin=origin,

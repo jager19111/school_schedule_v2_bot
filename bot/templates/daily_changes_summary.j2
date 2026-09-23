@@ -48,8 +48,8 @@
 
     {%- set is_multiple = sorted_changes | length > 1 -%}
     {%- set all_cancelled = sorted_changes | rejectattr('is_cancelled') | list | length == 0 -%}
-    {#- ДОБАВЛЕНО: если у ВСЕХ подгрупп в слоте нет original_subject_name — это добавленный урок целиком -#}
-    {%- set all_added = sorted_changes | selectattr('original_subject_name') | list | length == 0 -%}
+    {#- ДОБАВЛЕНО: если у ВСЕХ подгрупп в слоте нет original_subject_name или он 'нет занятий' — это добавленный урок целиком -#}
+    {%- set all_added = sorted_changes | rejectattr('original_subject_name', 'in', [none, '', 'нет занятий']) | list | length == 0 -%}
     {%- set group_icon = '🚫' if all_cancelled else ('➕' if all_added else '🔄') -%}
 
     {%- if is_multiple -%}
@@ -67,8 +67,8 @@
         {%- set safe_new_grp = c.new_group_name | e if c.new_group_name else '' -%}
         {%- set safe_cls = c.new_class_name | e if c.new_class_name else (c.original_class_name | e if c.original_class_name else '') -%}
 
-        {#- ДОБАВЛЕНО: урока не было в базе вообще (нет original_subject_name) -#}
-        {%- set is_added = not c.original_subject_name -%}
+        {#- ДОБАВЛЕНО: урока не было в базе вообще (нет original_subject_name или он 'нет занятий') -#}
+        {%- set is_added = not c.original_subject_name or c.original_subject_name == 'нет занятий' -%}
         {%- set subj_changed = (c.original_subject_name != c.new_subject_name) -%}
         {%- set room_changed = (c.original_room_name != c.new_room_name) -%}
         {%- set teacher_changed = (c.original_teacher_name != c.new_teacher_name) -%}

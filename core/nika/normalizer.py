@@ -404,7 +404,7 @@ class NikaNormalizer:
             if is_methodological:
                 sub_name = "Методический час"
             elif is_window:
-                sub_name = "Нет занятий" # Маркер окна для БД
+                sub_name = "нет занятий" # Маркер окна для БД
             else:
                 sub_name = (
                     self.subjects.get(clean_s).name

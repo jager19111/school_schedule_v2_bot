@@ -12,8 +12,6 @@
 # 2. Дополнительно (best practice): ночная задача PRAGMA wal_checkpoint(TRUNCATE),
 #    чтобы -wal файл не рос бесконечно при постоянной записи.
 #
-# 3. Мелкий фикс: убран продублированный
-#    "except asyncio.CancelledError: raise" в refresh_schedule_cache.
 # ЭТАП 2. СЕТЕВОЙ СЛОЙ (Задача 2.1): персистентная aiohttp-сессия.
 #
 # ИЗМЕНЕНИЯ:
@@ -29,12 +27,7 @@
 #   поднимал новый TCP+TLS-сокет и закрывал его.
 # - В finally — гарантированное закрытие сессии (с проверкой closed),
 #   в порядке: scheduler -> БД -> HTTP-сессия -> bot.session.
-#
-# ПРОШЛЫЕ ЭТАПЫ (без изменений):
-# - Задача 1.1: единое shared-подключение SQLite на весь жизненный цикл.
-# - Дополнительно: ночная задача PRAGMA wal_checkpoint(TRUNCATE).
-# - Фиксы Этапа 2 сервисного слоя: notification_service в workflow_data
-#   (для админ-команды /stress).
+
 
 import asyncio
 import datetime
@@ -289,14 +282,15 @@ async def main():
     # больше не оставляет пользователя без ответа и не роняет
     # обработку апдейта. Ожидаемые TelegramBadRequest остаются
     # на локальных _safe_edit_* как раньше.
-    # Anti-flood: ОДИН экземпляр — ДВЕ точки использования:
-    # 1) цепочка middleware (троттлит события),
-    # 2) /stats (читает счётчики через workflow_data).
+    
+    # 1. Сначала регистрируем перехватчик ошибок (он должен оборачивать вообще всё)
+    dp.update.outer_middleware(GlobalErrorMiddleware())
+
+    # 2. Затем регистрируем антифлуд
     antiflood_middleware = AntiFloodMiddleware(
         admin_ids=set(config.ADMIN_IDS),
     )
     dp.update.outer_middleware(antiflood_middleware)
-    
     # 2. Инициализация базы данных
     database = Database(config.DB_PATH)
     await database.init_db()
