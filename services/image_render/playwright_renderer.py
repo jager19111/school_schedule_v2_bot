@@ -2,15 +2,14 @@
 
 Гарантии (раздел 3 ТЗ v2.2):
 - контекст и вкладка закрываются в finally — утечка вкладок невозможна;
-- внешние сетевые запросы блокируются (_route_guard): шаблон
-  и шрифты строго локальные, рендер не ходит в интернет;
-- перед скриншотом ожидается document.fonts.ready — текст не должен
-  перехватиться системным fallback-шрифтом;
-- скриншот обрезается по контейнеру #poster (динамическая высота).
-
-Шаблон конфигурируется (template_dir/template_name): DI может
-подключить дизайн из bot/templates/schedule_poster.html без правки
-этого модуля. Контекст шаблона см. services/image_render/templates/.
+- внешние сетевые запросы блокируются (_route_guard): шаблон и шрифты
+  строго локальные, рендер не ходит в интернет;
+- перед скриншотом ожидается document.fonts.ready;
+- скриншот обрезается по контейнеру #poster (динамическая высота);
+- Нативные Playwright-таймауты (этап 5): set_default_timeout на контексте
+  страхует от зависших set_content/evaluate — wait_for в сервисе
+  ограничивает весь бюджет, но внутренний таймаут даёт Playwright
+  сразу аккуратную ошибку вместо принудительной отмены корутины.
 
 ВНИМАНИЕ: только async API Playwright — sync-варианты из документации
 блокируют event loop бота и несовместимы с aiogram.
@@ -32,6 +31,7 @@ logger = logging.getLogger(__name__)
 
 _TEMPLATE_DIR = Path(__file__).parent / "templates"
 _DEFAULT_TEMPLATE = "schedule_poster.html.j2"
+_DEFAULT_PAGE_TIMEOUT_MS = 10_000
 
 
 class PlaywrightRenderer(RendererPort):
@@ -42,15 +42,13 @@ class PlaywrightRenderer(RendererPort):
         lifecycle: BrowserLifecycleManager,
         template_dir: Path | None = None,
         template_name: str = _DEFAULT_TEMPLATE,
+        page_timeout_ms: int = _DEFAULT_PAGE_TIMEOUT_MS,
     ) -> None:
         self._lifecycle = lifecycle
         self._template_name = template_name
-        
-        # Сохраняем путь к папке с шаблонами (там же лежит шрифт)
-        self._template_dir = template_dir or _TEMPLATE_DIR
-        
+        self._page_timeout_ms = page_timeout_ms
         self._jinja = Environment(
-            loader=FileSystemLoader(self._template_dir),
+            loader=FileSystemLoader(template_dir or _TEMPLATE_DIR),
             autoescape=select_autoescape(["html", "j2"]),
         )
 
@@ -74,38 +72,22 @@ class PlaywrightRenderer(RendererPort):
             width=request.width,
         )
         browser = await self._lifecycle.acquire()
-        
-        # Высота 2000px защищает длинные расписания от обрезки
+        # Один легковесный контекст на запрос; закрытие гарантировано в finally.
         context = await browser.new_context(
-            viewport={"width": request.width, "height": 2000},
+            viewport={"width": request.width, "height": 800},
             device_scale_factor=1,
         )
-        
-        # --- ВНУТРЕННИЙ ПЕРЕХВАТЧИК ---
-        async def _route_guard_with_font(route):
-            url = route.request.url
-            if url == "https://local.app/InterVariable.woff2":
-                # Отдаем локальный файл шрифта
-                font_path = self._template_dir / "InterVariable.woff2"
-                await route.fulfill(path=str(font_path))
-            elif url.startswith(("data:", "about:")):
-                await route.continue_()
-            else:
-                await route.abort()
-        # ------------------------------
-
+        # Нативные таймауты: любая операция страницы, зависшая дольше лимита,
+        # бросает TimeoutError от Playwright вместо вечного ожидания.
+        context.set_default_timeout(self._page_timeout_ms)
+        context.set_default_navigation_timeout(self._page_timeout_ms)
         try:
             page = await context.new_page()
-            
-            # Подключаем наш умный перехватчик
-            await page.route("**/*", _route_guard_with_font)
-            
-            # Рендерим HTML
+            # Расписание не должно тянуть ничего из сети.
+            await page.route("**/*", _route_guard)
             await page.set_content(html, wait_until="load")
-            
-            # Ждем применения шрифтов
+            # Шрифты обязаны успеть примениться до скриншота.
             await page.evaluate("document.fonts.ready")
-            
             element = await page.query_selector("#poster")
             if element is None:
                 raise ImageRenderError("В шаблоне нет контейнера #poster")
