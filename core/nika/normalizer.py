@@ -414,8 +414,10 @@ class NikaNormalizer:
 
             if o_clean_s == "M":
                 orig_sub_name = "Методический час"
-            elif is_window:
-                orig_sub_name = "Нет занятий" # Маркер окна для БД
+            elif o_clean_s is None:
+                # Если в оригинальном расписании было пусто, то это всегда было окном, 
+                # независимо от того, пришла ли сейчас отмена "F" на весь слот.
+                orig_sub_name = "нет занятий" 
             else:
                 orig_sub_name = (
                     self.subjects.get(o_clean_s).name
