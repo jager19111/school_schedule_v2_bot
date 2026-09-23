@@ -1,0 +1,138 @@
+{# ==========================================================
+   ДЕТАЛИЗАЦИЯ ИЗМЕНЕНИЙ (было → стало), LessonDTO
+   Переписано из UIRenderer.render_day_changes_detail на Jinja2.
+
+   Отличия от исходного Python-метода:
+   1. Иконка отмены унифицирована на 🚫 (было ❌ — расходилось с
+      остальными шаблонами бота).
+   2. Слово "ОТМЕНЕНО" убрано — иконка 🚫 + зачёркивание уже
+      исчерпывающе передают статус.
+   3. Нумерация урока role-aware: display_num у ученика, lesson_num
+      у учителя (в оригинале — "display_num or lesson_num" для ОБЕИХ).
+   4. Добавлен кейс "новый урок вместо окна" (➕, нет original_subject_name)
+      — в оригинале такого кейса не было вовсе.
+   5. Если отменены ВСЕ подгруппы слота — рендерим одной строкой без
+      дерева ├/└, а не по подгруппам отдельно.
+   6. Приоритет полей по ролям:
+      - ученик: предмет → кабинет; учитель — только если это
+        единственное изменение (без упоминания предмета).
+      - учитель: класс/группа → кабинет; предмет — только если он
+        реально изменился; чужое имя учителя не показываем вовсе.
+   ВАЖНО про технику: каждая печатаемая строка внутри одной ветки собрана
+   ОДНИМ {{ }}-тегом через конкатенацию '~ \n ~', а не несколькими тегами
+   на разных строках исходника — иначе отступы для читаемости в самом
+   .j2-файле утекают в вывод как лишние пробелы/пустые строки.
+   Контекст: dto (dto.lessons, dto.origin, dto.date_iso). l.class_name —
+   контекстное, недиффуемое значение (см. пояснение по classes в разборе
+   collector.py: original/new класс в этой модели данных не различимы).
+   ========================================================== #}
+{%- set is_teacher = (dto.origin == "teacher") -%}
+{%- if not dto.lessons -%}
+🔄 <b>Изменения на {{ dto.date_iso }}</b>
+
+Изменений нет.
+{%- else -%}
+{%- set header %}🔄 <b>Изменения на {{ dto.date_iso }}</b>{% if is_teacher %}
+
+<i>Расписание учителя</i>{% endif %}{% endset -%}
+{{ header | trim }}
+{%- set grouped = {} -%}
+{%- for l in dto.lessons -%}
+    {%- set key = (l.lesson_num, l.start_time, l.end_time) -%}
+    {%- set _ = grouped.setdefault(key, []).append(l) -%}
+{%- endfor -%}
+{%- set sorted_keys = grouped.keys() | sort(attribute='0,1') -%}
+{%- for key in sorted_keys -%}
+    {%- set parallel = grouped[key] | sort(attribute='group_name') -%}
+    {%- set first = parallel[0] -%}
+    {%- set num_str = (first.lesson_num if is_teacher else (first.display_num or first.lesson_num)) ~ '.' -%}
+    {%- set time_str = (first.start_time or '') ~ ' - ' ~ (first.end_time or '') -%}
+    {%- set all_cancelled = parallel | rejectattr('is_cancelled') | list | length == 0 -%}
+    {%- set all_added = parallel | selectattr('original_subject_name') | list | length == 0 -%}
+    {%- set group_icon = '🚫' if all_cancelled else ('➕' if all_added else '🔄') -%}
+    {{ '\n\n' ~ group_icon ~ ' ' ~ num_str ~ ' ' ~ time_str }}
+    {%- if all_cancelled and parallel | length > 1 -%}
+        {%- set safe_subj = (first.original_subject_name or first.subject_name or 'Урок') | e -%}
+        {{ ('\n  <s>' ~ safe_subj ~ '</s>') | safe }}
+    {%- elif parallel | length == 1 -%}
+        {%- set l = first -%}
+        {%- set safe_orig_subj = (l.original_subject_name or '—') | e -%}
+        {%- set safe_new_subj = (l.subject_name or '—') | e -%}
+        {%- set safe_orig_room = (l.original_room_name or '') | e -%}
+        {%- set safe_new_room = (l.room_name or '') | e -%}
+        {%- set safe_orig_teacher = (l.original_teacher_name or '') | e -%}
+        {%- set safe_new_teacher = (l.teacher_name or '') | e -%}
+        {%- set safe_orig_grp = (l.original_group_name or '') | e -%}
+        {%- set safe_new_grp = (l.group_name or '') | e -%}
+        {%- set safe_cls = (l.class_name or '') | e -%}
+        {%- set orig_room_str = ' (' ~ safe_orig_room ~ ')' if safe_orig_room and safe_orig_room != '—' else '' -%}
+        {%- set new_room_str = ' (' ~ safe_new_room ~ ')' if safe_new_room and safe_new_room != '—' else '' -%}
+        {%- set cls_line = ('\n  👤 ' ~ safe_cls) if is_teacher and safe_cls else '' -%}
+        {%- set is_added = not l.original_subject_name -%}
+        {%- set subject_changed = (l.original_subject_name != l.subject_name) -%}
+        {%- set room_changed = (l.original_room_name != l.room_name) -%}
+        {%- set teacher_changed = (l.original_teacher_name != l.teacher_name) -%}
+        {%- set group_changed = safe_orig_grp and safe_new_grp and (safe_orig_grp != safe_new_grp) -%}
+        {%- set grp_line = ('\n  👥 Группа: <s>' ~ safe_orig_grp ~ '</s> → <b>' ~ safe_new_grp ~ '</b>') if group_changed else (('\n  👥 Группа: <b>' ~ safe_new_grp ~ '</b>') if (safe_new_grp and safe_new_grp | lower != 'весь класс') else '') -%}
+        {%- if l.is_cancelled -%}
+            {%- set safe_subj = (l.original_subject_name or l.subject_name or 'Урок') | e -%}
+            {{ (cls_line ~ '\n  <s>' ~ safe_subj ~ orig_room_str ~ '</s>' ~ grp_line) | safe }}
+        {%- elif is_added -%}
+            {{ (cls_line ~ '\n  ➔ <b>' ~ safe_new_subj ~ new_room_str ~ '</b>' ~ grp_line) | safe }}
+        {%- elif subject_changed -%}
+            {{ (cls_line ~ '\n  было: <s>' ~ safe_orig_subj ~ orig_room_str ~ '</s>' ~ '\n  стало: <b>' ~ safe_new_subj ~ new_room_str ~ '</b>' ~ grp_line) | safe }}
+        {%- elif room_changed -%}
+            {%- set head_line = ('\n  👤 ' ~ safe_cls) if is_teacher else ('\n  ' ~ safe_new_subj) -%}
+            {{ (head_line ~ '\n  было: (' ~ (safe_orig_room or '—') ~ ')' ~ '\n  стало: (<b>' ~ (safe_new_room or '—') ~ '</b>)' ~ grp_line) | safe }}
+        {%- elif teacher_changed -%}
+            {%- set head_line = ('\n  👤 ' ~ safe_cls ~ new_room_str) if is_teacher else '' -%}
+            {{ (head_line ~ '\n  было: ' ~ (safe_orig_teacher or '—') ~ '\n  стало: <b>' ~ (safe_new_teacher or '—') ~ '</b>' ~ grp_line) | safe }}
+        {%- else -%}
+            {{ (cls_line ~ '\n  ' ~ safe_new_subj ~ new_room_str ~ grp_line) | safe }}
+        {%- endif -%}
+    {%- else -%}
+        {%- for l in parallel -%}
+            {%- set is_last = loop.last -%}
+            {%- set prefix = '  └ ' if is_last else '  ├ ' -%}
+            {%- set safe_orig_subj = (l.original_subject_name or '—') | e -%}
+            {%- set safe_new_subj = (l.subject_name or '—') | e -%}
+            {%- set safe_orig_room = (l.original_room_name or '') | e -%}
+            {%- set safe_new_room = (l.room_name or '') | e -%}
+            {%- set safe_orig_teacher = (l.original_teacher_name or '') | e -%}
+            {%- set safe_new_teacher = (l.teacher_name or '') | e -%}
+            {%- set safe_orig_grp = (l.original_group_name or '') | e -%}
+            {%- set safe_new_grp = (l.group_name or '') | e -%}
+            {%- set safe_cls = (l.class_name or '') | e -%}
+            {%- set orig_room_str = ' (' ~ safe_orig_room ~ ')' if safe_orig_room and safe_orig_room != '—' else '' -%}
+            {%- set new_room_str = ' (' ~ safe_new_room ~ ')' if safe_new_room and safe_new_room != '—' else '' -%}
+            {%- set is_added = not l.original_subject_name -%}
+            {%- set subject_changed = (l.original_subject_name != l.subject_name) -%}
+            {%- set room_changed = (l.original_room_name != l.room_name) -%}
+            {%- set teacher_changed = (l.original_teacher_name != l.teacher_name) -%}
+            {%- set group_changed = safe_orig_grp and safe_new_grp and (safe_orig_grp != safe_new_grp) -%}
+            {%- set grp_label = ('👥 <s>' ~ safe_orig_grp ~ '</s> → <b>' ~ safe_new_grp ~ '</b>: ') if group_changed else ('👥 ' ~ (safe_new_grp or 'Весь класс') ~ ': ') -%}
+            {%- set sub_icon = '🚫 ' if l.is_cancelled else ('➕ ' if is_added else '🔄 ') -%}
+            {%- set cls_prefix = ('👤 ' ~ safe_cls ~ ' · ') if is_teacher and safe_cls else '' -%}
+            {%- if l.is_cancelled -%}
+                {%- set safe_subj = (l.original_subject_name or l.subject_name or 'Урок') | e -%}
+                {%- set body = '<s>' ~ safe_subj ~ orig_room_str ~ '</s>' -%}
+            {%- elif is_added -%}
+                {%- set body = '➔ <b>' ~ safe_new_subj ~ new_room_str ~ '</b>' -%}
+            {%- elif subject_changed -%}
+                {%- set body = '<s>' ~ safe_orig_subj ~ orig_room_str ~ '</s> ➔ <b>' ~ safe_new_subj ~ new_room_str ~ '</b>' -%}
+            {%- elif room_changed and not is_teacher -%}
+                {%- set body = safe_new_subj ~ ' (<s>' ~ safe_orig_room ~ '</s> ➔ <b>' ~ safe_new_room ~ '</b>)' -%}
+            {%- elif room_changed and is_teacher -%}
+                {%- set body = '<s>' ~ safe_orig_room ~ '</s> ➔ <b>' ~ safe_new_room ~ '</b>' -%}
+            {%- elif teacher_changed and not is_teacher -%}
+                {%- set body = safe_new_subj ~ new_room_str ~ ' (<s>' ~ safe_orig_teacher ~ '</s> ➔ <b>' ~ safe_new_teacher ~ '</b>)' -%}
+            {%- elif teacher_changed and is_teacher -%}
+                {%- set body = new_room_str ~ ' (<s>' ~ safe_orig_teacher ~ '</s> ➔ <b>' ~ safe_new_teacher ~ '</b>)' -%}
+            {%- else -%}
+                {%- set body = safe_new_subj ~ new_room_str -%}
+            {%- endif -%}
+            {{ ('\n' ~ prefix ~ sub_icon ~ cls_prefix ~ grp_label ~ body) | safe }}
+        {%- endfor -%}
+    {%- endif -%}
+{%- endfor -%}
+{%- endif -%}
