@@ -15,6 +15,7 @@ from services.image_render.models import (
     PosterLessonCard,
     PosterRequest,
     RenderedPoster,
+    PosterItem
 )
 from services.image_render.pillow_renderer import PillowRenderer
 from services.image_render.port import RendererPort
@@ -24,21 +25,23 @@ def _sample_request() -> PosterRequest:
     lessons = (
         PosterLessonCard(
             num="1", time_start="08:15", time_end="09:00",
-            subject="Математика", teacher="Иванова А.П.", room="205",
             status=LessonStatus.NORMAL,
+            items=(PosterItem(primary_text="Математика", secondary_text="Иванова А.П.", room="205"),)
         ),
         PosterLessonCard(
             num="2", time_start="09:10", time_end="09:55",
-            subject="Физкультура", original_subject="Математика",
             status=LessonStatus.EXCHANGE,
+            items=(PosterItem(primary_text="Физкультура", secondary_text=None, room=None, original_primary="Математика"),)
         ),
         PosterLessonCard(
             num="3", time_start="10:05", time_end="10:50",
-            subject="Музыка", status=LessonStatus.CANCELLED,
+            status=LessonStatus.CANCELLED,
+            items=(PosterItem(primary_text="Музыка", secondary_text=None, room=None, is_cancelled=True),)
         ),
         PosterLessonCard(
             num="Доп.", time_start="15:00", time_end="16:00",
-            subject="Робототехника", room="112", status=LessonStatus.EXTRA,
+            status=LessonStatus.EXTRA, is_extra=True,
+            items=(PosterItem(primary_text="Робототехника", secondary_text=None, room="112"),)
         ),
     )
     return PosterRequest(

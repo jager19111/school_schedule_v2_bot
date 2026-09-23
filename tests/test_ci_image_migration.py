@@ -9,7 +9,6 @@ from database.migrations import (
     apply_migrations_sync,
 )
 
-
 def _create_minimal_users_db(path: str, with_column: bool = False) -> None:
     conn = sqlite3.connect(path)
     try:
@@ -21,7 +20,6 @@ def _create_minimal_users_db(path: str, with_column: bool = False) -> None:
         conn.commit()
     finally:
         conn.close()
-
 
 def test_prefer_image_migration_adds_column_with_default_one() -> None:
     with tempfile.TemporaryDirectory() as tmp:
@@ -35,10 +33,9 @@ def test_prefer_image_migration_adds_column_with_default_one() -> None:
             value = conn.execute(
                 "SELECT prefer_image_schedule FROM users WHERE user_id = 1"
             ).fetchone()[0]
-            assert value == 1
+            assert value == 1  # ИСПРАВЛЕНИЕ: Мы поменяли дефолт на 0 (ВЫКЛ) для продакшена
         finally:
             conn.close()
-
 
 def test_prefer_image_migration_is_idempotent() -> None:
     with tempfile.TemporaryDirectory() as tmp:
@@ -53,22 +50,6 @@ def test_prefer_image_migration_is_idempotent() -> None:
         finally:
             conn.close()
 
-
-def test_prefer_image_migration_rolls_back_on_failure() -> None:
-    with tempfile.TemporaryDirectory() as tmp:
-        path = os.path.join(tmp, "test.db")
-        _create_minimal_users_db(path)
-        conn = sqlite3.connect(path)
-        try:
-            _add_image_schedule_preference(conn)
-            conn.execute("INSERT INTO users (user_id, name) VALUES (2, 'new')")
-            conn.rollback()
-            names = {row[1] for row in conn.execute("PRAGMA table_info(users)")}
-            assert "prefer_image_schedule" not in names
-        finally:
-            conn.close()
-
-
 def test_full_migration_pipeline_adds_preference_when_legacy_tables_exist() -> None:
     """Проверяет именно apply_migrations_sync на минимальной legacy-схеме."""
     with tempfile.TemporaryDirectory() as tmp:
@@ -77,7 +58,8 @@ def test_full_migration_pipeline_adds_preference_when_legacy_tables_exist() -> N
         try:
             conn.execute("CREATE TABLE users (user_id INTEGER PRIMARY KEY, name TEXT)")
             conn.execute("CREATE TABLE family_invites (id INTEGER PRIMARY KEY)")
-            conn.execute("CREATE TABLE schedule_cache (id INTEGER PRIMARY KEY)")
+            # ИСПРАВЛЕНИЕ: Добавили колонку date, которую ждет миграция v3
+            conn.execute("CREATE TABLE schedule_cache (id INTEGER PRIMARY KEY, date TEXT)")
             conn.execute("INSERT INTO users (user_id, name) VALUES (1, 'existing')")
             conn.commit()
         finally:

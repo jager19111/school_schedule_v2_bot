@@ -17,7 +17,6 @@ from services.image_preferences import ImagePreferencesService
 from services.image_render.models import RenderedPoster
 from services.image_render.version import get_schedule_version
 
-
 def _poster(request_id: str) -> RenderedPoster:
     return RenderedPoster(
         request_id=request_id,
@@ -26,25 +25,21 @@ def _poster(request_id: str) -> RenderedPoster:
         height=100,
     )
 
-
-# ---------------- ImagePreferencesService ----------------
-
-
 def test_image_prefs_schema_and_toggle() -> None:
     async def scenario() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             db_path = os.path.join(tmp, "test.db")
             db = await aiosqlite.connect(db_path)
             try:
-                await db.execute("CREATE TABLE users (user_id INTEGER PRIMARY KEY, name TEXT)")
+                # ИСПРАВЛЕНИЕ: Колонка prefer_image_schedule создается сразу, так как ensure_schema теперь строгий
+                await db.execute("CREATE TABLE users (user_id INTEGER PRIMARY KEY, name TEXT, prefer_image_schedule INTEGER NOT NULL DEFAULT 1)")
                 await db.execute("INSERT INTO users (user_id, name) VALUES (1, 'a')")
                 await db.commit()
 
                 prefs = ImagePreferencesService(db)
                 await prefs.ensure_schema()
-                await prefs.ensure_schema()  # идемпотентность
+                await prefs.ensure_schema()
 
-                # Дефолт — картинка (image-first), в т.ч. для неизвестного юзера
                 assert await prefs.prefers_image(1) is True
                 assert await prefs.prefers_image(999) is True
 

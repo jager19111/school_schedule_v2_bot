@@ -242,7 +242,8 @@ def test_poster_factory_maps_dto_statuses() -> None:
         LessonStatus.EXTRA,
     ]
     assert request.lessons[3].num == "Доп."
-    assert request.lessons[1].original_subject == "Математика"
+    # ИСПРАВЛЕНИЕ: Проверяем внутри items
+    assert request.lessons[1].items[0].original_primary == "Математика"
     assert request.changes_count == 2
 
 

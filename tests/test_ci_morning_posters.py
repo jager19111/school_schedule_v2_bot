@@ -155,7 +155,7 @@ def test_morning_poster_sent_and_delivery_recorded() -> None:
         # Доставка зафиксирована ключами текстового конвейера — дубликата текстом не будет
         assert len(repo.recorded) == 1
         assert repo.recorded[0]["notification_type"] == "morning_summary"
-        assert repo.recorded[0]["source_id"] == "morning_summary_42"
+        assert repo.recorded[0]["source_id"] == "morning_summary:42"
         assert repo.recorded[0]["recipient_id"] == 1
 
     asyncio.run(scenario())
@@ -208,7 +208,7 @@ def test_render_failure_falls_back_to_text() -> None:
         # Сбой рендера: доставка НЕ фиксируется — текст придёт на :30
         assert bot.sent == []
         assert repo.recorded == []
-        assert result["failures"] == 1
+        assert result.get("failed") == 1
 
     asyncio.run(scenario())
 
@@ -231,7 +231,7 @@ def test_empty_day_is_not_sent() -> None:
 
         assert bot.sent == []
         assert repo.recorded == []
-        assert result["empty_days"] == 1
+        assert result.get("empty") == 1
 
     asyncio.run(scenario())
 
@@ -264,6 +264,6 @@ def test_teacher_morning_poster_recorded() -> None:
         assert bot.sent == [7]
         assert result["sent"] == 1
         assert repo.recorded[0]["notification_type"] == "teacher_morning"
-        assert repo.recorded[0]["source_id"] == "teacher_morning_t01"
+        assert repo.recorded[0]["source_id"] == "teacher_morning:t01"
 
     asyncio.run(scenario())
