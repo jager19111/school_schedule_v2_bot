@@ -22,13 +22,16 @@ import logging
 
 
 from aiogram import Router, F
-from datetime import datetime
+from datetime import datetime, timedelta
+import asyncio
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, CommandObject
 from aiogram.types import Message, CallbackQuery, BufferedInputFile
 from services.profiles_service import ProfileService
+from services.schedule_service import ScheduleService
+from services.time_service import TimeService
 
 from bot.utils.ui_renderer import UIRenderer
 from services.admin_service import AdminService
@@ -39,7 +42,7 @@ from services.image_render.service import ImageGenerationService
 
 
 from bot.middlewares.antiflood import AntiFloodMiddleware, AntiFloodStatsDTO
-
+from services.image_render.poster_factory import build_poster_request
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -400,4 +403,72 @@ async def cmd_admin_users_list(
         document=file,
         caption="👥 <b>Полная выгрузка базы пользователей</b>\nФормат CSV. Можно открыть в Excel.",
         parse_mode="HTML"
+    )
+
+
+@router.message(Command("stress_render"))
+async def cmd_stress_render(
+    message: Message,
+    admin_service: AdminService,
+    schedule_service: ScheduleService,
+    image_service: ImageGenerationService,
+    time_service: TimeService,
+) -> None:
+    """Стресс-тест графического движка: честный рендер N уникальных постеров."""
+    if not await _require_admin(message=message, admin_service=admin_service):
+        return
+
+    parts = (message.text or "").split()
+    count = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 10
+    count = max(1, min(count, 30))
+
+    await message.answer(f"🔥 Запускаю одновременный рендер {count} уникальных постеров...")
+    
+    today = time_service.get_now_base().date()
+    tasks = []
+
+    for i in range(count):
+        target_date = today + timedelta(days=i)
+        date_iso = target_date.isoformat()
+        
+        # 1. Получаем сырой DTO
+        day_dto = await schedule_service.get_daily_schedule_for_student(
+            class_id="016", 
+            group_id="ALL",
+            date_iso=date_iso,
+            student_id=None
+        )
+        
+        # 2. ИСПРАВЛЕНИЕ: Формируем правильный PosterRequest.
+        # Генерируем фейковый уникальный request_id, чтобы пробить Single-Flight и Кэш
+        request = build_poster_request(
+            request_id=f"stress_test_{date_iso}_{i}", 
+            dto=day_dto,
+            title=f"Стресс-тест {date_iso}",
+            date_text=date_iso,
+            width=1080
+        )
+        
+        # 3. Отправляем в рендер
+        tasks.append(image_service.get_poster(request, user_id=None))
+
+    # Замеряем время и запускаем параллельно
+    start_time = time_service.get_now_base()
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    duration = (time_service.get_now_base() - start_time).total_seconds()
+
+    success = sum(1 for r in results if not isinstance(r, Exception))
+    failed = count - success
+
+    # Распаковываем первую ошибку, чтобы не гадать вслепую
+    error_msg = ""
+    if failed > 0:
+        first_err = next(r for r in results if isinstance(r, Exception))
+        error_msg = f"\n\n🛑 <b>Первая ошибка:</b>\n<code>{repr(first_err)}</code>"
+
+    await message.answer(
+        f"🏁 **Рендер завершен за {duration:.2f} сек**\n\n"
+        f"Успешно: {success}\n"
+        f"Ошибок: {failed}{error_msg}\n"
+        f"Среднее время на 1 постер: {(duration/max(1, success)):.2f} сек"
     )

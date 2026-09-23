@@ -1,0 +1,32 @@
+# nano /etc/systemd/system/school_schedule_bot.service                                                                                      
+[Unit]
+Description=School Schedule v2 Telegram Bot
+# Ждем реального подключения к интернету, а не просто поднятия сетевого интерфейса
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/school_schedule_v2_bot
+Environment="PATH=/opt/school_schedule_v2_bot/venv/bin"
+# переносим праузер в папку проекта
+Environment="PLAYWRIGHT_BROWSERS_PATH=/opt/school_schedule_v2_bot/pw-browsers"
+# 1. Защита памяти: Расширяем лимит для Playwright
+MemoryMax=1000M
+
+ExecStart=/opt/school_schedule_v2_bot/venv/bin/python main.py
+
+# 2. Защита от зомби-процессов Chromium
+# mixed: послать сигнал SIGTERM главному процессу (Python), 
+# а если дочерние процессы (Chromium) не завершатся, добить их через SIGKILL
+KillMode=mixed
+TimeoutStopSec=15
+
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+
+

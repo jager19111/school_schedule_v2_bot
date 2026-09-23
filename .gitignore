@@ -41,6 +41,7 @@ promt/
 *.sh
 backups/
 tests_local/
+pw-browsers/
 
 # Repomix outputs
 repomix-output.txt

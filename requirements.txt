@@ -1,4 +1,6 @@
-# pip install -r requirements.txt && playwright install chromium --with-deps
+# pip install -r requirements.txt
+# устанавливать браузер в папку с проектом, чтобы система не удаляла его при чистке кешей
+# PLAYWRIGHT_BROWSERS_PATH=/opt/school_schedule_v2_bot/pw-browsers playwright install chromium --with-deps
 # установить шрифт Inter sudo apt install fonts-inter # без него будет DejaVu Sans
 aiogram==3.31.0
 aiohttp==3.14.3
