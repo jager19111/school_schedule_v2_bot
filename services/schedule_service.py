@@ -431,35 +431,42 @@ class ScheduleService:
             teacher_id=teacher_id,
         )
 
-        changed = sorted(
-            (l for l in lessons if l.is_exchange or l.is_cancelled),
-            key=lambda l: l.lesson_num or 99,
+        # 1. Маппим ВСЕ уроки дня, чтобы обогатитель (w_flag) увидел 
+        # реальное начало дня (например, 6-й урок), даже если он не менялся.
+        day_permutation = self.detect_day_permutation(lessons)
+        all_lesson_dtos = LessonMapper.to_dto_list(
+            lessons, day_permutation=day_permutation
         )
 
-        day_permutation = self.detect_day_permutation(changed)
-        lesson_dtos = LessonMapper.to_dto_list(
-            changed, day_permutation=day_permutation
-        )
-
+        # 2. Вычисляем смены и номера для полного дня
         metadata = await self.schedule_repo.get_metadata()
-        self._enrich_display_numbers_dtos(lesson_dtos, metadata, origin=origin)
-        # Обогащаем названия классов для учителя ===
+        self._enrich_display_numbers_dtos(all_lesson_dtos, metadata, origin=origin)
+
+        # 3. Только ТЕПЕРЬ отфильтровываем измененные уроки 
+        # (они уже имеют правильный display_num без ложных звездочек)
+        changed_dtos = sorted(
+            (dto for dto in all_lesson_dtos if dto.is_exchange or dto.is_cancelled),
+            key=lambda dto: dto.lesson_num or 99,
+        )
+
+        # === Обогащаем названия классов для учителя ===
         if origin == "teacher":
-            for dto in lesson_dtos:
+            for dto in changed_dtos:
                 # Текущий класс
                 if dto.class_id:
                     cls_obj = metadata.classes.get(str(dto.class_id))
                     dto.class_name = cls_obj.name if cls_obj else str(dto.class_id)
                 
-                # Оригинальный класс (на случай, если учителю перекинули урок с одного класса на другой)
+                # Оригинальный класс (на случай, если учителю перекинули урок)
                 if dto.original_class_id:
                     orig_cls_obj = metadata.classes.get(str(dto.original_class_id))
                     dto.original_class_name = orig_cls_obj.name if orig_cls_obj else str(dto.original_class_id)
-                                                           
+        # ====================================================
+
         return DayChangesDetailDTO(
             date_iso=date_iso,
             origin=origin,
-            lessons=lesson_dtos,
+            lessons=changed_dtos,
         )
 
     async def get_display_numbers_for_class_day(
