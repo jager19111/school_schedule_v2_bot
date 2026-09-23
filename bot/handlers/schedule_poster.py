@@ -22,7 +22,7 @@ main.py в этом PR не менялся — подключение см. wiri
 from __future__ import annotations
 
 import logging
-from datetime import date as date_type
+from datetime import date as date_type, timedelta
 
 from aiogram import Router, F
 from aiogram.exceptions import TelegramBadRequest
@@ -39,7 +39,11 @@ from aiogram.types import (
     Message,
 )
 
-from bot.callbacks import DayChangesCD, ScheduleDayCD, ScheduleTargetCD, ScheduleWatchCD, TeacherScheduleDayCD, ScheduleForceTextCD, TeacherForceTextCD
+from bot.callbacks import (
+    DayChangesCD, ScheduleDayCD, ScheduleTargetCD, ScheduleWatchCD, 
+    TeacherScheduleDayCD, ScheduleForceTextCD, TeacherForceTextCD,
+    SearchClassCD, SearchClassDayCD, SearchTeacherCD, SearchTeacherDayCD
+)
 from bot.handlers.schedule_child import (
     _get_fsm_schedule_target,
     _get_schedule_targets,
@@ -732,4 +736,230 @@ async def cmd_format(message: Message, image_prefs: ImagePreferencesService) -> 
         "Картинка — наглядный постер, текст — экономия трафика "
         "на медленном интернете.",
         reply_markup=Keyboards.get_format_toggle_kb(prefer_image),
+    )
+
+
+# ==========================================================
+# ПЕРЕХВАТЧИКИ ПОИСКА ПО ШКОЛЕ (ЧИСТЫЕ DTO)
+# ==========================================================
+
+async def _render_and_send_search_class_poster(
+    callback: CallbackQuery,
+    class_id: str,
+    date_iso: str | None,
+    state: FSMContext,
+    actor_user_id: int,
+    schedule_service: ScheduleService,
+    extra_classes_service: ExtraClassesService,
+    schedule_repo: ScheduleRepository,
+    image_service: ImageGenerationService,
+):
+    """Хелпер для отрисовки постера класса из глобального поиска."""
+    if not date_iso:
+        date_iso = await schedule_service.get_smart_target_date(
+            class_id=class_id, group_id="ALL"
+        )
+        
+    class_name = await schedule_service.get_class_name(class_id)
+    target = ScheduleViewTargetDTO(
+        kind="watch",
+        target_id=0,
+        class_id=class_id,
+        group_id="ALL",
+        title=class_name
+    )
+    await state.update_data(poster_last_date=date_iso)
+    
+    try:
+        poster, day_dto = await _build_day_poster(
+            actor_user_id=actor_user_id,
+            target=target,
+            date_iso=date_iso,
+            schedule_service=schedule_service,
+            extra_classes_service=extra_classes_service,
+            schedule_repo=schedule_repo,
+            image_service=image_service
+        )
+    except RateLimitExceededError:
+        await callback.answer("⏳ Слишком много запросов. Подождите пару минут.", show_alert=True)
+        return
+    except ImageRenderError:
+        raise SkipHandler()
+        
+    value = date_type.fromisoformat(date_iso)
+    monday = value - timedelta(days=value.isoweekday() - 1)
+    
+    kb = Keyboards.get_search_days_kb(
+        target_id=class_id,
+        is_teacher=False,
+        week_start_iso=monday.isoformat(),
+        is_full=False,
+        has_changes=_changes_count(day_dto) > 0,
+        date_iso=date_iso,
+    )
+    caption = build_day_caption(_format_date_text(date_iso), _changes_count(day_dto))
+    
+    await edit_poster(callback, image_service, poster, caption, kb)
+    await callback.answer()
+
+
+async def _render_and_send_search_teacher_poster(
+    callback: CallbackQuery,
+    teacher_id: str,
+    date_iso: str | None,
+    state: FSMContext,
+    actor_user_id: int,
+    schedule_service: ScheduleService,
+    schedule_repo: ScheduleRepository,
+    image_service: ImageGenerationService,
+):
+    """Хелпер для отрисовки постера учителя из глобального поиска."""
+    if not date_iso:
+        date_iso = await schedule_service.get_smart_teacher_target_date(teacher_id=teacher_id)
+        
+    teacher_name = await schedule_service.get_teacher_name(teacher_id)
+    await state.update_data(poster_last_date=date_iso)
+    
+    try:
+        poster, day_dto = await _build_teacher_day_poster(
+            actor_user_id=actor_user_id,
+            teacher_id=teacher_id,
+            teacher_name=teacher_name,
+            date_iso=date_iso,
+            schedule_service=schedule_service,
+            schedule_repo=schedule_repo,
+            image_service=image_service
+        )
+    except RateLimitExceededError:
+        await callback.answer("⏳ Слишком много запросов. Подождите пару минут.", show_alert=True)
+        return
+    except ImageRenderError:
+        raise SkipHandler()
+        
+    value = date_type.fromisoformat(date_iso)
+    monday = value - timedelta(days=value.isoweekday() - 1)
+    
+    kb = Keyboards.get_search_days_kb(
+        target_id=teacher_id,
+        is_teacher=True,
+        week_start_iso=monday.isoformat(),
+        is_full=False,
+        has_changes=_changes_count(day_dto) > 0,
+        date_iso=date_iso,
+    )
+    caption = build_day_caption(_format_date_text(date_iso), _changes_count(day_dto))
+    
+    await edit_poster(callback, image_service, poster, caption, kb)
+    await callback.answer()
+
+
+@router.callback_query(SearchClassCD.filter(), _image_generation_enabled)
+async def search_class_smart_day_poster(
+    callback: CallbackQuery,
+    callback_data: SearchClassCD,
+    state: FSMContext,
+    schedule_service: ScheduleService,
+    extra_classes_service: ExtraClassesService,
+    schedule_repo: ScheduleRepository,
+    image_service: ImageGenerationService,
+    image_prefs: ImagePreferencesService,
+) -> None:
+    """Перехват 'умного' дня для класса из поиска."""
+    actor_user_id = callback.from_user.id
+    if not await image_prefs.prefers_image(actor_user_id):
+        raise SkipHandler()
+        
+    await _render_and_send_search_class_poster(
+        callback=callback,
+        class_id=callback_data.class_id,
+        date_iso=None,
+        state=state,
+        actor_user_id=actor_user_id,
+        schedule_service=schedule_service,
+        extra_classes_service=extra_classes_service,
+        schedule_repo=schedule_repo,
+        image_service=image_service
+    )
+
+
+@router.callback_query(SearchClassDayCD.filter(), _image_generation_enabled)
+async def search_class_day_nav_poster(
+    callback: CallbackQuery,
+    callback_data: SearchClassDayCD,
+    state: FSMContext,
+    schedule_service: ScheduleService,
+    extra_classes_service: ExtraClassesService,
+    schedule_repo: ScheduleRepository,
+    image_service: ImageGenerationService,
+    image_prefs: ImagePreferencesService,
+) -> None:
+    """Перехват навигации по дням для класса из поиска."""
+    actor_user_id = callback.from_user.id
+    if not await image_prefs.prefers_image(actor_user_id):
+        raise SkipHandler()
+        
+    await _render_and_send_search_class_poster(
+        callback=callback,
+        class_id=callback_data.class_id,
+        date_iso=callback_data.date_iso,
+        state=state,
+        actor_user_id=actor_user_id,
+        schedule_service=schedule_service,
+        extra_classes_service=extra_classes_service,
+        schedule_repo=schedule_repo,
+        image_service=image_service
+    )
+
+
+@router.callback_query(SearchTeacherCD.filter(), _image_generation_enabled)
+async def search_teacher_smart_day_poster(
+    callback: CallbackQuery,
+    callback_data: SearchTeacherCD,
+    state: FSMContext,
+    schedule_service: ScheduleService,
+    schedule_repo: ScheduleRepository,
+    image_service: ImageGenerationService,
+    image_prefs: ImagePreferencesService,
+) -> None:
+    """Перехват 'умного' дня для учителя из поиска."""
+    actor_user_id = callback.from_user.id
+    if not await image_prefs.prefers_image(actor_user_id):
+        raise SkipHandler()
+        
+    await _render_and_send_search_teacher_poster(
+        callback=callback,
+        teacher_id=callback_data.teacher_id,
+        date_iso=None,
+        state=state,
+        actor_user_id=actor_user_id,
+        schedule_service=schedule_service,
+        schedule_repo=schedule_repo,
+        image_service=image_service
+    )
+
+
+@router.callback_query(SearchTeacherDayCD.filter(), _image_generation_enabled)
+async def search_teacher_day_nav_poster(
+    callback: CallbackQuery,
+    callback_data: SearchTeacherDayCD,
+    state: FSMContext,
+    schedule_service: ScheduleService,
+    schedule_repo: ScheduleRepository,
+    image_service: ImageGenerationService,
+    image_prefs: ImagePreferencesService,
+) -> None:
+    """Перехват навигации по дням для учителя из поиска."""
+    actor_user_id = callback.from_user.id
+    if not await image_prefs.prefers_image(actor_user_id):
+        raise SkipHandler()
+        
+    await _render_and_send_search_teacher_poster(
+        callback=callback,
+        teacher_id=callback_data.teacher_id,
+        date_iso=callback_data.date_iso,
+        state=state,
+        actor_user_id=actor_user_id,
+        schedule_service=schedule_service,
+        schedule_repo=schedule_repo,
+        image_service=image_service
     )
