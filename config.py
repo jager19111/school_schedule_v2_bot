@@ -39,7 +39,11 @@ class Config:
             if x.strip()
         ]
     )
-
+    
+    # === Логирование ===
+    LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
+    LOG_DIR: str = os.getenv("LOG_DIR", "logs")
+    
     # === Генерация постеров (ТЗ v2.2, ImageGenerationService) ===
     # Глобальный рубильник: False = весь бот бесшовно в текстовом режиме.
     ENABLE_IMAGE_GENERATION: bool = os.getenv(

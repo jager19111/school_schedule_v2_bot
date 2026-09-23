@@ -42,6 +42,7 @@ promt/
 backups/
 tests_local/
 pw-browsers/
+logs/
 
 # Repomix outputs
 repomix-output.txt

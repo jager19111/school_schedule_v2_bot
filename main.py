@@ -63,6 +63,7 @@ from services.time_service import TimeService, TimeServiceConfig
 from services.admin_service import AdminService
 from services.watch_targets_service import WatchTargetsService
 from services.students_service import StudentsService
+from services.audit_service import AuditService
 from services.help_service import HelpService
 from services.image_render.setup import setup_image_generation
 from services.image_render.warmup import warmup_day_posters
@@ -96,10 +97,11 @@ from bot.handlers import (
     schedule_poster,
 )
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
+from core.logger_config import setup_logging
+
+
+# Инициализируем систему логов ПЕРЕД созданием любых логгеров
+setup_logging(log_level=config.LOG_LEVEL, log_dir=config.LOG_DIR)
 logger = logging.getLogger(__name__)
 
 
@@ -378,6 +380,7 @@ async def main():
         # =====================================================================
 
         # 5. Сервисы
+        audit_service = AuditService(log_dir=config.LOG_DIR)
         profile_service = ProfileService(profile_repo)
         students_service = StudentsService(student_repo, profile_service=profile_service)
         extra_classes_service = ExtraClassesService(extra_classes_repo=extra_classes_repo, profile_service=profile_service, students_service=students_service, time_service=time_service)
@@ -469,6 +472,7 @@ async def main():
             notification_service=notification_service, # Для теста из админ хендлера
             antiflood=antiflood_middleware,
             config=config,
+            audit_service=audit_service,
             # Этап 3 (ТЗ v2.2): постеры расписания
             image_service=image_service,
             image_prefs=image_prefs,
