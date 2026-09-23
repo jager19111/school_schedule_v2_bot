@@ -242,8 +242,14 @@ def test_poster_factory_maps_dto_statuses() -> None:
         LessonStatus.EXTRA,
     ]
     assert request.lessons[3].num == "Доп."
-    # ИСПРАВЛЕНИЕ: Проверяем внутри items
-    assert request.lessons[1].items[0].original_primary == "Математика"
+    
+    # ИСПРАВЛЕНИЕ: У замены (EXCHANGE) нет зачеркивания в PosterItem, поэтому None
+    assert request.lessons[1].items[0].primary_text == "Физкультура"
+    assert request.lessons[1].items[0].original_primary is None
+    
+    # ИСПРАВЛЕНИЕ: А вот у отмены (CANCELLED) зачеркивание есть
+    assert request.lessons[2].items[0].original_primary == "Музыка"
+    
     assert request.changes_count == 2
 
 

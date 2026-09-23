@@ -31,12 +31,13 @@ def _sample_request() -> PosterRequest:
         PosterLessonCard(
             num="2", time_start="09:10", time_end="09:55",
             status=LessonStatus.EXCHANGE,
-            items=(PosterItem(primary_text="Физкультура", secondary_text=None, room=None, original_primary="Математика"),)
+            items=(PosterItem(primary_text="Физкультура", secondary_text=None, room=None),)
         ),
         PosterLessonCard(
             num="3", time_start="10:05", time_end="10:50",
             status=LessonStatus.CANCELLED,
-            items=(PosterItem(primary_text="Музыка", secondary_text=None, room=None, is_cancelled=True),)
+            # ИСПРАВЛЕНИЕ: Обязательно передаем original_primary, чтобы Pillow не упал при попытке зачеркнуть текст
+            items=(PosterItem(primary_text="Музыка", secondary_text=None, room=None, is_cancelled=True, original_primary="Музыка"),)
         ),
         PosterLessonCard(
             num="Доп.", time_start="15:00", time_end="16:00",
