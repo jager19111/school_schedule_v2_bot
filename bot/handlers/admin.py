@@ -101,6 +101,7 @@ async def cmd_admin_help(message: Message, admin_service: AdminService) -> None:
         "🔸 /source_status — Состояние кэша NIKA (актуальность расписания, здоровье парсера)\n"
         "🔸 /img_stats — Статистика графического движка (рендер картинок, circuit breaker)\n"
         "🔸 /stress <i>[кол-во] [chat_id]</i> — Стресс-тест боевого пайплайна уведомлений\n"
+        "🔸 /stress_render <i>[кол-во]</i> — Стресс-тест боевого рендера расписания. По умолчанию 100 рендеров\n"
         "🔸 /debug_ui <i>[morning|change|lesson]</i> — Тестовый рендер всех видов уведомлений в чат\n\n"
         "<i>Все команды работают в режиме read-only и безопасны для production (кроме направленного /stress).</i>"
     )
@@ -407,52 +408,59 @@ async def cmd_admin_users_list(
 
 
 @router.message(Command("stress_render"))
-async def cmd_stress_render(
+async def cmd_stress_render_long(
     message: Message,
     admin_service: AdminService,
     schedule_service: ScheduleService,
     image_service: ImageGenerationService,
     time_service: TimeService,
 ) -> None:
-    """Стресс-тест графического движка: честный рендер N уникальных постеров."""
+    """Долгосрочный стресс-тест: непрерывный поток рендеров для проверки утечек RAM."""
     if not await _require_admin(message=message, admin_service=admin_service):
         return
 
     parts = (message.text or "").split()
-    count = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 10
-    count = max(1, min(count, 30))
+    count = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 100
+    count = max(1, min(count, 2000)) # Защита от бесконечного цикла
 
-    await message.answer(f"🔥 Запускаю одновременный рендер {count} уникальных постеров...")
+    status_msg = await message.answer(
+        f"🔥 Запускаю долгосрочный стресс-тест на {count} постеров...\n"
+        "Откройте `htop` на сервере. Рендер займет время."
+    )
     
-    today = time_service.get_now_base().date()
-    tasks = []
+    today_iso = time_service.get_now_base().date().isoformat()
+    
+    # 1. Получаем DTO один раз, чтобы тестировать именно графику, 
+    # а не нагружать SQLite одинаковыми SELECT-запросами.
+    base_dto = await schedule_service.get_daily_schedule_for_student(
+        class_id="016", 
+        group_id="ALL",
+        date_iso=today_iso,
+        student_id=None
+    )
+    
+    # 2. Шлюз-дозатор. 
+    # Пропускает в сервис не более 15 задач одновременно. 
+    # Это значение должно быть МЕНЬШЕ вашего IMAGE_QUEUE_CAPACITY, 
+    # чтобы очередь никогда не переполнялась.
+    feeder_semaphore = asyncio.Semaphore(15)
+    
+    async def render_with_throttle(i: int):
+        async with feeder_semaphore:
+            # Уникальный request_id пробивает in-memory кэш 
+            # и заставляет браузер рисовать каждый постер с нуля
+            request = build_poster_request(
+                request_id=f"stress_long_{today_iso}_{i}", 
+                dto=base_dto,
+                title=f"Стресс-тест #{i}",
+                date_text=today_iso,
+                width=1080
+            )
+            return await image_service.get_poster(request, user_id=None)
 
-    for i in range(count):
-        target_date = today + timedelta(days=i)
-        date_iso = target_date.isoformat()
-        
-        # 1. Получаем сырой DTO
-        day_dto = await schedule_service.get_daily_schedule_for_student(
-            class_id="016", 
-            group_id="ALL",
-            date_iso=date_iso,
-            student_id=None
-        )
-        
-        # 2. ИСПРАВЛЕНИЕ: Формируем правильный PosterRequest.
-        # Генерируем фейковый уникальный request_id, чтобы пробить Single-Flight и Кэш
-        request = build_poster_request(
-            request_id=f"stress_test_{date_iso}_{i}", 
-            dto=day_dto,
-            title=f"Стресс-тест {date_iso}",
-            date_text=date_iso,
-            width=1080
-        )
-        
-        # 3. Отправляем в рендер
-        tasks.append(image_service.get_poster(request, user_id=None))
-
-    # Замеряем время и запускаем параллельно
+    # 3. Запускаем конвейер
+    tasks = [render_with_throttle(i) for i in range(count)]
+    
     start_time = time_service.get_now_base()
     results = await asyncio.gather(*tasks, return_exceptions=True)
     duration = (time_service.get_now_base() - start_time).total_seconds()
@@ -460,15 +468,14 @@ async def cmd_stress_render(
     success = sum(1 for r in results if not isinstance(r, Exception))
     failed = count - success
 
-    # Распаковываем первую ошибку, чтобы не гадать вслепую
     error_msg = ""
     if failed > 0:
         first_err = next(r for r in results if isinstance(r, Exception))
         error_msg = f"\n\n🛑 <b>Первая ошибка:</b>\n<code>{repr(first_err)}</code>"
 
-    await message.answer(
-        f"🏁 **Рендер завершен за {duration:.2f} сек**\n\n"
+    await status_msg.edit_text(
+        f"🏁 **Марафон завершен за {duration:.2f} сек**\n\n"
         f"Успешно: {success}\n"
         f"Ошибок: {failed}{error_msg}\n"
-        f"Среднее время на 1 постер: {(duration/max(1, success)):.2f} сек"
+        f"Средняя скорость: {(duration/max(1, success)):.3f} сек/постер"
     )
