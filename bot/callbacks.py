@@ -27,6 +27,7 @@ from aiogram.filters.callback_data import CallbackData
 # Общие / справка
 SETTINGS_MAIN = "sm"
 HELP_MAIN = "hm"
+IGNORE_ACTION = "ign"
 
 # Регистрация / claim / семья
 FAMILY_CREATE = "fc"
@@ -405,6 +406,9 @@ class SearchClassFullWeekCD(CallbackData, prefix="qcf"):
 class SearchTeacherFullWeekCD(CallbackData, prefix="qtf"):
     teacher_id: str
     week_start_iso: str
+
+class SearchTeacherPageCD(CallbackData, prefix="qtp"):
+    page: int
 
 # ==============================================================
 # Rooms search

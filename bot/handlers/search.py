@@ -70,7 +70,23 @@ async def search_teachers(callback: CallbackQuery, schedule_service: ScheduleSer
     await send_or_edit_long(callback=callback, text=text, keyboard=kb)
     await callback.answer()
 
+@router.callback_query(callbacks.SearchTeacherPageCD.filter())
+async def paginate_teachers_list(
+    callback: CallbackQuery, 
+    callback_data: callbacks.SearchTeacherPageCD,
+    schedule_service: ScheduleService):
+    """Тонкий хендлер для перелистывания страниц учителей"""
+    teacher_dto = await schedule_service.get_teachers_list()
+    text = UIRenderer.render_search_teacher_select()
+    kb = Keyboards.get_search_teachers_kb(teacher_dto, page=callback_data.page)
+    await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    await callback.answer()
 
+@router.callback_query(F.data == callbacks.IGNORE_ACTION)
+async def ignore_pagination_counter(callback: CallbackQuery):
+    """Гасит нажатие на центральную информационную кнопку пагинации [ 1 / 5 ]."""
+    await callback.answer()
+    
 # ==========================================================
 # ПОИСК: ВЫБОР ЦЕЛИ (УМНЫЕ ДНИ)
 # ==========================================================

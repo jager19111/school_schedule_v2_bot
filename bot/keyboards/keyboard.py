@@ -5,6 +5,7 @@
 # callbacks.XxxCD(...).pack(). Legacy build_*/parse_* не используются.
 # Этот файл сгенерирован из актуального keyboard.py с AST-проверкой.
 
+import math
 from typing import List
 from datetime import datetime, timedelta, timezone, date
 
@@ -116,7 +117,7 @@ class Keyboards:
         return InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🎓 Расписание классов", callback_data=callbacks.SEARCH_CLASSES)],
             [InlineKeyboardButton(text="👨‍🏫 Расписание учителей", callback_data=callbacks.SEARCH_TEACHERS)],
-            [InlineKeyboardButton(text="🚪 Занятость кабинетов", callback_data=callbacks.SEARCH_ROOMS_MENU)]
+            [InlineKeyboardButton(text="🔍 Найти свободный кабинет", callback_data=callbacks.SEARCH_ROOMS_MENU)]
         ])
         
     @staticmethod
@@ -533,19 +534,64 @@ class Keyboards:
         return InlineKeyboardMarkup(inline_keyboard=buttons)
 
     @staticmethod
-    def get_search_teachers_kb(dto: 'TeacherListDTO') -> InlineKeyboardMarkup:
+    def get_search_teachers_kb(dto: 'TeacherListDTO', page: int = 0) -> InlineKeyboardMarkup:
         buttons = []
         row = []
-        sorted_teachers = sorted(dto.teachers.items(), key=lambda x: x[1].name if hasattr(x[1], 'name') else x[1])
-        for t_id, t_name in sorted_teachers:
+        
+        # Сортируем учителей по алфавиту
+        sorted_teachers = sorted(
+            dto.teachers.items(), 
+            key=lambda x: x[1].name if hasattr(x[1], 'name') else x[1]
+        )
+        
+        ITEMS_PER_PAGE = 20
+        total_pages = math.ceil(len(sorted_teachers) / ITEMS_PER_PAGE) if sorted_teachers else 1
+        
+        # Защита от выхода за пределы массива
+        if page < 0: page = 0
+        if page >= total_pages: page = total_pages - 1
+        
+        # Вычисляем срез списка для текущей страницы
+        start_idx = page * ITEMS_PER_PAGE
+        end_idx = start_idx + ITEMS_PER_PAGE
+        current_page_items = sorted_teachers[start_idx:end_idx]
+        
+        # Строим сетку по 2 учителя в ряд
+        for t_id, t_name in current_page_items:
             name_str = t_name.name if hasattr(t_name, 'name') else t_name
-            row.append(InlineKeyboardButton(text=name_str, callback_data=callbacks.SearchTeacherCD(teacher_id=t_id).pack()))
+            row.append(InlineKeyboardButton(
+                text=name_str, 
+                callback_data=callbacks.SearchTeacherCD(teacher_id=t_id).pack()
+            ))
             if len(row) == 2:
                 buttons.append(row)
                 row = []
-        if row:
+        if row: 
             buttons.append(row)
-        buttons.append([InlineKeyboardButton(text='⬅️ Назад', callback_data=callbacks.SEARCH_BACK)])
+            
+        # Блок пагинации (добавляется только если страниц > 1)
+        if total_pages > 1:
+            prev_page = page - 1 if page > 0 else total_pages - 1
+            next_page = page + 1 if page < total_pages - 1 else 0
+            
+            nav_row = [
+                InlineKeyboardButton(
+                    text="⬅️", 
+                    callback_data=callbacks.SearchTeacherPageCD(page=prev_page).pack()
+                ),
+                InlineKeyboardButton(
+                    text=f"{page + 1} / {total_pages}", 
+                    callback_data=callbacks.IGNORE_ACTION
+                ),
+                InlineKeyboardButton(
+                    text="➡️", 
+                    callback_data=callbacks.SearchTeacherPageCD(page=next_page).pack()
+                )
+            ]
+            buttons.append(nav_row)
+            
+        buttons.append([InlineKeyboardButton(text="⬅️ Назад", callback_data=callbacks.SEARCH_BACK)])
+        
         return InlineKeyboardMarkup(inline_keyboard=buttons)
 
     @staticmethod
