@@ -47,11 +47,12 @@ class Config:
     ).strip().lower() in ("1", "true", "yes", "on")
     # playwright | pillow (pillow — fallback для слабых серверов без Chromium).
     IMAGE_RENDER_ENGINE: str = os.getenv("IMAGE_RENDER_ENGINE", "playwright").strip().lower()
-    # Semaphore: 2 = пик RAM ~900 МБ при 3.5 ГБ свободных.
+    # Semaphore: одновременных рендеров (RAM = N контекстов Chromium).
     IMAGE_MAX_CONCURRENT_RENDERS: int = int(os.getenv("IMAGE_MAX_CONCURRENT_RENDERS", "2"))
     # Максимум ждущих в очереди; сверх — мгновенный текстовый fallback.
     IMAGE_QUEUE_CAPACITY: int = int(os.getenv("IMAGE_QUEUE_CAPACITY", "3"))
     # Общий бюджет запроса: ожидание слота + рендер, секунды.
+    # Калибровка (этап 5): p99 рендера + queue_capacity / пропускная способность.
     IMAGE_RENDER_TIMEOUT_SEC: float = float(os.getenv("IMAGE_RENDER_TIMEOUT_SEC", "4.0"))
     # Рецикл браузера: не более N рендеров на процесс...
     IMAGE_BROWSER_RECYCLE_RENDERS: int = int(os.getenv("IMAGE_BROWSER_RECYCLE_RENDERS", "200"))
@@ -62,9 +63,11 @@ class Config:
     # Rate limit: N генераций на пользователя за окно (только фактические рендеры).
     IMAGE_RATE_LIMIT_MAX: int = int(os.getenv("IMAGE_RATE_LIMIT_MAX", "10"))
     IMAGE_RATE_LIMIT_WINDOW_SEC: float = float(os.getenv("IMAGE_RATE_LIMIT_WINDOW_SEC", "180"))
-    # L1/L2-кэши: TTL записей и предел числа записей.
+    # L1 (PNG-байты, RAM ~0.1 МБ/запись) и L2 (file_id, строки) —
+    # раздельные лимиты: file_id-записи почти бесплатны, байты — нет.
     IMAGE_CACHE_TTL_HOURS: float = float(os.getenv("IMAGE_CACHE_TTL_HOURS", "24"))
     IMAGE_CACHE_MAXSIZE: int = int(os.getenv("IMAGE_CACHE_MAXSIZE", "200"))
+    IMAGE_FILE_ID_CACHE_MAXSIZE: int = int(os.getenv("IMAGE_FILE_ID_CACHE_MAXSIZE", "2000"))
     # Circuit breaker: серия ошибок до размыкания и пауза перед пробой.
     IMAGE_BREAKER_FAILURE_THRESHOLD: int = int(os.getenv("IMAGE_BREAKER_FAILURE_THRESHOLD", "5"))
     IMAGE_BREAKER_COOLDOWN_SEC: float = float(os.getenv("IMAGE_BREAKER_COOLDOWN_SEC", "120"))
@@ -93,7 +96,7 @@ def validate_config(config: Config) -> None:
 
 
 def build_image_render_settings():
-    """Собирает настройки слоя рендера из Config (DI-точка для main.py, этап 3)."""
+    """Собирает настройки слоя рендера из Config (DI-точка для main.py)."""
     from services.image_render.settings import ImageRenderSettings
 
     return ImageRenderSettings(
@@ -108,6 +111,7 @@ def build_image_render_settings():
         rate_limit_window_sec=config.IMAGE_RATE_LIMIT_WINDOW_SEC,
         cache_ttl_sec=config.IMAGE_CACHE_TTL_HOURS * 3600,
         cache_maxsize=config.IMAGE_CACHE_MAXSIZE,
+        file_id_cache_maxsize=config.IMAGE_FILE_ID_CACHE_MAXSIZE,
         breaker_failure_threshold=config.IMAGE_BREAKER_FAILURE_THRESHOLD,
         breaker_cooldown_sec=config.IMAGE_BREAKER_COOLDOWN_SEC,
     )

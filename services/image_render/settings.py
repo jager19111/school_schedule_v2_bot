@@ -9,15 +9,16 @@ from dataclasses import dataclass
 class ImageRenderSettings:
     engine: str = "playwright"                # "playwright" | "pillow"
     poster_width: int = 1080                  # переживает JPEG-компрессию Telegram
-    concurrency: int = 2                       # semaphore: пик RAM ~900 МБ при 2 контекстах
+    concurrency: int = 2                       # semaphore: слотов рендера
     queue_capacity: int = 3                   # сверх — отказ вместо бесконечного ожидания
     render_timeout_sec: float = 4.0           # общий бюджет: ожидание слота + рендер
     browser_recycle_renders: int = 200        # плановый рецикл по счётчику рендеров
-    browser_recycle_interval_min: int = 720   # ...и по возрасту процесса (12 ч)
+    browser_recycle_interval_min: int = 720   # ...и по возрасту процесса
     rate_limit_max: int = 10                  # генераций на пользователя...
-    rate_limit_window_sec: float = 180.0      # ...за 3 минуты (только фактические рендеры)
+    rate_limit_window_sec: float = 180.0      # ...за окно (только фактические рендеры)
     cache_ttl_sec: float = 86400.0            # L1/L2: TTL записей (24 ч)
-    cache_maxsize: int = 200                  # L1/L2: предел числа записей
+    cache_maxsize: int = 200                  # L1: PNG-байты (RAM, ~0.1 МБ/запись)
+    file_id_cache_maxsize: int = 2000         # L2: file_id (строки, копеечная память)
     breaker_failure_threshold: int = 5       # серия ошибок до размыкания цепи
     breaker_cooldown_sec: float = 120.0       # пауза перед пробной попыткой (half-open)
 
@@ -40,6 +41,8 @@ class ImageRenderSettings:
             raise ValueError("cache_ttl_sec должен быть > 0")
         if self.cache_maxsize < 1:
             raise ValueError("cache_maxsize должен быть >= 1")
+        if self.file_id_cache_maxsize < 1:
+            raise ValueError("file_id_cache_maxsize должен быть >= 1")
         if self.breaker_failure_threshold < 1:
             raise ValueError("breaker_failure_threshold должен быть >= 1")
         if self.breaker_cooldown_sec <= 0:

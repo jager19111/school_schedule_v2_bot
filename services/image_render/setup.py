@@ -37,7 +37,11 @@ async def setup_image_generation(
         renderer = PillowRenderer()
     else:
         lifecycle = BrowserLifecycleManager(settings)
-        renderer = PlaywrightRenderer(lifecycle)
+        # Нативный Playwright-таймаут = бюджет всего рендера (этап 5)
+        renderer = PlaywrightRenderer(
+            lifecycle,
+            page_timeout_ms=int(settings.render_timeout_sec * 1000),
+        )
 
     image_service = ImageGenerationService(renderer, settings)
     await image_service.startup()
