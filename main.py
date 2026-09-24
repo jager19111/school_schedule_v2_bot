@@ -633,8 +633,8 @@ async def main():
         scheduler.add_job(
             backup_service.run_backup,
             trigger="cron",
-            hour=14,
-            minute=52,
+            hour=3,
+            minute=30,
             id="db_backup_job",
             replace_existing=True,
             coalesce=True,
