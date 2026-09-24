@@ -32,6 +32,12 @@ class Config:
     NIKA_COVERAGE_DAYS: int = int(os.getenv("NIKA_COVERAGE_DAYS", "21"))
     NIKA_HISTORY_DAYS: int = int(os.getenv("NIKA_HISTORY_DAYS", "7"))
     TIMEZONE: str = os.getenv("TIMEZONE", "Asia/Novosibirsk")
+    # === Backup ===
+    # Если строка пустая или закомментирована — будет None (отправка отключена)
+    BACKUP_CHAT_ID: Optional[int] = field(
+        default_factory=lambda: int(os.getenv("BACKUP_CHAT_ID").strip()) 
+        if os.getenv("BACKUP_CHAT_ID", "").strip().lstrip('-').isdigit() else None
+    )
     ADMIN_IDS: List[int] = field(
         default_factory=lambda: [
             int(x)

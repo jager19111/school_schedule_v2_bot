@@ -66,6 +66,7 @@ from services.watch_targets_service import WatchTargetsService
 from services.students_service import StudentsService
 from services.audit_service import AuditService
 from services.help_service import HelpService
+from services.backup_service import BackupService
 from services.image_render.setup import setup_image_generation
 from services.image_render.warmup import warmup_day_posters
 from database.migrations import apply_migrations
@@ -406,7 +407,13 @@ async def main():
        
         help_service = HelpService(public_help_url=config.HELP_PUBLIC_URL, author_contact_url=config.AUTHOR_CONTACT_URL, donation_url=config.DONATION_URL)
         notification_delivery_cleanup_job = NotificationDeliveryCleanupJob(notification_repo=notification_repo, time_service=time_service, retention_days=35)
-
+        
+        backup_service = BackupService(
+            bot=bot,
+            db_path=config.DB_PATH,
+            backup_chat_id=config.BACKUP_CHAT_ID,
+            time_service=time_service
+    )
         # =====================================================================
         # Этап 3 (ТЗ v2.2): генерация PNG-постеров расписания.
         #
@@ -622,7 +629,18 @@ async def main():
             max_instances=1,
             misfire_grace_time=3600,
         )
-
+        # Резервное копирование БД в админ-чат
+        scheduler.add_job(
+            backup_service.run_backup,
+            trigger="cron",
+            hour=14,
+            minute=52,
+            id="db_backup_job",
+            replace_existing=True,
+            coalesce=True,
+            max_instances=1,
+            misfire_grace_time=3600,
+        )
         # Этап 3 (ТЗ v2.2): утренний прогрев кэша постеров в 06:30.
         #
         # Системная задача: рендеры идут мимо per-user rate limiter
