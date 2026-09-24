@@ -158,14 +158,16 @@ class TimeService:
     def get_date_window(self, now: datetime, days: int) -> tuple[date, date]:
         """
         Возвращает (start_date, end_date) для окна изменений/уведомлений.
-
-        Пример:
-        - now = get_now_base()
-        - start, end = get_date_window(now, 3)
-        - использовать в WHERE date BETWEEN start AND end
+        Смена суток для верхней границы окна сдвинута на 19:00.
+        Это предотвращает массовые ночные уведомления ровно в 00:00.
         """
         start = now.date()
-        end = (now + timedelta(days=days)).date()
+        
+        # Если время >= 19:00, для верхней границы окна считаем, что уже наступило "завтра".
+        # Таким образом, новые дни "попадают" в окно вечером, а не в полночь.
+        logical_target = now if now.hour < 19 else now + timedelta(days=1)
+        end = (logical_target + timedelta(days=days)).date()
+        
         return start, end
 
     def get_smart_view_datetime(self) -> datetime:

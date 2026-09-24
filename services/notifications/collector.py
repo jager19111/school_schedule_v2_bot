@@ -366,7 +366,9 @@ class NotificationCollector:
         now = self.time_service.get_now_base()
         today = now.date()
         today_iso = today.isoformat()
-        window_end_iso = (today + datetime.timedelta(days=MAX_CHANGES_WINDOW_DAYS)).isoformat()
+        # Глобальная граница БД теперь тоже учитывает "умное" окно
+        _, max_window_date = self.time_service.get_date_window(now, MAX_CHANGES_WINDOW_DAYS)
+        window_end_iso = max_window_date.isoformat()
 
         try:
             changes = await self.repo.get_pending_changes(start_date_iso=today_iso, end_date_iso=window_end_iso)
@@ -430,12 +432,13 @@ class NotificationCollector:
 
                 for recipient in unique_recipients:
                     window_days = recipient.changes_window_days
-                    if window_days > 0 and (today <= change_date <= (today + datetime.timedelta(days=window_days))):
+                    start_date, max_date = self.time_service.get_date_window(now, window_days)
+                    
+                    if window_days > 0 and (start_date <= change_date <= max_date):
                         del_key = DeliveredKeyDTO(change.date, change.id, recipient.recipient_id)
                         student_candidate_keys.append(del_key)
                         # Передаем расшифрованные имена
                         raw_student_candidates.append((del_key, change, recipient, class_display_num, human_class_name, human_group_name))
-
                 teacher_id = change.teacher_id
                 if not teacher_id: continue
 
@@ -445,12 +448,13 @@ class NotificationCollector:
 
                 for recipient in ctx.teacher_change_cache[teacher_id]:
                     window_days = recipient.changes_window_days
-                    if window_days > 0 and (today <= change_date <= (today + datetime.timedelta(days=window_days))):
+                    start_date, max_date = self.time_service.get_date_window(now, window_days)
+                    
+                    if window_days > 0 and (start_date <= change_date <= max_date):
                         del_key = DeliveredKeyDTO(change.date, change.id, recipient.recipient_id)
                         teacher_candidate_keys.append(del_key)
                         teacher_name = change.teacher_name or "Учитель"
                         raw_teacher_candidates.append((del_key, change, recipient, teacher_name, human_class_name, human_group_name))
-
             except Exception as e:
                 logger.error("Data prep error for schedule change=%s: %s", getattr(change, 'id', 'unknown'), e)
 
