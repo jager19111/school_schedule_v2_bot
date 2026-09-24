@@ -5,11 +5,11 @@ from typing import List, Optional
 from core.models.dto import (
         ActionResponseDTO, StudentAccessDTO,
         StudentProfileDTO, StudentProfileViewModel,
-        StudentClaimInviteDTO, SchoolDictionariesDTO,
+        StudentClaimInviteDTO, SchoolDictionariesDTO, AuditAction
     )
 from core.repository.student_repository import StudentRepository
 from services.profiles_service import ProfileService
-
+from services.audit_service import AuditService
 
 class StudentsService:
     """
@@ -20,8 +20,10 @@ class StudentsService:
         self,
         student_repo: StudentRepository,
         profile_service: ProfileService,
+        audit_service: AuditService,
     ):
         self.repo = student_repo
+        self.audit = audit_service
         self.profile_service = profile_service
 
     @staticmethod
@@ -162,7 +164,12 @@ class StudentsService:
                 success=False,
                 error_code="access_denied",
             )
-
+        await self.audit.log_action(
+            actor_id=admin_user_id, 
+            target_id=row["id"], 
+            action=AuditAction.VIRTUAL_STUDENT_CREATED, 
+            details={"student_name": name, "class_id": class_id}
+        )
         return ActionResponseDTO(
             success=True,
             data=self._student_dto_from_row(row),
@@ -221,7 +228,7 @@ class StudentsService:
                 success=False,
                 error_code="linked_or_not_found",
             )
-
+        await self.audit.log_action(admin_user_id, student_id, AuditAction.VIRTUAL_STUDENT_DELETED)
         return ActionResponseDTO(success=True)
     
     async def get_student_by_telegram_user_id(
@@ -360,7 +367,12 @@ class StudentsService:
                 success=False,
                 error_code="claim_unavailable",
             )
-
+            
+        await self.audit.log_action(
+            actor_id=telegram_user_id, target_id=row["id"], 
+            action=AuditAction.STUDENT_CLAIMED,
+            details={"student_name": normalized_name}
+        )
         return ActionResponseDTO(
             success=True,
             data=self._student_dto_from_row(row),

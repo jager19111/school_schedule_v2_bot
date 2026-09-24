@@ -108,13 +108,30 @@ def _add_image_schedule_preference(conn: sqlite3.Connection) -> str | None:
     )
     return "users.prefer_image_schedule"
 
+def _add_audit_logs_table(conn: sqlite3.Connection) -> str | None:
+    if "audit_logs" not in _columns_of(conn, "audit_logs"):
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS audit_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT NOT NULL,
+                actor_id INTEGER NOT NULL,
+                target_id INTEGER NOT NULL,
+                action TEXT NOT NULL,
+                payload TEXT NOT NULL
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_logs_actor ON audit_logs(actor_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_logs_target ON audit_logs(target_id)")
+        return "audit_logs_table"
+    return None
 
+# Добавьте _add_audit_logs_table в массив MIGRATIONS
 MIGRATIONS = [
     _add_family_invites_short_code,
     _apply_schedule_cache_v3,
     _add_image_schedule_preference,
+    _add_audit_logs_table,
 ]
-
 
 def apply_migrations_sync(db_path: str) -> list[str]:
     """Применяет все миграции. Возвращает список применённых."""

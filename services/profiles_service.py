@@ -4,12 +4,13 @@ from typing import Dict, Any, List, Optional, Tuple
 import time
 
 from core.repository.profile_repository import ProfileRepository
+from services.audit_service import AuditService
 from core.models.dto import (
     UserProfileDTO,
     FamilyMemberDTO,ParentStudentNotificationSettingsDTO, AdultStudentExtraClassesPermissionDTO,
     ProfileResetImpactDTO, FamilyInviteDTO,StudentTelegramSettingsDTO, FamilyMemberViewModel,
     SchoolDictionariesDTO, StudentTelegramSettingsViewModel, ParentStudentNotificationSettingsViewModel,
-    StudentTelegramSettingsDTO, ParentStudentNotificationSettingsDTO,
+    StudentTelegramSettingsDTO, ParentStudentNotificationSettingsDTO, AuditAction
 )
 
 logger = logging.getLogger(__name__)
@@ -29,8 +30,9 @@ class ProfileService:
     # дергают его 2-3 раза за экран).
     _LAST_ACTIVE_WRITE_INTERVAL_SEC = 300.0
 
-    def __init__(self, repo: ProfileRepository):
+    def __init__(self, repo: ProfileRepository, audit_service: AuditService):
         self.repo = repo
+        self.audit = audit_service
         self._last_active_written_at: dict[int, float] = {}
 
     async def _touch_last_active(self, user_id: int) -> None:
@@ -70,6 +72,10 @@ class ProfileService:
         Создаёт пользователя, если его нет, и обновляет last_active_at.
         """
         await self.repo.register_user_initial(user_id)
+        await self.audit.log_action(
+            actor_id=user_id, target_id=user_id, 
+            action=AuditAction.USER_REGISTERED
+        )
 
     async def update_last_active(self, user_id: int) -> None:
         """
@@ -81,6 +87,11 @@ class ProfileService:
     async def update_user_role(self, user_id: int, role: str) -> None:
         """Делегирует обновление роли и настроек репозиторию."""
         await self.repo.update_role_and_defaults(user_id, role)
+        await self.audit.log_action(
+            actor_id=user_id, target_id=user_id, 
+            action=AuditAction.SETTINGS_CHANGED, 
+            details={"setting_name": "role", "new_value": role}
+        )
         
     # ========== ПРОФИЛЬ ПОЛЬЗОВАТЕЛЯ ==========
 
@@ -185,7 +196,13 @@ class ProfileService:
 
         Возвращает family_code.
         """
-        return await self.repo.create_family_and_link(admin_user_id)
+        code = await self.repo.create_family_and_link(admin_user_id)
+        await self.audit.log_action(
+            actor_id=admin_user_id, target_id=admin_user_id, 
+            action=AuditAction.FAMILY_CREATED, 
+            details={"code": code}
+        )
+        return code
 
     async def create_family_invite(
         self,
@@ -210,7 +227,12 @@ class ProfileService:
 
         if row is None:
             return None
-
+        
+        await self.audit.log_action(
+            actor_id=created_by_user_id, target_id=created_by_user_id, 
+            action=AuditAction.INVITE_CREATED, 
+            details={"role": intended_role}
+        )
         return FamilyInviteDTO(
             id=row["id"],  # <-- Добавлено недостающее поле
             token=row["token"],
@@ -274,6 +296,11 @@ class ProfileService:
         if result is None:
             return None
 
+        await self.audit.log_action(
+            actor_id=user_id, target_id=user_id, 
+            action=AuditAction.INVITE_USED, 
+            details={"role": result["intended_role"]}
+        )
         return result["intended_role"]
     
     # Helper конвертации DTO
@@ -488,6 +515,11 @@ class ProfileService:
             field_name=field_name,
         )
 
+        await self.audit.log_action(
+            actor_id=user_id, target_id=user_id, 
+            action=AuditAction.SETTINGS_CHANGED, 
+            details={"setting_name": field_name, "new_value": "toggled"}
+        )
         return True
     
     async def update_own_integer_notification_setting(
@@ -606,6 +638,8 @@ class ProfileService:
                 )
                 if transferred:
                     reset_ok = await self.repo.reset_non_admin_user(user_id=user_id)
+                    await self.audit.log_action(user_id, successor_id, AuditAction.FAMILY_ADMIN_TRANSFERRED)
+                    await self.audit.log_action(user_id, user_id, AuditAction.PROFILE_RESET, {"details": "Успешная передача прав"})
                     return reset_ok, successor_id
                     
             # Преемника нет (или передача не удалась) — расформировка.
@@ -613,10 +647,12 @@ class ProfileService:
             disbanded = await self.repo.disband_family_by_admin(
                 admin_user_id=user_id
             )
+            await self.audit.log_action(user_id, user_id, AuditAction.PROFILE_RESET, {"details": "Семья расформирована"})
             return disbanded, None
             
         # Для обычных пользователей (или если impact == None)
         reset_ok = await self.repo.reset_non_admin_user(user_id=user_id)
+        await self.audit.log_action(user_id, user_id, AuditAction.PROFILE_RESET, {"details": "Стандартный сброс профиля"})
         return reset_ok, None
     
     
@@ -760,13 +796,14 @@ class ProfileService:
         Family admin изменяет право другого adult
         на управление кружками student profile.
         """
-        return await self.repo.set_adult_student_extra_classes_permission(
-            admin_user_id=admin_user_id,
-            adult_user_id=adult_user_id,
-            student_id=student_id,
-            can_manage=can_manage,
-        )
-        
+        result = await self.repo.set_adult_student_extra_classes_permission(admin_user_id=admin_user_id, adult_user_id=adult_user_id, student_id=student_id, can_manage=can_manage)
+        if result:
+            await self.audit.log_action(
+                actor_id=admin_user_id, target_id=adult_user_id, 
+                action=AuditAction.EXTRA_CLASS_PERMISSION_CHANGED, 
+                details={"student_id": student_id, "can_manage": can_manage}
+            )
+        return result
     #---------------------------------------------
     # Управление настройками уведомлений у ребенка
     #----------------------------------------------         
@@ -895,11 +932,14 @@ class ProfileService:
         Family admin включает или выключает lock
         personal Telegram settings student profile.
         """
-        return await self.repo.set_student_notification_settings_locked(
-            admin_user_id=admin_user_id,
-            student_id=student_id,
-            locked=locked,
-        )
+        result = await self.repo.set_student_notification_settings_locked(admin_user_id=admin_user_id, student_id=student_id, locked=locked)
+        if result:
+            await self.audit.log_action(
+                actor_id=admin_user_id, target_id=student_id, 
+                action=AuditAction.SETTINGS_LOCKED, 
+                details={"new_value": locked}
+            )
+        return result
         
     # ==========================================================
     # ЭТАП 5: ViewModel builders

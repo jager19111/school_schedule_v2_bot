@@ -31,13 +31,14 @@ from core.models.dto import (
     ExtraClassesAccessDTO,
     ExtraClassDTO,
     ExtraClassListDTO,
-    StudentProfileDTO,
+    StudentProfileDTO, AuditAction
 )
 from core.repository.extra_classes_repository import UNSET
 from core.repository.extra_classes_repository import ExtraClassesRepository
 from services.profiles_service import ProfileService
 from services.students_service import StudentsService
 from services.time_service import TimeService
+from services.audit_service import AuditService
 
 logger = logging.getLogger(__name__)
 
@@ -62,11 +63,13 @@ class ExtraClassesService:
         profile_service: ProfileService,
         students_service: StudentsService,
         time_service: TimeService,
+        audit_service: AuditService
     ) -> None:
         self.repo = extra_classes_repo
         self.profile_service = profile_service
         self.students_service = students_service
         self.time_service = time_service
+        self.audit_service = audit_service
 
     # ==========================================================
     # Access resolution (одним проходом, без дублей SQL)
@@ -305,6 +308,14 @@ class ExtraClassesService:
                 reminder_minutes=reminder_minutes,
             )
 
+            # Вызов аудита после успешного коммита
+            student_name = student.name if student else f"ID {target_student_id}"
+            await self.audit_service.log_action(
+                actor_id=actor_user_id,
+                target_id=target_student_id,
+                action=AuditAction.EXTRA_CLASS_ADDED,
+                details={"title": title, "student_name": student_name}
+            )
             return ActionResponseDTO(success=True)
 
         except Exception:
@@ -455,7 +466,13 @@ class ExtraClassesService:
             extra_id=extra_id,
             student_id=target_student_id,
         )
-
+        
+        await self.audit_service.log_action(
+                actor_id=actor_user_id, 
+                target_id=target_student_id, 
+                action=AuditAction.EXTRA_CLASS_DELETED
+            )
+        
         if deleted:
             return ActionResponseDTO(success=True)
 

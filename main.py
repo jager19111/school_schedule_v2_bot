@@ -53,6 +53,7 @@ from core.repository.notification_repository import NotificationRepository
 from core.repository.extra_classes_repository import ExtraClassesRepository
 from core.repository.watch_target_repository import WatchTargetRepository
 from core.repository.student_repository import StudentRepository
+from core.repository.audit_repository import AuditRepository
 
 from services.profiles_service import ProfileService
 from services.schedule_service import ScheduleService
@@ -368,7 +369,7 @@ async def main():
         extra_classes_repo = ExtraClassesRepository(db_path=db_connection, time_service=time_service)
         watch_target_repo = WatchTargetRepository(db_path=db_connection, time_service=time_service)
         student_repo = StudentRepository(db_path=db_connection, time_service=time_service)
-
+        audit_repo = AuditRepository(db_path=db_connection, time_service=time_service)
         # =====================================================================
         # ВНИМАНИЕ / TODO НА БУДУЩЕЕ (Изучить Dishka):
         # Количество зависимостей растет, ручная сборка начинает раздувать main.py.
@@ -380,10 +381,10 @@ async def main():
         # =====================================================================
 
         # 5. Сервисы
-        audit_service = AuditService(log_dir=config.LOG_DIR)
-        profile_service = ProfileService(profile_repo)
-        students_service = StudentsService(student_repo, profile_service=profile_service)
-        extra_classes_service = ExtraClassesService(extra_classes_repo=extra_classes_repo, profile_service=profile_service, students_service=students_service, time_service=time_service)
+        audit_service = AuditService(audit_repo=audit_repo, profile_repo=profile_repo, time_service=time_service, log_dir=config.LOG_DIR)
+        profile_service = ProfileService(profile_repo, audit_service=audit_service)
+        students_service = StudentsService(student_repo, profile_service=profile_service, audit_service=audit_service)
+        extra_classes_service = ExtraClassesService(extra_classes_repo=extra_classes_repo, profile_service=profile_service, students_service=students_service, time_service=time_service, audit_service=audit_service)
         schedule_service = ScheduleService(schedule_repo=schedule_repo, time_service=time_service, extra_classes_service=extra_classes_service)
         
         watch_targets_service = WatchTargetsService(repository=watch_target_repo)

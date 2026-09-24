@@ -11,6 +11,7 @@
 # 4. DayScheduleDTO.lessons строго типизирован как List[LessonDTO].
 
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Dict, Optional, List, Literal, Any, Protocol
 from datetime import datetime
 class ReplyMarkupProtocol(Protocol):
@@ -1041,3 +1042,57 @@ class FreeRoomsStatusDTO:
     target_num: Optional[int]
     start_time: Optional[str]
     end_time: Optional[str]
+    
+    
+# ==========================================================
+# Аудит
+# ==========================================================
+
+
+class AuditAction(str, Enum):
+    # Профиль и семья
+    USER_REGISTERED = "user_registered"
+    FAMILY_CREATED = "family_created"
+    INVITE_CREATED = "invite_created"
+    INVITE_USED = "invite_used"
+    FAMILY_ADMIN_TRANSFERRED = "family_admin_transferred"
+    PROFILE_RESET = "profile_reset"
+    
+    # Ученики
+    VIRTUAL_STUDENT_CREATED = "virtual_student_created"
+    VIRTUAL_STUDENT_DELETED = "virtual_student_deleted"
+    STUDENT_CLAIMED = "student_claimed"
+    
+    # Настройки
+    SETTINGS_CHANGED = "settings_changed"
+    SETTINGS_LOCKED = "settings_locked"
+    EXTRA_CLASS_PERMISSION_CHANGED = "extra_class_permission_changed"
+    
+    # Доп. занятия и отслеживание
+    EXTRA_CLASS_ADDED = "extra_class_added"
+    EXTRA_CLASS_DELETED = "extra_class_deleted"
+    WATCH_TARGET_ADDED = "watch_target_added"
+
+@dataclass(frozen=True, slots=True)
+class AuditLogDTO:
+    actor_id: int
+    actor_name: str
+    target_id: int
+    target_name: str
+    action: str
+    timestamp: str
+
+@dataclass(frozen=True, slots=True)
+class FamilyAuditDTO(AuditLogDTO):
+    role: str | None = None
+    code: str | None = None
+
+@dataclass(frozen=True, slots=True)
+class ExtraClassAuditDTO(AuditLogDTO):
+    title: str
+    student_name: str
+    
+@dataclass(frozen=True, slots=True)
+class SettingsAuditDTO(AuditLogDTO):
+    setting_name: str
+    new_value: str

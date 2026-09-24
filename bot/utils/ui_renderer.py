@@ -13,7 +13,8 @@ from core.models.dto import (ClassListDTO, AdminStatsDTO, DayScheduleDTO, ExtraC
                             ScheduleWatchTargetDTO, StudentProfileDTO, ParentStudentNotificationSettingsDTO,
                             AdultStudentExtraClassesPermissionDTO, StudentTelegramSettingsDTO, NikaSourceHealthDTO, FreeRoomsStatusDTO,  
                             StudentProfileViewModel, WatchTargetViewModel, ExtraClassViewModel, FamilyMemberViewModel, StudentTelegramSettingsViewModel,
-                            ParentStudentNotificationSettingsViewModel, DayChangesDetailDTO, LessonDTO, MorningLessonDTO, DailyChangeSummaryDTO
+                            ParentStudentNotificationSettingsViewModel, DayChangesDetailDTO, LessonDTO, MorningLessonDTO, DailyChangeSummaryDTO,
+                            SettingsAuditDTO, FamilyAuditDTO, ExtraClassAuditDTO, AuditLogDTO,
 )
 
 from datetime import datetime
@@ -1887,3 +1888,32 @@ class UIRenderer:
                 lines.append(f"🔹 <b>•.</b> {time_str} | {core_info}")
                 
         return "\n".join(lines)
+    
+    
+# ==========================================================
+# Аудит
+# ==========================================================
+
+    @staticmethod
+    def render_audit_log(dto: 'AuditLogDTO') -> str:
+        """Рендерит строго типизированную строку для файла audit.log"""
+        base = (
+            f"[{dto.timestamp}] "
+            f"ACTOR: {dto.actor_name} [ID: {dto.actor_id}] | "
+            f"TARGET: {dto.target_name} [ID: {dto.target_id}] | "
+            f"ACTION: {dto.action}"
+        )
+        
+        if isinstance(dto, ExtraClassAuditDTO):
+            return f"{base} | Кружок: '{dto.title}' для ученика '{dto.student_name}'"
+            
+        if isinstance(dto, FamilyAuditDTO):
+            details = []
+            if dto.role: details.append(f"Роль: {dto.role}")
+            if dto.code: details.append(f"Код: {dto.code}")
+            return f"{base} | " + ", ".join(details)
+            
+        if isinstance(dto, SettingsAuditDTO):
+            return f"{base} | Настройка: {dto.setting_name} -> {dto.new_value}"
+            
+        return base
