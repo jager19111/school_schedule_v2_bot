@@ -24,6 +24,11 @@ class PosterItem:
     room: str | None           # Кабинет
     is_cancelled: bool = False
     original_primary: str | None = None # Для зачеркивания старого значения
+    
+    # --- НОВЫЕ ФЛАГИ ДЛЯ УМНОЙ ПОДСВЕТКИ ---
+    primary_changed: bool = False
+    secondary_changed: bool = False
+    room_changed: bool = False
 
 @dataclass(frozen=True, slots=True)
 class PosterLessonCard:

@@ -245,10 +245,29 @@ async def _deliver_student_poster(
             )
 
     subtitle = task.child_name if task.recipient_kind == "adult" else None
+    
+    # --- НОВОЕ: УМНАЯ СБОРКА ЗАГОЛОВКА С УЧЕТОМ ГРУППЫ ---
+    class_str = day_dto.class_name or str(task.class_id)
+    group_str = str(day_dto.group_name).strip() if day_dto.group_name else ""
+    
+    # Фолбэк: если NIKA не отдала группу в корне DTO, берем её из задачи (профиля)
+    if not group_str and task.group_id and str(task.group_id) not in ("ALL", "0", "None", "", "—"):
+        if str(task.group_id).isdigit():
+            group_str = f"{task.group_id} группа"
+        else:
+            group_str = str(task.group_id)
+            
+    title_parts = [class_str]
+    if group_str and group_str not in ("Весь класс", "ALL", "None", "", "—"):
+        title_parts.append(group_str)
+        
+    title = f"Расписание · {' · '.join(title_parts)}"
+    # ---------------------------------------------------
+
     request = build_poster_request(
         request_id=request_id,
         dto=day_dto,
-        title=f"Расписание · {day_dto.class_name or task.class_id}",
+        title=title,
         date_text=_date_text(today_iso),
         subtitle=subtitle,
         width=config.POSTER_WIDTH,

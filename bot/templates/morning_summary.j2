@@ -4,8 +4,11 @@
    Принцип: показываем расписание "как есть", БЕЗ было/стало.
    Замены/отмены видны только через иконку и зачёркнутый текст.
    При отмене пишем предмет, который был до замены — слово "ОТМЕНА" не пишем.
-   Учителей показываем под tg-spoiler. Труд НЕ агрегируем — каждая
-   подгруппа рендерится отдельной строкой со своим учителем/кабинетом.
+   Учителей показываем под tg-spoiler. 
+   
+   ИЗМЕНЕНО: добавлена Умная Агрегация Труда(технология), которая склеивает 
+   предмет, если он единственный реальный в слоте (исключая окна), и 
+   расщепляет в дерево, если идет вместе с другими предметами (Информатика).
    Контекст, который должен прийти в шаблон: dto, date_text
    (dto — тот же MorningSummaryDTO/MorningLessonDTO, что и в исходном коде;
    date_text — результат UIRenderer._format_short_date(dto.date_iso), т.к.
@@ -68,19 +71,10 @@
 
 {# ==========================================================
    МАКРОС: рендер группы уроков одного слота (номер + время).
-   СЦЕНАРИЙ 0 (is_extra): дополнительное занятие — 2 строки:
-     1. время (моношир) + название (жирный)
-     2. кабинет (только если указан; если нет — строки нет вообще,
-        никакого "—" не пишем).
+   СЦЕНАРИЙ 0 (is_extra): дополнительное занятие.
+   СЦЕНАРИЙ 1.5: Агрегированный Труд (умная логика).
    СЦЕНАРИЙ 1 (len == 1): обычный одиночный урок.
    СЦЕНАРИЙ 2 (len > 1): расщеплённый урок (несколько подгрупп).
-   ИЗМЕНЕНО: старый "СЦЕНАРИЙ 2" с агрегацией "Труд(технология)" в одну
-   строку убран по требованию — труд больше не объединяем, чтобы было
-   видно учителя каждой подгруппы (он всегда попадает в общий
-   "расщеплённый" сценарий наравне с любым другим предметом).
-   ДОБАВЛЕНО: сценарий доп. занятий (is_extra) — раньше в утренней
-   сводке отдельно не обрабатывался, хотя иконка 🎨 для него уже
-   считалась в group_icon.
    ========================================================== #}
 {%- macro render_lesson_group(group, is_teacher) -%}
     {%- set base = group[0] -%}
@@ -94,29 +88,68 @@
             {%- if not loop.first %}{{ '\n' }}{% endif -%}
             🎨 <code>{{ lesson.start_time }}–{{ lesson.end_time }}</code> · <b>{{ (lesson.subject_name or '—') | e }}</b>{% if lesson.room_name %}{{ '\n' }}   ↳ <b>[{{ lesson.room_name | e }}]</b>{% endif %}
         {%- endfor -%}
-    {%- elif group | length == 1 -%}
-        {# --- СЦЕНАРИЙ 1: обычный урок --- #}
-        {%- set lesson = group[0] -%}
-        {%- set subject = lesson_subject(lesson, is_teacher) | trim -%}
-        {%- if lesson.is_cancelled -%}
-            {#- При отмене выводим только зачёркнутый предмет, без строки с деталями -#}
-            {{ icon }} <b>{{ display_num }}.</b> {{ time_text }} · <s><b>{{ subject }}</b></s>
-        {%- else -%}
-            {%- set details = lesson_details(lesson, is_teacher) | trim | safe -%}
-            {{ icon }} <b>{{ display_num }}.</b> {{ time_text }} · <b>{{ subject }}</b>{% if details %}{{ '\n' }}   ↳ {{ details }}{% endif %}
-        {%- endif -%}
     {%- else -%}
-        {# --- СЦЕНАРИЙ 2: расщеплённый урок (2+ подгрупп), включая труд --- #}
-        {{ icon }} <b>{{ display_num }}.</b> {{ time_text }}
-        {%- for lesson in group -%}
-            {%- set subject = lesson_subject(lesson, is_teacher) | trim -%}
-            {%- if lesson.is_cancelled -%}
-                {{ '\n' }}   ↳ <s><b>{{ subject }}</b></s>
-            {%- else -%}
-                {%- set details = lesson_details(lesson, is_teacher) | trim | safe -%}
-                {{ '\n' }}   ↳ <b>{{ subject }}</b>{% if details %} · {{ details }}{% endif %}
+        {#- УМНАЯ АГРЕГАЦИЯ ТРУДА: вычисляем реальные предметы -#}
+        {%- set real_subjs = [] -%}
+        {%- for l in group -%}
+            {%- set s_name = l.original_subject_name if l.is_cancelled and l.original_subject_name and l.original_subject_name != 'ОТМЕНА' else l.subject_name -%}
+            {%- if s_name and s_name|lower not in ['отмена', 'нет занятий', ''] -%}
+                {%- set _ = real_subjs.append(s_name|lower) -%}
             {%- endif -%}
         {%- endfor -%}
+        {%- set unique_real_subjs = real_subjs | unique | list -%}
+        {%- set is_trud_only = not is_teacher and group|length > 1 and unique_real_subjs|length == 1 and ('труд' in unique_real_subjs[0] or 'технологи' in unique_real_subjs[0]) -%}
+
+        {%- if is_trud_only -%}
+            {# --- СЦЕНАРИЙ 1.5: Агрегированный Труд --- #}
+            {%- set all_cancelled = group | rejectattr('is_cancelled') | list | length == 0 -%}
+            {%- if all_cancelled -%}
+                {{ icon }} <b>{{ display_num }}.</b> {{ time_text }} · <s><b>Труд(технология)</b></s>
+            {%- else -%}
+                {{ icon }} <b>{{ display_num }}.</b> {{ time_text }} · <b>Труд(технология)</b>
+                {%- for lesson in group -%}
+                    {%- set is_window = (lesson.subject_name == 'нет занятий') or (lesson.is_cancelled and lesson.original_subject_name == 'нет занятий') -%}
+                    {%- if not lesson.is_cancelled and not is_window -%}
+                        {%- set details = lesson_details(lesson, is_teacher) | trim | safe -%}
+                        {{ '\n' }}   ↳ {{ details }}
+                    {%- endif -%}
+                {%- endfor -%}
+            {%- endif -%}
+        {%- elif group | length == 1 -%}
+            {# --- СЦЕНАРИЙ 1: обычный урок --- #}
+            {%- set lesson = group[0] -%}
+            {%- set is_window = (lesson.subject_name == 'нет занятий') or (lesson.is_cancelled and lesson.original_subject_name == 'нет занятий') -%}
+            
+            {%- if is_window -%}
+                {{ icon }} <b>{{ display_num }}.</b> {{ time_text }} · нет занятий
+            {%- else -%}
+                {%- set subject = lesson_subject(lesson, is_teacher) | trim -%}
+                {%- if lesson.is_cancelled -%}
+                    {{ icon }} <b>{{ display_num }}.</b> {{ time_text }} · <s><b>{{ subject }}</b></s>
+                {%- else -%}
+                    {%- set details = lesson_details(lesson, is_teacher) | trim | safe -%}
+                    {{ icon }} <b>{{ display_num }}.</b> {{ time_text }} · <b>{{ subject }}</b>{% if details %}{{ '\n' }}   ↳ {{ details }}{% endif %}
+                {%- endif -%}
+            {%- endif -%}
+        {%- else -%}
+            {# --- СЦЕНАРИЙ 2: расщеплённый урок (2+ подгрупп) --- #}
+            {{ icon }} <b>{{ display_num }}.</b> {{ time_text }}
+            {%- for lesson in group -%}
+                {%- set is_window = (lesson.subject_name == 'нет занятий') or (lesson.is_cancelled and lesson.original_subject_name == 'нет занятий') -%}
+                
+                {%- if is_window -%}
+                    {{ '\n' }}   ↳ нет занятий{% if lesson.group_name and (lesson.group_name | string | trim) not in HIDDEN_GROUP_VALUES %} · <i>{{ lesson.group_name }}</i>{% endif %}
+                {%- else -%}
+                    {%- set subject = lesson_subject(lesson, is_teacher) | trim -%}
+                    {%- if lesson.is_cancelled -%}
+                        {{ '\n' }}   ↳ <s><b>{{ subject }}</b></s>{% if lesson.group_name and (lesson.group_name | string | trim) not in HIDDEN_GROUP_VALUES %} · <i>{{ lesson.group_name }}</i>{% endif %}
+                    {%- else -%}
+                        {%- set details = lesson_details(lesson, is_teacher) | trim | safe -%}
+                        {{ '\n' }}   ↳ <b>{{ subject }}</b>{% if details %} · {{ details }}{% endif %}
+                    {%- endif -%}
+                {%- endif -%}
+            {%- endfor -%}
+        {%- endif -%}
     {%- endif -%}
 {%- endmacro -%}
 
@@ -150,9 +183,6 @@
 
 {# ==========================================================
    СТАТУС ПЕРЕСТАНОВОК (аналог _render_morning_status).
-   ИЗМЕНЕНО: как и в исходном коде, этот блок посчитан, но НЕ включён в
-   финальную сборку — render_morning_summary его тоже не вызывал.
-   Оставлено для совместимости на случай, если понадобится подключить.
    ========================================================== #}
 {%- set status_text = '' -%}
 {%- if dto.origin == "student" and dto.has_permutation -%}
@@ -197,10 +227,11 @@
 {%- endif -%}
 
 {# ==========================================================
-   ФИНАЛЬНАЯ СБОРКА (аналог "\n\n".join(part for part in (header, lessons, footer) if part))
+   ФИНАЛЬНАЯ СБОРКА
    ========================================================== #}
 {%- set final_parts = [] -%}
 {%- if header_text | trim %}{% set _ = final_parts.append(header_text | trim | safe) %}{% endif -%}
+{%- if status_text | trim %}{% set _ = final_parts.append(status_text | trim | safe) %}{% endif -%}
 {%- if lessons_text | trim %}{% set _ = final_parts.append(lessons_text | trim | safe) %}{% endif -%}
 {%- if footer_text | trim %}{% set _ = final_parts.append(footer_text | trim | safe) %}{% endif -%}
 {{- (final_parts | join('\n\n')) | trim | safe -}}

@@ -43,6 +43,7 @@ backups/
 tests_local/
 pw-browsers/
 logs/
+.vkbottle/
 
 # Repomix outputs
 repomix-output.txt

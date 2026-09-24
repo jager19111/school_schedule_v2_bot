@@ -46,7 +46,6 @@ def build_poster_request(
         first = group[0]
         
         # Определяем статус всей карточки
-        # Определяем статус всей карточки
         is_all_cancelled = all(l.is_cancelled for l in group)
         has_changes = any(l.is_exchange or l.is_cancelled for l in group)
 
@@ -78,6 +77,8 @@ def build_poster_request(
                     classes = []
                     groups = []
                     
+                    prim_ch, sec_ch, rm_ch = False, False, False
+                    
                     for l in sub_group:
                         if l.class_name and l.class_name not in classes: 
                             classes.append(l.class_name)
@@ -85,15 +86,29 @@ def build_poster_request(
                         if gn and gn not in ("Весь класс", "ALL", "None", "", "—") and gn not in groups:
                             groups.append(gn)
                             
+                        # Считаем точечные изменения (без getattr)
+                        is_added = not l.original_subject_name or l.original_subject_name.lower() in ("нет занятий", "отмена")
+                        orig_grp = l.original_group_name if l.original_group_name else l.group_name
+                        orig_subj = l.original_subject_name if l.original_subject_name else l.subject_name
+                        orig_room = l.original_room_name if l.original_room_name else l.room_name
+                        
+                        # Primary у учителя — Класс и Группа (считаем группу)
+                        if is_added or (orig_grp != l.group_name):
+                            prim_ch = True
+                        # Secondary у учителя — Предмет
+                        if is_added or (orig_subj != l.subject_name):
+                            sec_ch = True
+                        if is_added or (orig_room != l.room_name):
+                            rm_ch = True
+                            
                     meta_parts = []
                     if classes: 
-                        meta_parts.append(", ".join(classes)) # Склеиваем классы через запятую
+                        meta_parts.append(", ".join(classes))
                     if groups: 
                         meta_parts.append(", ".join(groups))
                         
                     primary = " · ".join(meta_parts) if meta_parts else "Урок"
                     
-                    # Для зачеркивания берем старый предмет из первого элемента подгруппы
                     orig_subj = sub_group[0].original_subject_name or subj
                     orig_primary = f"{primary} · {orig_subj}" if is_cancelled else None
                     sec = None if is_cancelled else subj
@@ -103,7 +118,10 @@ def build_poster_request(
                         secondary_text=sec,
                         room=room_name if room_name != "—" else None,
                         is_cancelled=is_cancelled,
-                        original_primary=orig_primary
+                        original_primary=orig_primary,
+                        primary_changed=prim_ch,
+                        secondary_changed=sec_ch,
+                        room_changed=rm_ch
                     ))
         # ==========================================
         # ЛОГИКА УЧЕНИКА / РОДИТЕЛЯ
@@ -112,7 +130,7 @@ def build_poster_request(
             # Вычисляем реальные предметы в слоте, исключая окна и отмены
             real_subjs = set()
             for l in group:
-                s_name = l.original_subject_name if l.is_cancelled and l.original_subject_name != "ОТМЕНА" else l.subject_name
+                s_name = l.original_subject_name if l.is_cancelled and l.original_subject_name and l.original_subject_name != "ОТМЕНА" else l.subject_name
                 if s_name and s_name.lower() not in ("отмена", "нет занятий", ""):
                     real_subjs.add(s_name.lower())
             
@@ -120,22 +138,36 @@ def build_poster_request(
             is_trud_only = len(group) > 1 and len(real_subjs) == 1 and any("труд" in s or "технологи" in s for s in real_subjs)
 
             if is_trud_only:
-                # Агрегация Труда: оставляем только активные группы (дети идут к оставшимся учителям)
                 active_trud = [l for l in group if not l.is_cancelled]
                 trud_to_render = active_trud if active_trud else group
 
                 for idx, l in enumerate(trud_to_render):
                     is_window = (l.subject_name == "нет занятий") or (l.is_cancelled and l.original_subject_name == "нет занятий")
+                    
+                    is_added = not l.original_subject_name or l.original_subject_name.lower() in ("нет занятий", "отмена")
+                    orig_subj = l.original_subject_name if l.original_subject_name else l.subject_name
+                    orig_teacher = l.original_teacher_name if l.original_teacher_name else l.teacher_name
+                    orig_room = l.original_room_name if l.original_room_name else l.room_name
+                    
+                    # Для Труда primary_text выводится только у первого элемента
+                    p_ch = (is_added or orig_subj != l.subject_name) if idx == 0 else False
+                    # ВАЖНО: Учитель подсвечивается только если он изменился (а предмет остался тем же) или если урок новый
+                    s_ch = is_added or (orig_teacher != l.teacher_name)
+                    r_ch = is_added or (orig_room != l.room_name)
+                    
                     items.append(PosterItem(
                         primary_text="нет занятий" if is_window else ("Труд (технология)" if idx == 0 else ""),
                         secondary_text=l.teacher_name if not is_window else None,
                         room=(l.room_name if l.room_name != "—" else None) if not is_window else None,
-                        is_cancelled=l.is_cancelled and not is_window, # Окно не зачеркиваем
-                        original_primary="Труд (технология)" if idx == 0 and l.is_cancelled and not is_window else None
+                        is_cancelled=l.is_cancelled and not is_window,
+                        original_primary="Труд (технология)" if idx == 0 and l.is_cancelled and not is_window else None,
+                        primary_changed=p_ch,
+                        secondary_changed=s_ch,
+                        room_changed=r_ch
                     ))
             else:
                 for l in group:
-                    # --- ОБРАБОТКА ОКОН И РАЗНЫХ ПРЕДМЕТОВ ---
+                    # --- ОБРАБОТКА ОКОН И РАЗНЫХ ПРЕДМЕТОВ (Дерево) ---
                     is_window = (l.subject_name == "нет занятий") or (l.is_cancelled and l.original_subject_name == "нет занятий")
                     
                     if is_window:
@@ -144,19 +176,31 @@ def build_poster_request(
                             # Выводим номер группы, чтобы родитель точно знал, у кого окно
                             secondary_text=l.group_name if l.group_name and l.group_name not in ("ALL", "Весь класс", "—") else None,
                             room=None,
-                            is_cancelled=False, # Снимаем отмену, чтобы не было красного зачеркивания
+                            is_cancelled=False,
                             original_primary=None
                         ))
                     else:
                         subj = l.subject_name or l.original_subject_name or "Урок"
                         orig = l.original_subject_name if l.original_subject_name and l.original_subject_name != "ОТМЕНА" else subj
+                        
+                        is_added = not l.original_subject_name or l.original_subject_name.lower() in ("нет занятий", "отмена")
+                        orig_subj = l.original_subject_name if l.original_subject_name else l.subject_name
+                        orig_teacher = l.original_teacher_name if l.original_teacher_name else l.teacher_name
+                        orig_room = l.original_room_name if l.original_room_name else l.room_name
+
+                        p_ch = is_added or (orig_subj != l.subject_name)
+                        s_ch = is_added or (orig_teacher != l.teacher_name)
+                        r_ch = is_added or (orig_room != l.room_name)
 
                         items.append(PosterItem(
                             primary_text=subj,
                             secondary_text=l.teacher_name, # Всегда выводим преподавателя
                             room=l.room_name if l.room_name != "—" else None,
                             is_cancelled=l.is_cancelled,
-                            original_primary=orig if l.is_cancelled else None
+                            original_primary=orig if l.is_cancelled else None,
+                            primary_changed=p_ch,
+                            secondary_changed=s_ch,
+                            room_changed=r_ch
                         ))
 
         cards.append(PosterLessonCard(
@@ -167,7 +211,7 @@ def build_poster_request(
         if status in (LessonStatus.EXCHANGE, LessonStatus.CANCELLED) and not first.is_extra:
             changes_count += 1
 
-    # === НОВАЯ ЛОГИКА: Достраиваем сетку 1-12 для учителя ===
+    # === Достраиваем сетку 1-12 для учителя ===
     if is_teacher and cards:
         teacher_cards_map = {}
         extra_cards = []
@@ -191,21 +235,12 @@ def build_poster_request(
             if i in teacher_cards_map:
                 full_cards.append(teacher_cards_map[i])
             else:
-                # Генерируем компактное "окно"
                 full_cards.append(PosterLessonCard(
-                    num=str(i),
-                    time_start="—",
-                    time_end="—",
-                    status=LessonStatus.NORMAL,
-                    items=(PosterItem(
-                        primary_text="Окно", 
-                        secondary_text=None, room=None, 
-                        is_cancelled=False, original_primary=None
-                    ),),
+                    num=str(i), time_start="—", time_end="—", status=LessonStatus.NORMAL,
+                    items=(PosterItem(primary_text="Окно", secondary_text=None, room=None, is_cancelled=False, original_primary=None),),
                     is_extra=False
                 ))
         cards = full_cards + extra_cards
-    # =========================================================
 
     return PosterRequest(
         request_id=request_id, date_text=date_text, title=title,
