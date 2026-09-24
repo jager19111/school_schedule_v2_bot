@@ -160,7 +160,7 @@
                     </div>
 
                     <div class="items-col">
-                        {% set is_trud_block = lesson.items|length > 1 and lesson.items[0].primary_text and 'Труд' in lesson.items[0].primary_text %}
+                        {% set is_trud_block = lesson.items|length > 1 and lesson.items[0].primary_text and 'Труд' in lesson.items[0].primary_text and lesson.items[1].primary_text == '' %}
                         
                         {% if is_trud_block %}
                         <!-- СПЕЦИАЛЬНЫЙ СВЕРХКОМПАКТНЫЙ ВЫВОД ДЛЯ ТРУДА -->

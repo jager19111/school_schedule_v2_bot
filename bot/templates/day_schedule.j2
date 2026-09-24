@@ -64,57 +64,69 @@
 {%- endif -%}
 
 <blockquote>
-{%- set subj_names = slot | map(attribute='subject_name') | reject('none') | join(' ') | lower -%}
-{# ИЗМЕНЕНО: для school_search труд НЕ группируем — у каждой подгруппы свой учитель, нужно дерево из отдельных строк #}
-{%- set is_trud = not is_teacher and not is_school_search and slot|length > 1 and ('труд' in subj_names or 'технологи' in subj_names) -%}
+{%- set real_subjs = [] -%}
+{%- for l in slot -%}
+    {%- set s_name = l.original_subject_name if l.is_cancelled and l.original_subject_name and l.original_subject_name != 'ОТМЕНА' else l.subject_name -%}
+    {%- if s_name and s_name|lower not in ['отмена', 'нет занятий', ''] -%}
+        {%- set _ = real_subjs.append(s_name|lower) -%}
+    {%- endif -%}
+{%- endfor -%}
+{%- set unique_real_subjs = real_subjs | unique | list -%}
+{%- set is_trud_only = not is_teacher and not is_school_search and slot|length > 1 and unique_real_subjs|length == 1 and ('труд' in unique_real_subjs[0] or 'технологи' in unique_real_subjs[0]) -%}
 
-{%- if is_trud -%}
+{%- if is_trud_only -%}
     {#- АГРЕГАЦИЯ ТРУДА -#}
-        {%- set valid_rooms = slot | rejectattr('is_cancelled') | map(attribute='room_name') | reject('none') | reject('equalto', '—') | unique | list -%}
+    {%- set valid_rooms = slot | rejectattr('is_cancelled') | map(attribute='room_name') | reject('none') | reject('equalto', '—') | unique | list -%}
     {%- if is_all_cancelled -%}
         <s>Труд(технология)</s>
     {%- else -%}
         <b>Труд(технология)</b>{% if valid_rooms %} ➔ <b>[{{ valid_rooms | join(', ') }}]</b>{% endif -%}
     {%- endif -%}
 {%- else -%}
-    {#- ОБЫЧНЫЕ УРОКИ И ПОДГРУППЫ (Только актуальная инфа, без <s>Было</s>) -#}
+    {#- ОБЫЧНЫЕ УРОКИ И РАСЩЕПЛЕННЫЕ ПРЕДМЕТЫ -#}
     {%- for l in slot -%}
-        {%- set parts = [] -%}
-        {%- if is_teacher -%}
+        {%- set is_window = (l.subject_name == 'нет занятий') or (l.is_cancelled and l.original_subject_name == 'нет занятий') -%}
+        
+        {%- if is_window -%}
+            <b>нет занятий</b>
+        {%- else -%}
+            {%- set parts = [] -%}
+            {%- if is_teacher -%}
             {# ============================================================
                ИЗМЕНЕНО: новый порядок для УЧИТЕЛЯ.
                Было:  Предмет · Класс · Группа · [Кабинет]
                Стало: Класс · группа ➔ [Кабинет] · Предмет
                При отмене: зачеркиваем Класс/группу/Предмет, кабинет убираем.
                ============================================================ #}
-            {%- set cls_grp_parts = [] -%}
-            {%- if l.class_name %}{% set _ = cls_grp_parts.append('<b>' ~ l.class_name ~ '</b>') %}{% endif -%}
-            {%- if l.group_name and l.group_name not in ['Весь класс', 'ALL', 'None', '', '—'] %}{% set _ = cls_grp_parts.append('<i>' ~ l.group_name ~ '</i>') %}{% endif -%}
-            {%- set cls_grp = cls_grp_parts | join(' · ') | safe -%}
+                {%- set cls_grp_parts = [] -%}
+                {%- if l.class_name %}{% set _ = cls_grp_parts.append('<b>' ~ l.class_name ~ '</b>') %}{% endif -%}
+                {%- if l.group_name and l.group_name not in ['Весь класс', 'ALL', 'None', '', '—'] %}{% set _ = cls_grp_parts.append('<i>' ~ l.group_name ~ '</i>') %}{% endif -%}
+                {%- set cls_grp = cls_grp_parts | join(' · ') | safe -%}
 
-            {%- if l.is_cancelled -%}
-                {%- set subj = l.original_subject_name if l.original_subject_name and l.original_subject_name != 'ОТМЕНА' else 'Урок' -%}
-                <s>{{ cls_grp }}{% if cls_grp %} ➔ {% endif %}<i>{{ subj }}</i></s>
+                {%- if l.is_cancelled -%}
+                    {%- set subj = l.original_subject_name if l.original_subject_name and l.original_subject_name != 'ОТМЕНА' else 'Урок' -%}
+                    <s>{{ cls_grp }}{% if cls_grp %} ➔ {% endif %}<i>{{ subj }}</i></s>
+                {%- else -%}
+                    {{ cls_grp }}{% if cls_grp %} ➔ {% endif %}{% if l.room_name and l.room_name != '—' %}<b>[{{ l.room_name }}]</b> · {% endif %}<i>{{ l.subject_name }}</i>
+                {%- endif -%}
             {%- else -%}
-                {{ cls_grp }}{% if cls_grp %} ➔ {% endif %}{% if l.room_name and l.room_name != '—' %}<b>[{{ l.room_name }}]</b> · {% endif %}<i>{{ l.subject_name }}</i>
-            {%- endif -%}
-        {%- else -%}
-            {# ============================================================
-               ИЗМЕНЕНО: новый порядок для УЧЕНИКА / ПОИСКА ПО ШКОЛЕ.
-               Было:  Предмет · [Кабинет] · Преподаватель
-               Стало: Предмет ➔ [Кабинет] · Преподаватель (только school_search)
-               При отмене: зачеркиваем Предмет, кабинет убираем.
-               Преподаватель при отмене не показываем — второстепенная инфа.
-               ============================================================ #}
-            {%- set tail_parts = [] -%}
-            {%- if not l.is_cancelled and l.room_name and l.room_name != '—' %}{% set _ = tail_parts.append('<b>[' ~ l.room_name ~ ']</b>') %}{% endif -%}
-            {%- if not l.is_cancelled and is_school_search and l.teacher_name %}{% set _ = tail_parts.append('<tg-spoiler><i>' ~ l.teacher_name ~ '</i></tg-spoiler>') %}{% endif -%}
+                {# ============================================================
+                ИЗМЕНЕНО: новый порядок для УЧЕНИКА / ПОИСКА ПО ШКОЛЕ.
+                Было:  Предмет · [Кабинет] · Преподаватель
+                Стало: Предмет ➔ [Кабинет] · Преподаватель (только school_search)
+                При отмене: зачеркиваем Предмет, кабинет убираем.
+                Преподаватель при отмене не показываем — второстепенная инфа.
+                ============================================================ #}
+                {#- УЧЕНИК / ПОИСК -#}
+                {%- if not l.is_cancelled and l.room_name and l.room_name != '—' %}{% set _ = parts.append('<b>[' ~ l.room_name ~ ']</b>') %}{% endif -%}
+                {%- if not l.is_cancelled and is_school_search and l.teacher_name %}{% set _ = parts.append('<tg-spoiler><i>' ~ l.teacher_name ~ '</i></tg-spoiler>') %}{% endif -%}
 
-            {%- if l.is_cancelled -%}
-                {%- set old_subj = l.original_subject_name if l.original_subject_name and l.original_subject_name != 'ОТМЕНА' else 'Урок' -%}
-                <s>{{ old_subj }}</s>
-            {%- else -%}
-                <b>{{ l.subject_name }}</b>{% if tail_parts %} ➔ {{ tail_parts | join(' · ') | safe }}{% endif -%}
+                {%- if l.is_cancelled -%}
+                    {%- set old_subj = l.original_subject_name if l.original_subject_name and l.original_subject_name != 'ОТМЕНА' else 'Урок' -%}
+                    <s>{{ old_subj }}</s>{% if parts %} · {{ parts | join(' · ') | safe }}{% endif -%}
+                {%- else -%}
+                    <b>{{ l.subject_name }}</b>{% if parts %} ➔ {{ parts | join(' · ') | safe }}{% endif -%}
+                {%- endif -%}
             {%- endif -%}
         {%- endif -%}
         {%- if not loop.last %}{{ '\n' }}{% endif -%}

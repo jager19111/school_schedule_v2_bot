@@ -109,28 +109,34 @@ def build_poster_request(
         # ЛОГИКА УЧЕНИКА / РОДИТЕЛЯ
         # ==========================================
         else:
-            subj_names = {l.subject_name.lower() for l in group if l.subject_name}
-            is_trud = len(group) > 1 and any("труд" in s or "технологи" in s for s in subj_names)
+            # Вычисляем реальные предметы в слоте, исключая окна и отмены
+            real_subjs = set()
+            for l in group:
+                s_name = l.original_subject_name if l.is_cancelled and l.original_subject_name != "ОТМЕНА" else l.subject_name
+                if s_name and s_name.lower() not in ("отмена", "нет занятий", ""):
+                    real_subjs.add(s_name.lower())
+            
+            # Агрегируем Труд ТОЛЬКО если это ЕДИНСТВЕННЫЙ реальный предмет в слоте
+            is_trud_only = len(group) > 1 and len(real_subjs) == 1 and any("труд" in s or "технологи" in s for s in real_subjs)
 
-            if is_trud:
+            if is_trud_only:
                 # Агрегация Труда: оставляем только активные группы (дети идут к оставшимся учителям)
                 active_trud = [l for l in group if not l.is_cancelled]
-                # Если отменили вообще у всех — оставляем исходную группу для вывода зачеркивания
                 trud_to_render = active_trud if active_trud else group
 
                 for idx, l in enumerate(trud_to_render):
-                    is_window = (l.subject_name == "нет занятий")
+                    is_window = (l.subject_name == "нет занятий") or (l.is_cancelled and l.original_subject_name == "нет занятий")
                     items.append(PosterItem(
                         primary_text="нет занятий" if is_window else ("Труд (технология)" if idx == 0 else ""),
                         secondary_text=l.teacher_name if not is_window else None,
                         room=(l.room_name if l.room_name != "—" else None) if not is_window else None,
-                        is_cancelled=l.is_cancelled,
+                        is_cancelled=l.is_cancelled and not is_window, # Окно не зачеркиваем
                         original_primary="Труд (технология)" if idx == 0 and l.is_cancelled and not is_window else None
                     ))
             else:
                 for l in group:
-                    # --- ОБРАБОТКА ОКОН ---
-                    is_window = (l.subject_name == "нет занятий")
+                    # --- ОБРАБОТКА ОКОН И РАЗНЫХ ПРЕДМЕТОВ ---
+                    is_window = (l.subject_name == "нет занятий") or (l.is_cancelled and l.original_subject_name == "нет занятий")
                     
                     if is_window:
                         items.append(PosterItem(
@@ -144,10 +150,10 @@ def build_poster_request(
                     else:
                         subj = l.subject_name or l.original_subject_name or "Урок"
                         orig = l.original_subject_name if l.original_subject_name and l.original_subject_name != "ОТМЕНА" else subj
-                        
+
                         items.append(PosterItem(
                             primary_text=subj,
-                            secondary_text=l.teacher_name,
+                            secondary_text=l.teacher_name, # Всегда выводим преподавателя
                             room=l.room_name if l.room_name != "—" else None,
                             is_cancelled=l.is_cancelled,
                             original_primary=orig if l.is_cancelled else None
