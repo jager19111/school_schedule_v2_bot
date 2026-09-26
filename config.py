@@ -82,6 +82,19 @@ class Config:
     IMAGE_BREAKER_FAILURE_THRESHOLD: int = int(os.getenv("IMAGE_BREAKER_FAILURE_THRESHOLD", "5"))
     IMAGE_BREAKER_COOLDOWN_SEC: float = float(os.getenv("IMAGE_BREAKER_COOLDOWN_SEC", "120"))
 
+    # --- ДОБАВЛЕНО (Phase 1: Web) ---
+    WEB_ENABLED: bool = os.getenv("WEB_ENABLED", "0") == "1"
+    WEB_PUBLIC_URL: str = os.getenv("WEB_PUBLIC_URL", "http://localhost:8000")
+    WEB_HOST: str = os.getenv("WEB_HOST", "127.0.0.1")
+    WEB_PORT: int = int(os.getenv("WEB_PORT", "8000"))
+    WEB_TRUSTED_PROXY_IPS: str = os.getenv("WEB_TRUSTED_PROXY_IPS", "127.0.0.1")
+    WEB_GATEWAY_KEY: str = os.getenv("WEB_GATEWAY_KEY", "")
+    WEB_CSRF_SECRET: str = os.getenv("WEB_CSRF_SECRET", "")
+    WEB_ACCESS_MODE: str = os.getenv("WEB_ACCESS_MODE", "family_allowlist")
+    WEB_ALLOWED_FAMILY_IDS: str = os.getenv("WEB_ALLOWED_FAMILY_IDS", "")
+    WEB_COOKIE_SECURE: bool = os.getenv("WEB_COOKIE_SECURE", "1") == "1"
+    # --------------------------------
+
     HELP_PUBLIC_URL = os.getenv("HELP_PUBLIC_URL", "").strip() or None
     AUTHOR_CONTACT_URL = os.getenv("AUTHOR_CONTACT_URL", "").strip() or None
     DONATION_URL = os.getenv("DONATION_URL", "").strip() or None

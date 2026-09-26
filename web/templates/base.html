@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  {# ТЗ 40: viewport-fit=cover, БЕЗ user-scalable=no / maximum-scale #}
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#1a56db">
+  <title>{% block title %}Расписание{% endblock %} — School Schedule</title>
+  <link rel="stylesheet" href="/static/css/app.css">
+</head>
+{# ТЗ 16.1: глобальная передача CSRF во ВСЕ HTMX-запросы #}
+<body hx-headers='{"X-CSRF-Token": "{{ csrf_token }}"}'>
+
+<header class="app-header">
+  <div class="header-title">{% block header %}Расписание{% endblock %}</div>
+</header>
+
+<main class="app-content" id="main">
+  {% block content %}{% endblock %}
+</main>
+
+{# ТЗ 41: bottom navigation, touch targets >= 44px #}
+<nav class="bottom-nav" aria-label="Основная навигация">
+  <a href="/" class="nav-item{% if nav == 'today' %} active{% endif %}">
+    <span class="nav-icon">📅</span><span class="nav-label">Сегодня</span>
+  </a>
+  <a href="/schedule/week" class="nav-item{% if nav == 'week' %} active{% endif %}">
+    <span class="nav-icon">🗓</span><span class="nav-label">Неделя</span>
+  </a>
+  <a href="/school" class="nav-item{% if nav == 'school' %} active{% endif %}">
+    <span class="nav-icon">🏫</span><span class="nav-label">Школа</span>
+  </a>
+  <a href="/family" class="nav-item{% if nav == 'family' %} active{% endif %}">
+    <span class="nav-icon">👨‍👩‍👧</span><span class="nav-label">Семья</span>
+  </a>
+</nav>
+
+<script src="/static/js/htmx.min.js"></script>
+</body>
+</html>

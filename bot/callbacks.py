@@ -36,6 +36,9 @@ FAMILY_SKIP = "fs"
 CLAIM_CONFIRM = "cc"
 CLAIM_CANCEL = "cx"
 
+# Web Link
+WEB_OPEN = "web"
+
 # Настройки
 SETTINGS_FAMILY = "sf"
 SETTINGS_NOTIFICATIONS = "sn"

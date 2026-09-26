@@ -1,0 +1,7 @@
+{# Полная страница дня (dashboard = smart-day). #}
+{% extends "base.html" %}
+{% set nav = "today" %}
+{% block title %}{{ day.date_display }}{% endblock %}
+{% block content %}
+{% include "schedule/_day_content.html" %}
+{% endblock %}

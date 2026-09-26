@@ -79,6 +79,9 @@ from services.notifications.dispatcher import NotificationDispatcher
 
 from bot.middlewares.antiflood import AntiFloodMiddleware
 from bot.middlewares.error_middleware import GlobalErrorMiddleware
+
+from bot.handlers import web_link
+
 from bot.handlers import (
     settings, 
     settings_family, 
@@ -298,7 +301,7 @@ async def main():
     # 2. Инициализация базы данных
     database = Database(config.DB_PATH)
     await database.init_db()
-    applied = await apply_migrations(config.DB_PATH)   # <-- добавить
+    applied = await apply_migrations(config.DB_PATH)
     if applied:
         logger.info("DB migrations applied: %s", applied)
     # ==============================================================
@@ -337,6 +340,12 @@ async def main():
     # finally-блок обязан переживать любой сценарий падения main.
     image_service = None
 
+    # --- ДОБАВЛЕНО (Phase 1: Web Layer Variables) ---
+    web_server = None
+    web_task = None
+    web_sessions_service = None
+    # ------------------------------------------------
+
     try:
         # 3. Сервисы времени
         time_service = TimeService(TimeServiceConfig(timezone=config.TIMEZONE))
@@ -344,6 +353,7 @@ async def main():
         # (инвайты, /source_status и прочие таймстемпы — в местном
         # времени вместо сырого UTC "+00:00").
         UIRenderer.set_date_formatter(time_service.format_base)
+        
         # 4. Репозитории.
         # ВНИМАНИЕ: db_path= принимает ОБЪЕКТ СОЕДИНЕНИЯ, а не строку.
         # Это обеспечивает один пул (одно соединение) для всего приложения.
@@ -400,11 +410,9 @@ async def main():
             pipeline=notification_pipeline,
             dispatcher=notification_dispatcher,
             time_service=time_service,
-
         )
         cleanup_job = UserCleanupJob(user_repo, time_service=time_service, dormant_days=60)
         admin_service = AdminService(admin_repo=admin_repo, schedule_repo=schedule_repo, admin_ids=config.ADMIN_IDS)
-       
         help_service = HelpService(public_help_url=config.HELP_PUBLIC_URL, author_contact_url=config.AUTHOR_CONTACT_URL, donation_url=config.DONATION_URL)
         notification_delivery_cleanup_job = NotificationDeliveryCleanupJob(notification_repo=notification_repo, time_service=time_service, retention_days=35)
         
@@ -413,7 +421,7 @@ async def main():
             db_path=config.DB_PATH,
             backup_chat_id=config.BACKUP_CHAT_ID,
             time_service=time_service
-    )
+        )
         # =====================================================================
         # Этап 3 (ТЗ v2.2): генерация PNG-постеров расписания.
         #
@@ -429,10 +437,82 @@ async def main():
         # =====================================================================
         image_service, image_prefs = await setup_image_generation(db_connection)
 
+        # --- ДОБАВЛЕНО (Phase 1, 2, 2.1: Инициализация Web Layer) ---
+        if config.WEB_ENABLED:
+            from core.repository.web_auth_repository import WebAuthRepository
+            from services.web_sessions_service import WebSessionsService
+            from services.schedule_targets_service import ScheduleTargetsService
+            from web.app import WebSettings, create_web_app
+            import uvicorn
+
+            web_auth_repo = WebAuthRepository(
+                db_path=db_connection, time_service=time_service
+            )
+            web_sessions_service = WebSessionsService(
+                web_auth_repo, time_service, csrf_secret=config.WEB_CSRF_SECRET
+            )
+
+            # Phase 2.1: Таргет сервис с student_repo
+            schedule_targets_service = ScheduleTargetsService(
+                profile_service, students_service, student_repo
+            )
+
+            allowed_ids = frozenset(
+                int(x) for x in config.WEB_ALLOWED_FAMILY_IDS.split(",") if x.strip()
+            )
+            web_settings = WebSettings(
+                public_url=config.WEB_PUBLIC_URL,
+                allowed_hosts=[
+                    h for h in (
+                        config.WEB_PUBLIC_URL.split("//")[-1].split("/")[0],
+                        "localhost",
+                        "127.0.0.1",
+                    ) if h
+                ],
+                gateway_key=config.WEB_GATEWAY_KEY or None,
+                access_mode=config.WEB_ACCESS_MODE,
+                allowed_family_ids=allowed_ids,
+                cookie_secure=config.WEB_COOKIE_SECURE,
+            )
+
+            async def _db_liveness() -> bool:
+                # Лёгкая проверка общего shared-соединения (не открываем новое).
+                await db_connection.execute("SELECT 1")
+                return True
+
+            web_app = create_web_app(
+                web_settings=web_settings,
+                sessions_service=web_sessions_service,
+                profile_service=profile_service,
+                schedule_service=schedule_service,
+                students_service=students_service,
+                schedule_targets_service=schedule_targets_service,
+                time_service=time_service,
+                db_liveness=_db_liveness,
+            )
+
+            uvicorn_config = uvicorn.Config(
+                web_app,
+                host=config.WEB_HOST,
+                port=config.WEB_PORT,
+                workers=1,                      # SQLite: строго 1 до PostgreSQL
+                loop="asyncio",
+                reload=False,
+                proxy_headers=True,
+                forwarded_allow_ips=config.WEB_TRUSTED_PROXY_IPS,
+                timeout_graceful_shutdown=10,
+                log_level="info",
+            )
+            web_server = uvicorn.Server(uvicorn_config)
+        # ----------------------------------------------------
+
         # 6. Регистрация роутеров команд
         dp.include_router(registration.router)
         dp.include_router(help.router)
         
+        # --- ДОБАВЛЕНО (Phase 1: Кнопка генерации ссылки) ---
+        dp.include_router(web_link.router)
+        # ----------------------------------------------------
 
         # Image-first расписание (ТЗ v2.2): перехватывает навигацию по дням
         # ТОЛЬКО при ENABLE_IMAGE_GENERATION=True (иначе апдейт безусловно
@@ -477,13 +557,14 @@ async def main():
             admin_repo=admin_repo,
             student_repo=student_repo,
             db_path=config.DB_PATH,
-            notification_service=notification_service, # Для теста из админ хендлера
+            notification_service=notification_service,
             antiflood=antiflood_middleware,
             config=config,
             audit_service=audit_service,
             # Этап 3 (ТЗ v2.2): постеры расписания
             image_service=image_service,
             image_prefs=image_prefs,
+            web_sessions_service=web_sessions_service,
         )
 
         # 7. Первоначальная синхронизация кэша при старте
@@ -666,20 +747,45 @@ async def main():
             misfire_grace_time=1800,
         )
 
+        if config.WEB_ENABLED and web_sessions_service is not None:
+            scheduler.add_job(
+                web_sessions_service.cleanup,
+                trigger="cron",
+                hour=4,
+                minute=10,
+                id="web_auth_cleanup_job",
+                replace_existing=True,
+                coalesce=True,
+            )
+
         scheduler.start()
         logger.info("Планировщик задач успешно запущен.")
+
+        # --- ЗАПУСК WEB SERVER ---
+        if web_server is not None:
+            web_task = asyncio.create_task(web_server.serve(), name="web-server")
+            logger.info("Web UI: %s", config.WEB_PUBLIC_URL)
+        # -------------------------
 
         # 9. Запуск поллинга
         logger.info("🚀 Бот (v2) готов к работе!")
         await dp.start_polling(bot)
     finally:
         # Гарантированное освобождение ресурсов.
-        # Порядок: scheduler (без ожидания задач) -> браузер постеров
-        # -> БД -> HTTP-сессия -> aiogram session. HTTP-сессия закрывается
-        # с проверкой, чтобы двойное закрытие не падало.
+        # Порядок: web_server -> scheduler -> браузер -> БД -> HTTP-сессия -> aiogram
+        
+        # --- ДОБАВЛЕНО (Phase 1: Web Shutdown) ---
+        if web_server is not None:
+            web_server.should_exit = True
+        if web_task is not None:
+            try:
+                await asyncio.wait_for(web_task, timeout=15)
+            except asyncio.TimeoutError:
+                logger.warning("Web server shutdown timed out")
+
         if scheduler is not None:
             scheduler.shutdown(wait=False)
-        # Этап 3: корректное завершение Chromium — осиротевшие
+        # Корректное завершение Chromium — осиротевшие
         # chrome-процессы после каждого деплоя недопустимы.
         if image_service is not None:
             try:

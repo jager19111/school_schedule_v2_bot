@@ -125,12 +125,47 @@ def _add_audit_logs_table(conn: sqlite3.Connection) -> str | None:
         return "audit_logs_table"
     return None
 
+# --- ДОБАВЛЕНО (Phase 1: Web Auth Tables) ---
+def _create_web_auth_tables(conn: sqlite3.Connection) -> str | None:
+    """web_login_tokens + web_sessions (идемпотентно, для существующих БД)."""
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS web_login_tokens (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            token_hash TEXT NOT NULL UNIQUE,
+            user_id INTEGER NOT NULL,
+            created_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            used INTEGER NOT NULL DEFAULT 0,
+            used_at TEXT
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS web_sessions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_hash TEXT NOT NULL UNIQUE,
+            user_id INTEGER NOT NULL,
+            created_at TEXT NOT NULL,
+            last_seen_at TEXT NOT NULL,
+            idle_expires_at TEXT NOT NULL,
+            absolute_expires_at TEXT NOT NULL,
+            revoked_at TEXT,
+            user_agent TEXT
+        )
+    """)
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_web_sessions_user
+        ON web_sessions(user_id, revoked_at, absolute_expires_at)
+    """)
+    return "web_auth_tables"
+# --------------------------------------------
+
 # Добавьте _add_audit_logs_table в массив MIGRATIONS
 MIGRATIONS = [
     _add_family_invites_short_code,
     _apply_schedule_cache_v3,
     _add_image_schedule_preference,
     _add_audit_logs_table,
+    _create_web_auth_tables, # <-- ДОБАВЛЕНО (Phase 1: Web)
 ]
 
 def apply_migrations_sync(db_path: str) -> list[str]:

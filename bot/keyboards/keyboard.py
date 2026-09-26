@@ -150,6 +150,10 @@ class Keyboards:
         buttons.append([InlineKeyboardButton(text=format_text, callback_data=callbacks.SETTINGS_TOGGLE_FORMAT)])
         # --------------------------------------------------------
         
+        # --- ДОБАВЛЕНО (Phase 1: Кнопка Web) ---
+        buttons.append([InlineKeyboardButton(text='🌐 Веб-версия', callback_data=callbacks.WEB_OPEN)])
+        # ---------------------------------------
+        
         buttons.append([InlineKeyboardButton(text='ℹ️ Справка', callback_data=callbacks.HelpCD(section='main').pack())])
         buttons.append([InlineKeyboardButton(text='♻️ Перерегистрация/Выход', callback_data=callbacks.AUTH_RESTART)])
         return InlineKeyboardMarkup(inline_keyboard=buttons)

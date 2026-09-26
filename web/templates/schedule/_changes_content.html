@@ -1,0 +1,71 @@
+{#
+  Fragment «Изменения» на дату (Phase 2.1, ТЗ 24).
+  Источник: ScheduleService.get_day_changes_detail (origin="class").
+  «Было → стало» для замен, зачёркивание отмен, ➕ для добавленных уроков.
+#}
+<section id="day-content" class="day-schedule changes-view">
+
+  <header class="day-header">
+    <h2 class="day-title">🔄 Изменения — {{ changes.weekday_display|capitalize }}, {{ changes.date_display }}</h2>
+    {% if changes.class_name %}<div class="day-subtitle">{{ changes.class_name }}</div>{% endif %}
+    {% if changes.student_name %}<div class="day-subtitle">{{ changes.student_name }}</div>{% endif %}
+  </header>
+
+  <nav class="day-nav" aria-label="Возврат к расписанию">
+    <a class="nav-btn today-btn" href="/schedule/day/{{ changes.date_iso }}"
+       hx-get="/schedule/day/{{ changes.date_iso }}" hx-target="#day-content"
+       hx-swap="outerHTML" hx-push-url="/schedule/day/{{ changes.date_iso }}">
+      ← К расписанию
+    </a>
+  </nav>
+
+  <div class="lessons-list">
+    {% if not changes.changes %}
+    <div class="empty-day">Изменений нет ✅</div>
+    {% endif %}
+    {% for c in changes.changes %}
+    <article class="lesson-card{% if c.is_cancelled %} status-cancelled{% elif c.is_added %} status-added{% else %} status-exchange{% endif %}">
+      <div class="lesson-num">{{ c.display_num }}</div>
+      <div class="lesson-main">
+        <div class="lesson-time"><time>{{ c.start_time }}</time> – <time>{{ c.end_time }}</time></div>
+
+        {% if c.is_cancelled %}
+        <div class="lesson-subject"><s>{{ c.original_subject_name }}</s></div>
+        <div class="lesson-meta"><span>🚫 Отменён</span></div>
+
+        {% elif c.is_added %}
+        <div class="lesson-subject">{{ c.subject_name }}</div>
+        <div class="lesson-meta">
+          {% if c.teacher_name and c.teacher_name != '—' %}<span>👤 {{ c.teacher_name }}</span>{% endif %}
+          {% if c.room_name and c.room_name != '—' %}<span>📍 {{ c.room_name }}</span>{% endif %}
+        </div>
+
+        {% else %}
+        <div class="lesson-subject">
+          <s>{{ c.original_subject_name }}</s> ➔ <b>{{ c.subject_name }}</b>
+        </div>
+        <div class="lesson-meta">
+          {% if c.original_teacher_name != '—' and c.original_teacher_name != c.teacher_name %}
+          <span>👤 <s>{{ c.original_teacher_name }}</s> ➔ {{ c.teacher_name }}</span>
+          {% elif c.teacher_name and c.teacher_name != '—' %}
+          <span>👤 {{ c.teacher_name }}</span>
+          {% endif %}
+          {% if c.original_room_name != '—' and c.original_room_name != c.room_name %}
+          <span>📍 <s>{{ c.original_room_name }}</s> ➔ {{ c.room_name }}</span>
+          {% elif c.room_name and c.room_name != '—' %}
+          <span>📍 {{ c.room_name }}</span>
+          {% endif %}
+        </div>
+        {% endif %}
+      </div>
+      {% if c.is_cancelled %}
+      <div class="lesson-badge cancelled">отмена</div>
+      {% elif c.is_added %}
+      <div class="lesson-badge added">добавлен</div>
+      {% else %}
+      <div class="lesson-badge exchange">замена</div>
+      {% endif %}
+    </article>
+    {% endfor %}
+  </div>
+</section>

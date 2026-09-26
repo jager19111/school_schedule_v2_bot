@@ -442,9 +442,34 @@ class Database:
                 )
             """)
 
+            # --- ДОБАВЛЕНО (Phase 1: Web Auth Tables) ---
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS web_login_tokens (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    token_hash TEXT NOT NULL UNIQUE,
+                    user_id INTEGER NOT NULL,
+                    created_at TEXT NOT NULL,
+                    expires_at TEXT NOT NULL,
+                    used INTEGER NOT NULL DEFAULT 0,
+                    used_at TEXT
+                )
+            """)
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS web_sessions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_hash TEXT NOT NULL UNIQUE,
+                    user_id INTEGER NOT NULL,
+                    created_at TEXT NOT NULL,
+                    last_seen_at TEXT NOT NULL,
+                    idle_expires_at TEXT NOT NULL,
+                    absolute_expires_at TEXT NOT NULL,
+                    revoked_at TEXT,
+                    user_agent TEXT
+                )
+            """)
+            # --------------------------------------------
 
-            # --- Удалить после первой инициализации с новыми индексами ---
-# --- Индексы ---
+            # --- Индексы ---
             # Очистка старых/неоптимальных индексов для миграции
             await db.execute("DROP INDEX IF EXISTS idx_notification_delivery_log_date")
             await db.execute("DROP INDEX IF EXISTS idx_schedule_class_day_origin")
@@ -495,6 +520,13 @@ class Database:
                 ON schedule_watch_targets(owner_user_id, created_at, id)
                 WHERE is_enabled = 1
             """)
+
+            # --- ДОБАВЛЕНО (Phase 1: Индекс веб-сессий) ---
+            await db.execute("""
+                CREATE INDEX IF NOT EXISTS idx_web_sessions_user
+                ON web_sessions(user_id, revoked_at, absolute_expires_at)
+            """)
+            # ----------------------------------------------
                        
             await db.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
             await db.commit()

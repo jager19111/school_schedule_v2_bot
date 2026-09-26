@@ -1,0 +1,86 @@
+{#
+  Fragment расписания дня. Используется и как HTMX-target (#day-content),
+  и как содержимое полной страницы.
+  Навигация (ТЗ 26): prev/next/today — hx-get, обновляют только этот блок.
+  Phase 2.1: переключатель ребёнка — hx-post (POST + CSRF), «Изменения» —
+  отдельный fragment на выбранную дату.
+#}
+<section id="day-content" class="day-schedule">
+
+  {# Переключатель ребёнка (ТЗ 28): POST + CSRF, identity не меняется #}
+  {% if students and students|length > 1 %}
+  <div class="student-switch" role="group" aria-label="Выбор ребёнка">
+    {% for s in students %}
+    <button type="button" class="student-chip{% if s.is_current %} current{% endif %}"
+            {% if not s.is_current %}
+            hx-post="/api/v1/schedule/select/{{ s.student_id }}"
+            hx-indicator="#page-loading"
+            {% endif %}>
+      {{ s.name }}
+    </button>
+    {% endfor %}
+  </div>
+  {% elif students %}
+  <div class="student-switch single">{{ students[0].name }}</div>
+  {% endif %}
+
+  <header class="day-header">
+    <h2 class="day-title">{{ day.weekday_display|capitalize }}, {{ day.date_display }}</h2>
+    {% if day.class_name %}<div class="day-subtitle">{{ day.class_name }}{% if day.group_name and day.group_name != 'Весь класс' %} · {{ day.group_name }}{% endif %}</div>{% endif %}
+    {% if day.stale_warning %}
+    <div class="stale-warning" role="status">{{ day.stale_warning }}</div>
+    {% endif %}
+  </header>
+
+  <nav class="day-nav" aria-label="Навигация по дням">
+    <a class="nav-btn" href="/schedule/day/{{ day.date_iso|prev_date }}"
+       hx-get="/schedule/day/{{ day.date_iso|prev_date }}" hx-target="#day-content"
+       hx-swap="outerHTML" hx-push-url="true">← Пред.</a>
+    <a class="nav-btn today-btn" href="/">Сегодня</a>
+    <a class="nav-btn" href="/schedule/day/{{ day.date_iso|next_date }}"
+       hx-get="/schedule/day/{{ day.date_iso|next_date }}" hx-target="#day-content"
+       hx-swap="outerHTML" hx-push-url="true">След. →</a>
+  </nav>
+
+  <div class="lessons-list">
+    {% if not day.lessons %}
+    <div class="empty-day">Нет занятий 🎉</div>
+    {% endif %}
+    {% for lesson in day.lessons %}
+    <article class="lesson-card status-{{ lesson.status }}">
+      <div class="lesson-num">{{ lesson.display_num }}</div>
+      <div class="lesson-main">
+        <div class="lesson-time"><time>{{ lesson.start_time }}</time> – <time>{{ lesson.end_time }}</time></div>
+        <div class="lesson-subject">{{ lesson.subject_name }}</div>
+        <div class="lesson-meta">
+          {% if lesson.teacher_name and lesson.teacher_name != '—' %}<span>👤 {{ lesson.teacher_name }}</span>{% endif %}
+          {% if lesson.room_name and lesson.room_name != '—' %}<span>📍 {{ lesson.room_name }}</span>{% endif %}
+        </div>
+      </div>
+      {% if lesson.status == 'extra' %}
+      <div class="lesson-badge extra">доп.</div>
+      {% elif lesson.status == 'cancelled' %}
+      <div class="lesson-badge cancelled">отмена</div>
+      {% elif lesson.status == 'exchange' %}
+      <div class="lesson-badge exchange">замена</div>
+      {% elif lesson.status == 'methodological' %}
+      <div class="lesson-badge methodological">метод.</div>
+      {% endif %}
+    </article>
+    {% endfor %}
+  </div>
+
+  {% if day.has_permutation %}
+  <div class="permutation-note">🔁 Изменения — перестановка уроков</div>
+  {% endif %}
+
+  {% if day.exchange_count > 0 %}
+  <nav class="changes-nav" aria-label="Изменения">
+    <a class="nav-btn changes-btn" href="/schedule/changes/{{ day.date_iso }}"
+       hx-get="/schedule/changes/{{ day.date_iso }}" hx-target="#day-content"
+       hx-swap="outerHTML" hx-push-url="/schedule/changes/{{ day.date_iso }}">
+      🔄 Изменения ({{ day.exchange_count }})
+    </a>
+  </nav>
+  {% endif %}
+</section>

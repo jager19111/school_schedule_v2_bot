@@ -1,0 +1,45 @@
+{# Экран «Неделя» (ТЗ 27): сводка по дням, клик -> подробный день. #}
+{% extends "base.html" %}
+{% set nav = "week" %}
+{% block title %}Неделя{% endblock %}
+{% block header %}Неделя · {{ week.week_display }}{% endblock %}
+{% block content %}
+<section class="week-schedule">
+
+  {% if students and students|length > 1 %}
+  <div class="student-switch single">
+    {% for s in students %}{% if s.is_current %}{{ s.name }}{% endif %}{% endfor %}
+  </div>
+  {% elif students %}
+  <div class="student-switch single">{{ students[0].name }}</div>
+  {% endif %}
+
+  <div class="week-list">
+    {% for day in week.days %}
+    <a class="week-day{% if day.has_changes %} has-changes{% endif %}"
+       href="/schedule/day/{{ day.date_iso }}"
+       hx-get="/schedule/day/{{ day.date_iso }}" hx-target="#main"
+       hx-swap="innerHTML" hx-push-url="/schedule/day/{{ day.date_iso }}">
+      <div class="week-day-name">{{ day.weekday_display }} <span class="week-day-date">{{ day.date_short }}</span></div>
+      <div class="week-day-info">
+        {{ day.lesson_count }} уроков
+        {% if day.extra_count %} · {{ day.extra_count }} доп.{% endif %}
+        {% if day.has_changes %} · <span class="week-changes">🔄 {{ day.exchange_count }}</span>{% endif %}
+      </div>
+    </a>
+    {% endfor %}
+  </div>
+
+  <nav class="day-nav" aria-label="Навигация по неделям">
+    <a class="nav-btn" href="/schedule/week?week={{ prev_week }}"
+       hx-get="/schedule/week?week={{ prev_week }}" hx-target="#main"
+       hx-swap="innerHTML" hx-push-url="/schedule/week?week={{ prev_week }}">← Пред. нед.</a>
+    <a class="nav-btn" href="/schedule/week"
+       hx-get="/schedule/week" hx-target="#main" hx-swap="innerHTML"
+       hx-push-url="/schedule/week">Текущая</a>
+    <a class="nav-btn" href="/schedule/week?week={{ next_week }}"
+       hx-get="/schedule/week?week={{ next_week }}" hx-target="#main"
+       hx-swap="innerHTML" hx-push-url="/schedule/week?week={{ next_week }}">След. нед. →</a>
+  </nav>
+</section>
+{% endblock %}
