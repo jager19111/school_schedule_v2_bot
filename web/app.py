@@ -102,34 +102,33 @@ def create_web_app(
     async def custom_http_exception_handler(request: Request, exc: StarletteHTTPException):
         is_page_request = not request.url.path.startswith("/api/") and not request.headers.get("hx-request")
         
-        # 1. 401 Unauthorized (нет сессии) -> Редирект на вход
-        if exc.status_code == 401 and is_page_request:
-            return RedirectResponse(url="/auth", status_code=303)
+        # 1. 401 и 403 обрабатываем одинаково красивой заглушкой,
+        # НИКАКИХ редиректов на /auth, чтобы разорвать бесконечный цикл.
+        if is_page_request and exc.status_code in (401, 403):
+            title = "Требуется вход" if exc.status_code == 401 else "Доступ закрыт"
+            msg = "Пожалуйста, откройте Telegram-бота и нажмите кнопку «Веб-версия» для входа." if exc.status_code == 401 else "Режим закрытого тестирования. Ваша семья не в списке."
             
-        # 2. 403 Forbidden (сессия есть, но нет прав / не в allowlist) -> Остановка цикла
-        if exc.status_code == 403 and is_page_request:
             return HTMLResponse(
                 content=f"""<!DOCTYPE html>
                 <html lang="ru">
                 <head>
                     <meta charset="utf-8">
-                    <meta name="viewport" content="width=device-width, initial-scale=1">
-                    <title>Доступ закрыт</title>
+                    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+                    <meta name="theme-color" content="#1a56db">
+                    <title>{title}</title>
                 </head>
-                <body style="font-family: -apple-system, BlinkMacSystemFont, sans-serif; text-align: center; padding: 40px 20px; background: #f9fafb; color: #111827;">
-                    <div style="max-width: 400px; margin: 0 auto; background: white; padding: 30px; border-radius: 16px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1);">
-                        <h2 style="color: #ef4444; margin-top: 0;">🔒 Доступ закрыт</h2>
+                <body style="font-family: -apple-system, BlinkMacSystemFont, sans-serif; text-align: center; padding: 40px 20px; background: #f9fafb; color: #111827; margin: 0;">
+                    <div style="max-width: 400px; margin: 40px auto; background: white; padding: 30px; border-radius: 16px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1);">
+                        <h2 style="color: #ef4444; margin-top: 0;">🔒 {title}</h2>
                         <p style="font-size: 1.1rem; color: #4b5563;">{exc.detail}</p>
-                        <p style="margin-top: 24px; font-size: 0.9rem; color: #9ca3af;">
-                            Режим закрытого тестирования. Ваша семья не добавлена в список разрешённых (allowlist).
-                        </p>
+                        <p style="margin-top: 24px; font-size: 0.95rem; color: #6b7280; line-height: 1.5;">{msg}</p>
                     </div>
                 </body>
                 </html>""",
-                status_code=403
+                status_code=exc.status_code
             )
             
-        # 3. Для API и HTMX -> Отдаем JSON, жестко фиксируя UTF-8 для Safari
+        # 2. Для API и HTMX -> Отдаем JSON, жестко фиксируя UTF-8 для Safari
         return JSONResponse(
             status_code=exc.status_code,
             content={"detail": exc.detail},
