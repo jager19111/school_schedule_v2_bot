@@ -22,27 +22,25 @@
   </div>
   <script>
     function pingServer() {
-      // Добавляем timestamp, чтобы запрос не застрял в кэше Safari
-      fetch('/?ping=' + Date.now(), { method: 'HEAD', cache: 'no-store' })
+      // Пингуем системный healthcheck (он работает быстрее всего)
+      fetch('/health/live?t=' + Date.now(), { method: 'GET', cache: 'no-store' })
         .then(function(res) {
-          // Если статус < 500, значит Nginx больше не отдает 502, сервер бота поднялся!
-          if (res.status < 500) {
+          if (res.status === 200) {
             document.getElementById('title').innerText = "Готово!";
-            document.getElementById('msg').innerText = "Загружаем расписание...";
-            setTimeout(function() { window.location.reload(); }, 500);
+            document.getElementById('msg').innerText = "Возвращаемся к расписанию...";
+            // Заменяем текущую страницу в истории браузера
+            setTimeout(function() { window.location.replace('/'); }, 500);
           } else {
             setTimeout(pingServer, 2000);
           }
         })
         .catch(function() {
-          // Нет интернета
           document.getElementById('title').innerText = "Нет сети";
           document.getElementById('msg').innerText = "Проверьте подключение к интернету";
           setTimeout(pingServer, 2000);
         });
     }
-    // Начинаем проверку через 2 секунды
-    setTimeout(pingServer, 2000);
+    setTimeout(pingServer, 1500);
   </script>
 </body>
 </html>
