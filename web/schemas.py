@@ -125,9 +125,67 @@ class WebSearchResults(BaseModel):
     rooms: List[WebSchoolItem]
 
 
+class WebFreeRoomItem(BaseModel):
+    id: str
+    name: str
+
+
 class WebFreeRooms(BaseModel):
     """Свободные кабинеты сейчас (ТЗ 32, FreeRoomsStatusDTO)."""
-
     status_line: str   # «14:05 (идёт 5 урок 13:15–14:00)»
     is_empty: bool
-    rooms: List[WebSchoolItem]
+    current_time: str
+    is_finished: bool
+    is_break: bool
+    target_num: Optional[int]
+    slot_start: Optional[str]
+    slot_end: Optional[str]
+    slot_display: str
+    rooms: List[WebFreeRoomItem]
+
+
+# ==============================================================
+# Phase 4: «Семья» (ТЗ 33-34)
+# ==============================================================
+
+
+class WebFamilyMember(BaseModel):
+    user_id: Optional[int]
+    name: str
+    role: str
+    role_label: str
+    is_current: bool
+    is_family_admin: bool
+
+
+class WebStudentCard(BaseModel):
+    student_id: int
+    name: str
+    class_name: str
+    group_name: str
+    is_virtual: bool      # без Telegram
+    can_delete: bool      # virtual => можно удалить
+
+
+class WebInviteItem(BaseModel):
+    invite_id: int
+    role_label: str
+    short_code: str
+    expires_display: str
+
+
+class WebInviteResult(BaseModel):
+    """Созданное приглашение: короткий код + deep link (если известен бот)."""
+
+    role_label: str
+    short_code: str
+    deep_link: Optional[str] = None
+    expires_display: str
+    kind: str = "family"   # family | claim
+
+
+class WebPermissionItem(BaseModel):
+    adult_user_id: int
+    adult_name: str
+    can_manage: bool
+    is_self: bool

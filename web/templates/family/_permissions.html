@@ -1,0 +1,28 @@
+{# Права взрослых на доп. занятия student profile (Phase 4, ТЗ 33).
+   Fragment: GET открывает, POST-toggle перерисовывает этот же fragment. #}
+<section id="family-content" class="family-page">
+  <h2 class="day-title">🔑 Права на доп. занятия</h2>
+  <div class="day-subtitle">{{ student_name }}</div>
+
+  <div class="permissions-list">
+    {% for p in permissions %}
+    <div class="invite-row">
+      <div class="invite-main">
+        {{ p.adult_name }}{% if p.is_self %} <span class="you-badge">вы</span>{% endif %}
+        — <b class="{% if p.can_manage %}perm-on">может управлять{% else %}perm-off">только просмотр{% endif %}</b>
+      </div>
+      <button type="button" class="nav-btn small"
+              hx-post="/family/students/{{ student_id }}/permissions/{{ p.adult_user_id }}"
+              hx-target="#family-content" hx-swap="outerHTML"
+              hx-disabled-elt="this">
+        {% if p.can_manage %}Отозвать{% else %}Разрешить{% endif %}
+      </button>
+    </div>
+    {% endfor %}
+  </div>
+
+  <nav class="day-nav">
+    <a class="nav-btn" href="/family"
+       hx-get="/family" hx-target="#family-content" hx-swap="outerHTML">← Семья</a>
+  </nav>
+</section>

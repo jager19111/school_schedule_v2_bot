@@ -1,0 +1,123 @@
+{#
+  Fragment «Семья» (Phase 4). Используется как содержимое страницы
+  и как HTMX-target (#family-content) для mutations.
+  Все POST идут с CSRF из глобального hx-headers на <body>.
+#}
+<section id="family-content" class="family-page">
+
+  {% if no_family %}
+  <div class="empty-day">Вы не состоите в семье.<br>Присоединиться можно через приглашение в Telegram-боте.</div>
+  {% else %}
+
+  {# Результат созданного приглашения / claim-ссылки #}
+  {% if invite_result %}
+  <div class="invite-result card-ok" role="status">
+    {% if invite_result.kind == 'claim' %}
+    <b>📎 Ссылка для привязки Telegram — {{ invite_result.role_label }}</b>
+    {% else %}
+    <b>✅ Приглашение создано — {{ invite_result.role_label }}</b>
+    {% endif %}
+    <div class="invite-code">📋 Код: <code>{{ invite_result.short_code }}</code></div>
+    {% if invite_result.deep_link %}
+    <div class="invite-link"><a href="{{ invite_result.deep_link }}" rel="noopener">Открыть в Telegram</a></div>
+    {% else %}
+    <div class="invite-hint">Передайте код участнику — он введёт его в боте.</div>
+    {% endif %}
+    <div class="invite-exp">Действует до {{ invite_result.expires_display }} (одноразовое).</div>
+  </div>
+  {% endif %}
+
+  {# ---------- Участники ---------- #}
+  <h2 class="day-title">Участники</h2>
+  <div class="family-members">
+    {% for m in members %}
+    <div class="family-member{% if m.is_current %} current{% endif %}">
+      <div class="member-name">
+        {{ m.name }}{% if m.is_current %} <span class="you-badge">вы</span>{% endif %}
+        {% if m.is_family_admin %} <span class="admin-badge">админ</span>{% endif %}
+      </div>
+      <div class="member-role">{{ m.role_label }}</div>
+    </div>
+    {% endfor %}
+  </div>
+
+  {# ---------- Ученики (student profiles) ---------- #}
+  {% if students %}
+  <h2 class="day-title">Дети</h2>
+  <div class="family-students">
+    {% for s in students %}
+    <div class="student-card">
+      <div class="student-card-main">
+        <div class="student-name">{{ s.name }}</div>
+        <div class="student-meta">{{ s.class_name }}{% if s.group_name != 'Весь класс' %} · {{ s.group_name }}{% endif %}
+          {% if s.is_virtual %} · <i>без Telegram</i>{% endif %}</div>
+        <div class="student-actions">
+          <button type="button" class="nav-btn small"
+                  hx-post="/api/v1/schedule/select/{{ s.student_id }}"
+                  hx-indicator="#page-loading">📅 Расписание</button>
+          {% if is_admin %}
+          <button type="button" class="nav-btn small"
+                  hx-get="/family/students/{{ s.student_id }}/edit"
+                  hx-target="#family-content" hx-swap="outerHTML">✏️ Класс</button>
+          <button type="button" class="nav-btn small"
+                  hx-get="/family/students/{{ s.student_id }}/permissions"
+                  hx-target="#family-content" hx-swap="outerHTML">🔑 Права</button>
+          {% if s.is_virtual %}
+          <button type="button" class="nav-btn small"
+                  hx-post="/family/students/{{ s.student_id }}/claim"
+                  hx-target="#family-content" hx-swap="outerHTML">📎 Привязать Telegram</button>
+          <button type="button" class="nav-btn small danger"
+                  hx-confirm="Удалить ученика {{ s.name }}?"
+                  hx-post="/family/students/{{ s.student_id }}/delete"
+                  hx-target="#family-content" hx-swap="outerHTML">🗑</button>
+          {% endif %}
+          {% endif %}
+        </div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {# ---------- Администрирование (ТЗ 33) ---------- #}
+  {% if is_admin %}
+  <h2 class="day-title">Приглашения</h2>
+  {% if invites %}
+  <div class="family-invites">
+    {% for i in invites %}
+    <div class="invite-row">
+      <div class="invite-main">
+        <b>{{ i.role_label }}</b> · код <code>{{ i.short_code }}</code> · до {{ i.expires_display }}
+      </div>
+      <button type="button" class="nav-btn small danger"
+              hx-confirm="Отозвать приглашение {{ i.short_code }}?"
+              hx-post="/family/invites/{{ i.invite_id }}/revoke"
+              hx-target="#family-content" hx-swap="outerHTML">Отозвать</button>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="day-subtitle">Активных приглашений нет.</div>
+  {% endif %}
+
+  <div class="invite-create">
+    <div class="day-subtitle">Создать приглашение (одноразовое, 24 часа):</div>
+    <div class="invite-create-buttons">
+      {% for role, label in [('child', '👶 Ребёнок'), ('parent', '🧑‍🧒 Родитель'), ('observer', '👁 Наблюдатель')] %}
+      <button type="button" class="nav-btn small"
+              hx-post="/family/invites" hx-vals='{"role": "{{ role }}"}'
+              hx-target="#family-content" hx-swap="outerHTML"
+              hx-disabled-elt="this">{{ label }}</button>
+      {% endfor %}
+    </div>
+  </div>
+
+  <div class="invite-create" style="margin-top: 10px;">
+    <button type="button" class="nav-btn small"
+            hx-get="/family/students/new"
+            hx-target="#family-content" hx-swap="outerHTML">➕ Добавить ученика (без Telegram)</button>
+  </div>
+  {% endif %}
+
+  {% endif %}
+</section>

@@ -460,6 +460,15 @@ async def main():
             allowed_ids = frozenset(
                 int(x) for x in config.WEB_ALLOWED_FAMILY_IDS.split(",") if x.strip()
             )
+            
+            # Получаем username бота для web-invites
+            bot_username = None
+            try:
+                me = await bot.get_me()
+                bot_username = me.username
+            except Exception:
+                logger.warning("Не удалось получить username бота для web-invites")
+                
             web_settings = WebSettings(
                 public_url=config.WEB_PUBLIC_URL,
                 allowed_hosts=[
@@ -473,6 +482,7 @@ async def main():
                 access_mode=config.WEB_ACCESS_MODE,
                 allowed_family_ids=allowed_ids,
                 cookie_secure=config.WEB_COOKIE_SECURE,
+                bot_username=bot_username,
             )
 
             async def _db_liveness() -> bool:

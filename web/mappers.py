@@ -2,32 +2,30 @@
 #
 # Mapping domain DTO -> Web* схемы (ТЗ 44).
 # Routes не собирают web-представления из DTO сами — только через mappers.
-# Форматирование дат — чистая строковая логика по date-only ISO (ТЗ 55):
-# без JS Date и без timezone-преобразований.
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
+from typing import Dict, Iterable, List, Optional
 
-from core.models.dto import (
-    DayChangesDetailDTO,
-    DayScheduleDTO,
-    RoomListDTO,
-    TeacherListDTO,
-    WeekSummaryDTO,
-)
-from core.models.dto import ClassListDTO
+from core.models.dto import DayChangesDetailDTO, DayScheduleDTO, WeekSummaryDTO
 from services.schedule_targets_service import ScheduleTarget
 from web.schemas import (
     WebChange,
     WebDayChanges,
     WebDaySchedule,
     WebDaySummary,
+    WebFamilyMember,
+    WebFreeRoomItem,
     WebFreeRooms,
+    WebInviteItem,
+    WebInviteResult,
     WebLesson,
+    WebPermissionItem,
     WebSchoolItem,
     WebSearchResults,
     WebStudent,
+    WebStudentCard,
     WebWeekSchedule,
 )
 
@@ -40,6 +38,18 @@ _MONTHS_GEN = [
     "января", "февраля", "марта", "апреля", "мая", "июня",
     "июля", "августа", "сентября", "октября", "ноября", "декабря",
 ]
+
+ROLE_LABELS = {
+    "parent": "Родитель",
+    "observer": "Наблюдатель",
+    "child": "Ребёнок",
+    "teacher": "Учитель",
+}
+INVITE_ROLE_LABELS = {
+    "child": "Ребёнок с Telegram",
+    "parent": "Родитель",
+    "observer": "Наблюдатель",
+}
 
 
 def _parse(date_iso: str) -> date:
@@ -58,8 +68,8 @@ def _lesson_status(lesson) -> str:
     return "normal"
 
 
-def _g(lesson, name: str, default=""):
-    value = getattr(lesson, name, default)
+def _g(obj, name: str, default=""):
+    value = getattr(obj, name, default)
     return default if value is None else value
 
 
@@ -99,11 +109,12 @@ def day_to_web(
     stale_warning: str | None = None,
 ) -> WebDaySchedule:
     lessons = [lesson_to_web(l) for l in (dto.lessons or [])]
-    date_display, weekday = _date_parts(dto.date_iso, today_iso)
+    d = _parse(dto.date_iso)
+    prefix = "сегодня, " if dto.date_iso == today_iso else ""
     return WebDaySchedule(
         date_iso=dto.date_iso,
-        date_display=date_display,
-        weekday_display=weekday,
+        date_display=f"{prefix}{d.day} {_MONTHS_GEN[d.month - 1]}",
+        weekday_display=_WEEKDAYS_FULL[d.weekday()],
         class_name=str(getattr(dto, "class_name", "") or ""),
         group_name=str(getattr(dto, "group_name", "") or ""),
         student_name=target.name,
@@ -219,41 +230,37 @@ def student_to_web(target: ScheduleTarget, *, current_id: int | None) -> WebStud
     )
 
 
-# ==============================================================
-# School (Phase 3)
-# ==============================================================
+def prev_next_dates(date_iso: str) -> tuple[str, str]:
+    d = _parse(date_iso)
+    prev = date.fromordinal(d.toordinal() - 1).isoformat()
+    nxt = date.fromordinal(d.toordinal() + 1).isoformat()
+    return prev, nxt
 
 
-def free_rooms_to_web(status, free_rooms: dict[str, str]) -> WebFreeRooms:
-    """
-    FreeRoomsStatusDTO + dict[room_id, room_name] -> WebFreeRooms.
+# Phase 3: «Школа»
 
-    Формат статусной строки — как в bot/utils/ui_renderer.render_free_rooms_now
-    (отображение, не бизнес-логика): «14:05 (идёт 5 урок 13:15–14:00)» /
-    «14:05 (уроки завершены)».
-    """
-    if getattr(status, "is_finished", False):
-        line = f"{status.current_time_str} (уроки завершены)"
+
+def school_items_to_web(items: Dict[str, str] | Iterable) -> list[WebSchoolItem]:
+    if hasattr(items, "items"):
+        pairs = list(items.items())
     else:
-        num = f"{status.target_num} " if getattr(status, "target_num", None) else ""
-        state = "следующий" if getattr(status, "is_break", False) else "идёт"
-        line = (
-            f"{status.current_time_str} ({state} {num}урок "
-            f"{status.start_time}–{status.end_time})"
-        )
-    rooms = [
-        WebSchoolItem(id=str(r_id), name=name)
-        for r_id, name in free_rooms.items()
+        pairs = [(getattr(i, "id", ""), getattr(i, "name", "")) for i in items]
+    result = [
+        WebSchoolItem(id=str(k), name=str(v))
+        for k, v in pairs
+        if str(v).strip() and str(v) != "—"
     ]
-    return WebFreeRooms(status_line=line, is_empty=not rooms, rooms=rooms)
+    result.sort(key=lambda item: item.name)
+    return result
 
 
 def search_school(
     *,
     query: str,
-    classes: ClassListDTO,
-    teachers: TeacherListDTO,
-    rooms: RoomListDTO,
+    classes: Dict[str, str],
+    teachers: Dict[str, str],
+    rooms: Dict[str, str],
+    limit: int = 20,
 ) -> WebSearchResults:
     """
     Поиск по справочникам школы (ТЗ 31).
@@ -262,28 +269,175 @@ def search_school(
     (там список тоже фильтруется/рендерится в хендлере). SQL и domain-логика
     не дублируются: источники — существующие get_*_list DTO.
     """
-    q = (query or "").strip().lower()
-    if len(q) < 2:
-        return WebSearchResults(query=query or "", classes=[], teachers=[], rooms=[])
+    q = query.strip().lower()
+    if not q:
+        return WebSearchResults(query=query, classes=[], teachers=[], rooms=[])
 
-    def _match(items: dict) -> list[WebSchoolItem]:
-        return [
-            WebSchoolItem(id=str(k), name=v)
+    def match(items: Dict[str, str]) -> list[WebSchoolItem]:
+        found = [
+            WebSchoolItem(id=str(k), name=str(v))
             for k, v in items.items()
             if q in str(v).lower() or q in str(k).lower()
         ]
+        found.sort(key=lambda item: item.name)
+        return found[:limit]
 
     return WebSearchResults(
-        query=query.strip(),
-        classes=_match(classes.classes),
-        teachers=_match(teachers.teachers),
-        rooms=_match(rooms.rooms),
+        query=query,
+        classes=match(classes),
+        teachers=match(teachers),
+        rooms=match(rooms),
     )
 
 
-def prev_next_dates(date_iso: str) -> tuple[str, str]:
-    """Соседние даты для навигации ←/→ (date-only арифметика)."""
-    d = _parse(date_iso)
-    prev = date.fromordinal(d.toordinal() - 1).isoformat()
-    nxt = date.fromordinal(d.toordinal() + 1).isoformat()
-    return prev, nxt
+def free_rooms_to_web(status, rooms: Dict[str, str]) -> WebFreeRooms:
+    is_finished = bool(getattr(status, "is_finished", False))
+    is_break = bool(getattr(status, "is_break", False))
+    target_num = getattr(status, "target_num", None)
+    start = getattr(status, "start_time", None)
+    end = getattr(status, "end_time", None)
+
+    if is_finished:
+        slot_display = "уроки завершены"
+    elif target_num is None:
+        slot_display = "школа закрыта"
+    else:
+        state = "перемена" if is_break else f"идет {target_num} урок"
+        slot_display = f"{state} {start}–{end}" if start and end else state
+
+    return WebFreeRooms(
+        current_time=str(getattr(status, "current_time_str", "") or ""),
+        is_finished=is_finished,
+        is_break=is_break,
+        target_num=target_num,
+        slot_start=start,
+        slot_end=end,
+        slot_display=slot_display,
+        rooms=[
+            WebFreeRoomItem(id=str(k), name=str(v))
+            for k, v in sorted(rooms.items(), key=lambda kv: kv[1])
+        ],
+    )
+
+
+# ==============================================================
+# Phase 4: «Семья» (ТЗ 33-34)
+# ==============================================================
+
+
+def _format_dt(value) -> str:
+    """aware-UTC datetime / ISO-строка -> 'дд.мм чч:мм' (без timezone-логики)."""
+    if value is None:
+        return "—"
+    if isinstance(value, str):
+        try:
+            value = datetime.fromisoformat(value)
+        except (ValueError, TypeError):
+            return value
+    return value.strftime("%d.%m %H:%M")
+
+
+def family_members_to_web(members, *, current_user_id: int) -> List[WebFamilyMember]:
+    result = []
+    for m in (members or []):
+        user_id = _g(m, "user_id", None)
+        user_id = int(user_id) if user_id is not None else None
+        result.append(
+            WebFamilyMember(
+                user_id=user_id,
+                name=str(_g(m, "name") or f"Участник {user_id}"),
+                role=str(_g(m, "role") or ""),
+                role_label=ROLE_LABELS.get(str(_g(m, "role")), str(_g(m, "role") or "—")),
+                is_current=user_id == current_user_id,
+                is_family_admin=bool(getattr(m, "is_family_admin", False)),
+            )
+        )
+    return result
+
+
+def student_cards_to_web(
+    students,
+    *,
+    classes: Dict[str, str],
+    groups: Dict[str, str],
+) -> List[WebStudentCard]:
+    result = []
+    for s in (students or []):
+        class_id = str(_g(s, "class_id") or "")
+        group_id = str(_g(s, "group_id") or "ALL")
+        is_virtual = _g(s, "telegram_user_id", None) is None
+        result.append(
+            WebStudentCard(
+                student_id=int(_g(s, "id", 0)),
+                name=str(_g(s, "name") or f"Ученик {_g(s, 'id')}"),
+                class_name=classes.get(class_id, class_id or "—"),
+                group_name=(
+                    groups.get(group_id, f"Группа {group_id}")
+                    if group_id not in ("ALL", "")
+                    else "Весь класс"
+                ),
+                is_virtual=is_virtual,
+                can_delete=is_virtual,
+            )
+        )
+    return result
+
+
+def invites_to_web(invites) -> List[WebInviteItem]:
+    result = []
+    for invite in (invites or []):
+        result.append(
+            WebInviteItem(
+                invite_id=int(_g(invite, "id", 0)),
+                role_label=INVITE_ROLE_LABELS.get(
+                    str(_g(invite, "intended_role")), "Участник"
+                ),
+                short_code=str(_g(invite, "short_code") or "—"),
+                expires_display=_format_dt(_g(invite, "expires_at", None)),
+            )
+        )
+    return result
+
+
+def invite_result_to_web(
+    invite,
+    *,
+    kind: str = "family",
+    bot_username: Optional[str] = None,
+) -> WebInviteResult:
+    token = _g(invite, "token", "")
+    deep_link = None
+    if bot_username and token:
+        prefix = "claim" if kind == "claim" else "join"
+        deep_link = f"https://t.me/{bot_username}?start={prefix}_{token}"
+    return WebInviteResult(
+        role_label=(
+            str(_g(invite, "student_name") or "Ученик")
+            if kind == "claim"
+            else INVITE_ROLE_LABELS.get(str(_g(invite, "intended_role")), "Участник")
+        ),
+        short_code=str(_g(invite, "short_code") or "—"),
+        deep_link=deep_link,
+        expires_display=_format_dt(_g(invite, "expires_at", None)),
+        kind=kind,
+    )
+
+
+def permissions_to_web(
+    permissions,
+    *,
+    admin_user_id: int,
+    members_by_id: Dict[int, str],
+) -> List[WebPermissionItem]:
+    result = []
+    for p in (permissions or []):
+        adult_user_id = int(_g(p, "adult_user_id", 0))
+        result.append(
+            WebPermissionItem(
+                adult_user_id=adult_user_id,
+                adult_name=members_by_id.get(adult_user_id, f"Участник {adult_user_id}"),
+                can_manage=bool(getattr(p, "can_manage_extra_classes", False)),
+                is_self=adult_user_id == admin_user_id,
+            )
+        )
+    return result

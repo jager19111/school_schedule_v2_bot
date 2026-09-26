@@ -165,3 +165,34 @@ body {
 .search-group-title { font-size: 15px; margin: 14px 0 8px; color: var(--text-muted); }
 .free-status { font-size: 14px; color: var(--text-muted); margin-bottom: 12px; }
 @media (min-width: 768px) { .school-menu { grid-template-columns: repeat(4, 1fr); } }
+
+
+/* Phase 4: Семья */
+.family-members { display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px; }
+.family-member { background: var(--card); border-radius: 12px; padding: 10px 14px; box-shadow: 0 2px 8px rgba(0,0,0,0.04); }
+.family-member.current { border-left: 4px solid var(--accent); }
+.member-name { font-weight: 600; }
+.member-role { color: var(--text-muted); font-size: 13px; margin-top: 2px; }
+.you-badge, .admin-badge { font-size: 11px; font-weight: 700; padding: 2px 6px; border-radius: 999px; color: #fff; margin-left: 6px;}
+.you-badge { background: var(--accent); }
+.admin-badge { background: var(--methodological); }
+.family-students { display: flex; flex-direction: column; gap: 10px; margin-bottom: 16px; }
+.student-card { background: var(--card); border-radius: 12px; padding: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.04); }
+.student-name { font-weight: 700; font-size: 16px; }
+.student-meta { color: var(--text-muted); font-size: 13px; margin: 2px 0 8px; }
+.student-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.nav-btn.small { min-height: 36px; padding: 6px 10px; font-size: 13px; flex: none; }
+.nav-btn.danger { border-color: var(--cancelled); color: var(--cancelled); }
+.nav-btn.danger:hover { background: #fef2f2; }
+.family-invites, .permissions-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
+.invite-row { display: flex; justify-content: space-between; align-items: center; gap: 8px;
+  background: var(--card); border-radius: 12px; padding: 10px 12px; font-size: 14px; box-shadow: 0 2px 8px rgba(0,0,0,0.04); }
+.invite-create-buttons { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.invite-result { background: var(--card); border-left: 4px solid var(--ok);
+  border-radius: 12px; padding: 12px; margin-bottom: 16px; font-size: 14px; }
+.invite-code code { font-size: 18px; font-weight: 700; color: var(--text-main); }
+.student-form { display: flex; flex-direction: column; gap: 10px; }
+.student-form input, .student-form select { min-height: 44px; padding: 8px 12px;
+  font-size: 16px; border: 1px solid var(--border); border-radius: 10px; background: var(--card); color: var(--text-main); }
+.perm-on { color: var(--ok); font-weight: 600; } 
+.perm-off { color: var(--text-muted); }

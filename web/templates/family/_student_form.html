@@ -1,0 +1,47 @@
+{# Форма создания/правки student profile (Phase 4).
+   Fragment: подменяет #family-content; POST возвращает fragment/redirect. #}
+<section id="family-content" class="family-page">
+  <h2 class="day-title">
+    {% if mode == 'create' %}➕ Новый ученик{% else %}✏️ Профиль ученика{% endif %}
+  </h2>
+  {% if mode == 'edit' %}
+  <div class="day-subtitle">{{ student.name }}</div>
+  {% endif %}
+
+  <form class="student-form"
+        {% if mode == 'create' %}
+        hx-post="/family/students"
+        {% else %}
+        hx-post="/family/students/{{ student.id }}/edit"
+        {% endif %}
+        hx-target="#family-content" hx-swap="outerHTML" hx-disabled-elt="find button">
+
+    {% if mode == 'create' %}
+    <label class="visually-hidden" for="sf-name">Имя ученика</label>
+    <input id="sf-name" name="name" type="text" required maxlength="64"
+           placeholder="Имя ученика" autocomplete="off">
+    {% endif %}
+
+    <label class="visually-hidden" for="sf-class">Класс</label>
+    <select id="sf-class" name="class_id" required>
+      <option value="" disabled {% if mode == 'create' %}selected{% endif %}>Выберите класс</option>
+      {% for cid, cname in classes %}
+      <option value="{{ cid }}" {% if mode == 'edit' and student.class_id|string == cid|string %}selected{% endif %}>{{ cname }}</option>
+      {% endfor %}
+    </select>
+
+    <label class="visually-hidden" for="sf-group">Группа</label>
+    <select id="sf-group" name="group_id" required>
+      <option value="ALL" {% if mode == 'edit' and (student.group_id == 'ALL' or not student.group_id) %}selected{% endif %}>Весь класс</option>
+      {% for gid, gname in groups %}
+      <option value="{{ gid }}" {% if mode == 'edit' and student.group_id|string == gid|string %}selected{% endif %}>{{ gname }}</option>
+      {% endfor %}
+    </select>
+
+    <div class="day-nav">
+      <button type="submit" class="nav-btn today-btn">Сохранить</button>
+      <button type="button" class="nav-btn"
+              hx-get="/family" hx-target="#family-content" hx-swap="outerHTML">Отмена</button>
+    </div>
+  </form>
+</section>

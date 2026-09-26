@@ -60,7 +60,8 @@ class WebSettings:
     allowed_family_ids: frozenset = field(default_factory=frozenset)
     cookie_secure: bool = True                      # False только для локальной разработки
     session_cookie_max_age: int = 365 * 24 * 3600   # absolute lifetime (365 дней)
-
+    bot_username: Optional[str] = None
+    
 
 def create_web_app(
     *,
@@ -133,10 +134,12 @@ def create_web_app(
     from web.routes.health import router as health_router
     from web.routes.schedule import router as schedule_router
     from web.routes.school import router as school_router
+    from web.routes.family import router as family_router
 
     app.include_router(health_router)
     app.include_router(auth_router)
     app.include_router(schedule_router)
     app.include_router(school_router)
+    app.include_router(family_router)
 
     return app
