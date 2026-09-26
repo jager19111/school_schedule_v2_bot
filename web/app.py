@@ -23,6 +23,10 @@ from fastapi.templating import Jinja2Templates
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.staticfiles import StaticFiles
 
+from fastapi.responses import RedirectResponse, JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
+from fastapi import Request
+
 from services.extra_classes_web_service import ExtraClassesWebService
 from services.profiles_service import ProfileService
 from services.schedule_service import ScheduleService
@@ -94,6 +98,21 @@ def create_web_app(
         openapi_url=None,   # private deployment; включим осознанно позже
     )
 
+    @app.exception_handler(StarletteHTTPException)
+    async def custom_http_exception_handler(request: Request, exc: StarletteHTTPException):
+        # 1. Если это ошибка авторизации и запрос пришел из строки браузера (не API и не HTMX)
+        if exc.status_code in (401, 403):
+            if not request.url.path.startswith("/api/") and not request.headers.get("hx-request"):
+                # Мягко редиректим на страницу входа
+                return RedirectResponse(url="/auth", status_code=303)
+        
+        # 2. Во всех остальных случаях отдаем JSON, но ЖЕСТКО форсируем UTF-8 для Safari
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"detail": exc.detail},
+            headers={"Content-Type": "application/json; charset=utf-8"}
+        )
+        
     # --- app.state: зависимости, доступные всем route'ам ---
     app.state.web_settings = web_settings
     app.state.sessions_service = sessions_service

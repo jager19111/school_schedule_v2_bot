@@ -4,6 +4,7 @@
 # установить шрифт Inter sudo apt install fonts-inter # без него будет DejaVu Sans
 # Скачайте зафиксированную версию HTMX
 # curl -L -o web/static/js/htmx.min.js https://unpkg.com/htmx.org@2.0.4/dist/htmx.min.js
+# pip install python-multipart
 aiogram==3.31.0
 aiohttp==3.14.3
 aiosqlite==0.22.1
