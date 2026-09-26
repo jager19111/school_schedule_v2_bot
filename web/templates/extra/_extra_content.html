@@ -1,0 +1,47 @@
+{# Fragment списка доп. занятий (Phase 5, ТЗ 25). #}
+<section id="extra-content" class="extra-page">
+  <h2 class="day-title">🎯 Доп. занятия — {{ student_name }}</h2>
+
+  <div class="day-nav">
+    <button type="button" class="nav-btn today-btn"
+            hx-get="/extra-classes/new?student={{ student_id }}"
+            hx-target="#extra-content" hx-swap="outerHTML">➕ Добавить</button>
+    <a class="nav-btn" href="/" hx-get="/" hx-target="#main"
+       hx-swap="innerHTML" hx-push-url="/">📅 Расписание</a>
+  </div>
+
+  {% if not groups %}
+  <div class="empty-day">Доп. занятий пока нет 🎯</div>
+  {% endif %}
+
+  {% for group in groups %}
+  <h3 class="search-group-title">{{ group.weekday_display }}</h3>
+  <div class="lessons-list">
+    {# ИСПРАВЛЕНО: Теперь используем lessons вместо items #}
+    {% for item in group.lessons %}
+    <article class="lesson-card status-extra">
+      <div class="lesson-num">•</div>
+      <div class="lesson-main">
+        <div class="lesson-time"><time>{{ item.time_start }}</time> – <time>{{ item.time_end }}</time></div>
+        <div class="lesson-subject">{{ item.title }}</div>
+        <div class="lesson-meta">
+          {% if item.location and item.location != '—' %}<span>📍 {{ item.location }}</span>{% endif %}
+          <span>🔔 за {{ item.reminder_minutes }} мин</span>
+        </div>
+      </div>
+      <div class="lesson-badge extra">доп.</div>
+      <div class="student-actions">
+        {# ИСПРАВЛЕНО: Добавлено ?student={{ student_id }} к кнопкам #}
+        <button type="button" class="nav-btn small"
+                hx-get="/extra-classes/{{ item.id }}/edit?student={{ student_id }}"
+                hx-target="#extra-content" hx-swap="outerHTML">✏️</button>
+        <button type="button" class="nav-btn small danger"
+                hx-confirm="Удалить «{{ item.title }}»?"
+                hx-post="/extra-classes/{{ item.id }}/delete?student={{ student_id }}"
+                hx-target="#extra-content" hx-swap="outerHTML">🗑</button>
+      </div>
+    </article>
+    {% endfor %}
+  </div>
+  {% endfor %}
+</section>

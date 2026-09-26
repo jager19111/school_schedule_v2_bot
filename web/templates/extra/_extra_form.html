@@ -1,0 +1,52 @@
+{# Форма доп. занятия (создание и правка). #}
+<section id="extra-content" class="extra-page">
+  <h2 class="day-title">{% if mode == 'create' %}➕ Новое занятие{% else %}✏️ Правка занятия{% endif %}</h2>
+
+  {# Блок уведомлений об ошибках (пересечение времени, валидация) #}
+  {% if error %}
+  <div class="stale-warning" style="background-color: #fee2e2; color: #b91c1c; font-weight: 600; margin-bottom: 16px;">
+      ❌ {{ error }}
+  </div>
+  {% endif %}
+
+  <form hx-post="/extra-classes{% if mode == 'edit' %}/{{ item.id }}/edit{% endif %}?student={{ student_id }}"
+        hx-target="#extra-content"
+        hx-swap="outerHTML"
+        class="student-form">
+      
+      <input type="hidden" name="idempotency_key" value="{{ idempotency_key }}">
+      
+      <label class="form-hint" style="margin-bottom: 4px;">Название (например: Английский)</label>
+      <input type="text" name="title" value="{{ item.title if item else '' }}" required maxlength="128" placeholder="Кружок робототехники">
+
+      <label class="form-hint" style="margin-bottom: 4px; margin-top: 12px;">День недели</label>
+      <select name="day_of_week" required>
+          {% for d_val, d_name in weekdays %}
+          <option value="{{ d_val }}" {% if item and (item.day_of_week|string == d_val|string) %}selected{% endif %}>{{ d_name }}</option>
+          {% endfor %}
+      </select>
+
+      <label class="form-hint" style="margin-bottom: 4px; margin-top: 12px;">Время (Начало – Конец)</label>
+      <div class="time-row">
+          <input type="time" name="time_start" value="{{ item.time_start if item else '15:00' }}" required>
+          <input type="time" name="time_end" value="{{ item.time_end if item else '16:00' }}" required>
+      </div>
+
+      <label class="form-hint" style="margin-bottom: 4px; margin-top: 12px;">Место (кабинет, адрес)</label>
+      <input type="text" name="location" value="{{ item.location if item else '' }}" placeholder="Необязательно">
+
+      <label class="form-hint" style="margin-bottom: 4px; margin-top: 12px;">Напоминание</label>
+      <select name="reminder_minutes">
+          <option value="0" {% if item and item.reminder_minutes == 0 %}selected{% endif %}>Не напоминать</option>
+          <option value="15" {% if item and item.reminder_minutes == 15 %}selected{% endif %}>За 15 минут</option>
+          <option value="30" {% if not item or item.reminder_minutes == 30 %}selected{% endif %}>За 30 минут</option>
+          <option value="60" {% if item and item.reminder_minutes == 60 %}selected{% endif %}>За 1 час</option>
+          <option value="120" {% if item and item.reminder_minutes == 120 %}selected{% endif %}>За 2 часа</option>
+      </select>
+
+      <div class="invite-create-buttons" style="margin-top: 24px;">
+          <button type="submit" class="nav-btn today-btn" hx-indicator="#page-loading" hx-disabled-elt="this">💾 Сохранить</button>
+          <button type="button" class="nav-btn" hx-get="/extra-classes?student={{ student_id }}" hx-target="#extra-content" hx-swap="outerHTML">Отмена</button>
+      </div>
+  </form>
+</section>

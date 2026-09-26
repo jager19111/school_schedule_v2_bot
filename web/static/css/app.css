@@ -196,3 +196,10 @@ body {
   font-size: 16px; border: 1px solid var(--border); border-radius: 10px; background: var(--card); color: var(--text-main); }
 .perm-on { color: var(--ok); font-weight: 600; } 
 .perm-off { color: var(--text-muted); }
+
+/* Phase 5 */
+.time-row { display: grid; grid-template-columns: 1fr 1fr 90px; gap: 8px; }
+.time-row input { min-height: 44px; padding: 8px; font-size: 16px;
+  border: 1px solid var(--border); border-radius: 10px; background: var(--card); color: var(--text-main); }
+.form-hint { font-size: 13px; color: var(--text-muted); margin-bottom: 8px; }
+.lesson-card .student-actions { margin-left: 4px; margin-top: 8px; }

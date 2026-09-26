@@ -1,6 +1,6 @@
 # web/app.py
 #
-# Фабрика FastAPI-приложения (Phase 1-2).
+# Фабрика FastAPI-приложения (Phase 1-5).
 #
 # Web — interface layer над существующими сервисами (ТЗ 2):
 #   Web UI -> FastAPI Web Layer -> Existing Services -> Repositories -> SQLite
@@ -23,12 +23,14 @@ from fastapi.templating import Jinja2Templates
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.staticfiles import StaticFiles
 
+from services.extra_classes_web_service import ExtraClassesWebService
 from services.profiles_service import ProfileService
 from services.schedule_service import ScheduleService
 from services.schedule_targets_service import ScheduleTargetsService
 from services.students_service import StudentsService
 from services.time_service import TimeService
 from services.web_sessions_service import WebSessionsService
+from web.idempotency import IdempotencyStore
 from web.mappers import prev_next_dates
 from web.security import (
     CSRFMiddleware,
@@ -60,8 +62,8 @@ class WebSettings:
     allowed_family_ids: frozenset = field(default_factory=frozenset)
     cookie_secure: bool = True                      # False только для локальной разработки
     session_cookie_max_age: int = 365 * 24 * 3600   # absolute lifetime (365 дней)
-    bot_username: Optional[str] = None
-    
+    bot_username: Optional[str] = None              # deep-link приглашений
+
 
 def create_web_app(
     *,
@@ -71,6 +73,7 @@ def create_web_app(
     schedule_service: ScheduleService,
     students_service: StudentsService,
     schedule_targets_service: ScheduleTargetsService,
+    extra_classes_web_service: ExtraClassesWebService,
     time_service: TimeService,
     db_liveness: Callable[[], Awaitable[bool]],
 ) -> FastAPI:
@@ -83,7 +86,7 @@ def create_web_app(
     """
     app = FastAPI(
         title="School Schedule Web",
-        version="0.2.0",
+        version="0.5.0",
         docs_url=None,      # docs не выставляем наружу
         redoc_url=None,
         openapi_url=None,   # private deployment; включим осознанно позже
@@ -96,11 +99,10 @@ def create_web_app(
     app.state.schedule_service = schedule_service
     app.state.students_service = students_service
     app.state.schedule_targets_service = schedule_targets_service
+    app.state.extra_classes_web_service = extra_classes_web_service
     app.state.time_service = time_service
     app.state.db_liveness = db_liveness
-    # NIKA stale-предупреждение (ТЗ 53) обновляется фоново в Phase 3;
-    # строка или None.
-    app.state.nika_health_cache = None
+    app.state.idempotency = IdempotencyStore(ttl_seconds=600)
 
     # --- Шаблоны + jinja-фильтры навигации по датам ---
     templates = Jinja2Templates(directory=str(_WEB_DIR / "templates"))
@@ -131,15 +133,17 @@ def create_web_app(
 
     # --- Routes ---
     from web.routes.auth import router as auth_router
+    from web.routes.extra_classes import router as extra_router
+    from web.routes.family import router as family_router
     from web.routes.health import router as health_router
     from web.routes.schedule import router as schedule_router
     from web.routes.school import router as school_router
-    from web.routes.family import router as family_router
 
     app.include_router(health_router)
     app.include_router(auth_router)
     app.include_router(schedule_router)
     app.include_router(school_router)
     app.include_router(family_router)
+    app.include_router(extra_router)
 
     return app

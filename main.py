@@ -442,6 +442,7 @@ async def main():
             from core.repository.web_auth_repository import WebAuthRepository
             from services.web_sessions_service import WebSessionsService
             from services.schedule_targets_service import ScheduleTargetsService
+            from services.extra_classes_web_service import ExtraClassesWebService
             from web.app import WebSettings, create_web_app
             import uvicorn
 
@@ -457,6 +458,15 @@ async def main():
                 profile_service, students_service, student_repo
             )
 
+
+            extra_classes_web_service = ExtraClassesWebService(
+                extra_classes_repo=extra_classes_repo,
+                students_service=students_service,
+                profile_service=profile_service,
+                student_repo=student_repo,
+                time_service=time_service,
+            )
+        
             allowed_ids = frozenset(
                 int(x) for x in config.WEB_ALLOWED_FAMILY_IDS.split(",") if x.strip()
             )
@@ -499,6 +509,7 @@ async def main():
                 schedule_targets_service=schedule_targets_service,
                 time_service=time_service,
                 db_liveness=_db_liveness,
+                extra_classes_web_service=extra_classes_web_service,
             )
 
             uvicorn_config = uvicorn.Config(

@@ -55,6 +55,10 @@
           <button type="button" class="nav-btn small"
                   hx-post="/api/v1/schedule/select/{{ s.student_id }}"
                   hx-indicator="#page-loading">📅 Расписание</button>
+          
+          {# ДОБАВЛЕНА КНОПКА ДОП. ЗАНЯТИЙ #}
+          <a class="nav-btn small" href="/extra-classes?student={{ s.student_id }}">🎯 Кружки</a>
+          
           {% if is_admin %}
           <button type="button" class="nav-btn small"
                   hx-get="/family/students/{{ s.student_id }}/edit"
