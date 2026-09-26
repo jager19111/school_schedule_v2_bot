@@ -23,7 +23,7 @@ from fastapi.templating import Jinja2Templates
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.staticfiles import StaticFiles
 
-from fastapi.responses import RedirectResponse, JSONResponse
+from fastapi.responses import RedirectResponse, JSONResponse, HTMLResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from fastapi import Request
 
@@ -100,13 +100,36 @@ def create_web_app(
 
     @app.exception_handler(StarletteHTTPException)
     async def custom_http_exception_handler(request: Request, exc: StarletteHTTPException):
-        # 1. Если это ошибка авторизации и запрос пришел из строки браузера (не API и не HTMX)
-        if exc.status_code in (401, 403):
-            if not request.url.path.startswith("/api/") and not request.headers.get("hx-request"):
-                # Мягко редиректим на страницу входа
-                return RedirectResponse(url="/auth", status_code=303)
+        is_page_request = not request.url.path.startswith("/api/") and not request.headers.get("hx-request")
         
-        # 2. Во всех остальных случаях отдаем JSON, но ЖЕСТКО форсируем UTF-8 для Safari
+        # 1. 401 Unauthorized (нет сессии) -> Редирект на вход
+        if exc.status_code == 401 and is_page_request:
+            return RedirectResponse(url="/auth", status_code=303)
+            
+        # 2. 403 Forbidden (сессия есть, но нет прав / не в allowlist) -> Остановка цикла
+        if exc.status_code == 403 and is_page_request:
+            return HTMLResponse(
+                content=f"""<!DOCTYPE html>
+                <html lang="ru">
+                <head>
+                    <meta charset="utf-8">
+                    <meta name="viewport" content="width=device-width, initial-scale=1">
+                    <title>Доступ закрыт</title>
+                </head>
+                <body style="font-family: -apple-system, BlinkMacSystemFont, sans-serif; text-align: center; padding: 40px 20px; background: #f9fafb; color: #111827;">
+                    <div style="max-width: 400px; margin: 0 auto; background: white; padding: 30px; border-radius: 16px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1);">
+                        <h2 style="color: #ef4444; margin-top: 0;">🔒 Доступ закрыт</h2>
+                        <p style="font-size: 1.1rem; color: #4b5563;">{exc.detail}</p>
+                        <p style="margin-top: 24px; font-size: 0.9rem; color: #9ca3af;">
+                            Режим закрытого тестирования. Ваша семья не добавлена в список разрешённых (allowlist).
+                        </p>
+                    </div>
+                </body>
+                </html>""",
+                status_code=403
+            )
+            
+        # 3. Для API и HTMX -> Отдаем JSON, жестко фиксируя UTF-8 для Safari
         return JSONResponse(
             status_code=exc.status_code,
             content={"detail": exc.detail},
