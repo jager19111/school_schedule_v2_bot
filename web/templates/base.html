@@ -5,6 +5,15 @@
   {# ТЗ 40: viewport-fit=cover, БЕЗ user-scalable=no / maximum-scale #}
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#1a56db">
+  
+  {# --- PWA & iOS Meta Tags (Phase 6) --- #}
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Расписание">
+  <link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
+  <link rel="manifest" href="/manifest.webmanifest">
+  {# ------------------------------------- #}
+
   <title>{% block title %}Расписание{% endblock %} — School Schedule</title>
   <link rel="stylesheet" href="/static/css/app.css">
 </head>
@@ -38,6 +47,9 @@
   </a>
 </nav>
 
+{# Все production JS локальны (ТЗ 48.1). #}
 <script src="/static/js/htmx.min.js"></script>
+{# Подключение PWA-логики (Service Worker, Reload on Foreground) #}
+<script src="/static/js/app.js"></script>
 </body>
 </html>

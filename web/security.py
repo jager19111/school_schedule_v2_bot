@@ -81,9 +81,13 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Referrer-Policy"] = "no-referrer"
+        
         if not request.url.path.startswith(_STATIC_PREFIXES):
             # Персональные HTML/JSON responses не кэшируются.
-            response.headers["Cache-Control"] = "private, no-store"
+            # ИСПРАВЛЕНО: Не перетираем Cache-Control, если роутер (например, PWA) уже задал его явно.
+            if "cache-control" not in response.headers:
+                response.headers["Cache-Control"] = "private, no-store"
+                
         return response
 
 

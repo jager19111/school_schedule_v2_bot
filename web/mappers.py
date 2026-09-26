@@ -296,6 +296,7 @@ def free_rooms_to_web(status, rooms: Dict[str, str]) -> WebFreeRooms:
     target_num = getattr(status, "target_num", None)
     start = getattr(status, "start_time", None)
     end = getattr(status, "end_time", None)
+    current_time = str(getattr(status, "current_time_str", "") or "")
 
     if is_finished:
         slot_display = "уроки завершены"
@@ -305,8 +306,17 @@ def free_rooms_to_web(status, rooms: Dict[str, str]) -> WebFreeRooms:
         state = "перемена" if is_break else f"идет {target_num} урок"
         slot_display = f"{state} {start}–{end}" if start and end else state
 
+    status_line = f"{current_time} ({slot_display})" if current_time else slot_display
+    
+    room_items = [
+        WebFreeRoomItem(id=str(k), name=str(v))
+        for k, v in sorted(rooms.items(), key=lambda kv: kv[1])
+    ]
+
     return WebFreeRooms(
-        current_time=str(getattr(status, "current_time_str", "") or ""),
+        status_line=status_line,
+        is_empty=len(room_items) == 0,
+        current_time=current_time,
         is_finished=is_finished,
         is_break=is_break,
         target_num=target_num,

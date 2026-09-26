@@ -138,6 +138,7 @@ def create_web_app(
     from web.routes.health import router as health_router
     from web.routes.schedule import router as schedule_router
     from web.routes.school import router as school_router
+    from web.routes.pwa import router as pwa_router
 
     app.include_router(health_router)
     app.include_router(auth_router)
@@ -145,5 +146,6 @@ def create_web_app(
     app.include_router(school_router)
     app.include_router(family_router)
     app.include_router(extra_router)
+    app.include_router(pwa_router)
 
     return app
