@@ -69,16 +69,14 @@
     }, POLLING_FALLBACK_MS);
 
     // ГЛОБАЛЬНЫЙ ПЕРЕХВАТ ОШИБОК HTMX
-    // Если мы нажали кнопку в расписании в момент рестарта бота
+    // Если мы нажали кнопку в момент рестарта бота
     document.body.addEventListener('htmx:responseError', function(evt) {
-        if (evt.detail.xhr.status >= 500) {
-            window.location.replace("/offline.html");
-        }
+        if (evt.detail.xhr.status >= 500) window.location.reload();
     });
     
-    // Если вообще пропал интернет в момент нажатия
+    // Если пропал интернет на телефоне
     document.body.addEventListener('htmx:sendError', function(evt) {
-        window.location.replace("/offline.html");
+        window.location.reload();
     });
   }
 
