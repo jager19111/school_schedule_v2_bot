@@ -1,14 +1,19 @@
 /* web/static/js/app.js
  *
- * Phase 6 PWA glue (без business logic):
- * - регистрация Service Worker;
- * - foreground revalidation текущего экрана (ТЗ 51.13);
- * - revalidation после HTMX/SSE event (SSE добавится Phase 7);
- * - очистка application caches при logout.
+ * Phase 6/7 glue (без business logic):
+ * - регистрация Service Worker (PWA);
+ * - foreground revalidation (ТЗ 51.13): visibilitychange + Safari BFCache;
+ * - SSE-реакция (ТЗ 51.4): #live-monitor выполняет hx-get на событие
+ *   sse:schedule_changed, после ответа — revalidate текущего экрана;
+ * - polling fallback (ТЗ 51.12): если SSE-соединение отсутствует
+ *   (body без htmx-request), обновляем экран раз в 60 сек;
+ * - logout: очистка Cache Storage.
  */
 
 (function () {
   "use strict";
+
+  var POLLING_FALLBACK_MS = 60000;
 
   function isStandalone() {
     return window.matchMedia("(display-mode: standalone)").matches ||
@@ -22,14 +27,45 @@
     window.location.reload();
   }
 
+  function sseConnected() {
+    // htmx-ext-sse держит класс htmx-request на sse-connect элементе
+    // (body), пока соединение открыто. Это documented поведение
+    // long-lived SSE connections в htmx.
+    var host = document.body;
+    return !!(host && host.classList && host.classList.contains("htmx-request"));
+  }
+
   function registerServiceWorker() {
     if (!("serviceWorker" in navigator)) return;
     window.addEventListener("load", function () {
       navigator.serviceWorker.register("/service-worker.js", { scope: "/" })
-        .catch(function () {
-          // Регистрация PWA не должна ломать основное приложение.
-        });
+        .catch(function () { /* PWA не ломает приложение */ });
     });
+  }
+
+  function setupLiveUpdates() {
+    var monitor = document.getElementById("live-monitor");
+
+    // SSE invalidation -> лёгкий hx-get (204) -> revalidate (ТЗ 51.4).
+    if (monitor) {
+      monitor.addEventListener("htmx:afterRequest", function (event) {
+        if (event.detail && event.detail.elt === monitor &&
+            event.detail.failed !== true) {
+          revalidateCurrentScreen();
+        }
+      });
+    }
+
+    // Контракт для будущих интеграций (прямой SSE-клиент и т.п.).
+    document.addEventListener("schedule:revalidate", revalidateCurrentScreen);
+
+    // Polling fallback (ТЗ 51.12): SSE недоступен — периодическое
+    // обновление текущего экрана, пока вкладка видима.
+    window.setInterval(function () {
+      if (document.visibilityState === "visible" && !sseConnected()) {
+        revalidateCurrentScreen();
+      }
+    }, POLLING_FALLBACK_MS);
   }
 
   // iOS/Android могут заморозить PWA в background, оборвать SSE и сменить
@@ -41,15 +77,11 @@
   });
 
   window.addEventListener("pageshow", function (event) {
-    // Safari back-forward cache: page может быть восстановлена устаревшей.
+    // Safari back-forward cache: страница может быть восстановлена устаревшей.
     if (event.persisted) revalidateCurrentScreen();
   });
 
-  // Контракт с Phase 7: htmx SSE handler может dispatchEvent(new Event(...)).
-  document.addEventListener("schedule:revalidate", revalidateCurrentScreen);
-
-  // Logout: удалить shell-кэши не обязательно для безопасности (там нет
-  // персональных данных), но помогает не оставлять state приложения.
+  // Logout: удалить shell-кэши (там нет персональных данных — defence in depth).
   document.addEventListener("htmx:afterRequest", function (event) {
     var path = event.detail && event.detail.requestConfig && event.detail.requestConfig.path;
     if (path === "/api/v1/auth/logout" || path === "/api/v1/auth/logout-all") {
@@ -62,5 +94,15 @@
   });
 
   registerServiceWorker();
-  window.schoolSchedulePwa = { isStandalone: isStandalone, revalidate: revalidateCurrentScreen };
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", setupLiveUpdates);
+  } else {
+    setupLiveUpdates();
+  }
+
+  window.schoolSchedulePwa = {
+    isStandalone: isStandalone,
+    revalidate: revalidateCurrentScreen,
+    sseConnected: sseConnected
+  };
 })();

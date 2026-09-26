@@ -14,6 +14,8 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
+from web.events import SessionRevoked
+
 from services.web_sessions_service import (
     SESSION_COOKIE_NAME,
     WebSessionContext,
@@ -135,17 +137,28 @@ async def logout(
     raw = request.cookies.get(SESSION_COOKIE_NAME, "")
     await sessions.revoke_session(raw_token=raw, user_id=context.user_id)
     response.delete_cookie(SESSION_COOKIE_NAME, path="/")
+    
+    bus = getattr(request.app.state, "event_bus", None)
+    if bus is not None:
+        await bus.publish(SessionRevoked(user_id=context.user_id))
+        
     return LogoutResponse(ok=True)
 
 
 @router.post("/api/v1/auth/logout-all", response_model=LogoutResponse)
 async def logout_all(
+    request: Request,  # ИСПРАВЛЕНО: Добавлен request
     response: Response,
     context: WebSessionContext = Depends(require_family_allowed),
     sessions: WebSessionsService = Depends(get_sessions_service),
 ) -> LogoutResponse:
     """Logout на всех устройствах."""
     await sessions.revoke_all_sessions(user_id=context.user_id)
+    
+    bus = getattr(request.app.state, "event_bus", None)
+    if bus is not None:
+        await bus.publish(SessionRevoked(user_id=context.user_id))
+        
     response.delete_cookie(SESSION_COOKIE_NAME, path="/")
     return LogoutResponse(ok=True)
 
@@ -189,6 +202,7 @@ async def list_sessions(
 @router.post("/api/v1/sessions/{session_id}/revoke", response_model=LogoutResponse)
 async def revoke_session(
     session_id: int,
+    request: Request,  # ИСПРАВЛЕНО: Добавлен request
     context: WebSessionContext = Depends(require_family_allowed),
     sessions: WebSessionsService = Depends(get_sessions_service),
 ) -> LogoutResponse:
@@ -201,4 +215,9 @@ async def revoke_session(
     ok = await sessions.revoke_session_by_id(
         session_id=session_id, user_id=context.user_id
     )
+    
+    bus = getattr(request.app.state, "event_bus", None)
+    if bus is not None:
+        await bus.publish(SessionRevoked(user_id=context.user_id))
+        
     return LogoutResponse(ok=ok)

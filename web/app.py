@@ -1,11 +1,11 @@
 # web/app.py
 #
-# Фабрика FastAPI-приложения (Phase 1-5).
+# Фабрика FastAPI-приложения (Phase 1-7).
 #
 # Web — interface layer над существующими сервисами (ТЗ 2):
 #   Web UI -> FastAPI Web Layer -> Existing Services -> Repositories -> SQLite
 # Здесь нет бизнес-логики и SQL; только transport, auth/session handling,
-# security-политики, web-схемы и шаблоны.
+# security-политики, web-схемы, шаблоны и SSE-инфраструктура.
 #
 # Middleware-порядок (внешний -> внутренний):
 #   TrustedHost -> GatewayKey -> SecurityHeaders -> RateLimit -> CSRF -> routes
@@ -30,6 +30,7 @@ from services.schedule_targets_service import ScheduleTargetsService
 from services.students_service import StudentsService
 from services.time_service import TimeService
 from services.web_sessions_service import WebSessionsService
+from web.events import ApplicationEventBus
 from web.idempotency import IdempotencyStore
 from web.mappers import prev_next_dates
 from web.security import (
@@ -38,6 +39,7 @@ from web.security import (
     RateLimitMiddleware,
     SecurityHeadersMiddleware,
 )
+from web.sse import SSEConnectionManager
 
 logger = logging.getLogger(__name__)
 
@@ -86,7 +88,7 @@ def create_web_app(
     """
     app = FastAPI(
         title="School Schedule Web",
-        version="0.5.0",
+        version="0.7.0",
         docs_url=None,      # docs не выставляем наружу
         redoc_url=None,
         openapi_url=None,   # private deployment; включим осознанно позже
@@ -104,10 +106,16 @@ def create_web_app(
     app.state.db_liveness = db_liveness
     app.state.idempotency = IdempotencyStore(ttl_seconds=600)
 
+    # --- Phase 7: event bus + SSE connection manager ---
+    # Шина создаётся здесь (web-специфика); main.py публикует в неё
+    # ScheduleChanged после commit NIKA-обновления (см. integration doc).
+    event_bus = ApplicationEventBus()
+    sse_manager = SSEConnectionManager(event_bus)
+    app.state.event_bus = event_bus
+    app.state.sse_manager = sse_manager
+
     # --- Шаблоны + jinja-фильтры навигации по датам ---
     templates = Jinja2Templates(directory=str(_WEB_DIR / "templates"))
-    
-    # ИСПРАВЛЕНО: удалена ошибочная распаковка функции `_prev, _next = prev_next_dates`
 
     def _prev_date(value: str) -> str:
         return prev_next_dates(value)[0]
@@ -136,9 +144,10 @@ def create_web_app(
     from web.routes.extra_classes import router as extra_router
     from web.routes.family import router as family_router
     from web.routes.health import router as health_router
+    from web.routes.pwa import router as pwa_router
     from web.routes.schedule import router as schedule_router
     from web.routes.school import router as school_router
-    from web.routes.pwa import router as pwa_router
+    from web.routes.stream import router as stream_router
 
     app.include_router(health_router)
     app.include_router(auth_router)
@@ -147,5 +156,12 @@ def create_web_app(
     app.include_router(family_router)
     app.include_router(extra_router)
     app.include_router(pwa_router)
+    app.include_router(stream_router)
+
+    # При shutdown web-сервера закрываем SSE best effort
+    # (финальное закрытие ресурсов — в main.py, ТЗ 7.4).
+    @app.on_event("shutdown")
+    async def _close_sse() -> None:  # pragma: no cover
+        sse_manager.close_all()
 
     return app

@@ -10,15 +10,17 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="Расписание">
-  <link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
   <link rel="manifest" href="/manifest.webmanifest">
-  {# ------------------------------------- #}
-
+  <link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
   <title>{% block title %}Расписание{% endblock %} — School Schedule</title>
   <link rel="stylesheet" href="/static/css/app.css">
 </head>
-{# ТЗ 16.1: глобальная передача CSRF во ВСЕ HTMX-запросы #}
-<body hx-headers='{"X-CSRF-Token": "{{ csrf_token }}"}'>
+{# ТЗ 16.1: CSRF во ВСЕ HTMX-запросы.
+   ТЗ 51.5: SSE-подключение через htmx-ext-sse (reconnect c exponential backoff).
+   Элемент с sse-connect держит класс htmx-request, пока соединение открыто
+   (используется app.js как health-check для polling fallback, ТЗ 51.12). #}
+<body hx-ext="sse" sse-connect="/api/v1/schedule/stream"
+      hx-headers='{"X-CSRF-Token": "{{ csrf_token }}"}'>
 
 <header class="app-header">
   <div class="header-title">{% block header %}Расписание{% endblock %}</div>
@@ -47,9 +49,16 @@
   </a>
 </nav>
 
+{# ТЗ 51.4: SSE invalidation signal -> htmx GET (лёгкий 204) ->
+   app.js revalidate текущего экрана (authenticated reload). #}
+<div id="live-monitor" hidden
+     hx-trigger="sse:schedule_changed"
+     hx-get="/api/v1/live/revalidate" hx-swap="none"
+     aria-hidden="true"></div>
+
 {# Все production JS локальны (ТЗ 48.1). #}
 <script src="/static/js/htmx.min.js"></script>
-{# Подключение PWA-логики (Service Worker, Reload on Foreground) #}
+<script src="/static/js/htmx-ext-sse.min.js"></script>
 <script src="/static/js/app.js"></script>
 </body>
 </html>

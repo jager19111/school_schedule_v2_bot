@@ -20,6 +20,8 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, Response
 
+from web.events import ScheduleChanged
+
 from services.web_sessions_service import WebSessionContext
 from web.deps import require_family_allowed
 from web.extra_classes_helpers import (
@@ -223,7 +225,9 @@ async def extra_classes_create(
                 error=result.detail, student_id=access.student_id
             ),
         )
-
+    bus = getattr(request.app.state, "event_bus", None)
+    if bus is not None:
+        await bus.publish(ScheduleChanged(revision=bus.next_revision()))
     return Response(status_code=200, headers={"HX-Redirect": f"/extra-classes?student={access.student_id}"})
 
 @router.post("/extra-classes/{extra_id}/edit")
@@ -268,7 +272,9 @@ async def extra_classes_update(
                 error=result.detail, student_id=access.student_id
             ),
         )
-
+    bus = getattr(request.app.state, "event_bus", None)
+    if bus is not None:
+        await bus.publish(ScheduleChanged(revision=bus.next_revision()))
     return Response(status_code=200, headers={"HX-Redirect": f"/extra-classes?student={access.student_id}"})
 
 @router.post("/extra-classes/{extra_id}/delete")
@@ -282,4 +288,7 @@ async def extra_classes_delete(
     result = await _extra_service(request).delete(access, extra_id)
     if not result.success:
         raise HTTPException(status_code=404, detail=result.detail)
+    bus = getattr(request.app.state, "event_bus", None)
+    if bus is not None:
+        await bus.publish(ScheduleChanged(revision=bus.next_revision()))
     return Response(status_code=200, headers={"HX-Redirect": f"/extra-classes?student={access.student_id}"})
