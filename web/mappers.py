@@ -257,36 +257,39 @@ def school_items_to_web(items: Dict[str, str] | Iterable) -> list[WebSchoolItem]
 def search_school(
     *,
     query: str,
-    classes: Dict[str, str],
-    teachers: Dict[str, str],
-    rooms: Dict[str, str],
+    classes,   # ClassListDTO
+    teachers,  # TeacherListDTO
+    rooms,     # RoomListDTO
     limit: int = 20,
 ) -> WebSearchResults:
     """
     Поиск по справочникам школы (ТЗ 31).
-
-    Фильтрация по подстроке — presentation-уровень, как и в bot/handlers/search.py
-    (там список тоже фильтруется/рендерится в хендлере). SQL и domain-логика
-    не дублируются: источники — существующие get_*_list DTO.
+    Архитектурно чистая реализация: маршрутизатор передаёт полные DTO,
+    а маппер извлекает из них словари строго по контракту.
     """
     q = query.strip().lower()
     if not q:
         return WebSearchResults(query=query, classes=[], teachers=[], rooms=[])
 
-    def match(items: Dict[str, str]) -> list[WebSchoolItem]:
-        found = [
-            WebSchoolItem(id=str(k), name=str(v))
-            for k, v in items.items()
-            if q in str(v).lower() or q in str(k).lower()
-        ]
-        found.sort(key=lambda item: item.name)
+    def filter_dict(data_dict: dict) -> list[WebSchoolItem]:
+        found = []
+        # Перебираем словарь (ключ = ID, значение = Имя)
+        for item_id, item_name in data_dict.items():
+            item_id_str = str(item_id)
+            item_name_str = str(item_name)
+            
+            if item_name_str.strip() and item_name_str != "—":
+                if q in item_name_str.lower() or q in item_id_str.lower():
+                    found.append(WebSchoolItem(id=item_id_str, name=item_name_str))
+                    
+        found.sort(key=lambda x: x.name)
         return found[:limit]
 
     return WebSearchResults(
         query=query,
-        classes=match(classes),
-        teachers=match(teachers),
-        rooms=match(rooms),
+        classes=filter_dict(classes.classes),
+        teachers=filter_dict(teachers.teachers),
+        rooms=filter_dict(rooms.rooms),
     )
 
 

@@ -48,6 +48,9 @@ _AUTH_PAGE = """<!DOCTYPE html>
 </html>
 """
 
+def _session_ref(context) -> str:
+    # Корреляция без раскрытия токена (OWASP: salted/partial hash).
+    return getattr(context, "session_hash", hash(getattr(context, "raw_token", "")))[:8] if isinstance(getattr(context, "session_hash", ""), str) else str(hash(context.raw_token))[:8]
 
 class ExchangeRequest(BaseModel):
     token: str = Field(min_length=8, max_length=256)
