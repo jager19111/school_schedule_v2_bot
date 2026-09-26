@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% set nav = "school" %}
+{% block title %}{{ kind_title }}ы{% endblock %}
+{% block header %}{{ kind_icon }} {{ kind_title }}ы{% endblock %}
+{% block content %}
+<section class="school-list">
+  <div class="school-grid">
+    {% for item in items %}
+    <a class="school-item" href="/school/{{ kind }}/{{ item.id }}">{{ item.name }}</a>
+    {% else %}
+    <div class="empty-day">Список пуст (расписание школы ещё не загружено).</div>
+    {% endfor %}
+  </div>
+</section>
+{% endblock %}

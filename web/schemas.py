@@ -13,6 +13,11 @@ from typing import List, Optional
 from pydantic import BaseModel
 
 
+# ==============================================================
+# Schedule (Phase 2)
+# ==============================================================
+
+
 class WebStudent(BaseModel):
     """Student profile для переключателя (без внутренних ID лишних сущностей)."""
 
@@ -68,14 +73,14 @@ class WebDayChanges(BaseModel):
 
 
 class WebDaySchedule(BaseModel):
-    """Расписание на день + контекст заголовка."""
+    """Расписание на день + контекст заголовка (в т.ч. school-экраны)."""
 
     date_iso: str
     date_display: str          # «сегодня, 26 сентября»
     weekday_display: str       # «суббота»
     class_name: str
     group_name: str
-    student_name: str
+    student_name: str          # для school-экранов — название сущности
     lessons: List[WebLesson]
     has_permutation: bool = False
     exchange_count: int = 0
@@ -97,3 +102,32 @@ class WebWeekSchedule(BaseModel):
     week_start_iso: str
     week_display: str           # «21–26 сентября»
     days: List[WebDaySummary]
+
+
+# ==============================================================
+# School (Phase 3, ТЗ 29-32)
+# ==============================================================
+
+
+class WebSchoolItem(BaseModel):
+    """Элемент справочника школы (класс/учитель/кабинет)."""
+
+    id: str
+    name: str
+
+
+class WebSearchResults(BaseModel):
+    """Поиск (ТЗ 31): результаты, сгруппированные по типам."""
+
+    query: str
+    classes: List[WebSchoolItem]
+    teachers: List[WebSchoolItem]
+    rooms: List[WebSchoolItem]
+
+
+class WebFreeRooms(BaseModel):
+    """Свободные кабинеты сейчас (ТЗ 32, FreeRoomsStatusDTO)."""
+
+    status_line: str   # «14:05 (идёт 5 урок 13:15–14:00)»
+    is_empty: bool
+    rooms: List[WebSchoolItem]

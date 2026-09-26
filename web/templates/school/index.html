@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% set nav = "school" %}
+{% block title %}Школа{% endblock %}
+{% block header %}🏫 Школа{% endblock %}
+{% block content %}
+<section class="school-index">
+  <form class="search-form" action="/school/search" method="get" role="search">
+    <label class="visually-hidden" for="school-q">Поиск</label>
+    <input id="school-q" class="search-input" type="search" name="q"
+           placeholder="🔎 Класс, учитель, кабинет…" autocomplete="off">
+    <button class="nav-btn today-btn" type="submit">Найти</button>
+  </form>
+
+  <nav class="school-menu">
+    <a class="school-menu-item" href="/school/class/list">
+      <span class="nav-icon">🎓</span><span>Классы</span>
+    </a>
+    <a class="school-menu-item" href="/school/teacher/list">
+      <span class="nav-icon">👨‍🏫</span><span>Учителя</span>
+    </a>
+    <a class="school-menu-item" href="/school/room/list">
+      <span class="nav-icon">🚪</span><span>Кабинеты</span>
+    </a>
+    <a class="school-menu-item" href="/school/free-rooms">
+      <span class="nav-icon">🟢</span><span>Свободные сейчас</span>
+    </a>
+  </nav>
+</section>
+{% endblock %}

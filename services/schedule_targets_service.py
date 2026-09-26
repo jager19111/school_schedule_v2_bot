@@ -26,11 +26,11 @@ logger = logging.getLogger(__name__)
 @dataclass(frozen=True, slots=True)
 class ScheduleTarget:
     """Допустимая цель просмотра расписания для actor'а."""
-
-    student_id: Optional[int]  # None => legacy child без student_profile
+    student_id: Optional[int]
     class_id: str
     group_id: str
     name: str
+    teacher_id: Optional[str] = None  # <-- ДОБАВЛЕНО ДЛЯ ФАЗЫ 3
 
 
 class ScheduleTargetsService:
@@ -95,7 +95,20 @@ class ScheduleTargetsService:
                 )
             ]
 
-        # teacher — Phase 3 (реальный teacher_id из профиля).
+        # ВНЕДРЕНИЕ ФАЗЫ 3: УЧИТЕЛЬ
+        if role == "teacher":
+            teacher_id = getattr(dto, "teacher_id", None)
+            if teacher_id:
+                return [
+                    ScheduleTarget(
+                        student_id=None,
+                        class_id="",
+                        group_id="",
+                        name="Моё расписание",
+                        teacher_id=str(teacher_id)
+                    )
+                ]
+
         return []
 
     def find_target(

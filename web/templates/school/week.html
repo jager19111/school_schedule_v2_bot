@@ -1,0 +1,38 @@
+{# Сводка недели school-сущности (ТЗ 27); клик по дню -> подробный день. #}
+{% extends "base.html" %}
+{% set nav = "school" %}
+{% block title %}Неделя · {{ item_title }}{% endblock %}
+{% block header %}{{ kind_icon }} {{ item_title }} · {{ week.week_display }}{% endblock %}
+{% block content %}
+<section class="week-schedule">
+  <div class="week-list">
+    {% for day in week.days %}
+    <a class="week-day{% if day.has_changes %} has-changes{% endif %}"
+       href="/school/{{ kind }}/{{ item_id }}/day/{{ day.date_iso }}"
+       hx-get="/school/{{ kind }}/{{ item_id }}/day/{{ day.date_iso }}"
+       hx-target="#main" hx-swap="innerHTML"
+       hx-push-url="/school/{{ kind }}/{{ item_id }}/day/{{ day.date_iso }}">
+      <div class="week-day-name">{{ day.weekday_display }} <span class="week-day-date">{{ day.date_short }}</span></div>
+      <div class="week-day-info">
+        {{ day.lesson_count }} уроков
+        {% if day.has_changes %} · <span class="week-changes">🔄 {{ day.exchange_count }}</span>{% endif %}
+      </div>
+    </a>
+    {% endfor %}
+  </div>
+
+  <nav class="day-nav" aria-label="Навигация по неделям">
+    <a class="nav-btn" href="/school/{{ kind }}/{{ item_id }}/week?week={{ prev_week }}"
+       hx-get="/school/{{ kind }}/{{ item_id }}/week?week={{ prev_week }}"
+       hx-target="#main" hx-swap="innerHTML"
+       hx-push-url="/school/{{ kind }}/{{ item_id }}/week?week={{ prev_week }}">← Пред. нед.</a>
+    <a class="nav-btn" href="/school/{{ kind }}/{{ item_id }}"
+       hx-get="/school/{{ kind }}/{{ item_id }}" hx-target="#main" hx-swap="innerHTML"
+       hx-push-url="/school/{{ kind }}/{{ item_id }}">День</a>
+    <a class="nav-btn" href="/school/{{ kind }}/{{ item_id }}/week?week={{ next_week }}"
+       hx-get="/school/{{ kind }}/{{ item_id }}/week?week={{ next_week }}"
+       hx-target="#main" hx-swap="innerHTML"
+       hx-push-url="/school/{{ kind }}/{{ item_id }}/week?week={{ next_week }}">След. нед. →</a>
+  </nav>
+</section>
+{% endblock %}

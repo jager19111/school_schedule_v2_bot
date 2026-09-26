@@ -149,3 +149,19 @@ body {
   .app-content { padding: 24px 20px 40px; }
   .lesson-card { padding: 14px 16px; }
 }
+
+/* Phase 3 */
+.search-form { display: flex; gap: 8px; margin-bottom: 14px; }
+.search-input { flex: 1; min-height: 44px; padding: 8px 12px; font-size: 16px;
+  border: 1px solid #d1d5db; border-radius: 10px; }
+.school-menu { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.school-menu-item { display: flex; flex-direction: column; align-items: center; gap: 6px;
+  min-height: 72px; justify-content: center; background: var(--card);
+  border-radius: 12px; text-decoration: none; color: var(--text-main); font-weight: 600; }
+.school-grid { display: flex; flex-wrap: wrap; gap: 8px; }
+.school-item { min-height: 44px; min-width: 64px; display: flex; align-items: center;
+  justify-content: center; padding: 8px 12px; background: var(--card);
+  border: 1px solid #d1d5db; border-radius: 10px; text-decoration: none; color: var(--text-main); }
+.search-group-title { font-size: 15px; margin: 14px 0 8px; color: var(--text-muted); }
+.free-status { font-size: 14px; color: var(--text-muted); margin-bottom: 12px; }
+@media (min-width: 768px) { .school-menu { grid-template-columns: repeat(4, 1fr); } }

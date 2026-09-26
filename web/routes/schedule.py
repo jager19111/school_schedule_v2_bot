@@ -37,27 +37,28 @@ router = APIRouter()
 
 _STUDENT_COOKIE = "web_student"
 
-
 def _targets_service(request: Request) -> ScheduleTargetsService:
     return request.app.state.schedule_targets_service
-
 
 def _schedule_service(request: Request):
     return request.app.state.schedule_service
 
-
 def _time_service(request: Request):
     return request.app.state.time_service
-
 
 def _templates(request: Request):
     return request.app.state.templates
 
-
 def _today_iso(request: Request) -> str:
-    # Business date — только через TimeService (ТЗ 55.1).
     return _time_service(request).get_now_base().date().isoformat()
 
+def _dump(obj):
+    """Гарантирует, что Jinja2 сможет прочитать данные (обход багов Pydantic v2)."""
+    if hasattr(obj, "model_dump"):
+        return obj.model_dump()
+    if hasattr(obj, "dict"):
+        return obj.dict()
+    return obj
 
 async def _nika_stale_warning(request: Request) -> str | None:
     """
@@ -68,12 +69,14 @@ async def _nika_stale_warning(request: Request) -> str | None:
     last_changed_at в школьной таймзоне (TimeService.format_base).
     """
     try:
-        health = await _schedule_service(request).get_nika_health_status()
-    except Exception:
-        logger.exception("get_nika_health_status failed")
+        health = await _schedule_service(request).schedule_repo.get_nika_health_status()
+    except Exception as e:
+        logger.warning(f"get_nika_health_status failed: {e}")
         return None
+        
     if not getattr(health, "last_error", None):
         return None
+        
     changed_at = getattr(health, "last_changed_at", None)
     formatted = _time_service(request).format_base(changed_at) if changed_at else "неизвестно"
     return (
@@ -81,12 +84,10 @@ async def _nika_stale_warning(request: Request) -> str | None:
         "Расписание может быть неактуальным."
     )
 
-
 async def _resolve_target(
     request: Request,
     context: WebSessionContext,
 ) -> tuple[list, ScheduleTarget]:
-    """Список целей actor'а + выбранная цель (cookie/первая)."""
     targets = await _targets_service(request).get_targets_for_user(
         user_id=context.user_id
     )
@@ -101,15 +102,8 @@ async def _resolve_target(
 
     target = _targets_service(request).find_target(targets, requested)
     if target is None:
-        # Cookie протухла (ребёнок удалён из семьи) — fallback на первую.
         target = targets[0]
     return targets, target
-
-
-# ==============================================================
-# Dashboard «Сегодня»
-# ==============================================================
-
 
 @router.get("/", response_class=HTMLResponse)
 async def dashboard(
@@ -119,12 +113,18 @@ async def dashboard(
     targets, target = await _resolve_target(request, context)
     schedule_service = _schedule_service(request)
 
-    # Smart-day (ТЗ 23): существующая бизнес-логика, не копия.
-    dto = await schedule_service.get_smart_day_schedule_for_student(
-        class_id=target.class_id,
-        group_id=target.group_id,
-        student_id=target.student_id,
-    )
+    # Роутинг: Учитель или Ученик
+    if getattr(target, "teacher_id", None):
+        dto = await schedule_service.get_smart_day_schedule_for_teacher(
+            teacher_id=target.teacher_id,
+        )
+    else:
+        dto = await schedule_service.get_smart_day_schedule_for_student(
+            class_id=target.class_id,
+            group_id=target.group_id,
+            student_id=target.student_id,
+        )
+        
     view = day_to_web(
         dto,
         target=target,
@@ -136,8 +136,8 @@ async def dashboard(
         request,
         "schedule/day.html",
         _ctx(request, context, {
-            "day": view,
-            "students": [student_to_web(t, current_id=target.student_id) for t in targets],
+            "day": _dump(view),
+            "students": [_dump(student_to_web(t, current_id=target.student_id)) for t in targets],
         }),
     )
 
@@ -154,17 +154,26 @@ async def day_page(
     context: WebSessionContext = Depends(require_family_allowed),
 ):
     try:
-        date.fromisoformat(date_iso)  # date-only; некорректный формат -> 404
+        date.fromisoformat(date_iso)
     except ValueError:
         raise HTTPException(status_code=404, detail="Некорректная дата.")
 
     targets, target = await _resolve_target(request, context)
-    dto = await _schedule_service(request).get_daily_schedule_for_student(
-        class_id=target.class_id,
-        group_id=target.group_id,
-        date_iso=date_iso,
-        student_id=target.student_id,
-    )
+    
+    # Роутинг: Учитель или Ученик
+    if getattr(target, "teacher_id", None):
+        dto = await _schedule_service(request).get_daily_schedule_for_teacher(
+            teacher_id=target.teacher_id,
+            date_iso=date_iso,
+        )
+    else:
+        dto = await _schedule_service(request).get_daily_schedule_for_student(
+            class_id=target.class_id,
+            group_id=target.group_id,
+            date_iso=date_iso,
+            student_id=target.student_id,
+        )
+        
     view = day_to_web(
         dto,
         target=target,
@@ -175,8 +184,8 @@ async def day_page(
         request,
         "schedule/day.html",
         _ctx(request, context, {
-            "day": view,
-            "students": [student_to_web(t, current_id=target.student_id) for t in targets],
+            "day": _dump(view),
+            "students": [_dump(student_to_web(t, current_id=target.student_id)) for t in targets],
             "fragment": request.headers.get("HX-Request") == "true",
         }),
     )
@@ -199,16 +208,40 @@ async def day_changes(
         raise HTTPException(status_code=404, detail="Некорректная дата.")
 
     targets, target = await _resolve_target(request, context)
-    dto = await _schedule_service(request).get_day_changes_detail(
-        class_id=target.class_id,
-        date_iso=date_iso,
-        origin="class",
-    )
+    
+    # Роутинг: Учитель или Ученик
+    if getattr(target, "teacher_id", None):
+        try:
+            dto = await _schedule_service(request).get_day_changes_detail(
+                teacher_id=target.teacher_id,
+                date_iso=date_iso,
+                origin="teacher",
+            )
+        except AttributeError:
+            dto = await _schedule_service(request).schedule_repo.get_day_changes_detail(
+                teacher_id=target.teacher_id,
+                date_iso=date_iso,
+                origin="teacher",
+            )
+    else:
+        try:
+            dto = await _schedule_service(request).get_day_changes_detail(
+                class_id=target.class_id,
+                date_iso=date_iso,
+                origin="class",
+            )
+        except AttributeError:
+            dto = await _schedule_service(request).schedule_repo.get_day_changes_detail(
+                class_id=target.class_id,
+                date_iso=date_iso,
+                origin="class",
+            )
+        
     view = changes_to_web(dto, target=target)
     return _templates(request).TemplateResponse(
         request,
         "schedule/_changes_content.html",
-        _ctx(request, context, {"changes": view}),
+        _ctx(request, context, {"changes": _dump(view)}),
     )
 
 
@@ -232,15 +265,22 @@ async def week_page(
         except ValueError:
             raise HTTPException(status_code=404, detail="Некорректная неделя.")
     else:
-        # Smart week start (ТЗ 27): воскресенье/суббота вечером -> след. неделя.
         week_start = await schedule_service.get_smart_week_start()
 
-    summary = await schedule_service.get_week_schedule_summary(
-        class_id=target.class_id,
-        group_id=target.group_id,
-        week_start_iso=week_start,
-        student_id=target.student_id,
-    )
+    # Роутинг: Учитель или Ученик
+    if getattr(target, "teacher_id", None):
+        summary = await schedule_service.get_teacher_week_schedule_summary(
+            teacher_id=target.teacher_id,
+            week_start_iso=week_start,
+        )
+    else:
+        summary = await schedule_service.get_week_schedule_summary(
+            class_id=target.class_id,
+            group_id=target.group_id,
+            week_start_iso=week_start,
+            student_id=target.student_id,
+        )
+        
     view = week_summary_to_web(summary)
     prev_week = (date.fromisoformat(week_start) - timedelta(days=7)).isoformat()
     next_week = (date.fromisoformat(week_start) + timedelta(days=7)).isoformat()
@@ -248,8 +288,8 @@ async def week_page(
         request,
         "schedule/week.html",
         _ctx(request, context, {
-            "week": view,
-            "students": [student_to_web(t, current_id=target.student_id) for t in targets],
+            "week": _dump(view),
+            "students": [_dump(student_to_web(t, current_id=target.student_id)) for t in targets],
             "prev_week": prev_week,
             "next_week": next_week,
         }),
@@ -296,7 +336,6 @@ async def select_student(
         response.headers["HX-Redirect"] = "/"
         return {}
     return Response(status_code=303, headers={"Location": "/"})
-
 
 def _ctx(request: Request, context: WebSessionContext, extra: dict) -> dict:
     """Общий контекст шаблонов: CSRF для hx-headers."""

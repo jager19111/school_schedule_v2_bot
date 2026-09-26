@@ -1,0 +1,68 @@
+{# День расписания school-сущности (класс/учитель/кабинет). #}
+{% extends "base.html" %}
+{% set nav = "school" %}
+{% block title %}{{ item_title }}{% endblock %}
+{% block header %}{{ day.student_name }}{% endblock %}
+{% block content %}
+<section id="day-content" class="day-schedule"
+         hx-get="/school/{{ kind }}/{{ item_id }}/day/{{ day.date_iso }}"
+         hx-target="#day-content" hx-swap="outerHTML">
+
+  <header class="day-header">
+    <h2 class="day-title">{{ day.weekday_display|capitalize }}, {{ day.date_display }}</h2>
+    {% if day.stale_warning %}
+    <div class="stale-warning" role="status">{{ day.stale_warning }}</div>
+    {% endif %}
+  </header>
+
+  <nav class="day-nav" aria-label="Навигация по дням">
+    <a class="nav-btn" href="/school/{{ kind }}/{{ item_id }}/day/{{ day.date_iso|prev_date }}"
+       hx-get="/school/{{ kind }}/{{ item_id }}/day/{{ day.date_iso|prev_date }}"
+       hx-target="#day-content" hx-swap="outerHTML"
+       hx-push-url="/school/{{ kind }}/{{ item_id }}/day/{{ day.date_iso|prev_date }}">← Пред.</a>
+    <a class="nav-btn" href="/school/{{ kind }}/{{ item_id }}"
+       hx-get="/school/{{ kind }}/{{ item_id }}" hx-target="#day-content"
+       hx-swap="outerHTML" hx-push-url="/school/{{ kind }}/{{ item_id }}">Сегодня</a>
+    <a class="nav-btn" href="/school/{{ kind }}/{{ item_id }}/day/{{ day.date_iso|next_date }}"
+       hx-get="/school/{{ kind }}/{{ item_id }}/day/{{ day.date_iso|next_date }}"
+       hx-target="#day-content" hx-swap="outerHTML"
+       hx-push-url="/school/{{ kind }}/{{ item_id }}/day/{{ day.date_iso|next_date }}">След. →</a>
+  </nav>
+
+  <div class="lessons-list">
+    {% if not day.lessons %}
+    <div class="empty-day">{% if kind == 'room' %}🏖 Кабинет свободен весь день{% else %}Нет занятий{% endif %}</div>
+    {% endif %}
+    {% for lesson in day.lessons %}
+    <article class="lesson-card status-{{ lesson.status }}">
+      <div class="lesson-num">{{ lesson.display_num }}</div>
+      <div class="lesson-main">
+        <div class="lesson-time"><time>{{ lesson.start_time }}</time> – <time>{{ lesson.end_time }}</time></div>
+        <div class="lesson-subject">{{ lesson.subject_name }}</div>
+        <div class="lesson-meta">
+          {% if lesson.class_name and kind != 'class' %}<span>🎓 {{ lesson.class_name }}</span>{% endif %}
+          {% if lesson.group_name and lesson.group_name != 'Весь класс' and kind != 'class' %}<span>👥 {{ lesson.group_name }}</span>{% endif %}
+          {% if lesson.teacher_name and lesson.teacher_name != '—' and kind != 'teacher' %}<span>👤 {{ lesson.teacher_name }}</span>{% endif %}
+          {% if lesson.room_name and lesson.room_name != '—' and kind != 'room' %}<span>📍 {{ lesson.room_name }}</span>{% endif %}
+        </div>
+      </div>
+      {% if lesson.status == 'cancelled' %}
+      <div class="lesson-badge cancelled">отмена</div>
+      {% elif lesson.status == 'exchange' %}
+      <div class="lesson-badge exchange">замена</div>
+      {% elif lesson.status == 'methodological' %}
+      <div class="lesson-badge methodological">метод.</div>
+      {% endif %}
+    </article>
+    {% endfor %}
+  </div>
+
+  <nav class="day-nav" aria-label="Неделя и возврат">
+    <a class="nav-btn" href="/school/{{ kind }}/{{ item_id }}/week"
+       hx-get="/school/{{ kind }}/{{ item_id }}/week" hx-target="#main"
+       hx-swap="innerHTML"
+       hx-push-url="/school/{{ kind }}/{{ item_id }}/week">🗓 Неделя</a>
+    <a class="nav-btn" href="/school/{{ kind }}/list">⬅️ К списку</a>
+  </nav>
+</section>
+{% endblock %}

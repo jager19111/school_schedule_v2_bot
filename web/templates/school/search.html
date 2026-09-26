@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% set nav = "school" %}
+{% block title %}Поиск{% endblock %}
+{% block header %}🔎 Поиск{% endblock %}
+{% block content %}
+<section class="school-search">
+  <form class="search-form" action="/school/search" method="get" role="search">
+    <label class="visually-hidden" for="school-q">Поиск</label>
+    <input id="school-q" class="search-input" type="search" name="q"
+           value="{{ results.query }}" autocomplete="off">
+    <button class="nav-btn today-btn" type="submit">Найти</button>
+  </form>
+
+  {% set groups = [
+    ('🎓 Классы', results.classes, 'class'),
+    ('👨‍🏫 Учителя', results.teachers, 'teacher'),
+    ('🚪 Кабинеты', results.rooms, 'room'),
+  ] %}
+
+  {% if results.query|length < 2 %}
+  <div class="empty-day">Введите минимум 2 символа.</div>
+  {% else %}
+    {% set found = namespace(count=0) %}
+    {% for label, items, kind in groups %}
+      {% if found.count is defined %}{% endif %}
+      {% set found.count = found.count + items|length %}
+      {% if items %}
+      <h2 class="search-group-title">{{ label }}</h2>
+      <div class="school-grid">
+        {% for item in items %}
+        <a class="school-item" href="/school/{{ kind }}/{{ item.id }}">{{ item.name }}</a>
+        {% endfor %}
+      </div>
+      {% endif %}
+    {% endfor %}
+    {% if found.count == 0 %}
+    <div class="empty-day">Ничего не найдено 🤷</div>
+    {% endif %}
+  {% endif %}
+</section>
+{% endblock %}
