@@ -12,8 +12,7 @@
 
 "use strict";
 
-// ВАЖНО: Версия v3 заставит браузеры удалить старый кэш и применить новые правила
-const CACHE_VERSION = "school-schedule-shell-v3";
+const CACHE_VERSION = "school-schedule-shell-v4";
 const SHELL_ASSETS = [
   "/offline.html",
   "/manifest.webmanifest",
@@ -67,24 +66,17 @@ self.addEventListener("fetch", function (event) {
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
 
-  // Network-only для персональных данных
+  // Network-only: невозможно случайно выдать User B данные User A.
   if (isPersonal(url)) {
     event.respondWith(
-      fetch(request)
-        .then(function (response) {
-          // ПЕРЕХВАТ 502/503: Если Nginx говорит, что бот лежит
-          if (response.status >= 500 && (request.mode === "navigate" || request.headers.has("hx-request"))) {
-            return caches.match("/offline.html");
-          }
-          return response;
-        })
-        .catch(function () {
-          // ПЕРЕХВАТ ОФФЛАЙНА: Если пропал интернет
-          if (request.mode === "navigate" || request.headers.has("hx-request")) {
-            return caches.match("/offline.html");
-          }
-          return Response.error();
-        })
+      fetch(request).catch(function () {
+        // Только navigation получает нейтральный offline shell.
+        // Персональное расписание не подменяется snapshot'ом.
+        if (request.mode === "navigate") {
+          return caches.match("/offline.html");
+        }
+        return Response.error();
+      })
     );
     return;
   }

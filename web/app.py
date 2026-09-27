@@ -102,8 +102,7 @@ def create_web_app(
     async def custom_http_exception_handler(request: Request, exc: StarletteHTTPException):
         is_page_request = not request.url.path.startswith("/api/") and not request.headers.get("hx-request")
         
-        # 1. 401 и 403 обрабатываем одинаково красивой заглушкой,
-        # НИКАКИХ редиректов на /auth, чтобы разорвать бесконечный цикл.
+        # 1. Заглушка для браузера. Отдаем со статусом 200 OK, чтобы не ломать кнопку установки PWA!
         if is_page_request and exc.status_code in (401, 403):
             title = "Требуется вход" if exc.status_code == 401 else "Доступ закрыт"
             msg = "Пожалуйста, откройте Telegram-бота и нажмите кнопку «Веб-версия» для входа." if exc.status_code == 401 else "Режим закрытого тестирования. Ваша семья не в списке."
@@ -125,10 +124,11 @@ def create_web_app(
                     </div>
                 </body>
                 </html>""",
-                status_code=exc.status_code
+                # ВАЖНО: Принудительно 200, чтобы Chrome/Safari предложили установить приложение
+                status_code=200
             )
             
-        # 2. Для API и HTMX -> Отдаем JSON, жестко фиксируя UTF-8 для Safari
+        # 2. Для API и внутренних запросов HTMX отдаем строгие ошибки (401/403)
         return JSONResponse(
             status_code=exc.status_code,
             content={"detail": exc.detail},

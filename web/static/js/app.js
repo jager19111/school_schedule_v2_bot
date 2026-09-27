@@ -24,11 +24,13 @@
     // Персональные страницы всегда network-only в SW. Reload безопаснее,
     // чем ручное конструирование URL и не использует browser Date.
     if (document.visibilityState !== "visible") return;
-    // Принудительная навигация пробивает BFCache в Safari лучше, чем .reload()
-    window.location.href = window.location.pathname + window.location.search;
+    window.location.reload();
   }
 
   function sseConnected() {
+    // htmx-ext-sse держит класс htmx-request на sse-connect элементе
+    // (body), пока соединение открыто. Это documented поведение
+    // long-lived SSE connections в htmx.
     var host = document.body;
     return !!(host && host.classList && host.classList.contains("htmx-request"));
   }
@@ -37,10 +39,6 @@
     if (!("serviceWorker" in navigator)) return;
     window.addEventListener("load", function () {
       navigator.serviceWorker.register("/service-worker.js", { scope: "/" })
-        .then(function(registration) {
-          // Принудительно проверяем обновления SW при каждом открытии
-          registration.update();
-        })
         .catch(function () { /* PWA не ломает приложение */ });
     });
   }
@@ -48,6 +46,7 @@
   function setupLiveUpdates() {
     var monitor = document.getElementById("live-monitor");
 
+    // SSE invalidation -> лёгкий hx-get (204) -> revalidate (ТЗ 51.4).
     if (monitor) {
       monitor.addEventListener("htmx:afterRequest", function (event) {
         if (event.detail && event.detail.elt === monitor &&
@@ -67,19 +66,10 @@
         revalidateCurrentScreen();
       }
     }, POLLING_FALLBACK_MS);
-
-    // ГЛОБАЛЬНЫЙ ПЕРЕХВАТ ОШИБОК HTMX
-    // Если мы нажали кнопку в момент рестарта бота
-    document.body.addEventListener('htmx:responseError', function(evt) {
-        if (evt.detail.xhr.status >= 500) window.location.reload();
-    });
-    
-    // Если пропал интернет на телефоне
-    document.body.addEventListener('htmx:sendError', function(evt) {
-        window.location.reload();
-    });
   }
 
+  // iOS/Android могут заморозить PWA в background, оборвать SSE и сменить
+  // сеть. Возврат в foreground всегда запрашивает backend заново.
   document.addEventListener("visibilitychange", function () {
     if (document.visibilityState === "visible") {
       revalidateCurrentScreen();
