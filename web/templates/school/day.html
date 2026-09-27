@@ -34,24 +34,92 @@
     <div class="empty-day">{% if kind == 'room' %}🏖 Кабинет свободен весь день{% else %}Нет занятий{% endif %}</div>
     {% endif %}
     {% for lesson in day.lessons %}
-    <article class="lesson-card status-{{ lesson.status }}">
-      <div class="lesson-num">{{ lesson.display_num }}</div>
-      <div class="lesson-main">
-        <div class="lesson-time"><time>{{ lesson.start_time }}</time> – <time>{{ lesson.end_time }}</time></div>
-        <div class="lesson-subject">{{ lesson.subject_name }}</div>
-        <div class="lesson-meta">
-          {% if lesson.class_name and kind != 'class' %}<span>🎓 {{ lesson.class_name }}</span>{% endif %}
-          {% if lesson.group_name and lesson.group_name != 'Весь класс' and kind != 'class' %}<span>👥 {{ lesson.group_name }}</span>{% endif %}
-          {% if lesson.teacher_name and lesson.teacher_name != '—' and kind != 'teacher' %}<span>👤 {{ lesson.teacher_name }}</span>{% endif %}
-          {% if lesson.room_name and lesson.room_name != '—' and kind != 'room' %}<span>📍 {{ lesson.room_name }}</span>{% endif %}
-        </div>
+    <article
+      class="lesson-card status-{{ lesson.status.value }}"
+      aria-label="{{ lesson.aria_label }}"
+    >
+      <div class="lesson-num">
+        {{ lesson.number if lesson.number is not none else "•" }}
       </div>
-      {% if lesson.status == 'cancelled' %}
+
+      <div class="lesson-main">
+        <div class="lesson-time">
+          <time>{{ lesson.start_time }}</time> – <time>{{ lesson.end_time }}</time>
+        </div>
+
+        {% if lesson.shared_subject and lesson.entries %}
+          {% set shared_entry = lesson.entries[0] %}
+          {% if shared_entry.subject %}
+          <div class="lesson-subject">
+            {{ shared_entry.subject.value }}
+          </div>
+          {% endif %}
+        {% endif %}
+
+        {% for entry in lesson.entries %}
+          <div class="lesson-entry">
+            {% if lesson.view_mode.value == "teacher" %}
+              <div class="lesson-subject">
+                {% if entry.class_name %}
+                  {{ entry.class_name.value }}
+                {% endif %}
+                {% if entry.group %}
+                  · {{ entry.group.value }}
+                {% endif %}
+              </div>
+
+              {% if entry.subject %}
+              <div class="lesson-meta">
+                <span>{{ entry.subject.value }}</span>
+              </div>
+              {% endif %}
+
+            {% else %}
+              {% if not lesson.shared_subject and entry.subject %}
+              <div class="lesson-subject">
+                {{ entry.subject.value }}
+              </div>
+              {% endif %}
+
+              <div class="lesson-meta">
+                {% if lesson.view_mode.value == "room" %}
+                  {% if entry.class_name %}
+                  <span>🎓 {{ entry.class_name.value }}</span>
+                  {% endif %}
+                  {% if entry.group %}
+                  <span>👥 {{ entry.group.value }}</span>
+                  {% endif %}
+                  {% if entry.teacher %}
+                  <span>👤 {{ entry.teacher.value }}</span>
+                  {% endif %}
+                {% else %}
+                  {% if entry.teacher %}
+                  <span>👤 {{ entry.teacher.value }}</span>
+                  {% endif %}
+                  {% if entry.group %}
+                  <span>👥 {{ entry.group.value }}</span>
+                  {% endif %}
+                {% endif %}
+              </div>
+            {% endif %}
+
+            {% if entry.room %}
+            <div class="lesson-meta">
+              <span>📍 {{ entry.room.value }}</span>
+            </div>
+            {% endif %}
+          </div>
+        {% endfor %}
+      </div>
+
+      {% if lesson.kind.value == "window" %}
+      <div class="lesson-badge methodological">окно</div>
+      {% elif lesson.status.value == "cancelled" %}
       <div class="lesson-badge cancelled">отмена</div>
-      {% elif lesson.status == 'exchange' %}
+      {% elif lesson.status.value == "added" %}
+      <div class="lesson-badge added">добавлен</div>
+      {% elif lesson.status.value == "changed" %}
       <div class="lesson-badge exchange">замена</div>
-      {% elif lesson.status == 'methodological' %}
-      <div class="lesson-badge methodological">метод.</div>
       {% endif %}
     </article>
     {% endfor %}

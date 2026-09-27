@@ -18,8 +18,9 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Optional, Any
+from typing import Optional
 
+from core.models.dto import ExtraClassDTO, ExtraClassItemDTO
 from core.repository.extra_classes_repository import ExtraClassesRepository
 from core.repository.student_repository import StudentRepository
 from services.profiles_service import ProfileService
@@ -63,11 +64,6 @@ class ExtraClassesWebService:
         self.student_repo = student_repo
         self.time_service = time_service
 
-    def _get_val(self, obj: Any, key: str, default: Any = None) -> Any:
-        if hasattr(obj, "model_dump"): obj = obj.model_dump()
-        elif hasattr(obj, "dict"): obj = obj.dict()
-        if isinstance(obj, dict): return obj.get(key, default)
-        return getattr(obj, key, default)
 
     async def resolve_access(
         self,
@@ -134,17 +130,23 @@ class ExtraClassesWebService:
     # ==========================================================
     # Чтение
     # ==========================================================
-    
-    async def list_items(self, access: ExtraClassesAccess) -> list:
+
+    async def list_items(
+        self,
+        access: ExtraClassesAccess,
+    ) -> list[ExtraClassItemDTO]:
         return await self.repo.get_extra_classes_for_student(
-            student_id=access.student_id
+            student_id=access.student_id,
         )
 
     async def get_item(
-        self, access: ExtraClassesAccess, extra_id: int
-    ) -> Optional[Any]:
+        self,
+        access: ExtraClassesAccess,
+        extra_id: int,
+    ) -> Optional[ExtraClassDTO]:
         return await self.repo.get_extra_class(
-            extra_id=extra_id, student_id=access.student_id
+            extra_id=extra_id,
+            student_id=access.student_id,
         )
 
     # ==========================================================
@@ -189,13 +191,14 @@ class ExtraClassesWebService:
             student_id=access.student_id, day_of_week=day_of_week
         )
         for item in items:
-            item_id = self._get_val(item, "id")
-            if exclude_id is not None and int(item_id) == int(exclude_id):
+            if exclude_id is not None and item.id == exclude_id:
                 continue
-            other_s = self._parse(self._get_val(item, "time_start", "00:00"))
-            other_e = self._parse(self._get_val(item, "time_end", "00:00"))
-            if s < other_e and other_s < e:
-                return str(self._get_val(item, "title", "занятие"))
+
+            other_start = self._parse(item.time_start)
+            other_end = self._parse(item.time_end)
+
+            if s < other_end and other_start < e:
+                return item.title
         return None
 
     @staticmethod

@@ -31,7 +31,7 @@ from services.students_service import StudentsService
 from services.time_service import TimeService, TimeServiceConfig
 from services.web_sessions_service import WebSessionsService
 from services.audit_service import AuditService
-
+from services.extra_classes_web_service import ExtraClassesWebService  # noqa: E402
 from web.app import WebSettings, create_web_app
 
 RESULTS_PHASE3 = []
@@ -68,12 +68,12 @@ class Env:
             class_shift={},
             second_relative=False,
         )
-        
+
         self.schedule_repo = ScheduleRepository(
             db_path=self.conn, http_session=self.http_session, time_service=self.ts,
             nika_base_url="https://lyceum.nstu.ru/rasp", history_days=7, metadata_cache=metadata,
         )
-        
+
         profile_repo = ProfileRepository(db_path=self.conn, time_service=self.ts)
         student_repo = StudentRepository(db_path=self.conn, time_service=self.ts)
         extra_repo = ExtraClassesRepository(db_path=self.conn, time_service=self.ts)
@@ -90,19 +90,26 @@ class Env:
             extra_classes_repo=extra_repo, profile_service=profile_service,
             students_service=students_service, time_service=self.ts, audit_service=self.audit_service
         )
-        
+
         self.schedule_service = ScheduleService(
             schedule_repo=self.schedule_repo, time_service=self.ts, extra_classes_service=extra_service,
         )
         self.schedule_service.get_nika_health_status = self.schedule_repo.get_nika_health_status
-        
+
         self.targets_service = ScheduleTargetsService(profile_service, students_service, student_repo)
-        
+
         self.sessions = WebSessionsService(
-            WebAuthRepository(db_path=self.conn, time_service=self.ts), 
-            self.ts, 
+            WebAuthRepository(db_path=self.conn, time_service=self.ts),
+            self.ts,
             csrf_secret="phase3-checklist-secret-0123456789abcdef-valid-length",
         )
+        self.extra_classes_web_service = ExtraClassesWebService(
+                extra_classes_repo=extra_repo,
+                students_service=students_service,
+                profile_service=profile_service,
+                student_repo=student_repo,
+                time_service=self.ts,
+            )
 
         self.app = create_web_app(
             web_settings=WebSettings(
@@ -112,8 +119,8 @@ class Env:
             sessions_service=self.sessions, profile_service=profile_service,
             schedule_service=self.schedule_service, students_service=students_service,
             schedule_targets_service=self.targets_service, time_service=self.ts, db_liveness=self._db_alive,
+            extra_classes_web_service = self.extra_classes_web_service
         )
-
         # Хак для Jinja2 + Pydantic v2
         original_tr = self.app.state.templates.TemplateResponse
         def dictify(obj):
@@ -176,13 +183,13 @@ class Env:
             "name": "Саша", "class_id": "016", "group_id": "ALL",
             "is_active": 1, "created_at": now, "updated_at": now,
         }, required=("id", "telegram_user_id", "class_id"))
-        
+
         await self.seed("student_profiles", {
             "id": 12, "family_id": 1, "telegram_user_id": None,
             "name": "Маша", "class_id": "016", "group_id": "ALL",
             "is_active": 1, "created_at": now, "updated_at": now,
         })
-        
+
         await self.seed("student_profiles", {
             "id": 21, "family_id": 2, "telegram_user_id": 202,
             "name": "Чужой", "class_id": "017", "group_id": "ALL",
@@ -249,7 +256,7 @@ class Env:
 async def run_phase3(env: Env) -> None:
     print("\n--- Running Phase 3 Tests ---")
     parent, _ = await env.client(101)
-    
+
     # 1. Search & Index
     try:
         r = await parent.get("/school")
@@ -317,7 +324,7 @@ async def run_phase3(env: Env) -> None:
         assert r.status_code in (200, 404), "Should not fail access gate"
         record3("ACL: school pages доступны только авторизованному", True)
     except Exception as e: record3("ACL: school pages доступны...", False, str(e))
-    
+
     await parent.aclose()
 
     # Скрытая регрессия Phase 2.1

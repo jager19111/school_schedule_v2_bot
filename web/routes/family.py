@@ -382,7 +382,13 @@ async def _permissions_view(
         raise HTTPException(status_code=403, detail="Нет доступа к правам.")
     fctx = await _family_ctx(request, context)
     members_by_id = {
-        m.user_id: m.name for m in family_members_to_web(fctx["members"], current_user_id=admin_user_id)
+        member.user_id: member.name
+        for member in family_members_to_web(
+            fctx["members"],
+            current_user_id=admin_user_id,
+            family_admin_user_id=admin_user_id,
+        )
+        if member.user_id is not None
     }
     student = await _student_for_admin(request, context, student_id)
     return {

@@ -26,9 +26,11 @@ from web.deps import require_family_allowed
 from web.mappers import (
     free_rooms_to_web,
     school_day_to_web,
+    school_items_to_web,
     search_school,
     week_summary_to_web,
 )
+from web.schemas import LessonViewMode
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -76,10 +78,16 @@ async def _nika_stale_warning(request: Request) -> str | None:
         health = await _schedule_service(request).get_nika_health_status()
     except Exception:
         return None
-    if not getattr(health, "last_error", None):
+
+    if not health.last_error:
         return None
-    changed_at = getattr(health, "last_changed_at", None)
-    formatted = _time_service(request).format_base(changed_at) if changed_at else "неизвестно"
+
+    formatted = (
+        _time_service(request).format_base(health.last_changed_at)
+        if health.last_changed_at
+        else "неизвестно"
+    )
+
     return (
         f"⚠️ Последнее обновление расписания: {formatted}. "
         "Расписание может быть неактуальным."
@@ -142,27 +150,25 @@ async def school_list(
     service = _schedule_service(request)
 
     if kind_name == "class":
-        dto = await service.get_classes_list()
-        items = sorted(dto.classes.items(), key=lambda kv: kv[1])
+        source_items = (await service.get_classes_list()).classes
     elif kind_name == "teacher":
-        dto = await service.get_teachers_list()
-        items = sorted(dto.teachers.items(), key=lambda kv: kv[1])
+        source_items = (await service.get_teachers_list()).teachers
     else:
-        dto = await service.get_rooms_list()
-        items = sorted(dto.rooms.items(), key=lambda kv: kv[1])
+        source_items = (await service.get_rooms_list()).rooms
 
     return _templates(request).TemplateResponse(
-        request, "school/list.html",
-        _ctx(request, context, {
-            "kind": kind_name,
-            "kind_title": kind["title"],
-            "kind_icon": kind["icon"],
-            "items": [
-                {"id": k, "name": v}
-                for k, v in items
-                if str(v).strip() and str(v) != "—"
-            ],
-        }),
+        request,
+        "school/list.html",
+        _ctx(
+            request,
+            context,
+            {
+                "kind": kind_name,
+                "kind_title": kind["title"],
+                "kind_icon": kind["icon"],
+                "items": school_items_to_web(source_items),
+            },
+        ),
     )
 
 
@@ -221,12 +227,20 @@ async def _render_school_day(
     else:
         dto = await service.get_daily_schedule_for_room(item_id, date_iso)
 
+    view_mode = {
+        "class": LessonViewMode.CLASS,
+        "teacher": LessonViewMode.TEACHER,
+        "room": LessonViewMode.ROOM,
+    }[kind_name]
+
     view = school_day_to_web(
         dto,
         title=f"{kind['icon']} {title}",
         today_iso=_today_iso(request),
+        view_mode=view_mode,
         stale_warning=await _nika_stale_warning(request),
     )
+
     return _templates(request).TemplateResponse(
         request, "school/day.html",
         _ctx(request, context, {

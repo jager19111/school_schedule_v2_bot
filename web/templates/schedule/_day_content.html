@@ -47,24 +47,63 @@
     <div class="empty-day">Нет занятий 🎉</div>
     {% endif %}
     {% for lesson in day.lessons %}
-    <article class="lesson-card status-{{ lesson.status }}">
-      <div class="lesson-num">{{ lesson.display_num }}</div>
-      <div class="lesson-main">
-        <div class="lesson-time"><time>{{ lesson.start_time }}</time> – <time>{{ lesson.end_time }}</time></div>
-        <div class="lesson-subject">{{ lesson.subject_name }}</div>
-        <div class="lesson-meta">
-          {% if lesson.teacher_name and lesson.teacher_name != '—' %}<span>👤 {{ lesson.teacher_name }}</span>{% endif %}
-          {% if lesson.room_name and lesson.room_name != '—' %}<span>📍 {{ lesson.room_name }}</span>{% endif %}
-        </div>
+    <article
+      class="lesson-card status-{{ lesson.status.value }}"
+      aria-label="{{ lesson.aria_label }}"
+    >
+      <div class="lesson-num">
+        {{ lesson.number if lesson.number is not none else "•" }}
       </div>
-      {% if lesson.status == 'extra' %}
+
+      <div class="lesson-main">
+        <div class="lesson-time">
+          <time>{{ lesson.start_time }}</time> – <time>{{ lesson.end_time }}</time>
+        </div>
+
+        {% if lesson.shared_subject and lesson.entries %}
+          {% set shared_entry = lesson.entries[0] %}
+          {% if shared_entry.subject %}
+          <div class="lesson-subject">
+            {{ shared_entry.subject.value }}
+          </div>
+          {% endif %}
+        {% endif %}
+
+        {% for entry in lesson.entries %}
+          <div class="lesson-entry">
+            {% if not lesson.shared_subject and entry.subject %}
+            <div class="lesson-subject">
+              {{ entry.subject.value }}
+            </div>
+            {% endif %}
+
+            <div class="lesson-meta">
+              {% if entry.teacher %}
+              <span>👤 {{ entry.teacher.value }}</span>
+              {% endif %}
+
+              {% if entry.group %}
+              <span>👥 {{ entry.group.value }}</span>
+              {% endif %}
+
+              {% if entry.room %}
+              <span>📍 {{ entry.room.value }}</span>
+              {% endif %}
+            </div>
+          </div>
+        {% endfor %}
+      </div>
+
+      {% if lesson.kind.value == "extra" %}
       <div class="lesson-badge extra">доп.</div>
-      {% elif lesson.status == 'cancelled' %}
+      {% elif lesson.kind.value == "window" %}
+      <div class="lesson-badge methodological">окно</div>
+      {% elif lesson.status.value == "cancelled" %}
       <div class="lesson-badge cancelled">отмена</div>
-      {% elif lesson.status == 'exchange' %}
+      {% elif lesson.status.value == "added" %}
+      <div class="lesson-badge added">добавлен</div>
+      {% elif lesson.status.value == "changed" %}
       <div class="lesson-badge exchange">замена</div>
-      {% elif lesson.status == 'methodological' %}
-      <div class="lesson-badge methodological">метод.</div>
       {% endif %}
     </article>
     {% endfor %}

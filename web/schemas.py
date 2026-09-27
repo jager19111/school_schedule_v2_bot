@@ -8,57 +8,121 @@
 
 from __future__ import annotations
 
-from typing import List, Optional
+from enum import Enum
+from typing import List, Literal, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 # ==============================================================
-# Schedule (Phase 2)
+# Schedule presentation contract
 # ==============================================================
+
+
+class LessonViewMode(str, Enum):
+    STUDENT = "student"
+    CLASS = "class"
+    TEACHER = "teacher"
+    ROOM = "room"
+
+
+class LessonKind(str, Enum):
+    REGULAR = "regular"
+    EXTRA = "extra"
+    WINDOW = "window"
+
+
+class LessonStatus(str, Enum):
+    NORMAL = "normal"
+    CHANGED = "changed"
+    ADDED = "added"
+    CANCELLED = "cancelled"
 
 
 class WebStudent(BaseModel):
-    """Student profile для переключателя (без внутренних ID лишних сущностей)."""
+    """Профиль для переключателя расписания."""
 
     student_id: Optional[int]
     name: str
     is_current: bool = False
 
 
-class WebLesson(BaseModel):
-    """Карточка урока (ТЗ 24): минимум полей, без служебных DTO-полей."""
+class WebChangedValue(BaseModel):
+    """Значение поля урока и факт его изменения относительно original_*."""
 
-    display_num: str
+    value: Optional[str] = None
+    changed: bool = False
+
+
+class WebRoomBadge(BaseModel):
+    """Кабинет конкретной entry; не является свойством всей карточки."""
+
+    value: str
+    changed: bool = False
+
+
+class WebLessonEntry(BaseModel):
+    """Одна смысловая часть временного слота расписания."""
+
+    subject: Optional[WebChangedValue] = None
+    teacher: Optional[WebChangedValue] = None
+    group: Optional[WebChangedValue] = None
+    class_name: Optional[WebChangedValue] = None
+    room: Optional[WebRoomBadge] = None
+
+
+class WebLesson(BaseModel):
+    """Полностью подготовленная mapper-ом presentation model урока."""
+
+    key: str
+    number: Optional[int] = None
     start_time: str
     end_time: str
-    subject_name: str
-    teacher_name: str
-    room_name: str
-    class_name: str
-    group_name: str
-    status: str  # normal | exchange | cancelled | extra | methodological
-    is_extra: bool = False
-    is_cancelled: bool = False
-    is_exchange: bool = False
+    view_mode: LessonViewMode
+    kind: LessonKind
+    status: LessonStatus
+    is_current: bool = False
+    entries: List[WebLessonEntry] = Field(default_factory=list)
+    shared_subject: bool = False
+    history_url: Optional[str] = None
+    aria_label: str
 
 
 class WebChange(BaseModel):
-    """Изменённый/отменённый урок с полями «было» (ТЗ 24, Phase 2.1)."""
+    """Одно field-level изменение существующего LessonDTO."""
 
-    display_num: str
-    start_time: str
-    end_time: str
-    subject_name: str
-    teacher_name: str
-    room_name: str
-    group_name: str
-    original_subject_name: str
-    original_teacher_name: str
-    original_room_name: str
-    is_cancelled: bool
-    is_exchange: bool
-    is_added: bool  # урока не было вовсе (пустое original_subject_name)
+    field: Literal["subject", "teacher", "group", "class", "room"]
+    old_value: Optional[str] = None
+    new_value: Optional[str] = None
+    changed_at: Optional[str] = None
+
+
+class WebChangeItem(BaseModel):
+    """Текущая карточка изменённого урока и подготовленная история полей."""
+
+    lesson: WebLesson
+    changes: List[WebChange] = Field(default_factory=list)
+
+
+class WebExtraClass(BaseModel):
+    """Типизированное web-представление дополнительного занятия."""
+
+    id: int
+    day_of_week: int
+    weekday_display: str
+    time_start: str
+    time_end: str
+    title: str
+    location: Optional[str] = None
+    reminder_minutes: int
+
+
+class WebExtraClassDay(BaseModel):
+    """Типизированная группа дополнительных занятий одного дня недели."""
+
+    day_of_week: int
+    weekday_display: str
+    items: List[WebExtraClass] = Field(default_factory=list)
 
 
 class WebDayChanges(BaseModel):
@@ -69,7 +133,7 @@ class WebDayChanges(BaseModel):
     weekday_display: str
     class_name: str
     student_name: str
-    changes: List[WebChange]
+    changes: List[WebChangeItem]
 
 
 class WebDaySchedule(BaseModel):

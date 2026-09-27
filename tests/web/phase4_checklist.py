@@ -37,6 +37,7 @@ from services.students_service import StudentsService
 from services.time_service import TimeService, TimeServiceConfig
 from services.web_sessions_service import WebSessionsService
 from services.audit_service import AuditService
+from services.extra_classes_web_service import ExtraClassesWebService  # noqa: E402
 
 from web.app import WebSettings, create_web_app
 
@@ -111,7 +112,13 @@ class Env:
         self.targets_service = ScheduleTargetsService(profile_service, students_service, student_repo)
         
         self.sessions = WebSessionsService(WebAuthRepository(db_path=self.conn, time_service=self.ts), self.ts, csrf_secret="phase4-checklist-secret-0123456789abcdef-valid-length")
-
+        self.extra_classes_web_service = ExtraClassesWebService(
+                extra_classes_repo=extra_repo,
+                students_service=students_service,
+                profile_service=profile_service,
+                student_repo=student_repo,
+                time_service=self.ts,
+            )
         self.app = create_web_app(
             web_settings=WebSettings(
                 public_url="http://test", allowed_hosts=["testserver"], gateway_key=None,
@@ -120,6 +127,7 @@ class Env:
             sessions_service=self.sessions, profile_service=profile_service,
             schedule_service=self.schedule_service, students_service=students_service,
             schedule_targets_service=self.targets_service, time_service=self.ts, db_liveness=self._db_alive,
+            extra_classes_web_service = self.extra_classes_web_service
         )
 
         original_tr = self.app.state.templates.TemplateResponse

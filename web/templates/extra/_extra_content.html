@@ -14,11 +14,10 @@
   <div class="empty-day">Доп. занятий пока нет 🎯</div>
   {% endif %}
 
-  {% for group in groups %}
+{% for group in groups %}
   <h3 class="search-group-title">{{ group.weekday_display }}</h3>
   <div class="lessons-list">
-    {# ИСПРАВЛЕНО: Теперь используем lessons вместо items #}
-    {% for item in group.lessons %}
+    {% for item in group.items %}
     <article class="lesson-card status-extra">
       <div class="lesson-num">•</div>
       <div class="lesson-main">

@@ -52,14 +52,6 @@ def _templates(request: Request):
 def _today_iso(request: Request) -> str:
     return _time_service(request).get_now_base().date().isoformat()
 
-def _dump(obj):
-    """Гарантирует, что Jinja2 сможет прочитать данные (обход багов Pydantic v2)."""
-    if hasattr(obj, "model_dump"):
-        return obj.model_dump()
-    if hasattr(obj, "dict"):
-        return obj.dict()
-    return obj
-
 async def _nika_stale_warning(request: Request) -> str | None:
     """
     NIKA outage (ТЗ 53): источник с ошибкой при живом кеше.
@@ -70,15 +62,19 @@ async def _nika_stale_warning(request: Request) -> str | None:
     """
     try:
         health = await _schedule_service(request).schedule_repo.get_nika_health_status()
-    except Exception as e:
-        logger.warning(f"get_nika_health_status failed: {e}")
+    except Exception as exc:
+        logger.warning("get_nika_health_status failed: %s", exc)
         return None
-        
-    if not getattr(health, "last_error", None):
+
+    if not health.last_error:
         return None
-        
-    changed_at = getattr(health, "last_changed_at", None)
-    formatted = _time_service(request).format_base(changed_at) if changed_at else "неизвестно"
+
+    formatted = (
+        _time_service(request).format_base(health.last_changed_at)
+        if health.last_changed_at
+        else "неизвестно"
+    )
+
     return (
         f"⚠️ Последнее обновление расписания: {formatted}. "
         "Расписание может быть неактуальным."
@@ -114,7 +110,7 @@ async def dashboard(
     schedule_service = _schedule_service(request)
 
     # Роутинг: Учитель или Ученик
-    if getattr(target, "teacher_id", None):
+    if target.teacher_id:
         dto = await schedule_service.get_smart_day_schedule_for_teacher(
             teacher_id=target.teacher_id,
         )
@@ -136,8 +132,8 @@ async def dashboard(
         request,
         "schedule/day.html",
         _ctx(request, context, {
-            "day": _dump(view),
-            "students": [_dump(student_to_web(t, current_id=target.student_id)) for t in targets],
+            "day": view,
+            "students": [student_to_web(t, current_id=target.student_id) for t in targets],
         }),
     )
 
@@ -161,7 +157,7 @@ async def day_page(
     targets, target = await _resolve_target(request, context)
     
     # Роутинг: Учитель или Ученик
-    if getattr(target, "teacher_id", None):
+    if target.teacher_id:
         dto = await _schedule_service(request).get_daily_schedule_for_teacher(
             teacher_id=target.teacher_id,
             date_iso=date_iso,
@@ -184,8 +180,8 @@ async def day_page(
         request,
         "schedule/day.html",
         _ctx(request, context, {
-            "day": _dump(view),
-            "students": [_dump(student_to_web(t, current_id=target.student_id)) for t in targets],
+            "day": view,
+            "students": [student_to_web(t, current_id=target.student_id) for t in targets],
             "fragment": request.headers.get("HX-Request") == "true",
         }),
     )
@@ -210,40 +206,25 @@ async def day_changes(
     targets, target = await _resolve_target(request, context)
     
     # Роутинг: Учитель или Ученик
-    if getattr(target, "teacher_id", None):
-        try:
-            dto = await _schedule_service(request).get_day_changes_detail(
-                teacher_id=target.teacher_id,
-                date_iso=date_iso,
-                origin="teacher",
-            )
-        except AttributeError:
-            dto = await _schedule_service(request).schedule_repo.get_day_changes_detail(
-                teacher_id=target.teacher_id,
-                date_iso=date_iso,
-                origin="teacher",
-            )
+    if target.teacher_id:
+        dto = await _schedule_service(request).get_day_changes_detail(
+            teacher_id=target.teacher_id,
+            date_iso=date_iso,
+            origin="teacher",
+        )
     else:
-        try:
-            dto = await _schedule_service(request).get_day_changes_detail(
-                class_id=target.class_id,
-                date_iso=date_iso,
-                origin="class",
-            )
-        except AttributeError:
-            dto = await _schedule_service(request).schedule_repo.get_day_changes_detail(
-                class_id=target.class_id,
-                date_iso=date_iso,
-                origin="class",
-            )
-        
+        dto = await _schedule_service(request).get_day_changes_detail(
+            class_id=target.class_id,
+            date_iso=date_iso,
+            origin="class",
+        )
+
     view = changes_to_web(dto, target=target)
     return _templates(request).TemplateResponse(
         request,
         "schedule/_changes_content.html",
-        _ctx(request, context, {"changes": _dump(view)}),
+        _ctx(request, context, {"changes": view}),
     )
-
 
 # ==============================================================
 # Неделя (сводка + переходы на дни)
@@ -268,7 +249,7 @@ async def week_page(
         week_start = await schedule_service.get_smart_week_start()
 
     # Роутинг: Учитель или Ученик
-    if getattr(target, "teacher_id", None):
+    if target.teacher_id:
         summary = await schedule_service.get_teacher_week_schedule_summary(
             teacher_id=target.teacher_id,
             week_start_iso=week_start,
@@ -288,8 +269,8 @@ async def week_page(
         request,
         "schedule/week.html",
         _ctx(request, context, {
-            "week": _dump(view),
-            "students": [_dump(student_to_web(t, current_id=target.student_id)) for t in targets],
+            "week": view,
+            "students": [student_to_web(t, current_id=target.student_id) for t in targets],
             "prev_week": prev_week,
             "next_week": next_week,
         }),

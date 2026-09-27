@@ -29,6 +29,8 @@ from web.extra_classes_helpers import (
     extra_class_to_web,
     group_by_weekday,
 )
+from web.schemas import WebExtraClass
+
 from web.idempotency import IdempotencyStore
 
 logger = logging.getLogger(__name__)
@@ -84,7 +86,7 @@ def _form_context(
     context: WebSessionContext,
     *,
     mode: str,
-    item=None,
+    item: WebExtraClass | None = None,
     error: Optional[str] = None,
     student_id: int,
 ) -> dict:
@@ -93,11 +95,35 @@ def _form_context(
         "item": item,
         "error": error,
         "weekdays": sorted(WEEKDAYS_RU.items()),
-        "idempotency_key": _idempotency(request).new_key() if mode == "create" else "",
+        "idempotency_key": (
+            _idempotency(request).new_key()
+            if mode == "create"
+            else ""
+        ),
         "student_id": student_id,
         "csrf_token": context.csrf_token,
     }
 
+def _submitted_extra_class_to_web(
+    *,
+    extra_id: int,
+    day_of_week: int,
+    time_start: str,
+    time_end: str,
+    title: str,
+    location: str,
+    reminder_minutes: int,
+) -> WebExtraClass:
+    return WebExtraClass(
+        id=extra_id,
+        day_of_week=day_of_week,
+        weekday_display=WEEKDAYS_RU.get(day_of_week, "—"),
+        time_start=time_start,
+        time_end=time_end,
+        title=title,
+        location=location or None,
+        reminder_minutes=reminder_minutes,
+    )
 
 # ==============================================================
 # Список
@@ -159,11 +185,15 @@ async def extra_classes_edit(
     item = await _extra_service(request).get_item(access, extra_id)
     if item is None:
         raise HTTPException(status_code=404, detail="Занятие не найдено.")
+
     return _templates(request).TemplateResponse(
         request,
         "extra/_extra_form.html",
         _form_context(
-            request, context, mode="edit", item=item,
+            request,
+            context,
+            mode="edit",
+            item=extra_class_to_web(item),
             student_id=access.student_id,
         ),
     )
@@ -209,20 +239,34 @@ async def extra_classes_create(
         location=location,
         reminder_minutes=_int_in(reminder_minutes, 0, 180, 30),
     )
-    
+
     if not result.success:
         # При ошибке возвращаем форму со статусом 200, чтобы HTMX показал её юзеру
-        submitted_item = {
-            "title": title, "day_of_week": day_of_week,
-            "time_start": time_start, "time_end": time_end,
-            "location": location, "reminder_minutes": _int_in(reminder_minutes, 0, 180, 30)
-        }
+        submitted_item = _submitted_extra_class_to_web(
+            extra_id=0,
+            day_of_week=_int_in(day_of_week, 1, 7, 0),
+            time_start=time_start,
+            time_end=time_end,
+            title=title,
+            location=location,
+            reminder_minutes=_int_in(
+                reminder_minutes,
+                0,
+                180,
+                30,
+            ),
+        )
+
         return _templates(request).TemplateResponse(
             request,
             "extra/_extra_form.html",
             _form_context(
-                request, context, mode="create", item=submitted_item,
-                error=result.detail, student_id=access.student_id
+                request,
+                context,
+                mode="create",
+                item=submitted_item,
+                error=result.detail,
+                student_id=access.student_id,
             ),
         )
     bus = getattr(request.app.state, "event_bus", None)
@@ -254,24 +298,39 @@ async def extra_classes_update(
         location=location,
         reminder_minutes=_int_in(reminder_minutes, 0, 180, 30),
     )
-    
+
     if not result.success:
         if result.error_code == "not_found":
             raise HTTPException(status_code=404, detail=result.detail)
-        
-        submitted_item = {
-            "id": extra_id, "title": title, "day_of_week": day_of_week,
-            "time_start": time_start, "time_end": time_end,
-            "location": location, "reminder_minutes": _int_in(reminder_minutes, 0, 180, 30)
-        }
+
+        submitted_item = _submitted_extra_class_to_web(
+            extra_id=extra_id,
+            day_of_week=_int_in(day_of_week, 1, 7, 0),
+            time_start=time_start,
+            time_end=time_end,
+            title=title,
+            location=location,
+            reminder_minutes=_int_in(
+                reminder_minutes,
+                0,
+                180,
+                30,
+            ),
+        )
+
         return _templates(request).TemplateResponse(
             request,
             "extra/_extra_form.html",
             _form_context(
-                request, context, mode="edit", item=submitted_item,
-                error=result.detail, student_id=access.student_id
+                request,
+                context,
+                mode="edit",
+                item=submitted_item,
+                error=result.detail,
+                student_id=access.student_id,
             ),
         )
+
     bus = getattr(request.app.state, "event_bus", None)
     if bus is not None:
         await bus.publish(ScheduleChanged(revision=bus.next_revision()))

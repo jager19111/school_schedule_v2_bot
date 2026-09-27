@@ -1,4 +1,9 @@
 {# Форма доп. занятия (создание и правка). #}
+{#
+  item всегда WebExtraClass | None.
+  Route нормализует edit DTO и invalid submitted form state
+  до передачи данных в Jinja.
+#}
 <section id="extra-content" class="extra-page">
   <h2 class="day-title">{% if mode == 'create' %}➕ Новое занятие{% else %}✏️ Правка занятия{% endif %}</h2>
 
@@ -14,7 +19,9 @@
         hx-swap="outerHTML"
         class="student-form">
       
+      {% if idempotency_key %}
       <input type="hidden" name="idempotency_key" value="{{ idempotency_key }}">
+      {% endif %}
       
       <label class="form-hint" style="margin-bottom: 4px;">Название (например: Английский)</label>
       <input type="text" name="title" value="{{ item.title if item else '' }}" required maxlength="128" placeholder="Кружок робототехники">
@@ -37,7 +44,6 @@
 
       <label class="form-hint" style="margin-bottom: 4px; margin-top: 12px;">Напоминание</label>
       <select name="reminder_minutes">
-          <option value="0" {% if item and item.reminder_minutes == 0 %}selected{% endif %}>Не напоминать</option>
           <option value="15" {% if item and item.reminder_minutes == 15 %}selected{% endif %}>За 15 минут</option>
           <option value="30" {% if not item or item.reminder_minutes == 30 %}selected{% endif %}>За 30 минут</option>
           <option value="60" {% if item and item.reminder_minutes == 60 %}selected{% endif %}>За 1 час</option>

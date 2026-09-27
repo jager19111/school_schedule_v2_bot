@@ -47,7 +47,7 @@ from services.students_service import StudentsService  # noqa: E402
 from services.time_service import TimeService, TimeServiceConfig  # noqa: E402
 from services.web_sessions_service import WebSessionsService  # noqa: E402
 from services.audit_service import AuditService  # noqa: E402
-
+from services.extra_classes_web_service import ExtraClassesWebService  # noqa: E402
 from web.app import WebSettings, create_web_app  # noqa: E402
 
 RESULTS: list[tuple[str, bool, str]] = []
@@ -82,7 +82,7 @@ class Env:
             class_shift={},
             second_relative=False,
         )
-        
+
         self.schedule_repo = ScheduleRepository(
             db_path=self.conn,
             http_session=self.http_session,
@@ -91,7 +91,7 @@ class Env:
             history_days=7,
             metadata_cache=metadata,
         )
-        
+
         profile_repo = ProfileRepository(db_path=self.conn, time_service=self.ts)
         student_repo = StudentRepository(db_path=self.conn, time_service=self.ts)
         extra_repo = ExtraClassesRepository(db_path=self.conn, time_service=self.ts)
@@ -106,7 +106,7 @@ class Env:
 
         profile_service = ProfileService(profile_repo, audit_service=self.audit_service)
         students_service = StudentsService(student_repo, profile_service=profile_service, audit_service=self.audit_service)
-        
+
         extra_service = ExtraClassesService(
             extra_classes_repo=extra_repo,
             profile_service=profile_service,
@@ -114,19 +114,25 @@ class Env:
             time_service=self.ts,
             audit_service=self.audit_service
         )
-        
+
         self.schedule_service = ScheduleService(
             schedule_repo=self.schedule_repo,
             time_service=self.ts,
             extra_classes_service=extra_service,
         )
-        
+        self.extra_classes_web_service = ExtraClassesWebService(
+                extra_classes_repo=extra_repo,
+                students_service=students_service,
+                profile_service=profile_service,
+                student_repo=student_repo,
+                time_service=self.ts,
+            )
         self.schedule_service.get_nika_health_status = self.schedule_repo.get_nika_health_status
-        
+
         self.targets_service = ScheduleTargetsService(
             profile_service, students_service, student_repo
         )
-        
+
         self.sessions = WebSessionsService(
             WebAuthRepository(db_path=self.conn, time_service=self.ts),
             self.ts,
@@ -148,6 +154,7 @@ class Env:
             schedule_targets_service=self.targets_service,
             time_service=self.ts,
             db_liveness=self._db_alive,
+            extra_classes_web_service = self.extra_classes_web_service
         )
 
         original_tr = self.app.state.templates.TemplateResponse
@@ -301,7 +308,7 @@ async def run(env: Env) -> None:
         default_name = "Маша" if "Маша" in r.text else "Саша"
         other_id, other_name = (11, "Саша") if default_name == "Маша" else (12, "Маша")
         default_id = 12 if default_name == "Маша" else 11
-        
+
         if default_name not in r.text:
             raise AssertionError(f"HTML не содержит {default_name}. Получено: {r.text[:500]}")
 
@@ -309,16 +316,16 @@ async def run(env: Env) -> None:
                               headers={"X-CSRF-Token": csrf, "HX-Request": "true"})
         assert r.status_code == 200 and r.headers.get("HX-Redirect") == "/", (r.status_code, r.headers.get("HX-Redirect"))
 
-        r = await parent.get("/")  
+        r = await parent.get("/")
         if f'hx-post="/api/v1/schedule/select/{other_id}"' in r.text:
             raise AssertionError(f"Переключение на {other_name} не сработало")
         if f'hx-post="/api/v1/schedule/select/{default_id}"' not in r.text:
             raise AssertionError(f"Предыдущий ребенок {default_name} не стал кликабельным")
-            
-        r = await parent.get("/")  
+
+        r = await parent.get("/")
         if f'hx-post="/api/v1/schedule/select/{other_id}"' in r.text:
             raise AssertionError(f"Выбор {other_name} не сохранился после F5")
-            
+
         record("parent → child A/B + сохранение после F5 (POST + CSRF)", True)
         await parent.aclose()
     except Exception as exc:
@@ -327,7 +334,7 @@ async def run(env: Env) -> None:
     # --- 2. POST select без CSRF -> 403 ---
     try:
         client, csrf = await env.client(101)
-        r = await client.post("/api/v1/schedule/select/11")  
+        r = await client.post("/api/v1/schedule/select/11")
         assert r.status_code == 403, f"ожидали 403, получили {r.status_code}"
         record("POST select без CSRF → 403", True)
         await client.aclose()
@@ -385,7 +392,7 @@ async def run(env: Env) -> None:
         assert "Отменён" in html or "отмена" in html, "нет отмены"
         assert "добавлен" in html, "нет бейджа добавленного урока"
         assert "hx-push-url" in html, "нет hx-push-url"
-        r = await parent.get(url) 
+        r = await parent.get(url)
         assert r.status_code == 200 and "Химия" in r.text
         r = await parent.get(f"/schedule/day/{env.today_iso}")
         assert "Изменения" in r.text or "изменени" in r.text.lower()

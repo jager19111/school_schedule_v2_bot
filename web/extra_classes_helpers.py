@@ -1,62 +1,70 @@
 # web/extra_classes_helpers.py
 #
-# Phase 5: Web-схема и маппер доп. занятий (ТЗ 44: отдельные web-модели;
-# добавлены отдельным аддитивным модулем, чтобы не трогать уже
-# применённые web/schemas.py / web/mappers.py).
-# Домен -> WebExtraClass; никакой бизнес-логики.
+# Typed mapping internal ExtraClassItemDTO -> WebExtraClass.
+# Web schemas live in web/schemas.py; this module contains only
+# presentation mapping/grouping rules and no generic dict/object access.
 
 from __future__ import annotations
-from typing import Dict, List, Any
-from pydantic import BaseModel
+
+from collections import defaultdict
+from typing import Iterable
+
+from core.models.dto import ExtraClassDTO, ExtraClassItemDTO
+from web.schemas import WebExtraClass, WebExtraClassDay
+
 
 WEEKDAYS_RU = {
-    1: "Понедельник", 2: "Вторник", 3: "Среда", 4: "Четверг",
-    5: "Пятница", 6: "Суббота", 7: "Воскресенье",
+    1: "Понедельник",
+    2: "Вторник",
+    3: "Среда",
+    4: "Четверг",
+    5: "Пятница",
+    6: "Суббота",
+    7: "Воскресенье",
 }
 
-class WebExtraClass(BaseModel):
-    """Доп. занятие в web-представлении (ТЗ 25)."""
 
-    id: int
-    day_of_week: int
-    weekday_display: str
-    time_start: str
-    time_end: str
-    title: str
-    location: str
-    reminder_minutes: int
+def extra_class_to_web(
+    item: ExtraClassDTO | ExtraClassItemDTO,
+) -> WebExtraClass:
+    """ExtraClassItemDTO -> typed web presentation model."""
 
-def _get_val(obj: Any, key: str, default: Any = None) -> Any:
-    """Универсальный геттер: читает как словари, так и DTO-объекты."""
-    if hasattr(obj, "model_dump"): obj = obj.model_dump()
-    elif hasattr(obj, "dict"): obj = obj.dict()
-    if isinstance(obj, dict): return obj.get(key, default)
-    return getattr(obj, key, default)
+    day_of_week = item.day_of_week
 
-def extra_class_to_web(row: Any) -> WebExtraClass:
-    day = int(_get_val(row, "day_of_week") or 1)
     return WebExtraClass(
-        id=int(_get_val(row, "id") or 0),
-        day_of_week=day,
-        weekday_display=WEEKDAYS_RU.get(day, "—"),
-        time_start=str(_get_val(row, "time_start") or "—"),
-        time_end=str(_get_val(row, "time_end") or "—"),
-        title=str(_get_val(row, "title") or "Занятие"),
-        location=str(_get_val(row, "location") or "—"),
-        reminder_minutes=int(_get_val(row, "reminder_minutes") or 30),
+        id=item.id,
+        day_of_week=day_of_week,
+        weekday_display=WEEKDAYS_RU.get(day_of_week, "—"),
+        time_start=item.time_start,
+        time_end=item.time_end,
+        title=item.title,
+        location=item.location,
+        reminder_minutes=item.reminder_minutes,
     )
 
-def group_by_weekday(items: List[WebExtraClass]) -> List[Dict]:
-    """Группировка для списка: [{weekday_display, items: [...]}, ...]."""
-    groups: Dict[int, List[WebExtraClass]] = {}
+
+def group_by_weekday(
+    items: Iterable[WebExtraClass],
+) -> list[WebExtraClassDay]:
+    """Group typed extra-class web models by weekday without raw dicts."""
+
+    grouped: dict[int, list[WebExtraClass]] = defaultdict(list)
+
     for item in items:
-        groups.setdefault(item.day_of_week, []).append(item)
-    result = []
-    for day in sorted(groups):
-        result.append(
-            {
-                "weekday_display": WEEKDAYS_RU.get(day, "—"),
-                "lessons": sorted(groups[day], key=lambda i: i.time_start), # <-- ИСПРАВЛЕНО
-            }
+        grouped[item.day_of_week].append(item)
+
+    return [
+        WebExtraClassDay(
+            day_of_week=day_of_week,
+            weekday_display=WEEKDAYS_RU.get(day_of_week, "—"),
+            items=sorted(
+                day_items,
+                key=lambda item: (
+                    item.time_start,
+                    item.time_end,
+                    item.id,
+                ),
+            ),
         )
-    return result
+        for day_of_week, day_items in sorted(grouped.items())
+    ]
