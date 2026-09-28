@@ -1,0 +1,79 @@
+{#
+  Inline details для orange LessonStatus.CHANGED card.
+
+  Contract:
+  - `lesson` — WebLesson, полностью подготовленный mapper-ом.
+  - Компонент используется только при:
+      lesson.has_inline_changes == true
+      lesson.status.value == "changed"
+  - details не читают raw DTO и не вычисляют сравнение original/current.
+#}
+
+<section
+  id="lesson-details-{{ lesson.key }}"
+  class="lesson-change-details"
+  hidden
+  aria-label="Подробности изменения урока"
+>
+  <header class="lesson-change-details__header">
+    <span class="lesson-change-details__title">
+      Изменения
+    </span>
+
+    <button
+      type="button"
+      class="lesson-change-details__close"
+      data-inline-change-close
+      aria-label="Скрыть изменения урока"
+    >
+      <span aria-hidden="true">×</span>
+    </button>
+  </header>
+
+  <div
+    class="lesson-change-details__rows"
+    role="list"
+  >
+    {% for change in lesson.change_details %}
+    <div
+      class="lesson-change-row"
+      role="listitem"
+    >
+      <span class="lesson-change-row__field">
+        {% if change.field == "subject" %}
+          Предмет
+        {% elif change.field == "teacher" %}
+          Учитель
+        {% elif change.field == "room" %}
+          Кабинет
+        {% elif change.field == "group" %}
+          Группа
+        {% elif change.field == "class" %}
+          Класс
+        {% else %}
+          Изменение
+        {% endif %}
+      </span>
+
+      <span class="lesson-change-row__values">
+        {% if change.old_value %}
+        <span class="lesson-change-row__old">
+          {{ change.old_value }}
+        </span>
+
+        <span
+          class="lesson-change-row__arrow"
+          aria-hidden="true"
+        >
+          →
+        </span>
+        {% endif %}
+
+        <span class="lesson-change-row__new">
+          {{ change.new_value or "—" }}
+        </span>
+      </span>
+    </div>
+    {% endfor %}
+  </div>
+</section>

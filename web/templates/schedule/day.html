@@ -1,7 +1,15 @@
+  {# web/templates/schedule/day.html #}
 {# Полная страница дня (dashboard = smart-day). #}
 {% extends "base.html" %}
+
 {% set nav = "today" %}
 {% block title %}{{ day.date_display }}{% endblock %}
+
 {% block content %}
 {% include "schedule/_day_content.html" %}
+{% endblock %}
+
+{# ОБЯЗАТЕЛЬНО: Блок скриптов должен быть вне блока content #}
+{% block extra_scripts %}
+<script src="/static/js/schedule.js?v=10"></script>
 {% endblock %}

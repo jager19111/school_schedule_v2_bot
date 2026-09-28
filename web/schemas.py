@@ -68,8 +68,18 @@ class WebLessonEntry(BaseModel):
     subject: Optional[WebChangedValue] = None
     teacher: Optional[WebChangedValue] = None
     group: Optional[WebChangedValue] = None
+    show_group: bool = False
     class_name: Optional[WebChangedValue] = None
     room: Optional[WebRoomBadge] = None
+
+
+class WebChange(BaseModel):
+    """Одно field-level изменение существующего LessonDTO."""
+
+    field: Literal["subject", "teacher", "group", "class", "room"]
+    old_value: Optional[str] = None
+    new_value: Optional[str] = None
+    changed_at: Optional[str] = None
 
 
 class WebLesson(BaseModel):
@@ -86,19 +96,18 @@ class WebLesson(BaseModel):
     entries: List[WebLessonEntry] = Field(default_factory=list)
     shared_subject: bool = False
     shared_room: Optional[WebRoomBadge] = None
+
+    # Inline details доступны только для LessonStatus.CHANGED.
+    # Cancelled и added lessons намеренно остаются non-interactive.
+    has_inline_changes: bool = False
+    change_details: List[WebChange] = Field(default_factory=list)
+
+    # Пока не используется в inline-flow, но остаётся как future/fallback
+    # contract для отдельной страницы или полного history view.
     history_url: Optional[str] = None
+
     aria_label: str
-
-
-class WebChange(BaseModel):
-    """Одно field-level изменение существующего LessonDTO."""
-
-    field: Literal["subject", "teacher", "group", "class", "room"]
-    old_value: Optional[str] = None
-    new_value: Optional[str] = None
-    changed_at: Optional[str] = None
-
-
+    
 class WebChangeItem(BaseModel):
     """Текущая карточка изменённого урока и подготовленная история полей."""
 

@@ -29,22 +29,18 @@
       </span>
       {% endif %}
 
-      {% if entry.group %}
-        {% if entry.teacher %}
-        <span class="lesson-entry__separator" aria-hidden="true">·</span>
+      {% if entry.show_group and entry.group %}
+    <span
+    class="
+        lesson-entry__group
+        {% if entry.group.changed %}
+        lesson-card__field--changed
         {% endif %}
-
-        <span
-          class="
-            lesson-entry__group
-            {% if entry.group.changed %}
-              lesson-card__field--changed
-            {% endif %}
-          "
-        >
-          {{ entry.group.value }}
-        </span>
-      {% endif %}
+    "
+    >
+    · {{ entry.group.value }}
+    </span>
+    {% endif %}
     </div>
   </div>
 

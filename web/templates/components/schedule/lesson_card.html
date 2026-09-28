@@ -1,96 +1,147 @@
+{#
+  Standard LessonCard.
+
+  Interactive contract:
+  - Только orange LessonStatus.CHANGED card с actual mapper details
+    получает has_inline_changes=True.
+  - Cancelled / added / normal / extra cards остаются обычными article.
+  - Overlay button добавляется отдельно от card markup, чтобы не помещать
+    block-level elements внутрь <button>.
+#}
+
 <article
   class="
-    lesson-card
-    lesson-card--{{ lesson.kind.value }}
-    lesson-card--{{ lesson.status.value }}
-    {% if lesson.is_current %}
-      lesson-card--current
+    lesson-card-wrapper
+    {% if lesson.has_inline_changes %}
+      lesson-card-wrapper--interactive
     {% endif %}
   "
   data-lesson-key="{{ lesson.key }}"
-  aria-label="{{ lesson.aria_label }}"
 >
-    <div class="lesson-card__time">
-    {% if lesson.is_current %}
-    <span class="lesson-card__now-label">Сейчас</span>
-    {% endif %}
-
-    <time class="lesson-card__start">
-        {{ lesson.start_time }}
-    </time>
-
-    <time class="lesson-card__end">
-        {{ lesson.end_time }}
-    </time>
-
-    {% if lesson.kind.value == "extra" %}
-    <span class="lesson-card__number">
-        ДОП.
-    </span>
-    {% elif lesson.number is not none %}
-    <span class="lesson-card__number">
-        УРОК {{ lesson.number }}
-    </span>
-    {% endif %}
-    </div>
-
-  <div class="lesson-card__body">
-    {% if lesson.view_mode.value != "teacher"
-        and lesson.shared_subject
-        and lesson.entries %}
-    {% set shared_entry = lesson.entries[0] %}
-
-    {% if shared_entry.subject %}
+  <div class="lesson-card-shell">
     <div
-        class="
-        lesson-card__subject
-        {% if shared_entry.subject.changed %}
-            lesson-card__field--changed
+      class="
+        lesson-card
+        lesson-card--{{ lesson.kind.value }}
+        lesson-card--{{ lesson.status.value }}
+        {% if lesson.is_current %}
+          lesson-card--current
         {% endif %}
-        "
-        data-autofit="subject"
-        title="{{ shared_entry.subject.value }}"
+      "
+      aria-label="{{ lesson.aria_label }}"
     >
-        {{ shared_entry.subject.value }}
-    </div>
-    {% endif %}
-    {% endif %}
+      <div class="lesson-card__time">
+        {% if lesson.is_current %}
+        <span class="lesson-card__now-label">
+          Сейчас
+        </span>
+        {% endif %}
 
-    <div class="lesson-card__entries">
-      {% if lesson.kind.value == "extra" %}
-        {# --- КОМПАКТНЫЙ ВЫВОД ДЛЯ ДОП. ЗАНЯТИЙ --- #}
-        {% for entry in lesson.entries %}
-          {% if entry.subject %}
+        <time class="lesson-card__start">
+          {{ lesson.start_time }}
+        </time>
+
+        <time class="lesson-card__end">
+          {{ lesson.end_time }}
+        </time>
+
+        {% if lesson.kind.value == "extra" %}
+        <span class="lesson-card__number">
+          ДОП.
+        </span>
+        {% elif lesson.number is not none %}
+        <span class="lesson-card__number">
+          УРОК {{ lesson.number }}
+        </span>
+        {% endif %}
+      </div>
+
+      <div class="lesson-card__body">
+        {% if lesson.view_mode.value != "teacher"
+              and lesson.shared_subject
+              and lesson.entries %}
+          {% set shared_entry = lesson.entries[0] %}
+
+          {% if shared_entry.subject %}
           <div
-            class="lesson-card__subject"
+            class="
+              lesson-card__subject
+              {% if shared_entry.subject.changed %}
+                lesson-card__field--changed
+              {% endif %}
+            "
             data-autofit="subject"
-            title="{{ entry.subject.value }}"
+            title="{{ shared_entry.subject.value }}"
           >
-            {{ entry.subject.value }}
+            {{ shared_entry.subject.value }}
           </div>
           {% endif %}
-          
-          {% if entry.room %}
-          <div class="lesson-entry__meta lesson-entry__meta--location">
-            {{ entry.room.value }}
-          </div>
-          {% endif %}
-        {% endfor %}
-      {% else %}
-        {# --- СТАНДАРТНЫЙ ВЫВОД ДЛЯ ШКОЛЬНЫХ УРОКОВ --- #}
-        {% for entry in lesson.entries %}
-          {% set is_first = loop.first %} {# <-- Сохраняем состояние родительского цикла #}
-          {% if lesson.view_mode.value == "teacher" %}
-            {% include "components/schedule/teacher_lesson_content.html" %}
-          {% elif lesson.view_mode.value == "room" %}
-            {% include "components/schedule/room_lesson_content.html" %}
+        {% endif %}
+
+        <div class="lesson-card__entries">
+          {% if lesson.kind.value == "extra" %}
+        {# --- КОМПАКТНЫЙ ВЫВОД ДЛЯ ДОП. ЗАНЯТИЙ --- #}
+            {% for entry in lesson.entries %}
+              {% if entry.subject %}
+              <div
+                class="lesson-card__subject"
+                data-autofit="subject"
+                title="{{ entry.subject.value }}"
+              >
+                {{ entry.subject.value }}
+              </div>
+              {% endif %}
+
+              {% if entry.room %}
+              <div class="lesson-entry__meta lesson-entry__meta--location">
+                {{ entry.room.value }}
+              </div>
+              {% endif %}
+            {% endfor %}
           {% else %}
-            {% set show_subject = not lesson.shared_subject %}
-            {% include "components/schedule/lesson_subgroup.html" %}
+        {# --- СТАНДАРТНЫЙ ВЫВОД ДЛЯ ШКОЛЬНЫХ УРОКОВ --- #}
+            {% for entry in lesson.entries %}
+          {% set is_first = loop.first %} {# <-- Сохраняем состояние родительского цикла #}
+              {% if lesson.view_mode.value == "teacher" %}
+                {% include "components/schedule/teacher_lesson_content.html" %}
+              {% elif lesson.view_mode.value == "room" %}
+                {% include "components/schedule/room_lesson_content.html" %}
+              {% else %}
+                {% set show_subject = not lesson.shared_subject %}
+                {% include "components/schedule/lesson_subgroup.html" %}
+              {% endif %}
+            {% endfor %}
           {% endif %}
-        {% endfor %}
-      {% endif %}
+        </div>
+      </div>
+
+      <div
+        class="lesson-card__room-column"
+        aria-hidden="true"
+      ></div>
     </div>
 
-  <div class="lesson-card__room-column" aria-hidden="true"></div>
+    {% if lesson.has_inline_changes %}
+    <button
+      type="button"
+      class="lesson-card-toggle"
+      data-inline-change-toggle
+      aria-expanded="false"
+      aria-controls="lesson-details-{{ lesson.key }}"
+      aria-label="{{ lesson.aria_label }}. Показать изменения."
+    >
+      <span class="visually-hidden">
+        Показать изменения урока
+      </span>
+      <span
+        class="lesson-card-toggle__chevron"
+        aria-hidden="true"
+      ></span>
+    </button>
+    {% endif %}
+  </div>
+
+  {% if lesson.has_inline_changes %}
+    {% include "components/schedule/lesson_change_details.html" %}
+  {% endif %}
 </article>

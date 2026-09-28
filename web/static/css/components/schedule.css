@@ -1,3 +1,4 @@
+/* web/static/css/components/schedule.css */
 /* ==========================================================================
    1. ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ (Цвета и базовые размеры)
    Здесь задается палитра статусов и ширина левой колонки со временем.
@@ -292,23 +293,41 @@
   animation: skeleton-pulse 1.5s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }
 
-/* Скрываем скелетон по умолчанию. 
-   HTMX сам покажет его, добавив класс htmx-request */
-.htmx-indicator {
-  display: none;
-}
-.htmx-request .htmx-indicator {
-  display: block;
-}
-.htmx-request.htmx-indicator {
-  display: block;
+/* 
+ * ЛОГИКА HTMX (С УМНОЙ ЗАДЕРЖКОЙ)
+ */
+.htmx-indicator { 
+  display: none !important; 
 }
 
-/* Контейнер для списка скелетонов */
+/* Показываем скелетон, но делаем его прозрачным первые 150мс. 
+   Если сервер ответит мгновенно — пользователь даже не увидит мигания скелетона! */
+.htmx-request .htmx-indicator,
+.htmx-request.htmx-indicator { 
+  display: flex !important; 
+  opacity: 0;
+  animation: show-skeleton-delay 0s 0.15s forwards; 
+}
+
+@keyframes show-skeleton-delay {
+  to { opacity: 1; }
+}
+
+/* Контейнер списка скелетонов */
 .skeleton-list {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  width: 100%;
+}
+
+/* 
+ * МГНОВЕННО ПРЯЧЕМ СТАРОЕ РАСПИСАНИЕ ПРИ ЗАГРУЗКЕ
+ * Это избавляет от наслоения и "лагов" при листании
+ */
+.htmx-request .htmx-request-hide,
+.htmx-request.htmx-request-hide {
+  display: none !important;
 }
 
 /* Каркас карточки (полностью копирует сетку .lesson-card) */
@@ -370,4 +389,305 @@
 [data-autofit="subject"].is-fitted {
   opacity: 1;
   transition: opacity 0.15s ease-in;
+}
+
+/* ==========================================================================
+   Inline change details
+   ==========================================================================
+   Only WebLesson.has_inline_changes cards receive:
+   - .lesson-card-wrapper--interactive
+   - .lesson-card-toggle
+   - .lesson-change-details
+
+   Mapper contract:
+   LessonStatus.CHANGED + actual WebChange details
+   → interactive card.
+
+   Cancelled and added cards do not receive these classes.
+   ========================================================================== */
+
+
+/* One interaction unit: card plus optional disclosure panel. */
+.lesson-card-wrapper {
+  min-width: 0;
+}
+
+
+/*
+ * Relative positioning boundary only for visual card and transparent button.
+ *
+ * The details panel is OUTSIDE this shell, therefore the overlay button
+ * never blocks text selection or close controls inside details.
+ */
+.lesson-card-shell {
+  position: relative;
+  min-width: 0;
+}
+
+
+/*
+ * The actual LessonCard remains visually unchanged.
+ * The overlay button is an accessibility and tap-target layer above it.
+ */
+.lesson-card-wrapper--interactive .lesson-card {
+  cursor: pointer;
+}
+
+
+/*
+ * Reserve a narrow space on the right for the chevron.
+ *
+ * Changed lessons are comparatively rare. A small reduction in available
+ * right-side space is preferable to overlaying the room badge or lesson text.
+ */
+.lesson-card-wrapper--interactive .lesson-card__body {
+  padding-right: 8px;
+}
+
+
+/*
+ * Transparent full-card button.
+
+ * It is real button semantics:
+ * - keyboard Enter / Space work automatically;
+ * - VoiceOver/TalkBack announce the aria-label;
+ * - touch target covers all visual card space.
+ */
+.lesson-card-toggle {
+  position: absolute;
+  z-index: 2;
+  inset: 0;
+  display: block;
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 14px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+
+/*
+ * Focus is intentionally visible only for keyboard navigation.
+ * Mobile tap does not leave a persistent outline.
+ */
+.lesson-card-toggle:focus {
+  outline: none;
+}
+
+.lesson-card-toggle:focus-visible {
+  outline: 3px solid rgb(37 99 235 / 0.58);
+  outline-offset: 3px;
+}
+
+
+/*
+ * Subtle disclosure affordance.
+
+ * Bottom-right placement avoids the main teacher/subject line.
+ * Right padding above reserves its visual territory.
+ */
+.lesson-card-toggle__chevron {
+  position: absolute;
+  right: 8px;
+  bottom: 5px;
+  width: 7px;
+  height: 7px;
+  border-right: 2px solid var(--schedule-changed);
+  border-bottom: 2px solid var(--schedule-changed);
+  opacity: 0.85;
+  pointer-events: none;
+  transform: rotate(45deg);
+  transition: transform 0.16s ease;
+}
+
+
+/*
+ * Open state is applied by schedule.js on the wrapper.
+ * Chevron points up after disclosure opens.
+ */
+.lesson-card-wrapper--open .lesson-card-toggle__chevron {
+  transform: translateY(3px) rotate(225deg);
+}
+
+
+/*
+ * Open card gets a subtle visual connection to its detail panel.
+ * Orange state remains dominant; no extra status label is introduced.
+ */
+.lesson-card-wrapper--open .lesson-card {
+  box-shadow:
+    0 0 0 2px rgb(217 119 6 / 0.16),
+    0 2px 10px rgb(15 23 42 / 0.05);
+}
+
+
+/*
+ * Touch feedback.
+ *
+ * Uses the overlay button rather than `.lesson-card:active`, because
+ * card itself is a visual div and the real interaction element is button.
+ */
+
+
+  .lesson-card-wrapper--interactive:active .lesson-card {
+    filter: brightness(0.985);
+  }
+
+
+
+/* --------------------------------------------------------------------------
+   Details panel
+   -------------------------------------------------------------------------- */
+
+.lesson-change-details {
+  margin: 4px 4px 0;
+  padding: 8px 9px;
+  border: 1px solid #f3dfc1;
+  border-radius: 10px;
+  background: #fffdf8;
+  color: var(--lesson-content-color);
+}
+
+
+/*
+ * Defensive rule: browser already applies [hidden] { display: none; },
+ * but this protects the component from a reset stylesheet overriding it.
+ */
+.lesson-change-details[hidden] {
+  display: none;
+}
+
+
+.lesson-change-details__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+  margin-bottom: 6px;
+}
+
+
+.lesson-change-details__title {
+  color: var(--schedule-changed);
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.1;
+}
+
+
+/*
+ * Explicit close control for accessibility and discoverability.
+ *
+ * It remains compact because repeat tap on the card, outside tap, and Escape
+ * will also close the panel after schedule.js is added.
+ */
+.lesson-change-details__close {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  min-height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #778395;
+  cursor: pointer;
+  font-size: 20px;
+  line-height: 1;
+}
+
+
+.lesson-change-details__close:focus {
+  outline: none;
+}
+
+
+.lesson-change-details__close:focus-visible {
+  outline: 2px solid rgb(37 99 235 / 0.58);
+  outline-offset: 2px;
+}
+
+
+@media (hover: hover) {
+  .lesson-change-details__close:hover {
+    background: #f8ead9;
+    color: var(--schedule-changed);
+  }
+}
+
+
+.lesson-change-details__rows {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+
+/*
+ * Field label stays compact on the left.
+ * Values occupy remaining space and align to the right.
+ */
+.lesson-change-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+  color: var(--lesson-muted);
+  font-size: 12px;
+  line-height: 1.2;
+}
+
+
+.lesson-change-row__field {
+  flex: 0 0 auto;
+  color: #536174;
+  font-weight: 750;
+}
+
+
+.lesson-change-row__values {
+  display: flex;
+  justify-content: flex-end;
+  gap: 4px;
+  min-width: 0;
+  text-align: right;
+}
+
+
+.lesson-change-row__old,
+.lesson-change-row__new {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+
+.lesson-change-row__old {
+  color: #8b95a3;
+  text-decoration-line: line-through;
+  text-decoration-color: #b7c0cb;
+  text-decoration-thickness: 1px;
+}
+
+
+.lesson-change-row__arrow {
+  flex: 0 0 auto;
+  color: #a5afbd;
+  font-weight: 800;
+}
+
+
+.lesson-change-row__new {
+  color: var(--lesson-content-color);
+  font-weight: 750;
 }

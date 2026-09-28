@@ -90,7 +90,112 @@ def _text_or_none(value: str | None) -> str | None:
 
     return normalized
 
+_WHOLE_CLASS_GROUP_LABEL = "весь класс"
 
+
+def _group_or_none(value: str | None) -> str | None:
+    """
+    Нормализует group display value.
+
+    «Весь класс» — не группа для UI и никогда не должен попадать
+    в строку teacher/group lesson metadata.
+    """
+    normalized = _text_or_none(value)
+
+    if normalized is None:
+        return None
+
+    if normalized.casefold() == _WHOLE_CLASS_GROUP_LABEL:
+        return None
+
+    return normalized
+
+
+def _group_changed_value(
+    current_value: str | None,
+    original_value: str | None,
+) -> WebChangedValue | None:
+    current = _group_or_none(current_value)
+    original = _group_or_none(original_value)
+
+    if current is None:
+        return None
+
+    return WebChangedValue(
+        value=current,
+        changed=original is not None and original != current,
+    )
+
+
+def _is_trud_or_technology(lesson: LessonDTO) -> bool:
+    """
+    Временное согласование с существующей логикой
+    ScheduleService._filter_by_groups().
+
+    Когда в LessonDTO появится current subject_id, этот helper следует
+    перевести с display-name matching на subject-id matching.
+    """
+    subject_name = (lesson.subject_name or "").casefold()
+
+    return (
+        "труд" in subject_name
+        or "технологи" in subject_name
+    )
+
+
+def _should_show_group(
+    lesson: LessonDTO,
+    *,
+    view_mode: LessonViewMode,
+    show_profile_groups: bool,
+) -> bool:
+    """
+    Решение presentation layer.
+
+    Personal student/parent target:
+    - normal group already fixed in profile -> hidden;
+    - labour/technology groups remain visible;
+    - when target has ALL, UI is effectively class-wide -> groups visible.
+
+    School views:
+    - class, teacher and room views show actual groups.
+    """
+    if _group_or_none(lesson.group_name) is None:
+        return False
+
+    if view_mode in {
+        LessonViewMode.CLASS,
+        LessonViewMode.TEACHER,
+        LessonViewMode.ROOM,
+    }:
+        return True
+
+    if show_profile_groups:
+        return True
+
+    return _is_trud_or_technology(lesson)
+
+
+def _cancelled_subject_value(
+    lesson: LessonDTO,
+) -> WebChangedValue | None:
+    """
+    NIKA/DB cancellation entry may have subject_name='ОТМЕНА'.
+    User must see the actual cancelled subject from original_subject_name.
+    """
+    original_subject = _text_or_none(lesson.original_subject_name)
+
+    if original_subject is not None:
+        return WebChangedValue(
+            value=original_subject,
+            changed=False,
+        )
+
+    return _changed_value(
+        lesson.subject_name,
+        lesson.original_subject_name,
+    )
+    
 def _format_time(value: str) -> str:
     normalized = value.strip()
     if not normalized:
@@ -156,19 +261,35 @@ def _room_badge(lesson: LessonDTO) -> WebRoomBadge | None:
     )
 
 
-def lesson_entry_to_web(lesson: LessonDTO) -> WebLessonEntry:
-    return WebLessonEntry(
-        subject=_changed_value(
+def lesson_entry_to_web(
+    lesson: LessonDTO,
+    *,
+    view_mode: LessonViewMode,
+    show_profile_groups: bool,
+) -> WebLessonEntry:
+    subject = (
+        _cancelled_subject_value(lesson)
+        if lesson.is_cancelled
+        else _changed_value(
             lesson.subject_name,
             lesson.original_subject_name,
-        ),
+        )
+    )
+
+    return WebLessonEntry(
+        subject=subject,
         teacher=_changed_value(
             lesson.teacher_name,
             lesson.original_teacher_name,
         ),
-        group=_changed_value(
+        group=_group_changed_value(
             lesson.group_name,
             lesson.original_group_name,
+        ),
+        show_group=_should_show_group(
+            lesson,
+            view_mode=view_mode,
+            show_profile_groups=show_profile_groups,
         ),
         class_name=_changed_value(
             lesson.class_name,
@@ -267,13 +388,22 @@ def _single_lesson_to_web(
     *,
     view_mode: LessonViewMode,
     is_current: bool = False,
+    show_profile_groups: bool = False,
 ) -> WebLesson:
-    entry = lesson_entry_to_web(lesson)
+    entry = lesson_entry_to_web(
+        lesson,
+        view_mode=view_mode,
+        show_profile_groups=show_profile_groups,
+    )
     kind = _lesson_kind(lesson)
     status = _lesson_status(lesson)
     start_time = _format_time(lesson.start_time)
     end_time = _format_time(lesson.end_time)
 
+    change_details = _inline_change_details(
+        [lesson],
+        status=status,
+    )
     return WebLesson(
         key=_lesson_key(lesson),
         number=lesson.lesson_num,
@@ -286,6 +416,12 @@ def _single_lesson_to_web(
         entries=[entry],
         shared_subject=False,
         shared_room=entry.room,
+
+        # Interactive только при real field-level changes.
+        # Orange card without readable details не становится button.
+        has_inline_changes=bool(change_details),
+        change_details=change_details,
+
         history_url=None,
         aria_label=_lesson_aria_label(
             number=lesson.lesson_num,
@@ -324,8 +460,11 @@ def _slot_identity(
 def _teacher_entry_identity(
     lesson: LessonDTO,
 ) -> tuple[str, tuple[str, ...]]:
-    entry = lesson_entry_to_web(lesson)
-
+    entry = lesson_entry_to_web(
+        lesson,
+        view_mode=LessonViewMode.TEACHER,
+        show_profile_groups=True,
+    )
     subject = (
         entry.subject.value.casefold()
         if entry.subject is not None and entry.subject.value is not None
@@ -345,6 +484,7 @@ def _slot_to_web(
     *,
     view_mode: LessonViewMode,
     is_current: bool,
+    show_profile_groups: bool,
 ) -> list[WebLesson]:
     if not lessons:
         return []
@@ -375,10 +515,20 @@ def _slot_to_web(
 
     for lesson_set in grouped_lesson_sets:
         first_entry_lesson = lesson_set[0]
+
         entries = [
-            lesson_entry_to_web(lesson)
+            lesson_entry_to_web(
+                lesson,
+                view_mode=view_mode,
+                show_profile_groups=show_profile_groups,
+            )
             for lesson in lesson_set
         ]
+
+        change_details = _inline_change_details(
+            lesson_set,
+            status=status,
+        )
 
         result.append(
             WebLesson(
@@ -393,6 +543,11 @@ def _slot_to_web(
                 entries=entries,
                 shared_subject=_shared_subject(entries),
                 shared_room=_shared_room(entries),
+
+                # Только changed card с actual readable diff является interactive.
+                has_inline_changes=bool(change_details),
+                change_details=change_details,
+
                 history_url=None,
                 aria_label=_lesson_aria_label(
                     number=first_entry_lesson.lesson_num,
@@ -413,6 +568,7 @@ def lessons_to_web(
     *,
     view_mode: LessonViewMode,
     is_current: bool = False,
+    show_profile_groups: bool,
 ) -> list[WebLesson]:
     grouped: dict[
         tuple[
@@ -447,6 +603,7 @@ def lessons_to_web(
                 slot_lessons,
                 view_mode=view_mode,
                 is_current=is_current,
+                show_profile_groups=show_profile_groups,
             )
         )
 
@@ -483,9 +640,15 @@ def day_to_web(
         if dto.origin == "teacher"
         else LessonViewMode.STUDENT
     )
+    show_profile_groups = (
+        view_mode == LessonViewMode.STUDENT
+        and target.group_id in {"", "ALL"}
+    )
+
     lessons = lessons_to_web(
         dto.lessons,
         view_mode=view_mode,
+        show_profile_groups=show_profile_groups,
     )
     d = _parse(dto.date_iso)
     prefix = "сегодня, " if dto.date_iso == today_iso else ""
@@ -495,7 +658,7 @@ def day_to_web(
         date_display=f"{prefix}{d.day} {_MONTHS_GEN[d.month - 1]}",
         weekday_display=_WEEKDAYS_FULL[d.weekday()],
         class_name=dto.class_name or "",
-        group_name=dto.group_name or "",
+        group_name=_group_or_none(dto.group_name) or "",
         student_name=target.name,
         lessons=lessons,
         has_permutation=dto.has_permutation,
@@ -525,6 +688,7 @@ def school_day_to_web(
     lessons = lessons_to_web(
         dto.lessons,
         view_mode=view_mode,
+        show_profile_groups=True,
     )
     date_display, weekday = _date_parts(dto.date_iso, today_iso)
 
@@ -610,6 +774,42 @@ def _changes_for_lesson(lesson: LessonDTO) -> list[WebChange]:
 
     return changes
 
+def _inline_change_details(
+    lessons: Iterable[LessonDTO],
+    *,
+    status: LessonStatus,
+) -> list[WebChange]:
+    """
+    Возвращает details только для orange changed card.
+
+    Cancelled card уже полностью объясняется main LessonCard:
+    original subject, red semantic state и strike-through.
+    Added card визуально самодостаточна через green state.
+
+    Для grouped lesson объединяет field changes всех entries и удаляет
+    только точные дубликаты, сохраняя исходный порядок.
+    """
+    if status != LessonStatus.CHANGED:
+        return []
+
+    result: list[WebChange] = []
+    seen: set[tuple[str, str | None, str | None]] = set()
+
+    for lesson in lessons:
+        for change in _changes_for_lesson(lesson):
+            identity = (
+                change.field,
+                change.old_value,
+                change.new_value,
+            )
+
+            if identity in seen:
+                continue
+
+            seen.add(identity)
+            result.append(change)
+
+    return result
 
 def changes_to_web(
     dto: DayChangesDetailDTO,
@@ -621,11 +821,18 @@ def changes_to_web(
         if dto.origin == "teacher"
         else LessonViewMode.STUDENT
     )
+
+    show_profile_groups = (
+        view_mode == LessonViewMode.STUDENT
+        and target.group_id in {"", "ALL"}
+    )
+
     change_items = [
         WebChangeItem(
             lesson=_single_lesson_to_web(
                 lesson,
                 view_mode=view_mode,
+                show_profile_groups=show_profile_groups,
             ),
             changes=_changes_for_lesson(lesson),
         )
