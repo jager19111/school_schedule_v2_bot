@@ -1,3 +1,4 @@
+  {# web/templates/components/schedule/room_lesson_content.html #}
 <div class="lesson-entry lesson-entry--room">
   <div class="lesson-entry__content">
     {% if entry.subject %}
@@ -20,10 +21,10 @@
       <span>{{ entry.class_name.value }}</span>
       {% endif %}
 
-      {% if entry.group %}
-      <span class="lesson-entry__separator" aria-hidden="true">·</span>
-      <span>{{ entry.group.value }}</span>
-      {% endif %}
+        {% if entry.show_group and entry.group %}
+        <span class="lesson-entry__separator" aria-hidden="true">·</span>
+        <span>{{ entry.group.value }}</span>
+        {% endif %}
 
       {% if entry.teacher %}
       <span class="lesson-entry__separator" aria-hidden="true">·</span>

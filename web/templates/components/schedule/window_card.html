@@ -1,3 +1,16 @@
+  {# web/templates/components/schedule/window_card.html #}
+{#
+  Compact non-interactive timeline card.
+
+  Kinds:
+  - window: teacher/room free resource slot.
+  - methodological: teacher methodological hour.
+
+  Window labels come only from mapper/service:
+  - teacher: «Свободное время»
+  - room: «Кабинет свободен»
+#}
+
 <article
   class="
     lesson-card
@@ -12,7 +25,7 @@
   <div class="lesson-card__time lesson-card__time--compact">
     {% if lesson.number is not none %}
     <span class="lesson-card__number lesson-card__number--standalone">
-      УРОК {{ lesson.number }}
+    УРОК {{ lesson.display_number or lesson.number }}
     </span>
     {% endif %}
   </div>
@@ -24,16 +37,13 @@
     </span>
     {% else %}
     <span class="lesson-card__window-label">
-      Свободное время
-    </span>
-    {% endif %}
-
-    {% if lesson.is_current %}
-    <span class="lesson-card__current-badge">
-      Сейчас
+      {{ lesson.window_label or "Свободное время" }}
     </span>
     {% endif %}
   </div>
 
-  <div class="lesson-card__room-column" aria-hidden="true"></div>
+  <div
+    class="lesson-card__room-column"
+    aria-hidden="true"
+  ></div>
 </article>

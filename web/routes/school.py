@@ -241,14 +241,25 @@ async def _render_school_day(
         stale_warning=await _nika_stale_warning(request),
     )
 
+    template_name = (
+        "school/_day_content.html"
+        if request.headers.get("HX-Request") == "true"
+        else "school/day.html"
+    )
+
     return _templates(request).TemplateResponse(
-        request, "school/day.html",
-        _ctx(request, context, {
-            "day": view,
-            "kind": kind_name,
-            "item_id": item_id,
-            "item_title": title,
-        }),
+        request,
+        template_name,
+        _ctx(
+            request,
+            context,
+            {
+                "day": view,
+                "kind": kind_name,
+                "item_id": item_id,
+                "item_title": title,
+            },
+        ),
     )
 
 

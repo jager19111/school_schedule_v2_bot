@@ -344,32 +344,59 @@ class ScheduleService:
         """
         Сводка одного дня.
 
-        count_distinct_nums=True (класс): уникальные номера уроков
-        (многогрупповой слот = один урок).
-        count_distinct_nums=False (учитель): количество записей.
+        Synthetic и NIKA-defined windows не являются уроками:
+        - не увеличивают lesson_count;
+        - не увеличивают exchange_count;
+        - не становятся extra classes.
+
+        count_distinct_nums=True:
+            class / room summary:
+            один physical lesson slot с несколькими groups = один урок.
+
+        count_distinct_nums=False:
+            teacher summary:
+            количество actual teacher entries, без windows.
         """
-        lessons = day_dto.lessons
+        actual_lessons = [
+            lesson
+            for lesson in day_dto.lessons
+            if not lesson.is_extra and not lesson.is_window
+        ]
 
         if count_distinct_nums:
-            lesson_count = len({
-                l.lesson_num
-                for l in lessons
-                if not l.is_extra and l.lesson_num is not None
-            })
-            exchange_count = len({
-                l.lesson_num
-                for l in lessons
-                if l.is_exchange and not l.is_extra
-                and l.lesson_num is not None
-            })
+            lesson_count = len(
+                {
+                    lesson.lesson_num
+                    for lesson in actual_lessons
+                    if lesson.lesson_num is not None
+                }
+            )
+
+            exchange_count = len(
+                {
+                    lesson.lesson_num
+                    for lesson in actual_lessons
+                    if lesson.is_exchange
+                    and lesson.lesson_num is not None
+                }
+            )
         else:
-            lesson_count = len(lessons)
-            exchange_count = sum(1 for l in lessons if l.is_exchange)
+            lesson_count = len(actual_lessons)
+
+            exchange_count = sum(
+                1
+                for lesson in actual_lessons
+                if lesson.is_exchange
+            )
 
         return DaySummaryDTO(
             date_iso=date_iso,
             lesson_count=lesson_count,
-            extra_count=sum(1 for l in lessons if l.is_extra),
+            extra_count=sum(
+                1
+                for lesson in day_dto.lessons
+                if lesson.is_extra
+            ),
             exchange_count=exchange_count,
         )
 

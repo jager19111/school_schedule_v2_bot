@@ -1,136 +1,22 @@
-{# День расписания school-сущности (класс/учитель/кабинет). #}
+  {# web/templates/school/day.html #}
+{# День расписания school-сущности: класс / преподаватель / кабинет. #}
+
 {% extends "base.html" %}
+
 {% set nav = "school" %}
-{% block title %}{{ item_title }}{% endblock %}
-{% block header %}{{ day.student_name }}{% endblock %}
+
+{% block title %}
+  {{ item_title }}
+{% endblock %}
+
+{% block header %}
+  {{ day.student_name }}
+{% endblock %}
+
 {% block content %}
-<section id="day-content" class="day-schedule"
-         hx-get="/school/{{ kind }}/{{ item_id }}/day/{{ day.date_iso }}"
-         hx-target="#day-content" hx-swap="outerHTML">
+  {% include "school/_day_content.html" %}
+{% endblock %}
 
-  <header class="day-header">
-    <h2 class="day-title">{{ day.weekday_display|capitalize }}, {{ day.date_display }}</h2>
-    {% if day.stale_warning %}
-    <div class="stale-warning" role="status">{{ day.stale_warning }}</div>
-    {% endif %}
-  </header>
-
-  <nav class="day-nav" aria-label="Навигация по дням">
-    <a class="nav-btn" href="/school/{{ kind }}/{{ item_id }}/day/{{ day.date_iso|prev_date }}"
-       hx-get="/school/{{ kind }}/{{ item_id }}/day/{{ day.date_iso|prev_date }}"
-       hx-target="#day-content" hx-swap="outerHTML"
-       hx-push-url="/school/{{ kind }}/{{ item_id }}/day/{{ day.date_iso|prev_date }}">← Пред.</a>
-    <a class="nav-btn" href="/school/{{ kind }}/{{ item_id }}"
-       hx-get="/school/{{ kind }}/{{ item_id }}" hx-target="#day-content"
-       hx-swap="outerHTML" hx-push-url="/school/{{ kind }}/{{ item_id }}">Сегодня</a>
-    <a class="nav-btn" href="/school/{{ kind }}/{{ item_id }}/day/{{ day.date_iso|next_date }}"
-       hx-get="/school/{{ kind }}/{{ item_id }}/day/{{ day.date_iso|next_date }}"
-       hx-target="#day-content" hx-swap="outerHTML"
-       hx-push-url="/school/{{ kind }}/{{ item_id }}/day/{{ day.date_iso|next_date }}">След. →</a>
-  </nav>
-
-  <div class="lessons-list">
-    {% if not day.lessons %}
-    <div class="empty-day">{% if kind == 'room' %}🏖 Кабинет свободен весь день{% else %}Нет занятий{% endif %}</div>
-    {% endif %}
-    {% for lesson in day.lessons %}
-    <article
-      class="lesson-card status-{{ lesson.status.value }}"
-      aria-label="{{ lesson.aria_label }}"
-    >
-      <div class="lesson-num">
-        {{ lesson.number if lesson.number is not none else "•" }}
-      </div>
-
-      <div class="lesson-main">
-        <div class="lesson-time">
-          <time>{{ lesson.start_time }}</time> – <time>{{ lesson.end_time }}</time>
-        </div>
-
-        {% if lesson.shared_subject and lesson.entries %}
-          {% set shared_entry = lesson.entries[0] %}
-          {% if shared_entry.subject %}
-          <div class="lesson-subject">
-            {{ shared_entry.subject.value }}
-          </div>
-          {% endif %}
-        {% endif %}
-
-        {% for entry in lesson.entries %}
-          <div class="lesson-entry">
-            {% if lesson.view_mode.value == "teacher" %}
-              <div class="lesson-subject">
-                {% if entry.class_name %}
-                  {{ entry.class_name.value }}
-                {% endif %}
-                {% if entry.group %}
-                  · {{ entry.group.value }}
-                {% endif %}
-              </div>
-
-              {% if entry.subject %}
-              <div class="lesson-meta">
-                <span>{{ entry.subject.value }}</span>
-              </div>
-              {% endif %}
-
-            {% else %}
-              {% if not lesson.shared_subject and entry.subject %}
-              <div class="lesson-subject">
-                {{ entry.subject.value }}
-              </div>
-              {% endif %}
-
-              <div class="lesson-meta">
-                {% if lesson.view_mode.value == "room" %}
-                  {% if entry.class_name %}
-                  <span>🎓 {{ entry.class_name.value }}</span>
-                  {% endif %}
-                  {% if entry.group %}
-                  <span>👥 {{ entry.group.value }}</span>
-                  {% endif %}
-                  {% if entry.teacher %}
-                  <span>👤 {{ entry.teacher.value }}</span>
-                  {% endif %}
-                {% else %}
-                  {% if entry.teacher %}
-                  <span>👤 {{ entry.teacher.value }}</span>
-                  {% endif %}
-                  {% if entry.group %}
-                  <span>👥 {{ entry.group.value }}</span>
-                  {% endif %}
-                {% endif %}
-              </div>
-            {% endif %}
-
-            {% if entry.room %}
-            <div class="lesson-meta">
-              <span>📍 {{ entry.room.value }}</span>
-            </div>
-            {% endif %}
-          </div>
-        {% endfor %}
-      </div>
-
-      {% if lesson.kind.value == "window" %}
-      <div class="lesson-badge methodological">окно</div>
-      {% elif lesson.status.value == "cancelled" %}
-      <div class="lesson-badge cancelled">отмена</div>
-      {% elif lesson.status.value == "added" %}
-      <div class="lesson-badge added">добавлен</div>
-      {% elif lesson.status.value == "changed" %}
-      <div class="lesson-badge exchange">замена</div>
-      {% endif %}
-    </article>
-    {% endfor %}
-  </div>
-
-  <nav class="day-nav" aria-label="Неделя и возврат">
-    <a class="nav-btn" href="/school/{{ kind }}/{{ item_id }}/week"
-       hx-get="/school/{{ kind }}/{{ item_id }}/week" hx-target="#main"
-       hx-swap="innerHTML"
-       hx-push-url="/school/{{ kind }}/{{ item_id }}/week">🗓 Неделя</a>
-    <a class="nav-btn" href="/school/{{ kind }}/list">⬅️ К списку</a>
-  </nav>
-</section>
+{% block extra_scripts %}
+<script src="/static/js/schedule.js?v=12"></script>
 {% endblock %}

@@ -51,7 +51,7 @@
         </span>
         {% elif lesson.number is not none %}
         <span class="lesson-card__number">
-          УРОК {{ lesson.number }}
+        УРОК {{ lesson.display_number or lesson.number }}
         </span>
         {% endif %}
       </div>

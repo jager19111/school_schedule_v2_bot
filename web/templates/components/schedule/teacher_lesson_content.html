@@ -19,16 +19,16 @@
         </span>
         {% endif %}
 
-        {% if teacher_entry.group %}
+        {% if teacher_entry.show_group and teacher_entry.group %}
         <span
-          class="
+        class="
             lesson-teacher-content__group
             {% if teacher_entry.group.changed %}
-              lesson-card__field--changed
+            lesson-card__field--changed
             {% endif %}
-          "
+        "
         >
-          · {{ teacher_entry.group.value }}
+        · {{ teacher_entry.group.value }}
         </span>
         {% endif %}
       {% endfor %}
