@@ -86,7 +86,14 @@ class WebLesson(BaseModel):
     """Полностью подготовленная mapper-ом presentation model урока."""
 
     key: str
+    # Canonical absolute school slot:
+    # 7 means seventh physical lesson of the day.
     number: Optional[int] = None
+
+    # UI label:
+    # child/parent second shift can be "1";
+    # teacher/room remains "7".
+    display_number: Optional[str] = None
     start_time: str
     end_time: str
     view_mode: LessonViewMode
@@ -96,6 +103,10 @@ class WebLesson(BaseModel):
     entries: List[WebLessonEntry] = Field(default_factory=list)
     shared_subject: bool = False
     shared_room: Optional[WebRoomBadge] = None
+    # Context-aware label for LessonKind.WINDOW.
+    # Teacher: «Свободное время».
+    # Room: «Кабинет свободен».
+    window_label: Optional[str] = None
 
     # Inline details доступны только для LessonStatus.CHANGED.
     # Cancelled и added lessons намеренно остаются non-interactive.

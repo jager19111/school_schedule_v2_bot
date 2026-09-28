@@ -603,6 +603,7 @@ class ScheduleRepository(BaseRepository):
                 rooms=normalizer.rooms,
                 class_shift=nika_data.get("CLASS_SHIFT", {}),
                 second_relative=bool(nika_data.get("SECOND_RELATIVE", False)),
+                lesson_times=normalizer.build_lesson_times(),
             )
             return self._metadata_cache
         except Exception as exc:

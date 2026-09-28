@@ -38,6 +38,7 @@ class LessonMapper:
             teacher_id=lesson.teacher_id,
             teacher_name=(lesson.teacher_name or "").strip(),
             is_methodological=lesson.is_methodological,
+            is_window=lesson.is_window,
 
             original_subject_id=lesson.original_subject_id,
             original_subject_name=(lesson.original_subject_name or "").strip() if lesson.original_subject_name else None,

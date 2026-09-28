@@ -466,6 +466,14 @@ class LessonDTO:
     is_methodological: bool = False
     is_extra: bool = False
 
+    # Реальное или synthetic свободное окно.
+    is_window: bool = False
+
+    # Context-aware label для WebLesson(kind=WINDOW).
+    # Teacher: «Свободное время».
+    # Room: «Кабинет свободен».
+    window_label: Optional[str] = None
+
     # --- «Было → стало » (только школьные уроки с заменами) ---
     original_subject_id: Optional[str] = None
     original_subject_name: Optional[str] = None
@@ -503,7 +511,7 @@ class DayScheduleDTO:
     has_permutation: bool = False
     
     # === НОВЫЕ ПОЛЯ ДЛЯ КОНТЕКСТА РЕНДЕРА ===
-    origin: Literal["class", "teacher", "student"] = "student"
+    origin: Literal["class", "teacher", "room", "student"] = "student"
     class_name: Optional[str] = None
     group_name: Optional[str] = None
 

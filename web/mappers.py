@@ -206,6 +206,17 @@ def _format_time(value: str) -> str:
 
     return normalized[:5]
 
+def _display_number(lesson: LessonDTO) -> str | None:
+    """
+    User-facing lesson number prepared by ScheduleService.
+
+    lesson_num remains the absolute school slot.
+    display_num may be relative for a student/parent second shift.
+    """
+    if lesson.lesson_num is None:
+        return None
+
+    return lesson.display_num or str(lesson.lesson_num)
 
 def _lesson_kind(lesson: LessonDTO) -> LessonKind:
     if lesson.is_extra:
@@ -213,6 +224,9 @@ def _lesson_kind(lesson: LessonDTO) -> LessonKind:
 
     if lesson.is_methodological:
         return LessonKind.METHODOLOGICAL
+
+    if lesson.is_window:
+        return LessonKind.WINDOW
 
     return LessonKind.REGULAR
 
@@ -313,18 +327,22 @@ def _lesson_key(lesson: LessonDTO) -> str:
 def _lesson_aria_label(
     *,
     number: int | None,
+    display_number: str | None,
     start_time: str,
     end_time: str,
     kind: LessonKind,
     status: LessonStatus,
     entries: list[WebLessonEntry],
+    window_label: str | None = None,
 ) -> str:
     parts: list[str] = []
 
     if kind == LessonKind.EXTRA:
         parts.append("Дополнительное занятие")
     elif kind == LessonKind.WINDOW:
-        parts.append("Свободное время")
+        parts.append(window_label or "Свободное время")
+    elif display_number is not None:
+        parts.append(f"Урок {display_number}")
     elif number is not None:
         parts.append(f"Урок {number}")
 
@@ -399,7 +417,7 @@ def _single_lesson_to_web(
     status = _lesson_status(lesson)
     start_time = _format_time(lesson.start_time)
     end_time = _format_time(lesson.end_time)
-
+    display_number = _display_number(lesson)
     change_details = _inline_change_details(
         [lesson],
         status=status,
@@ -407,6 +425,7 @@ def _single_lesson_to_web(
     return WebLesson(
         key=_lesson_key(lesson),
         number=lesson.lesson_num,
+        display_number=display_number,
         start_time=start_time,
         end_time=end_time,
         view_mode=view_mode,
@@ -416,6 +435,7 @@ def _single_lesson_to_web(
         entries=[entry],
         shared_subject=False,
         shared_room=entry.room,
+        window_label=lesson.window_label,
 
         # Interactive только при real field-level changes.
         # Orange card without readable details не становится button.
@@ -425,11 +445,13 @@ def _single_lesson_to_web(
         history_url=None,
         aria_label=_lesson_aria_label(
             number=lesson.lesson_num,
+            display_number=display_number,
             start_time=start_time,
             end_time=end_time,
             kind=kind,
             status=status,
             entries=[entry],
+            window_label=lesson.window_label,
         ),
     )
 
@@ -494,7 +516,7 @@ def _slot_to_web(
     status = _lesson_status(first)
     start_time = _format_time(first.start_time)
     end_time = _format_time(first.end_time)
-
+    display_number = _display_number(first)
     if view_mode == LessonViewMode.TEACHER:
         partitions: dict[
             tuple[str, tuple[str, ...]],
@@ -534,6 +556,7 @@ def _slot_to_web(
             WebLesson(
                 key=_lesson_key(first_entry_lesson),
                 number=first_entry_lesson.lesson_num,
+                display_number=display_number,
                 start_time=start_time,
                 end_time=end_time,
                 view_mode=view_mode,
@@ -543,6 +566,7 @@ def _slot_to_web(
                 entries=entries,
                 shared_subject=_shared_subject(entries),
                 shared_room=_shared_room(entries),
+                window_label=first_entry_lesson.window_label,
 
                 # Только changed card с actual readable diff является interactive.
                 has_inline_changes=bool(change_details),
@@ -551,11 +575,13 @@ def _slot_to_web(
                 history_url=None,
                 aria_label=_lesson_aria_label(
                     number=first_entry_lesson.lesson_num,
+                    display_number=display_number,
                     start_time=start_time,
                     end_time=end_time,
                     kind=kind,
                     status=status,
                     entries=entries,
+                    window_label=first_entry_lesson.window_label,
                 ),
             )
         )

@@ -32,6 +32,13 @@ class Period:
     date_begin: datetime.date
     date_end: datetime.date
 
+@dataclass(frozen=True)
+class LessonTime:
+    """Временные границы одного физического слота школьного расписания."""
+
+    lesson_num: int
+    start_time: str
+    end_time: str
 
 @dataclass
 class LessonInstance:
@@ -78,5 +85,8 @@ class LessonInstance:
     
     # Флаг методического часа/дня (только для учителей)
     is_methodological: bool = False
-    
+    # Реальное окно, явно заданное в NIKA пустым предметом.
+    # Не путать с synthetic window, которое позже создаст ScheduleService
+    # для отсутствующего teacher/room slot.
+    is_window: bool = False
     # ИСПРАВЛЕНО: убраны groups_raw/subjects_raw/rooms_raw — мёртвый код

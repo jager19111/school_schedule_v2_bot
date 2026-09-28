@@ -187,6 +187,93 @@ class ScheduleService:
         )
 
     @staticmethod
+    def _has_actual_resource_lessons(
+        lessons: List[LessonInstance],
+    ) -> bool:
+        """
+        Реальный lesson — любой non-window LessonInstance.
+
+        Cancelled lesson тоже считается реальным slot:
+        teacher должен увидеть отмену, а не ложное «Свободное время».
+
+        NIKA window с subject_name='нет занятий' и is_window=True
+        не считается занятием сам по себе.
+        """
+        return any(not lesson.is_window for lesson in lessons)
+
+
+    @staticmethod
+    def _complete_resource_timeline(
+        lessons: List[LessonDTO],
+        *,
+        metadata: SchoolMetadata,
+        date_iso: str,
+        resource_key: str,
+        window_label: str,
+    ) -> List[LessonDTO]:
+        """
+        Достраивает timeline teacher/room до всех configured school slots.
+
+        Rules:
+        - Если нет ни одного actual lesson — возвращает [].
+        - Existing NIKA windows сохраняются.
+        - Missing slots становятся synthetic LessonDTO(is_window=True).
+        - Actual lesson, including cancelled/methodological, занимает slot.
+        - Multi-group / simultaneous teacher entries одного lesson_num
+          остаются одним занятым физическим slot.
+        """
+        actual_lessons = [
+            lesson
+            for lesson in lessons
+            if not lesson.is_extra and not lesson.is_window
+        ]
+
+        # Teacher without lessons = day off.
+        # Room without lessons = completely free day.
+        # Не генерируем 12 пустых cards подряд.
+        if not actual_lessons:
+            return []
+
+        completed = list(lessons)
+
+        existing_numbers = {
+            lesson.lesson_num
+            for lesson in completed
+            if lesson.lesson_num is not None
+        }
+
+        # Existing NIKA-generated window gets context-aware label.
+        for lesson in completed:
+            if lesson.is_window:
+                lesson.window_label = window_label
+
+        for lesson_num, lesson_time in metadata.lesson_times.items():
+            if lesson_num in existing_numbers:
+                continue
+
+            completed.append(
+                LessonDTO(
+                    id=(
+                        f"window-{resource_key}-"
+                        f"{date_iso}-{lesson_num}"
+                    ),
+                    date_iso=date_iso,
+                    lesson_num=lesson_num,
+                    display_num=str(lesson_num),
+                    start_time=lesson_time.start_time,
+                    end_time=lesson_time.end_time,
+                    subject_name="",
+                    room_name="",
+                    group_id="ALL",
+                    group_name="Весь класс",
+                    is_window=True,
+                    window_label=window_label,
+                )
+            )
+
+        return completed
+    
+    @staticmethod
     def _enrich_display_numbers_dtos(
         lessons: List[LessonDTO],
         metadata: SchoolMetadata,
@@ -199,12 +286,15 @@ class ScheduleService:
         уроки до shift_start идут «как есть» (w_flag), последующие
         сдвигаются на shift_start-1 и помечаются '*'.
         """
-        if origin == "teacher":
-            for l in lessons:
-                l.display_num = str(l.lesson_num) if l.lesson_num is not None else "•"
+        if origin in {"teacher", "room"}:
+            for lesson in lessons:
+                lesson.display_num = (
+                    str(lesson.lesson_num)
+                    if lesson.lesson_num is not None
+                    else "•"
+                )
             return
         class_shifts = metadata.class_shift
-        second_relative = metadata.second_relative
 
         groups: dict[tuple[str, str], List[LessonDTO]] = {}
         for l in lessons:
@@ -234,8 +324,9 @@ class ScheduleService:
                         is_star = True
 
                 if is_star:
-                    display_val = v if second_relative else m
-                    l.display_num = f"{display_val}*"
+                    # Web и bot UI показывают понятный relative second-shift number
+                    # without NIKA technical marker "*".
+                    l.display_num = str(v)
                 else:
                     l.display_num = str(m)
 
@@ -295,6 +386,8 @@ class ScheduleService:
         origin: Literal["class", "teacher", "student"] = "student",
         class_id: Optional[str] = None,
         group_id: Optional[str] = None,
+        resource_key: Optional[str] = None,
+        window_label: Optional[str] = None,
     ) -> DayScheduleDTO:
         """
         LessonInstance[] -> DayScheduleDTO:
@@ -304,19 +397,35 @@ class ScheduleService:
         """
         day_permutation = self.detect_day_permutation(lessons)
 
+        metadata = await self.schedule_repo.get_metadata()
+
         dtos: List[LessonDTO] = LessonMapper.to_dto_list(
-            lessons, day_permutation=day_permutation
+            lessons,
+            day_permutation=day_permutation,
         )
+
         if extra_items:
             dtos += [
                 self._map_extra_to_lesson(extra, date_iso)
                 for extra in extra_items
             ]
 
+        if window_label is not None and resource_key is not None:
+            dtos = self._complete_resource_timeline(
+                dtos,
+                metadata=metadata,
+                date_iso=date_iso,
+                resource_key=resource_key,
+                window_label=window_label,
+            )
+
         dtos.sort(key=self._sort_key)
 
-        metadata = await self.schedule_repo.get_metadata()
-        self._enrich_display_numbers_dtos(dtos, metadata, origin=origin)
+        self._enrich_display_numbers_dtos(
+            dtos,
+            metadata,
+            origin=origin,
+        )
 
         # Извлекаем красивые названия для заголовка рендерера
         class_name = None
@@ -409,10 +518,22 @@ class ScheduleService:
     async def get_daily_schedule_for_teacher(
         self, teacher_id: str, date_iso: str,
     ) -> DayScheduleDTO:
-        """Расписание учителя на день (включая методические часы)."""
+        """
+        Расписание учителя на день.
+        Если у учителя есть хотя бы один actual lesson, service достраивает
+        весь configured school timeline и добавляет windows.
+        """
+        lessons = await self.schedule_repo.get_lessons_for_teacher(
+            teacher_id=teacher_id,
+            date_iso=date_iso,
+        )
+
         return await self._assemble_day_schedule(
-            lessons=await self.schedule_repo.get_lessons_for_teacher(teacher_id=teacher_id, date_iso=date_iso),
-            date_iso=date_iso, origin="teacher"
+            lessons=lessons,
+            date_iso=date_iso,
+            origin="teacher",
+            resource_key=f"teacher-{teacher_id}",
+            window_label="Свободное время",
         )
         
     async def get_day_changes_detail(
@@ -612,12 +733,28 @@ class ScheduleService:
                 seen.add(sig)
                 unique_dtos.append(dto)
 
-        # 3. Сортировка по времени и номеру
+        # 3. Metadata нужен для complete room timeline.
+        metadata = await self.schedule_repo.get_metadata()
+
+        # 4. Если кабинет был занят хотя бы раз, добавляем окна
+        # для всех missing configured school slots.
+        unique_dtos = self._complete_resource_timeline(
+            unique_dtos,
+            metadata=metadata,
+            date_iso=date_iso,
+            resource_key=f"room-{room_id}",
+            window_label="Кабинет свободен",
+        )
+
+        # 5. Сортировка complete timeline.
         unique_dtos.sort(key=self._sort_key)
 
-        # 4. Обогащение номерами уроков (со звездочками)
-        metadata = await self.schedule_repo.get_metadata()
-        self._enrich_display_numbers_dtos(unique_dtos, metadata)
+        # 6. Кабинет всегда использует absolute physical numbering.
+        self._enrich_display_numbers_dtos(
+            unique_dtos,
+            metadata,
+            origin="room",
+        )
 
         # Безопасное получение названия кабинета
         room_obj = metadata.rooms.get(str(room_id))
@@ -627,8 +764,8 @@ class ScheduleService:
             date_iso=date_iso,
             lessons=unique_dtos,
             has_permutation=day_permutation,
-            origin="class",  # Системный origin
-            class_name=room_name
+            origin="room",
+            class_name=room_name,
         )
 
     async def get_smart_room_target_date(self, room_id: str) -> str:
@@ -714,19 +851,40 @@ class ScheduleService:
             date_iso = date.isoformat()
             lessons = await self.schedule_repo.get_lessons_for_teacher(teacher_id=teacher_id, date_iso=date_iso)
 
-            if offset == 0: first_lessons = lessons
-            if not lessons: continue
+            if offset == 0:
+                first_lessons = lessons
+
+            if not self._has_actual_resource_lessons(lessons):
+                continue
 
             if date != today:
-                return await self._assemble_day_schedule(lessons=lessons, date_iso=date_iso, origin="teacher")
+                return await self._assemble_day_schedule(
+                    lessons=lessons,
+                    date_iso=date_iso,
+                    origin="teacher",
+                    resource_key=f"teacher-{teacher_id}",
+                    window_label="Свободное время",
+                )
 
             end_times = [self._parse_hhmm(l.end_time) for l in lessons if l.end_time]
             if not end_times: continue
 
             if now_time <= max(end_times):
-                return await self._assemble_day_schedule(lessons=lessons, date_iso=date_iso, origin="teacher")
+                return await self._assemble_day_schedule(
+                    lessons=lessons,
+                    date_iso=date_iso,
+                    origin="teacher",
+                    resource_key=f"teacher-{teacher_id}",
+                    window_label="Свободное время",
+                )
 
-        return await self._assemble_day_schedule(lessons=first_lessons, date_iso=today.isoformat(), origin="teacher")
+        return await self._assemble_day_schedule(
+                    lessons=lessons,
+                    date_iso=date_iso,
+                    origin="teacher",
+                    resource_key=f"teacher-{teacher_id}",
+                    window_label="Свободное время",
+                )
     
 
     async def get_smart_target_date(

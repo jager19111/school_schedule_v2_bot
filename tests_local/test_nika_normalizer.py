@@ -87,7 +87,51 @@ def test_normalizer_reads_lesson_numbers_from_schedule_keys():
 
     assert [item.lesson_num for item in lessons] == [15]
 
+def test_normalizer_builds_typed_lesson_times():
+    nika = make_nika(
+        lesson_times={
+            "1": ["08:15", "09:00"],
+            "7": ["14:00", "14:40"],
+            "12": ["18:20", "19:00"],
+        },
+    )
 
+    slots = NikaNormalizer(nika).build_lesson_times()
+
+    assert list(slots) == [1, 7, 12]
+
+    assert slots[1].lesson_num == 1
+    assert slots[1].start_time == "08:15"
+    assert slots[1].end_time == "09:00"
+
+    assert slots[7].start_time == "14:00"
+    assert slots[7].end_time == "14:40"
+
+    assert slots[12].start_time == "18:20"
+    assert slots[12].end_time == "19:00"
+
+def test_normalizer_marks_real_window():
+    nika = make_nika(
+        class_schedule={
+            "109": {
+                "013": {
+                    "101": {
+                        "s": [""],
+                        "t": ["002"],
+                        "r": ["027"],
+                    }
+                }
+            }
+        }
+    )
+
+    lessons = NikaNormalizer(nika).build_class_lessons([MONDAY])
+
+    assert len(lessons) == 1
+    assert lessons[0].is_window is True
+    assert lessons[0].is_cancelled is False
+    assert lessons[0].subject_name == "нет занятий"
+        
 def test_normalizer_returns_empty_for_date_without_period():
     nika = make_nika(
         periods={

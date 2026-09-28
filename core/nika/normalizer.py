@@ -39,7 +39,7 @@ from typing import List, Dict, Any, Tuple, Optional
 import datetime
 import re
 import logging
-from core.models.domain import Class, Teacher, Room, Subject, Period, LessonInstance
+from core.models.domain import Class, Teacher, Room, Subject, Period, LessonInstance, LessonTime
 from core.nika.exceptions import ScheduleDataError
 
 logger = logging.getLogger(__name__)
@@ -185,6 +185,49 @@ class NikaNormalizer:
             return None
         return value[0].strip(), value[1].strip()
 
+    def build_lesson_times(self) -> Dict[int, LessonTime]:
+        """
+        Нормализует configured NIKA.LESSON_TIMES в typed school slots.
+
+        Не использует расписание конкретного класса/учителя, поэтому
+        возвращает все slots школы, включая те, где конкретный ресурс
+        свободен. Именно это нужно для teacher/room complete timeline.
+        """
+        result: Dict[int, LessonTime] = {}
+
+        for raw_number, raw_value in self.lesson_times.items():
+            try:
+                lesson_num = int(raw_number)
+            except (TypeError, ValueError):
+                logger.warning(
+                    "Ignoring invalid LESSON_TIMES key: %r",
+                    raw_number,
+                )
+                continue
+
+            if (
+                not isinstance(raw_value, list)
+                or len(raw_value) != 2
+                or not all(
+                    isinstance(value, str) and value.strip()
+                    for value in raw_value
+                )
+            ):
+                logger.warning(
+                    "Ignoring invalid LESSON_TIMES[%s]: %r",
+                    raw_number,
+                    raw_value,
+                )
+                continue
+
+            result[lesson_num] = LessonTime(
+                lesson_num=lesson_num,
+                start_time=raw_value[0].strip(),
+                end_time=raw_value[1].strip(),
+            )
+
+        return dict(sorted(result.items()))
+    
     @staticmethod
     def _is_valid_grouping(raw_g: list) -> bool:
         """
@@ -465,7 +508,7 @@ class NikaNormalizer:
                     original_class_id=o_clean_t_c, original_class_name=orig_cls_name,
                     original_group_id=o_clean_g, original_group_name=orig_grp_name,
                     group_id=safe_g_id, group_name=grp_name,
-                    is_exchange=is_exchange, is_cancelled=is_cancelled, is_methodological=is_methodological
+                    is_exchange=is_exchange, is_cancelled=is_cancelled, is_methodological=is_methodological, is_window=is_window,
                 ))
             else:
                 lesson_id = f"{period_id}_{context_id}_{iso_date}_{lesson_num}_{safe_g_id}"
@@ -485,7 +528,7 @@ class NikaNormalizer:
                     original_class_id=None, original_class_name=None,
                     original_group_id=o_clean_g, original_group_name=orig_grp_name,
                     group_id=safe_g_id, group_name=grp_name,
-                    is_exchange=is_exchange, is_cancelled=is_cancelled, is_methodological=False
+                    is_exchange=is_exchange, is_cancelled=is_cancelled, is_methodological=False, is_window=is_window,
                 ))
         return lessons
 
