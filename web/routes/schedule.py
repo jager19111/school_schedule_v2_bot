@@ -17,6 +17,7 @@ import logging
 from datetime import date, timedelta
 from urllib.parse import urlsplit
 
+from dataclasses import replace
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse
 
@@ -62,6 +63,38 @@ def _templates(request: Request):
 def _today_iso(request: Request) -> str:
     return _time_service(request).get_now_base().date().isoformat()
 
+def _day_navigation(
+    *,
+    selected_date_iso: str,
+    today_iso: str,
+) -> dict[str, str | bool]:
+    """
+    Контекст навигации для дневного расписания.
+
+    Все ссылки рассчитываются на сервере. Шаблон и JavaScript не
+    выполняют арифметику с датами и не знают правил URL-роутинга.
+    """
+    selected_date = date.fromisoformat(selected_date_iso)
+
+    previous_date_iso = (
+        selected_date - timedelta(days=1)
+    ).isoformat()
+
+    next_date_iso = (
+        selected_date + timedelta(days=1)
+    ).isoformat()
+
+    return {
+        "previous_url": (
+            f"/schedule/day/{previous_date_iso}"
+        ),
+        "next_url": (
+            f"/schedule/day/{next_date_iso}"
+        ),
+        "today_url": "/",
+        "is_today": selected_date_iso == today_iso,
+    }
+    
 def _safe_next_url(value: str | None) -> str:
     """
     Разрешает только internal relative redirects.
@@ -571,7 +604,10 @@ async def _resolve_target(
         user_id=context.user_id
     )
     if not targets:
-        raise HTTPException(status_code=403, detail="Нет доступных профилей.")
+        raise HTTPException(
+            status_code=403,
+            detail="Нет доступных профилей.",
+        )
 
     raw = request.cookies.get(_STUDENT_COOKIE, "")
     try:
@@ -579,9 +615,35 @@ async def _resolve_target(
     except ValueError:
         requested = None
 
-    target = _targets_service(request).find_target(targets, requested)
+    target = _targets_service(request).find_target(
+        targets,
+        requested,
+    )
     if target is None:
         target = targets[0]
+
+    if target.teacher_id:
+        try:
+            teacher_name = await _schedule_service(
+                request
+            ).get_teacher_name(target.teacher_id)
+        except Exception as exc:
+            logger.warning(
+                "get_teacher_name failed for %s: %s",
+                target.teacher_id,
+                exc,
+            )
+            teacher_name = None
+
+        target = replace(
+            target,
+            name=(
+                str(teacher_name).strip()
+                if teacher_name
+                else "Преподаватель"
+            ),
+        )
+
     return targets, target
 
 @router.get("/", response_class=HTMLResponse)
@@ -604,12 +666,19 @@ async def dashboard(
             student_id=target.student_id,
         )
         
+    today_iso = _today_iso(request)
+
     view = day_to_web(
         dto,
         target=target,
-        today_iso=_today_iso(request),
+        today_iso=today_iso,
         is_smart_today=True,
         stale_warning=await _nika_stale_warning(request),
+    )
+
+    day_navigation = _day_navigation(
+        selected_date_iso=view.date_iso,
+        today_iso=today_iso,
     )
     template_name = (
         "schedule/_day_content.html"
@@ -625,6 +694,7 @@ async def dashboard(
             context,
             {
                 "day": view,
+                "day_navigation": day_navigation,
                 "students": [
                     student_to_web(
                         target_item,
@@ -691,11 +761,18 @@ async def day_page(
             student_id=target.student_id,
         )
         
+    today_iso = _today_iso(request)
+
     view = day_to_web(
         dto,
         target=target,
-        today_iso=_today_iso(request),
+        today_iso=today_iso,
         stale_warning=await _nika_stale_warning(request),
+    )
+
+    day_navigation = _day_navigation(
+        selected_date_iso=view.date_iso,
+        today_iso=today_iso,
     )
     template_name = (
         "schedule/_day_content.html"
@@ -711,6 +788,7 @@ async def day_page(
             context,
             {
                 "day": view,
+                "day_navigation": day_navigation,
                 "students": [
                     student_to_web(
                         target_item,

@@ -57,6 +57,41 @@ def _templates(request: Request):
 def _today_iso(request: Request) -> str:
     return _time_service(request).get_now_base().date().isoformat()
 
+def _school_day_navigation(
+    *,
+    kind_name: str,
+    item_id: str,
+    selected_date_iso: str,
+    today_iso: str,
+) -> dict[str, str | bool]:
+    """
+    Навигация между датами school schedule.
+
+    URL строятся на сервере: шаблон не содержит арифметики с датами
+    и не зависит от Jinja-фильтров prev_date / next_date.
+    """
+    selected_date = date.fromisoformat(selected_date_iso)
+
+    previous_date_iso = (
+        selected_date - timedelta(days=1)
+    ).isoformat()
+
+    next_date_iso = (
+        selected_date + timedelta(days=1)
+    ).isoformat()
+
+    root_url = f"/school/{kind_name}/{item_id}"
+
+    return {
+        "previous_url": (
+            f"{root_url}/day/{previous_date_iso}"
+        ),
+        "next_url": (
+            f"{root_url}/day/{next_date_iso}"
+        ),
+        "today_url": root_url,
+        "is_today": selected_date_iso == today_iso,
+    }
 
 def _kind(kind_name: str) -> dict:
     if kind_name not in _KINDS:
@@ -233,12 +268,27 @@ async def _render_school_day(
         "room": LessonViewMode.ROOM,
     }[kind_name]
 
+    header_context = (
+        f"Кабинет {title}"
+        if kind_name == "room"
+        else title
+    )
+
+    today_iso = _today_iso(request)
+
     view = school_day_to_web(
         dto,
-        title=f"{kind['icon']} {title}",
-        today_iso=_today_iso(request),
+        title=header_context,
+        today_iso=today_iso,
         view_mode=view_mode,
         stale_warning=await _nika_stale_warning(request),
+    )
+
+    day_navigation = _school_day_navigation(
+        kind_name=kind_name,
+        item_id=item_id,
+        selected_date_iso=view.date_iso,
+        today_iso=today_iso,
     )
 
     template_name = (
@@ -255,6 +305,7 @@ async def _render_school_day(
             context,
             {
                 "day": view,
+                "day_navigation": day_navigation,
                 "kind": kind_name,
                 "item_id": item_id,
                 "item_title": title,

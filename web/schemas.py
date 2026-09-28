@@ -174,7 +174,14 @@ class WebDaySchedule(BaseModel):
     weekday_display: str       # «суббота»
     class_name: str
     group_name: str
-    student_name: str          # для school-экранов — название сущности
+    student_name: str          # legacy display name; для school-экранов — название сущности
+
+    # Единый контекст глобальной шапки:
+    # «6а · 2 группа», «Иванов И.И.», «Кабинет 305», «8б».
+    #
+    # Header никогда не собирается в Jinja из raw полей и не зависит
+    # от типа страницы: day.html / school/day.html используют одно поле.
+    header_context: str = ""
     lessons: List[WebLesson]
     has_permutation: bool = False
     exchange_count: int = 0

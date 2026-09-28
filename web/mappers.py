@@ -651,6 +651,27 @@ def _date_parts(date_iso: str, today_iso: str) -> tuple[str, str]:
         f"{prefix}{d.day} {_MONTHS_GEN[d.month - 1]}",
         _WEEKDAYS_FULL[d.weekday()],
     )
+    
+def _class_schedule_header_context(
+    *,
+    class_name: str,
+    group_name: str,
+) -> str:
+    """
+    Контекст шапки для личного расписания ученика.
+
+    Примеры:
+    - «6а · 2 группа»
+    - «6а»
+    - «»
+    """
+    parts = [
+        value.strip()
+        for value in (class_name, group_name)
+        if value and value.strip()
+    ]
+
+    return " · ".join(parts)
 
 
 def day_to_web(
@@ -677,15 +698,28 @@ def day_to_web(
         show_profile_groups=show_profile_groups,
     )
     d = _parse(dto.date_iso)
-    prefix = "сегодня, " if dto.date_iso == today_iso else ""
+    d = _parse(dto.date_iso)
+
+    class_name = dto.class_name or ""
+    group_name = _group_or_none(dto.group_name) or ""
+
+    header_context = (
+        target.name.strip()
+        if target.teacher_id
+        else _class_schedule_header_context(
+            class_name=class_name,
+            group_name=group_name,
+        )
+    )
 
     return WebDaySchedule(
         date_iso=dto.date_iso,
-        date_display=f"{prefix}{d.day} {_MONTHS_GEN[d.month - 1]}",
+        date_display=f"{d.day} {_MONTHS_GEN[d.month - 1]}",
         weekday_display=_WEEKDAYS_FULL[d.weekday()],
-        class_name=dto.class_name or "",
-        group_name=_group_or_none(dto.group_name) or "",
+        class_name=class_name,
+        group_name=group_name,
         student_name=target.name,
+        header_context=header_context,
         lessons=lessons,
         has_permutation=dto.has_permutation,
         exchange_count=sum(
@@ -716,7 +750,13 @@ def school_day_to_web(
         view_mode=view_mode,
         show_profile_groups=True,
     )
-    date_display, weekday = _date_parts(dto.date_iso, today_iso)
+    d = _parse(dto.date_iso)
+
+    date_display = (
+        f"{d.day} {_MONTHS_GEN[d.month - 1]}"
+    )
+
+    weekday = _WEEKDAYS_FULL[d.weekday()]
 
     return WebDaySchedule(
         date_iso=dto.date_iso,
@@ -725,6 +765,7 @@ def school_day_to_web(
         class_name=dto.class_name or "",
         group_name="",
         student_name=title,
+        header_context=title,
         lessons=lessons,
         has_permutation=dto.has_permutation,
         exchange_count=sum(

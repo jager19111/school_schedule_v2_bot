@@ -26,38 +26,72 @@
   {% endif %}
 
   <header class="day-header">
-    <h2 class="day-title">{{ day.weekday_display|capitalize }}, {{ day.date_display }}</h2>
-  {% if day.class_name %}
-  <div class="day-subtitle">
-    {{ day.class_name }}
-    {% if day.group_name %}
-      · {{ day.group_name }}
-    {% endif %}
-  </div>
-  {% endif %}
+    <nav
+      class="day-navigation"
+      aria-label="Навигация по дням расписания"
+    >
+      <a
+        class="day-navigation__arrow"
+        href="{{ day_navigation.previous_url }}"
+        hx-get="{{ day_navigation.previous_url }}"
+        hx-target="#day-content"
+        hx-swap="outerHTML"
+        hx-push-url="true"
+        hx-indicator="#day-content"
+        aria-label="Открыть расписание на предыдущий день"
+      >
+        ←
+      </a>
+
+      <div class="day-navigation__heading">
+        <h2 class="day-title">
+          {{ day.weekday_display|capitalize }}, {{ day.date_display }}
+        </h2>
+        <div class="day-navigation__today-slot">
+          {% if day_navigation.is_today %}
+          <span
+            class="day-navigation__today-status"
+            aria-label="Открыто расписание на сегодня"
+          >
+            <span aria-hidden="true">•</span>
+            Сегодня
+          </span>
+          {% else %}
+          <a
+            class="day-navigation__today-action"
+            href="{{ day_navigation.today_url }}"
+            hx-get="{{ day_navigation.today_url }}"
+            hx-target="#day-content"
+            hx-swap="outerHTML"
+            hx-push-url="true"
+            hx-indicator="#day-content"
+          >
+            Сегодня
+          </a>
+          {% endif %}
+        </div>
+      </div>
+
+      <a
+        class="day-navigation__arrow"
+        href="{{ day_navigation.next_url }}"
+        hx-get="{{ day_navigation.next_url }}"
+        hx-target="#day-content"
+        hx-swap="outerHTML"
+        hx-push-url="true"
+        hx-indicator="#day-content"
+        aria-label="Открыть расписание на следующий день"
+      >
+        →
+      </a>
+    </nav>
+
     {% if day.stale_warning %}
-    <div class="stale-warning" role="status">{{ day.stale_warning }}</div>
+    <div class="stale-warning" role="status">
+      {{ day.stale_warning }}
+    </div>
     {% endif %}
   </header>
-
-  {# ДОБАВЛЕНО: hx-indicator="#schedule-skeleton" для связи кнопок со скелетоном #}
-{# ИЗМЕНЕНО: hx-indicator теперь указывает на родительский #day-content #}
-  <nav class="day-nav" aria-label="Навигация по дням">
-    <a class="nav-btn" href="/schedule/day/{{ day.date_iso|prev_date }}"
-       hx-get="/schedule/day/{{ day.date_iso|prev_date }}" hx-target="#day-content"
-       hx-swap="outerHTML" hx-push-url="true" 
-       hx-indicator="#day-content">← Пред.</a>
-    
-    <a class="nav-btn today-btn" href="/"
-       hx-get="/" hx-target="#day-content"
-       hx-swap="outerHTML" hx-push-url="true" 
-       hx-indicator="#day-content">Сегодня</a>
-       
-    <a class="nav-btn" href="/schedule/day/{{ day.date_iso|next_date }}"
-       hx-get="/schedule/day/{{ day.date_iso|next_date }}" hx-target="#day-content"
-       hx-swap="outerHTML" hx-push-url="true" 
-       hx-indicator="#day-content">След. →</a>
-  </nav>
 
   {# ДОБАВЛЕНО: Индикатор загрузки Скелетон #}
   {% include "components/schedule/skeleton.html" %}

@@ -714,3 +714,305 @@
   color: var(--lesson-content-color);
   font-weight: 750;
 }
+
+/* ==========================================================================
+   12. НАВИГАЦИЯ ПО ДНЯМ РАСПИСАНИЯ
+   ========================================================================== */
+
+.day-header {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  margin-bottom: 12px;
+}
+
+
+.day-navigation {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) 44px;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+
+.day-navigation__arrow {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0;
+  border: 1px solid #dce4ee;
+  border-radius: 12px;
+  background: var(--card);
+  color: #35506d;
+  cursor: pointer;
+  font-size: 24px;
+  font-weight: 650;
+  line-height: 1;
+  text-decoration: none;
+  transition:
+    border-color 0.16s ease,
+    background-color 0.16s ease,
+    color 0.16s ease,
+    transform 0.1s ease;
+}
+
+
+.day-navigation__arrow:focus {
+  outline: none;
+}
+
+
+.day-navigation__arrow:focus-visible {
+  position: relative;
+  z-index: 1;
+  outline: 3px solid rgb(37 99 235 / 0.52);
+  outline-offset: 2px;
+}
+
+
+.day-navigation__heading {
+  min-width: 0;
+  text-align: center;
+}
+
+
+.day-navigation__heading .day-title {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--lesson-content-color);
+  font-size: clamp(17px, 4.7vw, 21px);
+  font-weight: 800;
+  line-height: 1.15;
+}
+
+
+/*
+ * Контейнер существует на любой выбранной дате.
+ * Поэтому переход между «• Сегодня» и кнопкой не двигает карточки.
+ */
+.day-navigation__today-slot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 32px;
+  margin-top: 5px;
+}
+
+
+.day-navigation__today-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 32px;
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 750;
+  line-height: 1;
+}
+
+
+.day-navigation__today-status span[aria-hidden="true"] {
+  font-size: 16px;
+  line-height: 1;
+}
+
+
+.day-navigation__today-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 30px;
+  padding: 6px 12px;
+  border: 1px solid #dce4ee;
+  border-radius: 9px;
+  background: #f8fafc;
+  color: #35506d;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 750;
+  line-height: 1;
+  text-decoration: none;
+  transition:
+    border-color 0.16s ease,
+    background-color 0.16s ease,
+    color 0.16s ease,
+    transform 0.1s ease;
+}
+
+
+.day-navigation__today-action:focus {
+  outline: none;
+}
+
+
+.day-navigation__today-action:focus-visible {
+  outline: 3px solid rgb(37 99 235 / 0.52);
+  outline-offset: 2px;
+}
+
+
+.day-header .stale-warning {
+  margin-top: 8px;
+}
+
+
+@media (hover: hover) {
+  .day-navigation__arrow:hover {
+    border-color: #b9c8da;
+    background: #f3f7fb;
+    color: var(--accent);
+  }
+
+  .day-navigation__today-action:hover {
+    border-color: #b9c8da;
+    background: #eef4fa;
+    color: var(--accent);
+  }
+}
+
+
+@media (hover: none) and (pointer: coarse) {
+  .day-navigation__arrow:active,
+  .day-navigation__today-action:active {
+    background: #e8f0f8;
+    transform: scale(0.96);
+  }
+}
+
+
+@media (min-width: 431px) {
+  .day-navigation {
+    grid-template-columns: 46px minmax(0, 1fr) 46px;
+    gap: 8px;
+  }
+
+  .day-navigation__arrow {
+    width: 46px;
+    min-width: 46px;
+    min-height: 46px;
+  }
+}
+
+
+@media (prefers-reduced-motion: reduce) {
+  .day-navigation__arrow,
+  .day-navigation__today-action {
+    transition: none;
+  }
+}
+
+/* ==========================================================================
+   13. УПЛОТНЕНИЕ ДНЕВНОЙ НАВИГАЦИИ
+   ========================================================================== */
+
+/*
+ * Уменьшаем расстояние между выбором ребёнка и датой.
+ * На экране дня чипы являются контекстом, а не отдельной секцией.
+ */
+.day-schedule .student-switch {
+  margin-bottom: 10px;
+}
+
+
+/*
+ * Header больше не должен создавать крупный пустой промежуток
+ * между статусом «Сегодня» и первой карточкой урока.
+ */
+.day-schedule .day-header {
+  margin-bottom: 10px;
+}
+
+
+/*
+ * У стрелок сохраняется доступная touch-area 44 × 44 px,
+ * но сетка становится компактнее за счёт меньшего промежутка.
+ */
+.day-schedule .day-navigation {
+  grid-template-columns: 44px minmax(0, 1fr) 44px;
+  gap: 5px;
+}
+
+
+/*
+ * Визуально стрелка становится легче и аккуратнее.
+ * Размер интерактивной области остаётся 44 × 44 px.
+ */
+.day-schedule .day-navigation__arrow {
+  width: 44px;
+  min-width: 44px;
+  min-height: 44px;
+  border-radius: 11px;
+  font-size: 22px;
+}
+
+
+/*
+ * Дата поднимается визуально: меньше line-height, меньше размер,
+ * нет лишней высоты внутри центральной колонки.
+ */
+.day-schedule .day-navigation__heading .day-title {
+  font-size: clamp(18px, 4.8vw, 20px);
+  line-height: 1.05;
+  margin-bottom: 5px;
+}
+
+
+/*
+ * Постоянный слот остаётся всегда — это исключает прыжок уроков,
+ * но его высота уменьшается с 32 px до 28 px.
+ */
+.day-schedule .day-navigation__today-slot {
+  min-height: 25px;
+  margin-top: -0;
+}
+
+
+/*
+ * Текущий день — только спокойный статус, а не крупный элемент UI.
+ */
+.day-schedule .day-navigation__today-status {
+  min-height: 28px;
+  gap: 4px;
+  font-size: 12px;
+  line-height: 1;
+}
+
+
+.day-schedule .day-navigation__today-status span[aria-hidden="true"] {
+  font-size: 14px;
+}
+
+
+/*
+ * Другой день — компактное действие.
+ * Визуальная высота меньше, но элемент остаётся достаточно заметным
+ * и находится строго в том же месте, что и статус текущего дня.
+ */
+.day-schedule .day-navigation__today-action {
+  min-height: 25px;
+  padding: 4px 10px;
+  border-radius: 8px;
+  font-size: 12px;
+}
+
+
+/*
+ * При ширине от 431 px не расширяем навигацию обратно до 46 px:
+ * для дневного расписания компактность важнее.
+ */
+@media (min-width: 431px) {
+  .day-schedule .day-navigation {
+    grid-template-columns: 44px minmax(0, 1fr) 44px;
+    gap: 5px;
+  }
+
+  .day-schedule .day-navigation__arrow {
+    width: 44px;
+    min-width: 44px;
+    min-height: 44px;
+  }
+}

@@ -1,4 +1,4 @@
-  {# web/templates/school/day.html #}
+{# web/templates/school/day.html #}
 {# День расписания school-сущности: класс / преподаватель / кабинет. #}
 
 {% extends "base.html" %}
@@ -10,7 +10,18 @@
 {% endblock %}
 
 {% block header %}
-  {{ day.student_name }}
+  <span class="header-title__main">
+    Расписание
+  </span>
+
+  {% if day.header_context %}
+  <span
+    class="header-title__context"
+    title="{{ day.header_context }}"
+  >
+    {{ day.header_context }}
+  </span>
+  {% endif %}
 {% endblock %}
 
 {% block content %}
