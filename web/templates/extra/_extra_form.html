@@ -1,3 +1,4 @@
+  {# web/templates/extra/_extra_form.html #}
 {# Форма доп. занятия (создание и правка). #}
 {#
   item всегда WebExtraClass | None.
@@ -14,11 +15,14 @@
   </div>
   {% endif %}
 
-  <form hx-post="/extra-classes{% if mode == 'edit' %}/{{ item.id }}/edit{% endif %}?student={{ student_id }}"
-        hx-target="#extra-content"
-        hx-swap="outerHTML"
-        class="student-form">
-      
+    <form
+    hx-post="/extra-classes{% if mode == 'edit' %}/{{ item.id }}/edit{% endif %}?student={{ student_id }}"
+    hx-target="#extra-content"
+    hx-swap="outerHTML"
+    class="student-form extra-class-form"
+    data-extra-preview-form
+    >
+ 
       {% if idempotency_key %}
       <input type="hidden" name="idempotency_key" value="{{ idempotency_key }}">
       {% endif %}
@@ -35,21 +39,95 @@
 
       <label class="form-hint" style="margin-bottom: 4px; margin-top: 12px;">Время (Начало – Конец)</label>
       <div class="time-row">
-          <input type="time" name="time_start" value="{{ item.time_start if item else '15:00' }}" required>
-          <input type="time" name="time_end" value="{{ item.time_end if item else '16:00' }}" required>
+            <input
+            type="time"
+            name="time_start"
+            value="{{ item.time_start if item else '15:00' }}"
+            step="300"
+            required
+            >
+
+            <input
+            type="time"
+            name="time_end"
+            value="{{ item.time_end if item else '16:00' }}"
+            step="300"
+            required
+            >
       </div>
 
       <label class="form-hint" style="margin-bottom: 4px; margin-top: 12px;">Место (кабинет, адрес)</label>
-      <input type="text" name="location" value="{{ item.location if item else '' }}" placeholder="Необязательно">
+      <input type="text" name="location" value="{{ item.location or '' if item else '' }}" placeholder="Необязательно"
+>
 
-      <label class="form-hint" style="margin-bottom: 4px; margin-top: 12px;">Напоминание</label>
-      <select name="reminder_minutes">
-          <option value="15" {% if item and item.reminder_minutes == 15 %}selected{% endif %}>За 15 минут</option>
-          <option value="30" {% if not item or item.reminder_minutes == 30 %}selected{% endif %}>За 30 минут</option>
-          <option value="60" {% if item and item.reminder_minutes == 60 %}selected{% endif %}>За 1 час</option>
-          <option value="120" {% if item and item.reminder_minutes == 120 %}selected{% endif %}>За 2 часа</option>
-      </select>
+  <div
+    class="reminder-field"
+    data-reminder-stepper
+  >
+    <label
+      for="ec-remind"
+      class="reminder-label"
+    >
+      Напоминание
+    </label>
 
+    <div class="reminder-stepper">
+      <button
+        type="button"
+        class="reminder-stepper__button"
+        data-reminder-adjust="-5"
+        aria-label="Уменьшить время напоминания на пять минут"
+      >
+        −
+      </button>
+
+      <label
+        class="visually-hidden"
+        for="ec-remind"
+      >
+        Минут до напоминания
+      </label>
+
+      <input
+        id="ec-remind"
+        class="reminder-stepper__input"
+        name="reminder_minutes"
+        type="number"
+        min="1"
+        max="180"
+        step="1"
+        inputmode="numeric"
+        value="{% if item and item.reminder_minutes %}{{ item.reminder_minutes }}{% else %}30{% endif %}"
+        required
+      >
+
+      <button
+        type="button"
+        class="reminder-stepper__button"
+        data-reminder-adjust="5"
+        aria-label="Увеличить время напоминания на пять минут"
+      >
+        +
+      </button>
+    </div>
+
+    <span class="reminder-suffix">
+      мин.
+    </span>
+  </div>
+    <section
+    class="extra-class-preview"
+    data-extra-preview
+    aria-label="Предпросмотр занятия"
+    >
+    <h3 class="extra-class-preview__title">
+      Предпросмотр
+    </h3>
+
+    {% set lesson = preview_lesson %}
+    {% include "components/schedule/lesson_card.html" %}
+  </section>
+  
       <div class="invite-create-buttons" style="margin-top: 24px;">
           <button type="submit" class="nav-btn today-btn" hx-indicator="#page-loading" hx-disabled-elt="this">💾 Сохранить</button>
           <button type="button" class="nav-btn" hx-get="/extra-classes?student={{ student_id }}" hx-target="#extra-content" hx-swap="outerHTML">Отмена</button>

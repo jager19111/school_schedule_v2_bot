@@ -1,46 +1,94 @@
-{# Fragment списка доп. занятий (Phase 5, ТЗ 25). #}
-<section id="extra-content" class="extra-page">
-  <h2 class="day-title">🎯 Доп. занятия — {{ student_name }}</h2>
+  {# web/templates/extra/_extra_content.html #}
+{#
+  HTMX fragment списка дополнительных занятий.
 
-  <div class="day-nav">
-    <button type="button" class="nav-btn today-btn"
-            hx-get="/extra-classes/new?student={{ student_id }}"
-            hx-target="#extra-content" hx-swap="outerHTML">➕ Добавить</button>
-    <a class="nav-btn" href="/" hx-get="/" hx-target="#main"
-       hx-swap="innerHTML" hx-push-url="/">📅 Расписание</a>
-  </div>
+  Contract:
+  - groups: list[WebExtraClassDay]
+  - students: list[WebStudent]
+  - item: WebExtraClass
+  - item.lesson: WebLesson(kind=EXTRA)
+  - student_id: current target profile
+  - can_manage: current actor can mutate extras for current target
+#}
 
-  {% if not groups %}
-  <div class="empty-day">Доп. занятий пока нет 🎯</div>
-  {% endif %}
+<section
+  id="extra-content"
+  class="extra-page extra-page--list"
+>
 
-{% for group in groups %}
-  <h3 class="search-group-title">{{ group.weekday_display }}</h3>
-  <div class="lessons-list">
-    {% for item in group.items %}
-    <article class="lesson-card status-extra">
-      <div class="lesson-num">•</div>
-      <div class="lesson-main">
-        <div class="lesson-time"><time>{{ item.time_start }}</time> – <time>{{ item.time_end }}</time></div>
-        <div class="lesson-subject">{{ item.title }}</div>
-        <div class="lesson-meta">
-          {% if item.location and item.location != '—' %}<span>📍 {{ item.location }}</span>{% endif %}
-          <span>🔔 за {{ item.reminder_minutes }} мин</span>
-        </div>
-      </div>
-      <div class="lesson-badge extra">доп.</div>
-      <div class="student-actions">
-        {# ИСПРАВЛЕНО: Добавлено ?student={{ student_id }} к кнопкам #}
-        <button type="button" class="nav-btn small"
-                hx-get="/extra-classes/{{ item.id }}/edit?student={{ student_id }}"
-                hx-target="#extra-content" hx-swap="outerHTML">✏️</button>
-        <button type="button" class="nav-btn small danger"
-                hx-confirm="Удалить «{{ item.title }}»?"
-                hx-post="/extra-classes/{{ item.id }}/delete?student={{ student_id }}"
-                hx-target="#extra-content" hx-swap="outerHTML">🗑</button>
-      </div>
-    </article>
+  {% if students and students|length > 1 %}
+  <div
+    class="student-switch"
+    role="group"
+    aria-label="Выбор ребёнка"
+  >
+    {% for student in students %}
+    <a
+      class="student-chip{% if student.is_current %} current{% endif %}"
+      href="/extra-classes?student={{ student.student_id }}"
+      {% if not student.is_current %}
+      hx-get="/extra-classes?student={{ student.student_id }}"
+      hx-target="#extra-content"
+      hx-swap="outerHTML"
+      hx-push-url="true"
+      {% endif %}
+      aria-current="{% if student.is_current %}true{% else %}false{% endif %}"
+    >
+      {{ student.name }}
+    </a>
     {% endfor %}
   </div>
+  {% elif students %}
+  <div class="student-switch single">
+    {{ students[0].name }}
+  </div>
+  {% endif %}
+
+  {% if not groups %}
+  <div class="empty-day">
+    Доп. занятий пока нет 🎯
+  </div>
+  {% endif %}
+
+  {% for group in groups %}
+  <section
+    class="extra-day-group"
+    aria-labelledby="extra-weekday-{{ group.day_of_week }}"
+  >
+    <h3
+      id="extra-weekday-{{ group.day_of_week }}"
+      class="search-group-title"
+    >
+      {{ group.weekday_display }}
+    </h3>
+
+    <div class="lessons-list">
+      {% for item in group.items %}
+        {% include "components/extra/extra_class_card.html" %}
+      {% endfor %}
+    </div>
+  </section>
   {% endfor %}
+
+  {% if can_manage %}
+  <button
+    type="button"
+    class="extra-fab"
+    hx-get="/extra-classes/new?student={{ student_id }}"
+    hx-target="#extra-content"
+    hx-swap="outerHTML"
+    aria-label="Добавить дополнительное занятие"
+  >
+    <span
+      class="extra-fab__icon"
+      aria-hidden="true"
+    >
+      +
+    </span>
+
+    <span class="visually-hidden">
+      Добавить занятие
+    </span>
+  </button>
+  {% endif %}
 </section>

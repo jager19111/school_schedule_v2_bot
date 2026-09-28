@@ -91,18 +91,42 @@ class ExtraClassesWebService:
             )
             if result is None:
                 return None
+
             student, access = result
-            can_manage = bool(
-                getattr(access, "can_manage_extra_classes", False)
-                or getattr(access, "is_family_admin", False)
+
+            can_view = bool(
+                getattr(student, "is_active", True)
+                and getattr(access, "can_view", True)
             )
-            if not can_manage:
-                return None  # просмотр без права управления недоступен в web Phase 5
+
+            if not can_view:
+                return None
+
+            # Observer is intentionally view-only.
+            # Parent can manage only with explicit permission or family-admin role.
+            can_manage = (
+                role == "parent"
+                and bool(
+                    getattr(
+                        access,
+                        "can_manage_extra_classes",
+                        False,
+                    )
+                    or getattr(
+                        access,
+                        "is_family_admin",
+                        False,
+                    )
+                )
+            )
+
             return ExtraClassesAccess(
                 student_id=int(student.id),
                 family_id=getattr(student, "family_id", None),
-                student_name=str(getattr(student, "name", "") or "Ученик"),
-                can_manage=True,
+                student_name=str(
+                    getattr(student, "name", "") or "Ученик"
+                ),
+                can_manage=can_manage,
             )
 
         if role == "child":
@@ -111,18 +135,32 @@ class ExtraClassesWebService:
             )
             if not row or not row.get("id"):
                 return None
-            if student_id is not None and int(row["id"]) != int(student_id):
+
+            if (
+                student_id is not None
+                and int(row["id"]) != int(student_id)
+            ):
                 return None
-            # ИСПРАВЛЕНО: Используем get_user_profile_dto
-            user_dto = await self.profile_service.get_user_profile_dto(actor_user_id)
-            can_manage = bool(getattr(user_dto, "can_manage_own_extra_classes", False))
-            if not can_manage:
-                return None
+
+            user_dto = await self.profile_service.get_user_profile_dto(
+                actor_user_id
+            )
+
+            can_manage = bool(
+                getattr(
+                    user_dto,
+                    "can_manage_own_extra_classes",
+                    False,
+                )
+            )
+
             return ExtraClassesAccess(
                 student_id=int(row["id"]),
                 family_id=row.get("family_id"),
-                student_name=str(row.get("name") or "Моё расписание"),
-                can_manage=True,
+                student_name=str(
+                    row.get("name") or "Моё расписание"
+                ),
+                can_manage=can_manage,
             )
 
         return None

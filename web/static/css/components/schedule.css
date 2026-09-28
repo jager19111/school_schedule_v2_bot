@@ -37,7 +37,13 @@
 /* ==========================================================================
    3. КАРКАС КАРТОЧКИ УРОКА (Основа)
    ========================================================================== */
-.lesson-card {
+/* Shared schedule list layout: production day, school day, extra list. */
+.lessons-list {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+   .lesson-card {
   display: grid;
   grid-template-columns: var(--lesson-time-width) minmax(0, 1fr);
   min-height: 0;
@@ -180,6 +186,23 @@
 
 .lesson-entry__meta--location { min-width: 0; overflow: hidden; color: var(--lesson-muted); font-size: 13px; font-style: italic; line-height: 1.1; text-overflow: ellipsis; white-space: nowrap; }
 
+/*
+ * Extra-class location can be an address, venue, or long description.
+ * Unlike a standard school room, it must not be truncated.
+ */
+.lesson-card--extra .lesson-entry__meta--location {
+  display: block;
+  overflow: visible;
+  max-width: none;
+  margin-top: 1px;
+  color: var(--lesson-muted);
+  font-size: 12px;
+  font-style: italic;
+  line-height: 1.1;
+  overflow-wrap: anywhere;
+  text-overflow: clip;
+  white-space: normal;
+}
 /* ==========================================================================
    8. СВОБОДНОЕ ВРЕМЯ И МЕТОДИЧЕСКИЙ ЧАС (Окна)
    ========================================================================== */

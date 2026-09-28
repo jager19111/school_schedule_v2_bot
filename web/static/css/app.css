@@ -8,12 +8,21 @@
   --card: #ffffff;
   --text: #111827;
   --muted: #6b7280;
+
+  /*
+   * Compatibility aliases for older school/family/form components.
+   * New code should prefer --text / --muted / --border directly.
+   */
+  --text-main: var(--text);
+  --text-muted: var(--muted);
+  --border: #d1d5db;
   --accent: #1a56db;
   --cancelled: #dc2626;
   --exchange: #d97706;
   --extra: #7c3aed;
   --methodical: #0891b2;
   --ok: #16a34a;
+  
 }
 
 /* 2. Global reset + system font */
@@ -49,7 +58,7 @@ body {
 .app-content {
   max-width: 640px;
   margin: 0 auto;
-  /* Увеличены боковые отступы (24px) чтобы карточки не прилипали к краям экрана */
+ /* Compact mobile gutters; LessonCard fills the available content width. */
   padding: 16px 10px 24px;
 }
 
@@ -71,8 +80,60 @@ body {
 
 /* 4. Navigation and shared page components */
 /* ---------- Student switch ---------- */
-.student-switch { margin-bottom: 12px; }
-.student-switch.single { color: var(--muted); font-size: 15px; padding: 4px 2px; }
+.student-switch {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.student-switch.single {
+  display: block;
+  color: var(--muted);
+  font-size: 15px;
+  padding: 4px 2px;
+}
+
+.student-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 30px;
+  padding: 7px 10px;
+  border: 1px solid #d1d5db;
+  border-radius: 10px;
+  background: var(--card);
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 650;
+  line-height: 1;
+  text-decoration: none;
+}
+
+.student-chip.current {
+  border-color: var(--accent);
+  background: #eff6ff;
+  color: var(--accent);
+  font-weight: 750;
+}
+
+.student-chip:focus {
+  outline: none;
+}
+
+.student-chip:focus-visible {
+  outline: 2px solid rgb(37 99 235 / 0.58);
+  outline-offset: 2px;
+}
+
+@media (hover: hover) {
+  .student-chip:not(.current):hover {
+    background: #f8fafc;
+  }
+}
+
 .student-select {
   width: 100%; min-height: 44px; padding: 8px 12px;
   font-size: 16px; border: 1px solid #d1d5db; border-radius: 10px;
@@ -178,7 +239,11 @@ body {
 
 /* 8. Extras/forms */
 /* Phase 5 */
-.time-row { display: grid; grid-template-columns: 1fr 1fr 90px; gap: 8px; }
+.time-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
 .time-row input { min-height: 44px; padding: 8px; font-size: 16px;
   border: 1px solid var(--border); border-radius: 10px; background: var(--card); color: var(--text-main); }
 .form-hint { font-size: 13px; color: var(--text-muted); margin-bottom: 8px; }

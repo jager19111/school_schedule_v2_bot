@@ -20,6 +20,9 @@
   <link rel="stylesheet" href="{{ url_for('static', path='css/app.css') }}?v=5">
   <!-- schedule.css является ЕДИНСТВЕННЫМ владельцем .lesson-card -->
   <link rel="stylesheet" href="{{ url_for('static', path='css/components/schedule.css') }}?v=5">
+   <!-- extra.css добавляет footer ниже card. --> 
+  <link rel="stylesheet" href="{{ url_for('static', path='css/components/extra.css') }}?v=1"
+>
   {% block extra_head %}{% endblock %}
 </head>
 {# ТЗ 16.1: CSRF во ВСЕ HTMX-запросы.

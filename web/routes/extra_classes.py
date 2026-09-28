@@ -26,9 +26,11 @@ from services.web_sessions_service import WebSessionContext
 from web.deps import require_family_allowed
 from web.extra_classes_helpers import (
     WEEKDAYS_RU,
+    build_web_extra_class,
     extra_class_to_web,
     group_by_weekday,
 )
+from web.mappers import student_to_web
 from web.schemas import WebExtraClass
 
 from web.idempotency import IdempotencyStore
@@ -81,6 +83,48 @@ async def _resolve_access(
         raise HTTPException(status_code=403, detail="Нет доступа к занятиям ученика.")
     return access
 
+async def _student_chips(
+    request: Request,
+    context: WebSessionContext,
+    *,
+    current_student_id: int,
+):
+    """
+    Schedule targets -> typed WebStudent chips.
+
+    Extra list still validates each requested student through
+    ExtraClassesWebService.resolve_access(). Chips are UI only;
+    they do not form a security boundary.
+    """
+    targets = await (
+        request.app.state.schedule_targets_service
+        .get_targets_for_user(
+            user_id=context.user_id,
+        )
+    )
+
+    return [
+        student_to_web(
+            target,
+            current_id=current_student_id,
+        )
+        for target in targets
+        if target.student_id is not None
+    ]
+    
+def _require_manage(access) -> None:
+    """
+    UI hiding is not security.
+
+    Every mutation route must enforce can_manage server-side,
+    even when FAB/edit/delete buttons are not rendered.
+    """
+    if not access.can_manage:
+        raise HTTPException(
+            status_code=403,
+            detail="Недостаточно прав для изменения занятий.",
+        )
+        
 def _form_context(
     request: Request,
     context: WebSessionContext,
@@ -90,9 +134,28 @@ def _form_context(
     error: Optional[str] = None,
     student_id: int,
 ) -> dict:
+    """
+    Shared create/edit form context.
+
+    preview_lesson always exists:
+    - edit: current persisted/submitted item;
+    - invalid/conflict form: submitted values;
+    - new form: safe default draft.
+    """
+    preview_item = item or _submitted_extra_class_to_web(
+        extra_id=0,
+        day_of_week=1,
+        time_start="15:00",
+        time_end="16:00",
+        title="",
+        location="",
+        reminder_minutes=30,
+    )
+
     return {
         "mode": mode,
         "item": item,
+        "preview_lesson": preview_item.lesson,
         "error": error,
         "weekdays": sorted(WEEKDAYS_RU.items()),
         "idempotency_key": (
@@ -114,14 +177,19 @@ def _submitted_extra_class_to_web(
     location: str,
     reminder_minutes: int,
 ) -> WebExtraClass:
-    return WebExtraClass(
-        id=extra_id,
+    """
+    Submitted but not persisted form values -> complete web model.
+
+    Используется при validation/conflict error, поэтому preview сохраняет
+    actual values, которые пользователь уже ввёл в форму.
+    """
+    return build_web_extra_class(
+        extra_id=extra_id,
         day_of_week=day_of_week,
-        weekday_display=WEEKDAYS_RU.get(day_of_week, "—"),
         time_start=time_start,
         time_end=time_end,
         title=title,
-        location=location or None,
+        location=location,
         reminder_minutes=reminder_minutes,
     )
 
@@ -147,8 +215,14 @@ async def extra_classes_list(
         template,
         {
             "groups": group_by_weekday(view),
+            "students": await _student_chips(
+                request,
+                context,
+                current_student_id=access.student_id,
+            ),
             "student_name": access.student_name,
             "student_id": access.student_id,
+            "can_manage": access.can_manage,
             "csrf_token": context.csrf_token,
         },
     )
@@ -166,6 +240,8 @@ async def extra_classes_new(
     student: Optional[int] = None,
 ):
     access = await _resolve_access(request, context, student)
+    _require_manage(access)
+
     return _templates(request).TemplateResponse(
         request,
         "extra/_extra_form.html",
@@ -182,6 +258,7 @@ async def extra_classes_edit(
     student: Optional[int] = None,
 ):
     access = await _resolve_access(request, context, student)
+    _require_manage(access)
     item = await _extra_service(request).get_item(access, extra_id)
     if item is None:
         raise HTTPException(status_code=404, detail="Занятие не найдено.")
@@ -225,6 +302,7 @@ async def extra_classes_create(
     student: Optional[int] = None,
 ):
     access = await _resolve_access(request, context, student)
+    _require_manage(access)
 
     # Idempotency (ТЗ 60): повторная отправка с тем же ключом — no-op.
     if not _idempotency(request).consume(idempotency_key or ""):
@@ -288,6 +366,7 @@ async def extra_classes_update(
     student: Optional[int] = None,
 ):
     access = await _resolve_access(request, context, student)
+    _require_manage(access)
     result = await _extra_service(request).update(
         access,
         extra_id,
@@ -344,6 +423,7 @@ async def extra_classes_delete(
     student: Optional[int] = None,
 ):
     access = await _resolve_access(request, context, student)
+    _require_manage(access)
     result = await _extra_service(request).delete(access, extra_id)
     if not result.success:
         raise HTTPException(status_code=404, detail=result.detail)

@@ -1,8 +1,23 @@
-{# Доп. занятия (Phase 5): полная страница. #}
+  {# web/templates/extra/extra.html #}
+{# Дополнительные занятия: полная страница. #}
+
 {% extends "base.html" %}
-{% set nav = "today" %}
-{% block title %}Доп. занятия{% endblock %}
-{% block header %}🎯 Доп. занятия{% endblock %}
+
+{% set nav = "extra" %}
+
+{% block title %}
+  Доп. занятия
+{% endblock %}
+
+{% block header %}
+  🎯 Доп. занятия
+{% endblock %}
+
 {% block content %}
-{% include "extra/_extra_content.html" %}
+  {% include "extra/_extra_content.html" %}
+{% endblock %}
+
+{% block extra_scripts %}
+<script src="/static/js/schedule.js?v=13"></script>
+<script src="/static/js/extra.js?v=1"></script>
 {% endblock %}

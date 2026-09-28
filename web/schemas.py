@@ -127,7 +127,13 @@ class WebChangeItem(BaseModel):
 
 
 class WebExtraClass(BaseModel):
-    """Типизированное web-представление дополнительного занятия."""
+    """
+    Типизированное web-представление дополнительного занятия.
+
+    `lesson` — reusable schedule presentation model для purple LessonCard.
+    Extra class остаётся отдельной domain сущностью; WebLesson используется
+    только как UI adapter.
+    """
 
     id: int
     day_of_week: int
@@ -137,6 +143,8 @@ class WebExtraClass(BaseModel):
     title: str
     location: Optional[str] = None
     reminder_minutes: int
+
+    lesson: WebLesson
 
 
 class WebExtraClassDay(BaseModel):
