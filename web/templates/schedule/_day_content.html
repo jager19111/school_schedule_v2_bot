@@ -9,11 +9,14 @@
   {% if students and students|length > 1 %}
   <div class="student-switch" role="group" aria-label="Выбор ребёнка">
     {% for s in students %}
-    <button type="button" class="student-chip{% if s.is_current %} current{% endif %}"
-            {% if not s.is_current %}
-            hx-post="/api/v1/schedule/select/{{ s.student_id }}"
-            hx-indicator="#page-loading"
-            {% endif %}>
+    <button
+      type="button"
+      class="student-chip{% if s.is_current %} current{% endif %}"
+      {% if not s.is_current %}
+      hx-post="/api/v1/schedule/select/{{ s.student_id }}?next_url={{ selection_redirect|urlencode }}"
+      hx-indicator="#page-loading"
+      {% endif %}
+    >
       {{ s.name }}
     </button>
     {% endfor %}

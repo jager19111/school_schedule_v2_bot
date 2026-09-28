@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 from datetime import date, timedelta
+from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse
@@ -60,6 +61,33 @@ def _templates(request: Request):
 
 def _today_iso(request: Request) -> str:
     return _time_service(request).get_now_base().date().isoformat()
+
+def _safe_next_url(value: str | None) -> str:
+    """
+    Разрешает только internal relative redirects.
+
+    Нельзя позволять caller-у передать:
+    https://evil.example/...
+    //evil.example/...
+    javascript:...
+    """
+    if not value:
+        return "/"
+
+    parsed = urlsplit(value)
+
+    if parsed.scheme or parsed.netloc:
+        return "/"
+
+    if not parsed.path.startswith("/"):
+        return "/"
+
+    result = parsed.path
+
+    if parsed.query:
+        result = f"{result}?{parsed.query}"
+
+    return result
 
 def _fixture_entry(
     *,
@@ -583,13 +611,30 @@ async def dashboard(
         is_smart_today=True,
         stale_warning=await _nika_stale_warning(request),
     )
+    template_name = (
+        "schedule/_day_content.html"
+        if request.headers.get("HX-Request") == "true"
+        else "schedule/day.html"
+    )
+
     return _templates(request).TemplateResponse(
         request,
-        "schedule/day.html",
-        _ctx(request, context, {
-            "day": view,
-            "students": [student_to_web(t, current_id=target.student_id) for t in targets],
-        }),
+        template_name,
+        _ctx(
+            request,
+            context,
+            {
+                "day": view,
+                "students": [
+                    student_to_web(
+                        target_item,
+                        current_id=target.student_id,
+                    )
+                    for target_item in targets
+                ],
+                "selection_redirect": "/",
+            },
+        ),
     )
 
 # ==============================================================
@@ -652,14 +697,32 @@ async def day_page(
         today_iso=_today_iso(request),
         stale_warning=await _nika_stale_warning(request),
     )
+    template_name = (
+        "schedule/_day_content.html"
+        if request.headers.get("HX-Request") == "true"
+        else "schedule/day.html"
+    )
+
     return _templates(request).TemplateResponse(
         request,
-        "schedule/day.html",
-        _ctx(request, context, {
-            "day": view,
-            "students": [student_to_web(t, current_id=target.student_id) for t in targets],
-            "fragment": request.headers.get("HX-Request") == "true",
-        }),
+        template_name,
+        _ctx(
+            request,
+            context,
+            {
+                "day": view,
+                "students": [
+                    student_to_web(
+                        target_item,
+                        current_id=target.student_id,
+                    )
+                    for target_item in targets
+                ],
+                "selection_redirect": (
+                    f"/schedule/day/{date_iso}"
+                ),
+            },
+        ),
     )
 
 
@@ -744,12 +807,25 @@ async def week_page(
     return _templates(request).TemplateResponse(
         request,
         "schedule/week.html",
-        _ctx(request, context, {
-            "week": view,
-            "students": [student_to_web(t, current_id=target.student_id) for t in targets],
-            "prev_week": prev_week,
-            "next_week": next_week,
-        }),
+        _ctx(
+            request,
+            context,
+            {
+                "week": view,
+                "students": [
+                    student_to_web(
+                        target_item,
+                        current_id=target.student_id,
+                    )
+                    for target_item in targets
+                ],
+                "prev_week": prev_week,
+                "next_week": next_week,
+                "selection_redirect": (
+                    f"/schedule/week?week={week_start}"
+                ),
+            },
+        ),
     )
 
 
@@ -761,23 +837,42 @@ async def week_page(
 @router.post("/api/v1/schedule/select/{student_id}")
 async def select_student(
     request: Request,
-    response: Response,
     student_id: int,
     context: WebSessionContext = Depends(require_family_allowed),
+    next_url: str | None = None,
 ):
     """
-    Смена target student profile.
+    Смена schedule target.
 
-    POST-only (Phase 2.1: GET = no side effects). CSRF проверяется
-    CSRFMiddleware по глобальному hx-headers. Доступ actor -> target
-    валидируется через ScheduleTargetsService.
+    POST-only:
+    - access actor -> selected student validated server-side;
+    - CSRF is handled by global hx-headers / middleware;
+    - redirect stays strictly internal and preserves current page context.
     """
     targets = await _targets_service(request).get_targets_for_user(
         user_id=context.user_id
     )
-    target = _targets_service(request).find_target(targets, student_id)
+    target = _targets_service(request).find_target(
+        targets,
+        student_id,
+    )
+
     if target is None:
-        raise HTTPException(status_code=403, detail="Профиль недоступен.")
+        raise HTTPException(
+            status_code=403,
+            detail="Профиль недоступен.",
+        )
+
+    redirect_url = _safe_next_url(next_url)
+
+    if request.headers.get("HX-Request") == "true":
+        response = Response(status_code=200)
+        response.headers["HX-Redirect"] = redirect_url
+    else:
+        response = Response(
+            status_code=303,
+            headers={"Location": redirect_url},
+        )
 
     response.set_cookie(
         _STUDENT_COOKIE,
@@ -788,11 +883,8 @@ async def select_student(
         secure=request.app.state.web_settings.cookie_secure,
         path="/",
     )
-    # HTMX: полная перезагрузка дашборда; не-HTMX (form) — обычный redirect.
-    if request.headers.get("HX-Request") == "true":
-        response.headers["HX-Redirect"] = "/"
-        return {}
-    return Response(status_code=303, headers={"Location": "/"})
+
+    return response
 
 def _ctx(request: Request, context: WebSessionContext, extra: dict) -> dict:
     """Общий контекст шаблонов: CSRF для hx-headers."""

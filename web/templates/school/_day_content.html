@@ -1,0 +1,116 @@
+  {# web/templates/school/_day_content.html #}
+{#
+  Фрагмент school day schedule.
+
+  Используется:
+  - как #day-content внутри полной school/day.html page;
+  - как HTMX response при previous / today / next navigation.
+
+  `day` уже является WebDaySchedule.
+  `lesson` уже является WebLesson.
+  Никаких raw DTO или legacy lesson markup здесь нет.
+#}
+
+<section
+  id="day-content"
+  class="day-schedule school-day-schedule"
+>
+  <header class="day-header">
+    <h2 class="day-title">
+      {{ day.weekday_display|capitalize }}, {{ day.date_display }}
+    </h2>
+
+    {% if day.stale_warning %}
+    <div class="stale-warning" role="status">
+      {{ day.stale_warning }}
+    </div>
+    {% endif %}
+  </header>
+
+  <nav class="day-nav" aria-label="Навигация по дням">
+    <a
+      class="nav-btn"
+      href="/school/{{ kind }}/{{ item_id }}/day/{{ day.date_iso|prev_date }}"
+      hx-get="/school/{{ kind }}/{{ item_id }}/day/{{ day.date_iso|prev_date }}"
+      hx-target="#day-content"
+      hx-swap="outerHTML"
+      hx-push-url="/school/{{ kind }}/{{ item_id }}/day/{{ day.date_iso|prev_date }}"
+      hx-indicator="#day-content"
+    >
+      ← Пред.
+    </a>
+
+    <a
+      class="nav-btn today-btn"
+      href="/school/{{ kind }}/{{ item_id }}"
+      hx-get="/school/{{ kind }}/{{ item_id }}"
+      hx-target="#day-content"
+      hx-swap="outerHTML"
+      hx-push-url="/school/{{ kind }}/{{ item_id }}"
+      hx-indicator="#day-content"
+    >
+      Сегодня
+    </a>
+
+    <a
+      class="nav-btn"
+      href="/school/{{ kind }}/{{ item_id }}/day/{{ day.date_iso|next_date }}"
+      hx-get="/school/{{ kind }}/{{ item_id }}/day/{{ day.date_iso|next_date }}"
+      hx-target="#day-content"
+      hx-swap="outerHTML"
+      hx-push-url="/school/{{ kind }}/{{ item_id }}/day/{{ day.date_iso|next_date }}"
+      hx-indicator="#day-content"
+    >
+      След. →
+    </a>
+  </nav>
+
+  {% include "components/schedule/skeleton.html" %}
+
+  <div class="htmx-request-hide">
+    {% if not day.lessons %}
+      <div class="empty-day">
+        {% if kind == "room" %}
+          🏖 Кабинет свободен весь день
+        {% else %}
+          Нет занятий
+        {% endif %}
+      </div>
+    {% else %}
+      <section
+        class="lessons-list"
+        aria-label="Расписание на {{ day.date_display }}"
+      >
+        {% for lesson in day.lessons %}
+          {% if lesson.kind.value in ["window", "methodological"] %}
+            {% include "components/schedule/window_card.html" %}
+          {% else %}
+            {% include "components/schedule/lesson_card.html" %}
+          {% endif %}
+        {% endfor %}
+      </section>
+    {% endif %}
+  </div>
+
+  {% if day.has_permutation %}
+  <div class="permutation-note">
+    🔁 Изменения — перестановка уроков
+  </div>
+  {% endif %}
+
+  <nav class="day-nav school-day-schedule__footer-nav" aria-label="Разделы школы">
+    <a
+      class="nav-btn"
+      href="/school/{{ kind }}/{{ item_id }}/week"
+    >
+      🗓 Неделя
+    </a>
+
+    <a
+      class="nav-btn"
+      href="/school/{{ kind }}/list"
+    >
+      ← К списку
+    </a>
+  </nav>
+</section>
