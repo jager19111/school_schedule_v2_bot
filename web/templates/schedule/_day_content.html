@@ -32,6 +32,7 @@
     >
       <a
         class="day-navigation__arrow"
+        data-day-direction="previous"
         href="{{ day_navigation.previous_url }}"
         hx-get="{{ day_navigation.previous_url }}"
         hx-target="#day-content"
@@ -74,6 +75,7 @@
 
       <a
         class="day-navigation__arrow"
+        data-day-direction="next"
         href="{{ day_navigation.next_url }}"
         hx-get="{{ day_navigation.next_url }}"
         hx-target="#day-content"
