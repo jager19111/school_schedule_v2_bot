@@ -1,0 +1,13 @@
+{% if entry.room %}
+<span
+  class="
+    room-badge
+    {% if entry.room.changed %}
+      room-badge--changed
+    {% endif %}
+  "
+  aria-label="Кабинет {{ entry.room.value }}"
+>
+  {{ entry.room.value }}
+</span>
+{% endif %}

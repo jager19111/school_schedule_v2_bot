@@ -1,0 +1,36 @@
+<div class="lesson-entry lesson-entry--room">
+  <div class="lesson-entry__content">
+    {% if entry.subject %}
+    <div
+      class="
+        lesson-entry__subject
+        {% if entry.subject.changed %}
+          lesson-card__field--changed
+        {% endif %}
+      "
+      data-autofit="subject"
+      title="{{ entry.subject.value }}"
+    >
+      {{ entry.subject.value }}
+    </div>
+    {% endif %}
+
+    <div class="lesson-entry__meta">
+      {% if entry.class_name %}
+      <span>{{ entry.class_name.value }}</span>
+      {% endif %}
+
+      {% if entry.group %}
+      <span class="lesson-entry__separator" aria-hidden="true">·</span>
+      <span>{{ entry.group.value }}</span>
+      {% endif %}
+
+      {% if entry.teacher %}
+      <span class="lesson-entry__separator" aria-hidden="true">·</span>
+      <span>{{ entry.teacher.value }}</span>
+      {% endif %}
+    </div>
+  </div>
+
+  {% include "components/schedule/room_badge.html" %}
+</div>

@@ -107,7 +107,7 @@ def _lesson_kind(lesson: LessonDTO) -> LessonKind:
         return LessonKind.EXTRA
 
     if lesson.is_methodological:
-        return LessonKind.WINDOW
+        return LessonKind.METHODOLOGICAL
 
     return LessonKind.REGULAR
 
@@ -240,6 +240,27 @@ def _shared_subject(entries: list[WebLessonEntry]) -> bool:
 
     return len(subjects) > 1 and len(set(subjects)) == 1
 
+def _shared_room(
+    entries: list[WebLessonEntry],
+) -> WebRoomBadge | None:
+    rooms = [
+        entry.room
+        for entry in entries
+        if entry.room is not None
+    ]
+
+    if len(rooms) != len(entries) or not rooms:
+        return None
+
+    room_values = {room.value for room in rooms}
+    if len(room_values) != 1:
+        return None
+
+    first_room = rooms[0]
+    return WebRoomBadge(
+        value=first_room.value,
+        changed=any(room.changed for room in rooms),
+    )
 
 def _single_lesson_to_web(
     lesson: LessonDTO,
@@ -264,6 +285,7 @@ def _single_lesson_to_web(
         is_current=is_current,
         entries=[entry],
         shared_subject=False,
+        shared_room=entry.room,
         history_url=None,
         aria_label=_lesson_aria_label(
             number=lesson.lesson_num,
@@ -370,6 +392,7 @@ def _slot_to_web(
                 is_current=is_current,
                 entries=entries,
                 shared_subject=_shared_subject(entries),
+                shared_room=_shared_room(entries),
                 history_url=None,
                 aria_label=_lesson_aria_label(
                     number=first_entry_lesson.lesson_num,

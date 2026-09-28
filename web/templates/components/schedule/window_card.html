@@ -1,0 +1,39 @@
+<article
+  class="
+    lesson-card
+    lesson-card--{{ lesson.kind.value }}
+    {% if lesson.is_current %}
+      lesson-card--current
+    {% endif %}
+  "
+  data-lesson-key="{{ lesson.key }}"
+  aria-label="{{ lesson.aria_label }}"
+>
+  <div class="lesson-card__time lesson-card__time--compact">
+    {% if lesson.number is not none %}
+    <span class="lesson-card__number lesson-card__number--standalone">
+      УРОК {{ lesson.number }}
+    </span>
+    {% endif %}
+  </div>
+
+  <div class="lesson-card__body lesson-card__body--window">
+    {% if lesson.kind.value == "methodological" %}
+    <span class="lesson-card__window-label">
+      Методический час
+    </span>
+    {% else %}
+    <span class="lesson-card__window-label">
+      Свободное время
+    </span>
+    {% endif %}
+
+    {% if lesson.is_current %}
+    <span class="lesson-card__current-badge">
+      Сейчас
+    </span>
+    {% endif %}
+  </div>
+
+  <div class="lesson-card__room-column" aria-hidden="true"></div>
+</article>

@@ -13,7 +13,13 @@
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
   <title>{% block title %}Расписание{% endblock %} — School Schedule</title>
-  <link rel="stylesheet" href="/static/css/app.css">
+  
+  {# ПРАВИЛЬНЫЙ ПОРЯДОК ПОДКЛЮЧЕНИЯ CSS #}
+<!-- app.css дает оболочку, system font и навигацию -->
+  <link rel="stylesheet" href="{{ url_for('static', path='css/app.css') }}?v=5">
+  <!-- schedule.css является ЕДИНСТВЕННЫМ владельцем .lesson-card -->
+  <link rel="stylesheet" href="{{ url_for('static', path='css/components/schedule.css') }}?v=5">
+  {% block extra_head %}{% endblock %}
 </head>
 {# ТЗ 16.1: CSRF во ВСЕ HTMX-запросы.
    ТЗ 51.5: SSE-подключение через htmx-ext-sse (reconnect c exponential backoff).
@@ -59,6 +65,7 @@
 {# Все production JS локальны (ТЗ 48.1). #}
 <script src="/static/js/htmx.min.js"></script>
 <script src="/static/js/htmx-ext-sse.min.js"></script>
-<script src="/static/js/app.js"></script>
+<script src="/static/js/app.js?v=4"></script>
+{% block extra_scripts %}{% endblock %}
 </body>
 </html>

@@ -31,6 +31,15 @@ from web.mappers import (
     student_to_web,
     week_summary_to_web,
 )
+from web.schemas import (
+    LessonKind,
+    LessonStatus,
+    LessonViewMode,
+    WebChangedValue,
+    WebLesson,
+    WebLessonEntry,
+    WebRoomBadge,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -52,6 +61,452 @@ def _templates(request: Request):
 def _today_iso(request: Request) -> str:
     return _time_service(request).get_now_base().date().isoformat()
 
+def _fixture_entry(
+    *,
+    subject: str | None = None,
+    teacher: str | None = None,
+    group: str | None = None,
+    class_name: str | None = None,
+    room: str | None = None,
+    subject_changed: bool = False,
+    teacher_changed: bool = False,
+    group_changed: bool = False,
+    class_changed: bool = False,
+    room_changed: bool = False,
+) -> WebLessonEntry:
+    return WebLessonEntry(
+        subject=(
+            WebChangedValue(
+                value=subject,
+                changed=subject_changed,
+            )
+            if subject
+            else None
+        ),
+        teacher=(
+            WebChangedValue(
+                value=teacher,
+                changed=teacher_changed,
+            )
+            if teacher
+            else None
+        ),
+        group=(
+            WebChangedValue(
+                value=group,
+                changed=group_changed,
+            )
+            if group
+            else None
+        ),
+        class_name=(
+            WebChangedValue(
+                value=class_name,
+                changed=class_changed,
+            )
+            if class_name
+            else None
+        ),
+        room=(
+            WebRoomBadge(
+                value=room,
+                changed=room_changed,
+            )
+            if room
+            else None
+        ),
+    )
+
+
+def _fixture_lesson(
+    *,
+    key: str,
+    number: int | None,
+    start_time: str,
+    end_time: str,
+    view_mode: LessonViewMode,
+    kind: LessonKind = LessonKind.REGULAR,
+    status: LessonStatus = LessonStatus.NORMAL,
+    is_current: bool = False,
+    entries: list[WebLessonEntry],
+    shared_subject: bool = False,
+    shared_room: WebRoomBadge | None = None,
+    aria_label: str,
+) -> WebLesson:
+    return WebLesson(
+        key=key,
+        number=number,
+        start_time=start_time,
+        end_time=end_time,
+        view_mode=view_mode,
+        kind=kind,
+        status=status,
+        is_current=is_current,
+        entries=entries,
+        shared_subject=shared_subject,
+        shared_room=shared_room or _fixture_shared_room(entries),
+        history_url=None,
+        aria_label=aria_label,
+    )
+
+def _fixture_shared_room(
+    entries: list[WebLessonEntry],
+) -> WebRoomBadge | None:
+    rooms = [
+        entry.room
+        for entry in entries
+        if entry.room is not None
+    ]
+
+    if not rooms or len(rooms) != len(entries):
+        return None
+
+    if len({room.value for room in rooms}) != 1:
+        return None
+
+    return WebRoomBadge(
+        value=rooms[0].value,
+        changed=any(room.changed for room in rooms),
+    )
+
+def _schedule_component_fixtures() -> list[WebLesson]:
+    return [
+        _fixture_lesson(
+            key="fixture-normal-student",
+            number=1,
+            start_time="08:15",
+            end_time="09:00",
+            view_mode=LessonViewMode.STUDENT,
+            entries=[
+                _fixture_entry(
+                    subject="Биология",
+                    teacher="Потапова М.В.",
+                    group="Группа 2",
+                    room="305",
+                )
+            ],
+            aria_label="Урок 1. Биология. Потапова М.В. Кабинет 305.",
+        ),
+        _fixture_lesson(
+            key="fixture-current",
+            number=2,
+            start_time="09:10",
+            end_time="09:55",
+            view_mode=LessonViewMode.STUDENT,
+            is_current=True,
+            entries=[
+                _fixture_entry(
+                    subject="Математика",
+                    teacher="Иванов И.И.",
+                    group="Группа 2",
+                    room="214",
+                )
+            ],
+            aria_label="Сейчас. Урок 2. Математика. Кабинет 214.",
+        ),
+        _fixture_lesson(
+            key="fixture-shared-subject",
+            number=3,
+            start_time="10:15",
+            end_time="11:00",
+            view_mode=LessonViewMode.CLASS,
+            shared_subject=True,
+            entries=[
+                _fixture_entry(
+                    subject="Английский язык",
+                    teacher="Победа А.А.",
+                    group="Группа 1",
+                    room="230",
+                ),
+                _fixture_entry(
+                    subject="Английский язык",
+                    teacher="Погорцева Г.К.",
+                    group="Группа 2",
+                    room="324",
+                ),
+            ],
+            aria_label="Урок 3. Английский язык. Две группы.",
+        ),
+        _fixture_lesson(
+            key="fixture-different-subjects",
+            number=4,
+            start_time="11:15",
+            end_time="12:00",
+            view_mode=LessonViewMode.CLASS,
+            entries=[
+                _fixture_entry(
+                    subject="Ин. язык",
+                    teacher="Корчмит О.О.",
+                    group="Группа 1",
+                    room="324а",
+                ),
+                _fixture_entry(
+                    subject="Программирование",
+                    teacher="Гурина А.А.",
+                    group="Группа 2",
+                    room="301",
+                ),
+            ],
+            aria_label="Урок 4. Ин. язык и программирование.",
+        ),
+        _fixture_lesson(
+            key="fixture-changed-subject",
+            number=5,
+            start_time="12:10",
+            end_time="12:55",
+            view_mode=LessonViewMode.STUDENT,
+            status=LessonStatus.CHANGED,
+            entries=[
+                _fixture_entry(
+                    subject="История",
+                    teacher="Емалетдинов Т.А.",
+                    room="232",
+                    subject_changed=True,
+                )
+            ],
+            aria_label="Изменение расписания. Предмет изменён на историю.",
+        ),
+        _fixture_lesson(
+            key="fixture-cancelled",
+            number=6,
+            start_time="13:05",
+            end_time="13:50",
+            view_mode=LessonViewMode.STUDENT,
+            status=LessonStatus.CANCELLED,
+            entries=[
+                _fixture_entry(
+                    subject="Музыка",
+                    teacher="Денисова Л.В.",
+                )
+            ],
+            aria_label="Урок 6 отменён. Музыка.",
+        ),
+        _fixture_lesson(
+            key="fixture-extra",
+            number=None,
+            start_time="17:30",
+            end_time="18:30",
+            view_mode=LessonViewMode.STUDENT,
+            kind=LessonKind.EXTRA,
+            entries=[
+                _fixture_entry(
+                    subject="Робототехника",
+                    teacher="Кузнецов А.В.",
+                    room="актовый зал",
+                )
+            ],
+            aria_label="Дополнительное занятие. Робототехника.",
+        ),
+        _fixture_lesson(
+            key="fixture-teacher",
+            number=7,
+            start_time="14:00",
+            end_time="14:40",
+            view_mode=LessonViewMode.TEACHER,
+            shared_subject=True,
+            entries=[
+                _fixture_entry(
+                    subject="Математика",
+                    class_name="6а",
+                    group="Группа 1",
+                    room="201",
+                ),
+                _fixture_entry(
+                    subject="Математика",
+                    class_name="6б",
+                    group="Группа 2",
+                    room="201",
+                ),
+                _fixture_entry(
+                    subject="Математика",
+                    class_name="7а",
+                    group="Группа 1",
+                    room="201",
+                ),
+            ],
+            aria_label="Урок 7. Математика. 6а, 6б, 7а. Кабинет 201.",
+        ),
+        _fixture_lesson(
+            key="fixture-window",
+            number=8,
+            start_time="14:55",
+            end_time="15:35",
+            view_mode=LessonViewMode.TEACHER,
+            kind=LessonKind.WINDOW,
+            entries=[],
+            aria_label="Урок 8. Свободное время.",
+        ),
+        _fixture_lesson(
+            key="fixture-long-subject",
+            number=9,
+            start_time="15:50",
+            end_time="16:30",
+            view_mode=LessonViewMode.STUDENT,
+            entries=[
+                _fixture_entry(
+                    subject="Основы естественно-научных исследований",
+                    teacher="Перфилов М.В.",
+                    room="207",
+                )
+            ],
+            aria_label=(
+                "Урок 9. Основы естественно-научных исследований. "
+                "Кабинет 207."
+            ),
+        ),
+        _fixture_lesson(
+            key="fixture-changed-teacher",
+            number=10,
+            start_time="16:40",
+            end_time="17:20",
+            view_mode=LessonViewMode.STUDENT,
+            status=LessonStatus.CHANGED,
+            entries=[
+                _fixture_entry(
+                    subject="География",
+                    teacher="Петрова Е.В.",
+                    room="304",
+                    teacher_changed=True,
+                )
+            ],
+            aria_label=(
+                "Изменение расписания. Преподаватель изменён. "
+                "География. Петрова Е.В."
+            ),
+        ),
+        _fixture_lesson(
+            key="fixture-changed-room",
+            number=11,
+            start_time="17:30",
+            end_time="18:10",
+            view_mode=LessonViewMode.STUDENT,
+            status=LessonStatus.CHANGED,
+            entries=[
+                _fixture_entry(
+                    subject="Обществознание",
+                    teacher="Сидоров В.В.",
+                    room="214",
+                    room_changed=True,
+                )
+            ],
+            aria_label=(
+                "Изменение расписания. Кабинет изменён на 214. "
+                "Обществознание."
+            ),
+        ),
+        _fixture_lesson(
+            key="fixture-added",
+            number=12,
+            start_time="18:20",
+            end_time="19:00",
+            view_mode=LessonViewMode.STUDENT,
+            status=LessonStatus.ADDED,
+            entries=[
+                _fixture_entry(
+                    subject="Консультация по математике",
+                    teacher="Иванов И.И.",
+                    room="201",
+                )
+            ],
+            aria_label=(
+                "Добавленный урок 12. Консультация по математике. "
+                "Кабинет 201."
+            ),
+        ),
+        _fixture_lesson(
+            key="fixture-shared-subject-three-groups",
+            number=13,
+            start_time="19:10",
+            end_time="19:50",
+            view_mode=LessonViewMode.CLASS,
+            shared_subject=True,
+            entries=[
+                _fixture_entry(
+                    subject="Английский язык",
+                    teacher="Победа А.А.",
+                    group="Группа 1",
+                    room="230",
+                ),
+                _fixture_entry(
+                    subject="Английский язык",
+                    teacher="Погорцева Г.К.",
+                    group="Группа 2",
+                    room="324",
+                ),
+                _fixture_entry(
+                    subject="Английский язык",
+                    teacher="Корчмит О.О.",
+                    group="Группа 3",
+                    room="324а",
+                ),
+            ],
+            aria_label=(
+                "Урок 13. Английский язык. "
+                "Три подгруппы в кабинетах 230, 324 и 324а."
+            ),
+        ),
+        _fixture_lesson(
+            key="fixture-different-subjects-three-groups",
+            number=14,
+            start_time="20:00",
+            end_time="20:40",
+            view_mode=LessonViewMode.CLASS,
+            entries=[
+                _fixture_entry(
+                    subject="Ин. язык",
+                    teacher="Корчмит О.О.",
+                    group="Группа 1",
+                    room="324а",
+                ),
+                _fixture_entry(
+                    subject="Программирование",
+                    teacher="Гурина А.А.",
+                    group="Группа 2",
+                    room="301",
+                ),
+                _fixture_entry(
+                    subject="Робототехника",
+                    teacher="Кузнецов А.В.",
+                    group="Группа 3",
+                    room="актовый зал",
+                ),
+            ],
+            aria_label=(
+                "Урок 14. Три разных предмета для трёх подгрупп."
+            ),
+        ),
+        _fixture_lesson(
+            key="fixture-room-mode",
+            number=15,
+            start_time="20:50",
+            end_time="21:30",
+            view_mode=LessonViewMode.ROOM,
+            entries=[
+                _fixture_entry(
+                    subject="Физика",
+                    teacher="Кузнецов С.П.",
+                    class_name="8б",
+                    group="Группа 1",
+                    room="лаборатория",
+                )
+            ],
+            aria_label=(
+                "Урок 15. Физика. 8б, группа 1. "
+                "Кабинет лаборатория."
+            ),
+        ),
+        _fixture_lesson(
+            key="fixture-methodological",
+            number=16,
+            start_time="21:40",
+            end_time="22:20",
+            view_mode=LessonViewMode.TEACHER,
+            kind=LessonKind.METHODOLOGICAL,
+            entries=[],
+            aria_label="Урок 16. Методический час.",
+        ),
+    ]
+    
 async def _nika_stale_warning(request: Request) -> str | None:
     """
     NIKA outage (ТЗ 53): источник с ошибкой при живом кеше.
@@ -137,7 +592,28 @@ async def dashboard(
         }),
     )
 
+# ==============================================================
+# Dev showcase: reusable schedule components
+# ==============================================================
 
+
+@router.get("/dev/schedule-components", response_class=HTMLResponse)
+async def schedule_components_showcase(
+    request: Request,
+    context: WebSessionContext = Depends(require_family_allowed),
+):
+    return _templates(request).TemplateResponse(
+        request,
+        "dev/schedule_components.html",
+        _ctx(
+            request,
+            context,
+            {
+                "lessons": _schedule_component_fixtures(),
+            },
+        ),
+    )
+    
 # ==============================================================
 # День (полная страница и HTMX-fragment)
 # ==============================================================

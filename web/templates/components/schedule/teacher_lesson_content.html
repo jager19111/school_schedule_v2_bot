@@ -1,0 +1,68 @@
+{% if is_first %}
+<div class="lesson-teacher-content">
+  <div class="lesson-teacher-content__main">
+    <!-- shared_room={{ lesson.shared_room }} -->
+    <div class="lesson-teacher-content__classes">
+      {% for teacher_entry in lesson.entries %}
+        {% if not loop.first %}, {% endif %}
+
+        {% if teacher_entry.class_name %}
+        <span
+          class="
+            lesson-teacher-content__class
+            {% if teacher_entry.class_name.changed %}
+              lesson-card__field--changed
+            {% endif %}
+          "
+        >
+          {{ teacher_entry.class_name.value }}
+        </span>
+        {% endif %}
+
+        {% if teacher_entry.group %}
+        <span
+          class="
+            lesson-teacher-content__group
+            {% if teacher_entry.group.changed %}
+              lesson-card__field--changed
+            {% endif %}
+          "
+        >
+          · {{ teacher_entry.group.value }}
+        </span>
+        {% endif %}
+      {% endfor %}
+    </div>
+
+    {% if entry.subject %}
+    <div
+      class="
+        lesson-teacher-content__subject
+        {% if entry.subject.changed %}
+          lesson-card__field--changed
+        {% endif %}
+      "
+      title="{{ entry.subject.value }}"
+    >
+      {{ entry.subject.value }}
+    </div>
+    {% endif %}
+  </div>
+
+  {% if lesson.shared_room %}
+  <div class="lesson-teacher-content__room">
+    <span
+      class="
+        room-badge
+        {% if lesson.shared_room.changed %}
+          room-badge--changed
+        {% endif %}
+      "
+      aria-label="Кабинет {{ lesson.shared_room.value }}"
+    >
+      {{ lesson.shared_room.value }}
+    </span>
+  </div>
+  {% endif %}
+</div>
+{% endif %}

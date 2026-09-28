@@ -30,6 +30,7 @@ class LessonKind(str, Enum):
     REGULAR = "regular"
     EXTRA = "extra"
     WINDOW = "window"
+    METHODOLOGICAL = "methodological"
 
 
 class LessonStatus(str, Enum):
@@ -84,6 +85,7 @@ class WebLesson(BaseModel):
     is_current: bool = False
     entries: List[WebLessonEntry] = Field(default_factory=list)
     shared_subject: bool = False
+    shared_room: Optional[WebRoomBadge] = None
     history_url: Optional[str] = None
     aria_label: str
 

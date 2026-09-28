@@ -2,6 +2,7 @@
    Mobile-first (ТЗ 41): iPhone ~390-430px, touch >= 44px,
    safe-area для вырезов/home indicator. Без hover-зависимости. */
 
+/* 1. Tokens */
 :root {
   --bg: #f3f4f6;
   --card: #ffffff;
@@ -15,6 +16,7 @@
   --ok: #16a34a;
 }
 
+/* 2. Global reset + system font */
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
 html { -webkit-text-size-adjust: 100%; }
@@ -29,6 +31,7 @@ body {
   padding-bottom: calc(env(safe-area-inset-bottom) + 64px);
 }
 
+/* 3. Shared application shell */
 .visually-hidden {
   position: absolute; width: 1px; height: 1px; overflow: hidden;
   clip: rect(0 0 0 0); white-space: nowrap;
@@ -46,7 +49,8 @@ body {
 .app-content {
   max-width: 640px;
   margin: 0 auto;
-  padding: 16px 14px 24px;
+  /* Увеличены боковые отступы (24px) чтобы карточки не прилипали к краям экрана */
+  padding: 16px 10px 24px;
 }
 
 /* ---------- Bottom nav (>= 44px touch) ---------- */
@@ -65,6 +69,7 @@ body {
 .nav-item.active { color: var(--accent); font-weight: 600; }
 .nav-icon { font-size: 20px; line-height: 24px; }
 
+/* 4. Navigation and shared page components */
 /* ---------- Student switch ---------- */
 .student-switch { margin-bottom: 12px; }
 .student-switch.single { color: var(--muted); font-size: 15px; padding: 4px 2px; }
@@ -93,43 +98,14 @@ body {
 }
 .nav-btn.today-btn { background: var(--accent); color: #fff; border-color: var(--accent); }
 
-/* ---------- Lesson cards (ТЗ 24-25) ---------- */
-.lessons-list { display: flex; flex-direction: column; gap: 10px; }
-.lesson-card {
-  display: flex; align-items: flex-start; gap: 10px;
-  background: var(--card); border-radius: 12px; padding: 12px;
-  border-left: 4px solid var(--accent);
-}
-.lesson-card.status-cancelled  { border-left-color: var(--cancelled); opacity: .75; }
-.lesson-card.status-cancelled .lesson-subject { text-decoration: line-through; }
-.lesson-card.status-exchange   { border-left-color: var(--exchange); }
-.lesson-card.status-extra      { border-left-color: var(--extra); background: #faf5ff; }
-.lesson-card.status-methodological { border-left-color: var(--methodical); }
-
-.lesson-num {
-  min-width: 30px; font-weight: 700; font-size: 16px;
-  color: var(--accent); text-align: center;
-}
-.lesson-main { flex: 1; }
-.lesson-time { font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
-.lesson-subject { font-size: 16px; font-weight: 600; margin-top: 2px; }
-.lesson-meta { display: flex; flex-wrap: wrap; gap: 10px; font-size: 13px; color: var(--muted); margin-top: 4px; }
-
-.lesson-badge {
-  align-self: center; font-size: 11px; font-weight: 700;
-  padding: 3px 8px; border-radius: 999px; color: #fff; white-space: nowrap;
-}
-.lesson-badge.cancelled { background: var(--cancelled); }
-.lesson-badge.exchange  { background: var(--exchange); }
-.lesson-badge.extra     { background: var(--extra); }
-.lesson-badge.methodological { background: var(--methodical); }
-
+/* Остатки списков для пустых дней (legacy .lesson-card удалены) */
 .empty-day {
   text-align: center; padding: 40px 16px; color: var(--muted);
   background: var(--card); border-radius: 12px; font-size: 16px;
 }
 .permutation-note { margin-top: 12px; font-size: 13px; color: var(--muted); text-align: center; }
 
+/* 5. Week */
 /* ---------- Week (ТЗ 27) ---------- */
 .week-list { display: flex; flex-direction: column; gap: 8px; }
 .week-day {
@@ -147,9 +123,9 @@ body {
 /* ---------- Desktop: та же система, шире ---------- */
 @media (min-width: 768px) {
   .app-content { padding: 24px 20px 40px; }
-  .lesson-card { padding: 14px 16px; }
 }
 
+/* 6. School */
 /* Phase 3 */
 .search-form { display: flex; gap: 8px; margin-bottom: 14px; }
 .search-input { flex: 1; min-height: 44px; padding: 8px 12px; font-size: 16px;
@@ -164,9 +140,12 @@ body {
   border: 1px solid #d1d5db; border-radius: 10px; text-decoration: none; color: var(--text-main); }
 .search-group-title { font-size: 15px; margin: 14px 0 8px; color: var(--text-muted); }
 .free-status { font-size: 14px; color: var(--text-muted); margin-bottom: 12px; }
-@media (min-width: 768px) { .school-menu { grid-template-columns: repeat(4, 1fr); } }
 
+@media (min-width: 768px) { 
+  .school-menu { grid-template-columns: repeat(4, 1fr); } 
+}
 
+/* 7. Family */
 /* Phase 4: Семья */
 .family-members { display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px; }
 .family-member { background: var(--card); border-radius: 12px; padding: 10px 14px; box-shadow: 0 2px 8px rgba(0,0,0,0.04); }
@@ -175,7 +154,7 @@ body {
 .member-role { color: var(--text-muted); font-size: 13px; margin-top: 2px; }
 .you-badge, .admin-badge { font-size: 11px; font-weight: 700; padding: 2px 6px; border-radius: 999px; color: #fff; margin-left: 6px;}
 .you-badge { background: var(--accent); }
-.admin-badge { background: var(--methodological); }
+.admin-badge { background: var(--methodical); }
 .family-students { display: flex; flex-direction: column; gap: 10px; margin-bottom: 16px; }
 .student-card { background: var(--card); border-radius: 12px; padding: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.04); }
 .student-name { font-weight: 700; font-size: 16px; }
@@ -197,9 +176,9 @@ body {
 .perm-on { color: var(--ok); font-weight: 600; } 
 .perm-off { color: var(--text-muted); }
 
+/* 8. Extras/forms */
 /* Phase 5 */
 .time-row { display: grid; grid-template-columns: 1fr 1fr 90px; gap: 8px; }
 .time-row input { min-height: 44px; padding: 8px; font-size: 16px;
   border: 1px solid var(--border); border-radius: 10px; background: var(--card); color: var(--text-main); }
 .form-hint { font-size: 13px; color: var(--text-muted); margin-bottom: 8px; }
-.lesson-card .student-actions { margin-left: 4px; margin-top: 8px; }

@@ -1,0 +1,373 @@
+/* ==========================================================================
+   1. ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ (Цвета и базовые размеры)
+   Здесь задается палитра статусов и ширина левой колонки со временем.
+   чтобы добавить темную тему (которую обожают школьники), 
+   переопределить переменные в медиа-запросе @media (prefers-color-scheme: dark) { :root { ... } }.
+   ========================================================================== */
+:root {
+  --schedule-normal: #2f80c9;    /* Синий - обычный урок */
+  --schedule-extra: #7c3aed;     /* Фиолетовый - доп. занятие */
+  --schedule-changed: #d97706;   /* Оранжевый - замена кабинета/учителя */
+  --schedule-added: #16803c;     /* Зеленый - добавленный новый урок */
+  --schedule-cancelled: #dc2626; /* Красный - отмененный урок */
+  --schedule-current: #1d4ed8;   /* Ярко-синий - маркер идущего сейчас урока */
+
+  --room-bg: #eef2f6;            /* Фон плашки кабинета (правая часть) */
+  --room-text: #334155;          /* Цвет текста внутри плашки кабинета */
+  --room-changed: #d97706;       /* Цвет рамки кабинета при замене */
+
+  /* Ширина левой колонки со временем (идеально для "УРОК 16") */
+  --lesson-time-width: 60px;     
+  
+  --lesson-card-bg: #ffffff;
+  --lesson-card-border: #e8edf3;
+  --lesson-muted: #7b8798;       /* Серый цвет для второстепенного текста */
+  --lesson-content-color: #1d3858; /* Темно-синий/черный для названий предметов */
+}
+
+/* ==========================================================================
+   2. DEV SHOWCASE (Служебные стили для страницы тестирования)
+   ========================================================================== */
+.schedule-showcase { display: flex; flex-direction: column; gap: 8px; }
+.schedule-showcase__notice { padding: 8px 10px; border: 1px solid #bfdbfe; border-radius: 10px; background: #eff6ff; color: #1e3a5f; font-size: 13px; line-height: 1.25; }
+.schedule-showcase__viewport-label { color: var(--lesson-muted); font-size: 12px; }
+.schedule-showcase__list { display: flex; flex-direction: column; gap: 7px; }
+
+/* ==========================================================================
+   3. КАРКАС КАРТОЧКИ УРОКА (Основа)
+   ========================================================================== */
+.lesson-card {
+  display: grid;
+  grid-template-columns: var(--lesson-time-width) minmax(0, 1fr);
+  min-height: 0;
+  overflow: hidden;
+  
+  /* [ИЗМЕНЕНО] Убрали margin: 0 4px; карточка теперь занимает всю ширину контейнера */
+  margin: 0; 
+  
+  border: 1px solid var(--lesson-card-border);
+  border-left: 5px solid var(--schedule-normal);
+  border-radius: 14px;
+  background: var(--lesson-card-bg);
+  box-shadow: 0 2px 10px rgb(15 23 42 / 0.04);
+}
+
+/* ==========================================================================
+   4. КОЛОНКА ВРЕМЕНИ (Левый блок карточки)
+   ========================================================================== */
+.lesson-card__time {
+  display: flex;
+  align-self: stretch; /* Растягивает разделительную линию на всю высоту карточки */
+  flex-direction: column;
+  justify-content: center;
+  align-items: flex-start;
+  min-width: 0;
+  
+  /* Симметричные отступы (Сверху/Снизу: 4px, По бокам: 10px). */
+  padding: 4px 8px; 
+  border-right: 1px solid #edf0f4; 
+  font-variant-numeric: tabular-nums;
+}
+
+.lesson-card__now-label {
+  margin-bottom: 2px; color: var(--schedule-current); font-size: 10px; font-weight: 800; line-height: 1; white-space: nowrap;
+}
+
+/* Время начала (Снижено до 14px) */
+.lesson-card__start {
+  display: block; color: #172033; font-size: 14px; font-weight: 750; line-height: 1.05; text-align: left; white-space: nowrap;
+}
+
+/* Время окончания (Снижено до 10px) */
+.lesson-card__end {
+  display: block; color: #98a3b3; font-size: 10px; font-weight: 750; line-height: 1.1; text-align: left; white-space: nowrap; margin-top: 1px;
+}
+
+/* Номер урока */
+/* [ИЗМЕНЕНО] Номер урока. Снижен до 9px. */
+.lesson-card__number {
+  display: block; 
+  margin-top: 2px; 
+  color: #536174; 
+  font-size: 9px; 
+  font-weight: 850; 
+  line-height: 1; 
+  letter-spacing: 0.01em; 
+  white-space: nowrap;
+  
+  /* --- НОВЫЕ СТРОКИ ДЛЯ ЦЕНТРИРОВАНИЯ --- */
+  align-self: center; /* Центрирует сам элемент внутри левой колонки */
+  text-align: center; /* На всякий случай выравниваем и сам текст */
+  margin-left: 0px;  /* Небольшая компенсация, чтобы визуально отцентрировать относительно двоеточия во времени */
+}
+
+/* ==========================================================================
+   5. ТЕЛО УРОКА (Правая большая часть карточки)
+   ========================================================================== */
+.lesson-card__body {
+  min-width: 0;
+  
+  /* [ИЗМЕНЕНО] Слегка увеличили правый отступ (с 10px до 12px), 
+     чтобы бейдж кабинета не прилипал к краю расширившейся карточки */
+  padding: 4px 8px 4px 10px; 
+  
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.lesson-card__entries {
+  display: flex; flex-direction: column; gap: 3px;
+}
+
+.lesson-card__subject,
+.lesson-entry__subject {
+  min-width: 0; overflow: hidden; color: var(--lesson-content-color);
+  font-size: clamp(14px, 4.4vw, 18px); font-weight: 750; line-height: 1.1; text-overflow: ellipsis; white-space: nowrap;
+}
+
+.lesson-entry { display: flex; min-width: 0; align-items: center; gap: 6px; }
+.lesson-entry__content { min-width: 0; flex: 1 1 auto; }
+
+.lesson-entry__meta { display: flex; min-width: 0; flex-wrap: wrap; gap: 3px; color: var(--lesson-muted); font-size: 13px; line-height: 1.12; }
+.lesson-entry__teacher { font-style: italic; }
+.lesson-entry__separator { color: #a5afbd; }
+.lesson-entry__group { color: #728096; }
+
+.lesson-entry__class-line { min-width: 0; overflow: hidden; color: var(--lesson-content-color); font-size: 16px; font-weight: 700; line-height: 1.12; text-overflow: ellipsis; white-space: nowrap; }
+.lesson-entry__teacher-subject { min-width: 0; margin-top: 1px; overflow: hidden; color: var(--lesson-muted); font-size: 12px; font-style: italic; line-height: 1.1; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ==========================================================================
+   6. ПЛАШКА КАБИНЕТА
+   ========================================================================== */
+.room-badge {
+  display: inline-flex; flex: 0 0 auto; align-items: center; justify-content: center;
+  max-width: 85px; min-height: 20px; margin-left: auto;
+  padding: 3px 7px; border: 0; border-radius: 10px; background: var(--room-bg); color: var(--room-text);
+  font-size: 13px; font-weight: 800; line-height: 1; text-align: center; overflow-wrap: anywhere;
+}
+.room-badge--changed { border: 2px solid var(--room-changed); background: #fffaf0; color: var(--room-changed); }
+
+/* ==========================================================================
+   7. ЦВЕТОВЫЕ СТАТУСЫ КАРТОЧЕК (Замены и Отмены)
+   ========================================================================== */
+.lesson-card__field--changed { color: var(--schedule-changed); }
+
+.lesson-card.lesson-card--changed { border-left-color: var(--schedule-changed); background: #fffdf8; }
+.lesson-card.lesson-card--added { border-left-color: var(--schedule-added); background: #f7fcf8; }
+.lesson-card.lesson-card--extra { border-left-color: var(--schedule-extra); background: #faf7ff; }
+.lesson-card.lesson-card--cancelled { border-left-color: var(--schedule-cancelled); background: #fff7f7; }
+
+.lesson-card--cancelled .lesson-card__subject,
+.lesson-card--cancelled .lesson-entry__subject,
+.lesson-card--cancelled .lesson-entry__meta,
+.lesson-card--cancelled .lesson-entry__class-line,
+.lesson-card--cancelled .lesson-entry__teacher-subject,
+.lesson-card--cancelled .lesson-teacher-content__classes,
+.lesson-card--cancelled .lesson-teacher-content__class,
+.lesson-card--cancelled .lesson-teacher-content__group,
+.lesson-card--cancelled .lesson-teacher-content__subject {
+  color: #7f8793;
+  text-decoration-line: line-through;
+  text-decoration-color: var(--schedule-cancelled);
+  text-decoration-thickness: 2px;
+}
+
+.lesson-card--current {
+  box-shadow: 0 0 0 2px rgb(59 130 246 / 0.14), 0 2px 10px rgb(15 23 42 / 0.04);
+}
+
+.lesson-entry__meta--location { min-width: 0; overflow: hidden; color: var(--lesson-muted); font-size: 13px; font-style: italic; line-height: 1.1; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ==========================================================================
+   8. СВОБОДНОЕ ВРЕМЯ И МЕТОДИЧЕСКИЙ ЧАС (Окна)
+   ========================================================================== */
+/* [ИЗМЕНЕНО] Ультра-сжатие высоты карточки до 24px */
+.lesson-card.lesson-card--window,
+.lesson-card.lesson-card--methodological {
+  min-height: 24px !important;
+  height: 24px !important;
+}
+
+.lesson-card.lesson-card--window { border-left-color: #cbd5e1; background: #f8fafc; }
+.lesson-card.lesson-card--methodological { border-left-color: var(--schedule-normal); background: #ffffff; }
+
+/* Обнуляем отступы карточки */
+.lesson-card--window .lesson-card__body,
+.lesson-card--methodological .lesson-card__body,
+.lesson-card--window .lesson-card__time,
+.lesson-card--methodological .lesson-card__time {
+  padding-top: 0 !important;
+  padding-bottom: 0 !important;
+}
+
+/* Скрываем время (оно работает как невидимая распорка) */
+.lesson-card--window .lesson-card__start,
+.lesson-card--window .lesson-card__end,
+.lesson-card--methodological .lesson-card__start,
+.lesson-card--methodological .lesson-card__end {
+  display: none !important;
+}
+
+/* Выравниваем номер урока по центру полоски */
+.lesson-card--window .lesson-card__number,
+.lesson-card--methodological .lesson-card__number {
+  margin-top: 0 !important; 
+  font-size: 9px !important; 
+  line-height: 24px !important; /* Центрируем по вертикали */
+}
+
+/* 
+ * [ИСПРАВЛЕНО] Форматирование текста (обращаемся к правильному классу .lesson-card__window-label)
+ */
+.lesson-card__window-label {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 13px !important;
+  font-weight: 750 !important; /* Делаем ЖИРНЫМ */
+  line-height: 24px !important; /* Ровно по высоте карточки */
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin: 0 !important;
+}
+
+/* Свободное время: Светлый цвет (красивый серебристо-серый) */
+.lesson-card--window .lesson-card__window-label {
+  color: #8793a5 !important;
+}
+
+/* Методический час: Темный цвет (как обычный урок) */
+.lesson-card--methodological .lesson-card__window-label {
+  color: var(--lesson-content-color) !important;
+}
+
+/* ==========================================================================
+   9. ОПТИМИЗАЦИЯ ПОД БОЛЬШИЕ ЭКРАНЫ (Планшеты)
+   ========================================================================== */
+@media (min-width: 431px) {
+  :root { --lesson-time-width: 76px; }
+  .lesson-card__start { font-size: 16px; }
+  .lesson-card__subject, .lesson-entry__subject { font-size: 18px; }
+}
+
+/* ==========================================================================
+   10. РЕЖИМ УЧИТЕЛЯ (Специфичная сетка вывода)
+   ========================================================================== */
+.lesson-teacher-content { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 5px; min-width: 0; }
+.lesson-teacher-content__main { min-width: 0; }
+.lesson-teacher-content__classes { min-width: 0; color: var(--lesson-content-color); font-size: 15px; font-weight: 750; line-height: 1.1; overflow-wrap: anywhere; }
+.lesson-teacher-content__class { color: var(--lesson-content-color); }
+.lesson-teacher-content__group { color: #728096; font-size: 14px; font-weight: 600; line-height: 1.1; }
+.lesson-teacher-content__subject { min-width: 0; margin-top: 1px; overflow: hidden; color: var(--lesson-muted); font-size: 12px; font-style: italic; line-height: 1.08; text-overflow: ellipsis; white-space: nowrap; }
+.lesson-teacher-content__room { align-self: center; justify-self: end; }
+
+
+/* Эффект нажатия для мобильных устройств */
+.lesson-card {
+  transition: transform 0.1s ease, background-color 0.1s ease;
+}
+@media (hover: none) and (pointer: coarse) {
+  .lesson-card:active {
+    transform: scale(0.98);
+    background-color: #f8fafc;
+  }
+}
+
+/* ==========================================================================
+   11. SKELETON LOADING (Индикатор загрузки)
+   Анимация пульсации и структура каркасных карточек
+   ========================================================================== */
+
+/* Анимация мягкого мерцания (пульсации) */
+@keyframes skeleton-pulse {
+  0% { opacity: 1; }
+  50% { opacity: 0.4; }
+  100% { opacity: 1; }
+}
+
+/* Базовый класс для заливки блоков */
+.skel-block {
+  background-color: #e2e8f0; /* Светло-серый цвет */
+  border-radius: 6px;
+  animation: skeleton-pulse 1.5s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/* Скрываем скелетон по умолчанию. 
+   HTMX сам покажет его, добавив класс htmx-request */
+.htmx-indicator {
+  display: none;
+}
+.htmx-request .htmx-indicator {
+  display: block;
+}
+.htmx-request.htmx-indicator {
+  display: block;
+}
+
+/* Контейнер для списка скелетонов */
+.skeleton-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* Каркас карточки (полностью копирует сетку .lesson-card) */
+.skel-card {
+  display: grid;
+  grid-template-columns: var(--lesson-time-width) minmax(0, 1fr);
+  min-height: 70px;
+  margin: 0;
+  border: 1px solid var(--lesson-card-border);
+  border-left: 5px solid #cbd5e1; /* Нейтральный серый левый бордер */
+  border-radius: 14px;
+  background: var(--lesson-card-bg);
+  box-shadow: 0 2px 10px rgb(15 23 42 / 0.04);
+}
+
+/* Колонка времени (Левая) */
+.skel-time-col {
+  padding: 8px 10px;
+  border-right: 1px solid #edf0f4;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 6px;
+}
+
+/* Размеры заглушек времени */
+.skel-time { width: 36px; height: 12px; }
+.skel-num { width: 24px; height: 8px; margin-top: 4px; }
+
+/* Колонка контента (Правая) */
+.skel-body-col {
+  padding: 8px 12px 8px 10px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 8px;
+}
+
+/* Строка с заглушками предмета и кабинета */
+.skel-row-main {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+/* Размеры заглушек контента */
+.skel-subject { width: 60%; height: 16px; }
+.skel-room { width: 40px; height: 18px; border-radius: 8px; }
+.skel-teacher { width: 40%; height: 10px; }
+
+
+/* Прячем текст до того, как JS вычислит размер, чтобы избежать "моргания" */
+[data-autofit="subject"]:not(.is-fitted) {
+  opacity: 0;
+}
+
+/* Плавное проявление после обработки скриптом */
+[data-autofit="subject"].is-fitted {
+  opacity: 1;
+  transition: opacity 0.15s ease-in;
+}

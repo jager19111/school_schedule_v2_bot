@@ -1,0 +1,23 @@
+{# Компонент каркасной загрузки (Skeleton). 
+   Показывается HTMX-ом во время сетевых запросов #}
+<div class="skeleton-list htmx-indicator" id="schedule-skeleton">
+    {% for i in range(6) %}
+    <article class="skel-card">
+        <!-- Имитация времени -->
+        <div class="skel-time-col">
+            <div class="skel-block skel-time"></div>
+            <div class="skel-block skel-time"></div>
+            <div class="skel-block skel-num"></div>
+        </div>
+        
+        <!-- Имитация контента -->
+        <div class="skel-body-col">
+            <div class="skel-row-main">
+                <div class="skel-block skel-subject"></div>
+                <div class="skel-block skel-room"></div>
+            </div>
+            <div class="skel-block skel-teacher"></div>
+        </div>
+    </article>
+    {% endfor %}
+</div>

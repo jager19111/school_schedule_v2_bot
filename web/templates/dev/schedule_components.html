@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+
+{% block title %}LessonCard showcase{% endblock %}
+
+{% block header %}
+LessonCard · dev showcase
+{% endblock %}
+
+{% block extra_head %}
+<link rel="stylesheet" href="/static/css/components/schedule.css">
+{% endblock %}
+
+{% block extra_scripts %}
+<script src="/static/js/schedule.js"></script>
+{% endblock %}
+
+{% block content %}
+<section class="schedule-showcase">
+  <header class="day-header">
+    <h2 class="day-title">Компоненты расписания</h2>
+    <div class="day-subtitle">
+      Fixture data · Phase B1 · production routes не используют этот экран
+    </div>
+  </header>
+
+  <div class="schedule-showcase__notice" role="status">
+    Этот экран доступен только авторизованному пользователю и предназначен
+    для визуальной приёмки LessonCard.
+  </div>
+
+  <div class="schedule-showcase__viewport-label">
+    Контрольный viewport: 390 × 844
+  </div>
+
+<div class="lessons-list schedule-showcase__list">
+    {% for lesson in lessons %}
+      {% if lesson.kind.value in ["window", "methodological"] %}
+        {% include "components/schedule/window_card.html" %}
+      {% else %}
+        {% include "components/schedule/lesson_card.html" %}
+      {% endif %}
+    {% endfor %}
+  </div>
+
+  <!-- ДОБАВЬТЕ ЭТОТ БЛОК ДЛЯ ТЕСТИРОВАНИЯ СКЕЛЕТОНА -->
+  <header class="day-header" style="margin-top: 30px;">
+    <h2 class="day-title">Анимация загрузки (Skeleton)</h2>
+  </header>
+  
+  <div class="schedule-showcase__list">
+    {% include "components/schedule/skeleton.html" %}
+  </div>
+
+  <!-- Принудительно показываем скелетон в песочнице, игнорируя HTMX -->
+  <style>
+    #schedule-skeleton { display: flex !important; }
+  </style>
+
+</section>
+{% endblock %}
