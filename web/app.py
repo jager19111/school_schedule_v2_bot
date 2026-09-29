@@ -205,11 +205,13 @@ def create_web_app(
     from web.routes.schedule import router as schedule_router
     from web.routes.school import router as school_router
     from web.routes.stream import router as stream_router
+    from web.routes.settings import router as settings_router
 
     app.include_router(health_router)
     app.include_router(auth_router)
     app.include_router(schedule_router)
     app.include_router(school_router)
+    app.include_router(settings_router)
     app.include_router(family_router)
     app.include_router(extra_router)
     app.include_router(pwa_router)

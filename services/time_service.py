@@ -283,15 +283,3 @@ class TimeService:
             return None
         except ValueError:
             return None
-
-    def format_base(self, dt) -> Optional[str]:
-        """aware-UTC datetime -> 'DD.MM.YYYY HH:MM' в таймзоне школы."""
-        if dt is None:
-            return None
-        if isinstance(dt, str):
-            try:
-                dt = datetime.fromisoformat(dt)
-            except (ValueError, TypeError):
-                return dt
-        local = self.from_utc(dt)
-        return local.strftime("%d.%m.%Y %H:%M")

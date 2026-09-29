@@ -9,7 +9,9 @@
 # События:
 # - ScheduleChanged(revision) — инвалидирующий сигнал (без персональных
 #   данных, ТЗ 51.4);
-# - SessionRevoked(user_id) — logout/revoke: закрыть SSE этого пользователя.
+# - SessionRevoked(user_id, session_id) — отзыв web session:
+#   session_id=None закрывает все SSE пользователя;
+#   конкретный session_id закрывает только одно устройство.
 
 from __future__ import annotations
 
@@ -28,7 +30,15 @@ class ScheduleChanged:
 
 @dataclass(frozen=True, slots=True)
 class SessionRevoked:
+    """
+    Сигнал отзыва web session.
+
+    session_id:
+    - None -> отозваны все sessions пользователя;
+    - число -> отозвана только одна конкретная session.
+    """
     user_id: int
+    session_id: int | None = None
 
 
 class ApplicationEventBus:

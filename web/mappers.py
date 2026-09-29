@@ -25,11 +25,13 @@ from core.models.dto import (
 )
 
 from services.schedule_targets_service import ScheduleTarget
+from services.time_service import TimeService
+from services.web_sessions_service import WebDeviceInfo
 from web.schemas import (
     WebChange,
     WebDayChanges,
     WebDaySchedule,
-    WebDaySummary,
+    WebDaySummary, WebDeviceSession,
     WebFamilyMember,
     WebFreeRoomItem,
     WebFreeRooms,
@@ -50,7 +52,7 @@ from web.schemas import (
     WebExtraClass,
     WebExtraClassDay,
     WebLessonEntry,
-    WebRoomBadge,
+    WebRoomBadge, 
 )
 
 _WEEKDAYS_FULL = [
@@ -1349,6 +1351,48 @@ def permissions_to_web(
                 ),
                 can_manage=permission.can_manage_extra_classes,
                 is_self=adult_user_id == admin_user_id,
+            )
+        )
+
+    return result
+
+
+# ==============================================================
+# Настройки: web-сеансы и устройства
+# ==============================================================
+
+
+def web_devices_to_web(
+    devices: Iterable[WebDeviceInfo],
+    *,
+    time_service: TimeService,
+) -> list[WebDeviceSession]:
+    """
+    WebDeviceInfo -> WebDeviceSession.
+
+    Время из БД хранится в UTC; для UI переводим его в school timezone
+    через единственный canonical TimeService.format_base().
+    """
+    result: list[WebDeviceSession] = []
+
+    for device in devices:
+        result.append(
+            WebDeviceSession(
+                session_id=device.session_id,
+                user_agent=(
+                    device.user_agent.strip()
+                    if device.user_agent and device.user_agent.strip()
+                    else "Неизвестное устройство"
+                ),
+                created_at_display=(
+                    time_service.format_base(device.created_at)
+                    or "—"
+                ),
+                last_seen_at_display=(
+                    time_service.format_base(device.last_seen_at)
+                    or "—"
+                ),
+                is_current=device.current,
             )
         )
 

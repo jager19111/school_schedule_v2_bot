@@ -1,0 +1,71 @@
+  {# web/templates/settings/_settings_content.html #}
+<section
+  id="settings-content"
+  class="settings-page"
+>
+  <h2 class="day-title">
+    Настройки
+  </h2>
+
+  <section
+    class="settings-section"
+    aria-labelledby="security-settings-title"
+  >
+    <h3
+      id="security-settings-title"
+      class="settings-section__title"
+    >
+      Безопасность
+    </h3>
+
+        <a
+    href="/settings/devices"
+    class="settings-card settings-card--link"
+    hx-get="/settings/devices"
+    hx-target="#main"
+    hx-swap="innerHTML"
+    hx-push-url="true"
+    >
+    <div class="settings-card__content">
+        <div class="settings-card__title">
+        Активные устройства
+        </div>
+
+        <p class="settings-card__description">
+        Просмотр и завершение веб-сеансов на других устройствах.
+        </p>
+    </div>
+
+    <span
+        class="settings-card__chevron"
+        aria-hidden="true"
+    >
+        ›
+    </span>
+    </a>
+
+    <div class="settings-card">
+      <div class="settings-card__content">
+        <div class="settings-card__title">
+          Выйти с этого устройства
+        </div>
+
+        <p class="settings-card__description">
+          Завершит веб-сеанс только на текущем устройстве.
+          Другие устройства останутся авторизованными.
+        </p>
+      </div>
+
+      <button
+        type="button"
+        class="settings-card__action settings-card__action--danger"
+        hx-post="/api/v1/auth/logout"
+        hx-swap="none"
+        hx-confirm="Выйти с этого устройства? Другие устройства останутся авторизованными."
+        hx-disabled-elt="this"
+      >
+        Выйти
+      </button>
+    </div>
+  </section>
+</section>

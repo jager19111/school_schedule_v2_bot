@@ -1,0 +1,16 @@
+  {# web/templates/settings/settings.html #}
+{% extends "base.html" %}
+
+{% set nav = "settings" %}
+
+{% block title %}
+Настройки
+{% endblock %}
+
+{% block header %}
+Настройки
+{% endblock %}
+
+{% block content %}
+{% include "settings/_settings_content.html" %}
+{% endblock %}

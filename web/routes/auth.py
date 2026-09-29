@@ -134,17 +134,45 @@ async def logout(
     context: WebSessionContext = Depends(get_session_context),
     sessions: WebSessionsService = Depends(get_sessions_service),
 ) -> LogoutResponse:
-    """Logout текущего устройства (отзывает только текущую сессию)."""
-    raw = request.cookies.get(SESSION_COOKIE_NAME, "")
-    await sessions.revoke_session(raw_token=raw, user_id=context.user_id)
-    response.delete_cookie(SESSION_COOKIE_NAME, path="/")
-    
-    bus = getattr(request.app.state, "event_bus", None)
-    if bus is not None:
-        await bus.publish(SessionRevoked(user_id=context.user_id))
-        
-    return LogoutResponse(ok=True)
+    """
+    Выход с текущего web device.
 
+    Отзывается только current server-side session.
+    Другие устройства того же пользователя остаются active.
+    """
+    raw = request.cookies.get(
+        SESSION_COOKIE_NAME,
+        "",
+    )
+
+    await sessions.revoke_session(
+        raw_token=raw,
+        user_id=context.user_id,
+    )
+
+    response.delete_cookie(
+        SESSION_COOKIE_NAME,
+        path="/",
+    )
+
+    bus = getattr(
+        request.app.state,
+        "event_bus",
+        None,
+    )
+
+    if bus is not None:
+        await bus.publish(
+            SessionRevoked(
+                user_id=context.user_id,
+                session_id=context.session_id,
+            )
+        )
+
+    if request.headers.get("HX-Request") == "true":
+        response.headers["HX-Redirect"] = "/auth"
+
+    return LogoutResponse(ok=True)
 
 @router.post("/api/v1/auth/logout-all", response_model=LogoutResponse)
 async def logout_all(
@@ -214,11 +242,23 @@ async def revoke_session(
     не может быть отозван подстановкой.
     """
     ok = await sessions.revoke_session_by_id(
-        session_id=session_id, user_id=context.user_id
+        session_id=session_id,
+        user_id=context.user_id,
     )
-    
-    bus = getattr(request.app.state, "event_bus", None)
-    if bus is not None:
-        await bus.publish(SessionRevoked(user_id=context.user_id))
-        
+
+    if ok:
+        bus = getattr(
+            request.app.state,
+            "event_bus",
+            None,
+        )
+
+        if bus is not None:
+            await bus.publish(
+                SessionRevoked(
+                    user_id=context.user_id,
+                    session_id=session_id,
+                )
+            )
+
     return LogoutResponse(ok=ok)

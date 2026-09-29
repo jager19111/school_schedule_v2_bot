@@ -1,0 +1,161 @@
+  {# web/templates/settings/_devices_content.html #}
+  <section
+  id="settings-content"
+  class="settings-page"
+>
+  <div class="settings-page__heading">
+    <h2 class="day-title">
+      Активные устройства
+    </h2>
+
+    <a
+      href="/settings"
+      class="settings-back-link"
+      hx-get="/settings"
+      hx-target="#main"
+      hx-swap="innerHTML"
+      hx-push-url="true"
+    >
+      ← К настройкам
+    </a>
+  </div>
+
+  {% if error %}
+  <div
+    class="settings-error"
+    role="status"
+  >
+    {{ error }}
+  </div>
+  {% endif %}
+
+  <section
+    class="settings-section"
+    aria-labelledby="current-device-title"
+  >
+    <h3
+      id="current-device-title"
+      class="settings-section__title"
+    >
+      Это устройство
+    </h3>
+
+    {% for device in devices %}
+      {% if device.is_current %}
+      <article class="device-card device-card--current">
+        <div class="device-card__content">
+          <div class="device-card__title">
+            {{ device.user_agent }}
+          </div>
+
+          <div class="device-card__meta">
+            Текущий веб-сеанс
+          </div>
+
+          <div class="device-card__meta">
+            Активность: {{ device.last_seen_at_display }}
+          </div>
+
+          <div class="device-card__meta">
+            Вход: {{ device.created_at_display }}
+          </div>
+        </div>
+
+        <span class="device-card__current-badge">
+          Текущий
+        </span>
+      </article>
+      {% endif %}
+    {% endfor %}
+  </section>
+
+  <section
+    class="settings-section"
+    aria-labelledby="other-devices-title"
+  >
+    <h3
+      id="other-devices-title"
+      class="settings-section__title"
+    >
+      Другие устройства
+    </h3>
+
+    {% set other_devices = namespace(count=0) %}
+
+    {% for device in devices %}
+      {% if not device.is_current %}
+        {% set other_devices.count = other_devices.count + 1 %}
+
+        <article class="device-card">
+          <div class="device-card__content">
+            <div class="device-card__title">
+              {{ device.user_agent }}
+            </div>
+
+            <div class="device-card__meta">
+              Активность: {{ device.last_seen_at_display }}
+            </div>
+
+            <div class="device-card__meta">
+              Вход: {{ device.created_at_display }}
+            </div>
+          </div>
+
+          <button
+            type="button"
+            class="settings-card__action settings-card__action--danger"
+            hx-post="/settings/devices/{{ device.session_id }}/revoke"
+            hx-target="#settings-content"
+            hx-swap="outerHTML"
+            hx-confirm="Завершить веб-сеанс на этом устройстве?"
+            hx-disabled-elt="this"
+          >
+            Завершить
+          </button>
+        </article>
+      {% endif %}
+    {% endfor %}
+
+    {% if other_devices.count == 0 %}
+    <div class="settings-empty-state">
+      Других активных устройств нет.
+    </div>
+    {% endif %}
+  </section>
+
+  <section
+    class="settings-section"
+    aria-labelledby="all-devices-title"
+  >
+    <h3
+      id="all-devices-title"
+      class="settings-section__title"
+    >
+      Все устройства
+    </h3>
+
+    <div class="settings-card">
+      <div class="settings-card__content">
+        <div class="settings-card__title">
+          Выйти на всех устройствах
+        </div>
+
+        <p class="settings-card__description">
+          Завершит все веб-сеансы, включая текущий.
+          Для повторного входа потребуется новая ссылка из Telegram-бота.
+        </p>
+      </div>
+
+      <button
+        type="button"
+        class="settings-card__action settings-card__action--danger"
+        hx-post="/api/v1/auth/logout-all"
+        hx-swap="none"
+        hx-confirm="Выйти на всех устройствах? Все веб-сеансы будут завершены, включая текущий."
+        hx-disabled-elt="this"
+      >
+        Выйти везде
+      </button>
+    </div>
+  </section>
+</section>

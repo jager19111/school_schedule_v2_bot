@@ -290,3 +290,22 @@ class WebPermissionItem(BaseModel):
     adult_name: str
     can_manage: bool
     is_self: bool
+
+# ==============================================================
+# Настройки: web-сеансы и устройства
+# ==============================================================
+
+
+class WebDeviceSession(BaseModel):
+    """
+    Безопасное presentation-представление active web session.
+
+    Raw session token и session hash сюда никогда не попадают.
+    session_id нужен только для server-side revoke route.
+    """
+
+    session_id: int
+    user_agent: str
+    created_at_display: str
+    last_seen_at_display: str
+    is_current: bool

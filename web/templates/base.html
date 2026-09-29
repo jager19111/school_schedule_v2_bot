@@ -33,7 +33,25 @@
       hx-headers='{"X-CSRF-Token": "{{ csrf_token }}"}'>
 
 <header class="app-header">
-  <div class="header-title">{% block header %}Расписание{% endblock %}</div>
+  <div class="header-title">
+    {% block header %}Расписание{% endblock %}
+  </div>
+  
+  <a
+    href="/settings"
+    class="header-settings{% if nav == 'settings' %} active{% endif %}"
+    hx-get="/settings"
+    hx-target="#main"
+    hx-swap="innerHTML"
+    hx-push-url="true"
+    {% if nav == "settings" %}
+    aria-current="page"
+    {% endif %}
+    aria-label="Открыть настройки"
+  >
+    <span aria-hidden="true" class="header-settings__icon">⚙</span>
+    <span class="visually-hidden">Настройки</span>
+  </a>
 </header>
 
 <main class="app-content" id="main">

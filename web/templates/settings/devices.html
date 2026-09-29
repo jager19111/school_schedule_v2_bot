@@ -1,0 +1,16 @@
+  {# web/templates/settings/devices.html #}
+  {% extends "base.html" %}
+
+{% set nav = "settings" %}
+
+{% block title %}
+Активные устройства
+{% endblock %}
+
+{% block header %}
+Настройки
+{% endblock %}
+
+{% block content %}
+{% include "settings/_devices_content.html" %}
+{% endblock %}

@@ -93,16 +93,55 @@ class SSEConnectionManager:
         message = f"event: schedule_changed\ndata: {payload}\n\n"
         await self._broadcast(message)
 
-    async def _on_session_revoked(self, event: SessionRevoked) -> None:
-        """Logout/revoke: закрыть все SSE пользователя best effort (ТЗ 51.7).
-
-        Даже если close не сработал мгновенно, следующая revalidation
-        в stream-цикле завершит соединение, а повторный reconnect
-        получит 401 для отозванной сессии.
+    async def _on_session_revoked(
+        self,
+        event: SessionRevoked,
+    ) -> None:
         """
-        sessions = list(self._by_user.get(event.user_id, ()))
-        for session_id in sessions:
+        Закрывает SSE stream после server-side session revoke.
+
+        session_id is None:
+        - отозваны все web sessions пользователя;
+        - закрываем все SSE connections этого пользователя.
+
+        session_id задан:
+        - отозвана одна конкретная web session;
+        - закрываем SSE только этой session.
+
+        Даже если закрытие не сработало мгновенно, следующая session
+        revalidation в stream-цикле завершит connection, а reconnect
+        отозванной session получит 401.
+        """
+
+        if event.session_id is not None:
+            connection = self._by_session.get(
+                event.session_id
+            )
+
+            if connection is None:
+                return
+
+            # Защита от ошибочного internal event payload.
+            if connection.user_id != event.user_id:
+                logger.warning(
+                    "SSE session revoke user mismatch: "
+                    "session_id=%s event_user_id=%s connection_user_id=%s",
+                    event.session_id,
+                    event.user_id,
+                    connection.user_id,
+                )
+                return
+
+            await self._close(connection)
+            return
+
+        session_ids = list(
+            self._by_user.get(event.user_id, ())
+        )
+
+        for session_id in session_ids:
             connection = self._by_session.get(session_id)
+
             if connection is not None:
                 await self._close(connection)
 
