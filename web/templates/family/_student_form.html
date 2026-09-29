@@ -8,7 +8,9 @@
   <div class="day-subtitle">{{ student.name }}</div>
   {% endif %}
 
-  <form class="student-form"
+      <form
+        class="student-form"
+        data-live-refresh="defer"
         {% if mode == 'create' %}
         hx-post="/family/students"
         {% else %}

@@ -13,17 +13,32 @@
 (function () {
   "use strict";
 
-  var POLLING_FALLBACK_MS = 60000;
+  var POLLING_FALLBACK_MS = 5 * 60 * 1000;
 
   function isStandalone() {
     return window.matchMedia("(display-mode: standalone)").matches ||
       window.navigator.standalone === true;
   }
 
+  function hasProtectedLiveForm() {
+    return document.querySelector(
+      'form[data-live-refresh="defer"]'
+    ) !== null;
+  }
+
   function revalidateCurrentScreen() {
-    // Персональные страницы всегда network-only в SW. Reload безопаснее,
-    // чем ручное конструирование URL и не использует browser Date.
+    // Не обновляем background tab.
     if (document.visibilityState !== "visible") return;
+
+    /*
+    * Открытая форма важнее background schedule update.
+    *
+    * Не показываем banner, не уведомляем пользователя и не копим pending
+    * reload: после submit/cancel следующий server response или navigation
+    * всё равно даст fresh data.
+    */
+    if (hasProtectedLiveForm()) return;
+
     window.location.reload();
   }
 
@@ -62,7 +77,17 @@
     // Polling fallback (ТЗ 51.12): SSE недоступен — периодическое
     // обновление текущего экрана, пока вкладка видима.
     window.setInterval(function () {
-      if (document.visibilityState === "visible" && !sseConnected()) {
+      /*
+      * Polling нужен только для standalone PWA, где ОС может оборвать SSE
+      * в background. В browser tab SSE сам делает reconnect, а reload раз
+      * в минуту слишком агрессивен.
+      */
+      if (!isStandalone()) return;
+
+      if (
+        document.visibilityState === "visible"
+        && !sseConnected()
+      ) {
         revalidateCurrentScreen();
       }
     }, POLLING_FALLBACK_MS);
@@ -71,14 +96,30 @@
   // iOS/Android могут заморозить PWA в background, оборвать SSE и сменить
   // сеть. Возврат в foreground всегда запрашивает backend заново.
   document.addEventListener("visibilitychange", function () {
-    if (document.visibilityState === "visible") {
+    /*
+    * Foreground revalidation нужна прежде всего standalone PWA:
+    * iOS/Android могут заморозить приложение, оборвать SSE или сменить сеть.
+    *
+    * В обычной browser tab это слишком агрессивно:
+    * пользователь часто переключается между вкладками во время работы.
+    */
+    if (
+      isStandalone()
+      && document.visibilityState === "visible"
+    ) {
       revalidateCurrentScreen();
     }
   });
 
   window.addEventListener("pageshow", function (event) {
-    // Safari back-forward cache: страница может быть восстановлена устаревшей.
-    if (event.persisted) revalidateCurrentScreen();
+    /*
+    * BFCache revalidation полезна в standalone PWA.
+    * В обычном browser history пользователь ожидает увидеть сохранённый
+    * state страницы, особенно если вернулся к форме.
+    */
+    if (isStandalone() && event.persisted) {
+      revalidateCurrentScreen();
+    }
   });
 
   // Logout: удалить shell-кэши (там нет персональных данных — defence in depth).
