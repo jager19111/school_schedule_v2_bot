@@ -342,32 +342,43 @@ class ScheduleService:
         count_distinct_nums: bool,
     ) -> DaySummaryDTO:
         """
-        Сводка одного дня.
+        Сводка для week view.
 
-        Synthetic и NIKA-defined windows не являются уроками:
-        - не увеличивают lesson_count;
-        - не увеличивают exchange_count;
-        - не становятся extra classes.
+        lesson_count:
+        - учитывает реальные школьные уроки;
+        - не учитывает extra classes и synthetic/NIKA windows;
+        - не учитывает отменённые уроки.
 
-        count_distinct_nums=True:
-            class / room summary:
-            один physical lesson slot с несколькими groups = один урок.
-
-        count_distinct_nums=False:
-            teacher summary:
-            количество actual teacher entries, без windows.
+        exchange_count:
+        - считает changed / added / cancelled schedule slots;
+        - для class/room summary считает physical slots;
+        - для teacher summary считает entries.
         """
-        actual_lessons = [
+
+        schedule_lessons = [
             lesson
             for lesson in day_dto.lessons
-            if not lesson.is_extra and not lesson.is_window
+            if not lesson.is_extra
+            and not lesson.is_window
+        ]
+
+        active_lessons = [
+            lesson
+            for lesson in schedule_lessons
+            if not lesson.is_cancelled
+        ]
+
+        changed_lessons = [
+            lesson
+            for lesson in schedule_lessons
+            if lesson.is_exchange or lesson.is_cancelled
         ]
 
         if count_distinct_nums:
             lesson_count = len(
                 {
                     lesson.lesson_num
-                    for lesson in actual_lessons
+                    for lesson in active_lessons
                     if lesson.lesson_num is not None
                 }
             )
@@ -375,28 +386,24 @@ class ScheduleService:
             exchange_count = len(
                 {
                     lesson.lesson_num
-                    for lesson in actual_lessons
-                    if lesson.is_exchange
-                    and lesson.lesson_num is not None
+                    for lesson in changed_lessons
+                    if lesson.lesson_num is not None
                 }
             )
         else:
-            lesson_count = len(actual_lessons)
+            lesson_count = len(active_lessons)
+            exchange_count = len(changed_lessons)
 
-            exchange_count = sum(
-                1
-                for lesson in actual_lessons
-                if lesson.is_exchange
-            )
+        extra_count = sum(
+            1
+            for lesson in day_dto.lessons
+            if lesson.is_extra
+        )
 
         return DaySummaryDTO(
             date_iso=date_iso,
             lesson_count=lesson_count,
-            extra_count=sum(
-                1
-                for lesson in day_dto.lessons
-                if lesson.is_extra
-            ),
+            extra_count=extra_count,
             exchange_count=exchange_count,
         )
 
@@ -667,81 +674,147 @@ class ScheduleService:
         return room_obj.name if room_obj else fallback
 
     async def get_currently_free_rooms(self) -> tuple['FreeRoomsStatusDTO', dict[str, str]]:
-        """
-        Вычисляет свободные кабинеты на текущую минуту ИЛИ на следующий урок.
-        Возвращает сухие данные: (FreeRoomsStatusDTO, dict[room_id, room_name]).
-        """
-        now = self.time_service.get_now_base()
-        date_iso = now.date().isoformat()
-        current_time_obj = now.time()
+            """
+            Вычисляет свободные кабинеты на текущую минуту ИЛИ на следующий урок.
+            Возвращает сухие данные: (FreeRoomsStatusDTO, dict[room_id, room_name]).
+            """
+            now = self.time_service.get_now_base()
+            date_iso = now.date().isoformat()
+            current_time_obj = now.time()
 
-        metadata = await self.schedule_repo.get_metadata()
-        lessons_today = await self.schedule_repo.get_active_lessons_for_date(date_iso)
-        
-        # 1. Собираем уникальные интервалы уроков
-        slots_map = {}
-        for l in lessons_today:
-            if l.start_time and l.end_time:
-                slot = (l.start_time, l.end_time)
-                if slot not in slots_map and l.lesson_num:
-                    slots_map[slot] = l.lesson_num
-                
-        sorted_slots = sorted(list(slots_map.keys()), key=lambda x: self._parse_hhmm(x[0]))
-        
-        # 2. Ищем целевой слот
-        target_slot = None
-        target_num = None
-        is_break = False
-        
-        for start_str, end_str in sorted_slots:
-            try:
-                start_t = self._parse_hhmm(start_str)
-                end_t = self._parse_hhmm(end_str)
-                
-                if current_time_obj <= end_t:
-                    target_slot = (start_str, end_str)
-                    target_num = slots_map.get(target_slot)
-                    if current_time_obj < start_t:
-                        is_break = True
-                    break
-            except ValueError:
-                continue
-
-        # 3. Вычисляем занятые кабинеты
-        occupied_ids = set()
-        if target_slot:
-            t_start_obj = self._parse_hhmm(target_slot[0])
-            t_end_obj = self._parse_hhmm(target_slot[1])
+            metadata = await self.schedule_repo.get_metadata()
+            lessons_today = await self.schedule_repo.get_active_lessons_for_date(date_iso)
             
-            for l in lessons_today:
-                if not l.start_time or not l.end_time:
+            # 1. Собираем уникальные интервалы уроков
+            slots_map: dict[tuple[str, str], int] = {}
+            for lesson in lessons_today:
+                if not lesson.start_time or not lesson.end_time:
                     continue
+                slot = (
+                    lesson.start_time,
+                    lesson.end_time,
+                )
+                if slot not in slots_map and lesson.lesson_num is not None:
+                    slots_map[slot] = lesson.lesson_num
+
+            parsed_slots: list[
+                tuple[time, time, str, str, int | None]
+            ] = []
+            for (start_str, end_str), lesson_num in slots_map.items():
                 try:
-                    l_start = self._parse_hhmm(l.start_time)
-                    l_end = self._parse_hhmm(l.end_time)
-                    if l_start < t_end_obj and l_end > t_start_obj:
-                        occupied_ids.add(str(l.room_id))
+                    start_time_obj = self._parse_hhmm(start_str)
+                    end_time_obj = self._parse_hhmm(end_str)
                 except ValueError:
+                    continue
+                if end_time_obj <= start_time_obj:
+                    continue
+                parsed_slots.append(
+                    (
+                        start_time_obj,
+                        end_time_obj,
+                        start_str,
+                        end_str,
+                        lesson_num,
+                    )
+                )
+                
+            parsed_slots.sort(key=lambda item: item[0])
+            
+            # 2. Ищем целевой слот
+            occupancy_slot: tuple[str, str] | None = None
+            target_num: int | None = None
+            status_start_time: str | None = None
+            status_end_time: str | None = None
+            is_break = False
+            is_finished = False
+            
+            if not parsed_slots:
+                # Нет активных уроков на дату: школа закрыта.
+                pass
+            else:
+                first_start, _, _, _, _ = parsed_slots[0]
+                _, last_end, _, _, _ = parsed_slots[-1]
+                if current_time_obj < first_start:
+                    # До первого урока.
                     pass
+                elif current_time_obj >= last_end:
+                    # После последнего урока.
+                    is_finished = True
+                else:
+                    for index, (
+                        start_time_obj,
+                        end_time_obj,
+                        start_str,
+                        end_str,
+                        lesson_num,
+                    ) in enumerate(parsed_slots):
+                        if start_time_obj <= current_time_obj < end_time_obj:
+                            # Сейчас идёт урок.
+                            occupancy_slot = (start_str, end_str)
+                            target_num = lesson_num
+                            status_start_time = start_str
+                            status_end_time = end_str
+                            break
+                        if index + 1 >= len(parsed_slots):
+                            continue
+                        (
+                            next_start_time_obj,
+                            _,
+                            next_start_str,
+                            _,
+                            next_lesson_num,
+                        ) = parsed_slots[index + 1]
+                        if end_time_obj <= current_time_obj < next_start_time_obj:
+                            # Перемена: кабинеты считаем свободными до следующего урока,
+                            # но пользователю отображаем реальные границы перемены.
+                            occupancy_slot = (
+                                next_start_str,
+                                parsed_slots[index + 1][3],
+                            )
+                            target_num = next_lesson_num
+                            status_start_time = end_str
+                            status_end_time = next_start_str
+                            is_break = True
+                            break
 
-        # 4. Формируем DTO состояния
-        status_dto = FreeRoomsStatusDTO(
-            current_time_str=now.strftime("%H:%M"),
-            is_finished=not bool(target_slot),
-            is_break=is_break,
-            target_num=target_num,
-            start_time=target_slot[0] if target_slot else None,
-            end_time=target_slot[1] if target_slot else None
-        )
+            # 3. Вычисляем занятые кабинеты
+            occupied_ids = set()
+            if occupancy_slot:
+                target_start_obj = self._parse_hhmm(occupancy_slot[0])
+                target_end_obj = self._parse_hhmm(occupancy_slot[1])
+                for lesson in lessons_today:
+                    if not lesson.start_time or not lesson.end_time:
+                        continue
+                    try:
+                        lesson_start = self._parse_hhmm(lesson.start_time)
+                        lesson_end = self._parse_hhmm(lesson.end_time)
+                    except ValueError:
+                        continue
+                    if (
+                        lesson_start < target_end_obj
+                        and lesson_end > target_start_obj
+                        and lesson.room_id
+                    ):
+                        occupied_ids.add(str(lesson.room_id))
 
-        free_rooms = {}
-        for r_id, room_obj in metadata.rooms.items():
-            if str(r_id) not in occupied_ids and room_obj.name.strip() and room_obj.name != "—":
-                free_rooms[str(r_id)] = room_obj.name
+            # 4. Формируем DTO состояния
+            status_dto = FreeRoomsStatusDTO(
+                current_time_str=now.strftime("%H:%M"),
+                is_finished=is_finished,
+                is_break=is_break,
+                target_num=target_num,
+                start_time=status_start_time,
+                end_time=status_end_time,
+            )
 
-        sorted_free_rooms = {k: v for k, v in sorted(free_rooms.items(), key=lambda item: item[1])}
-        return status_dto, sorted_free_rooms
+            free_rooms = {}
+            for r_id, room_obj in metadata.rooms.items():
+                if str(r_id) not in occupied_ids and room_obj.name.strip() and room_obj.name != "—":
+                    free_rooms[str(r_id)] = room_obj.name
 
+            sorted_free_rooms = {k: v for k, v in sorted(free_rooms.items(), key=lambda item: item[1])}
+            return status_dto, sorted_free_rooms
+    
     async def get_daily_schedule_for_room(self, room_id: str, date_iso: str) -> DayScheduleDTO:
         """Сборка расписания кабинета в чистый DTO с дедубликацией подгрупп."""
         lessons = await self.schedule_repo.get_lessons_for_room(room_id, date_iso)

@@ -206,6 +206,64 @@ def _format_time(value: str) -> str:
 
     return normalized[:5]
 
+def _minutes_from_time(value: str) -> int | None:
+    """
+    '08:15' -> 495.
+
+    Возвращает None для неполного или некорректного времени,
+    чтобы mapper никогда не падал из-за display/source value.
+    """
+    normalized = _format_time(value)
+
+    try:
+        hours_text, minutes_text = normalized.split(":", 1)
+        hours = int(hours_text)
+        minutes = int(minutes_text)
+    except (TypeError, ValueError):
+        return None
+
+    if not (0 <= hours <= 23 and 0 <= minutes <= 59):
+        return None
+
+    return hours * 60 + minutes
+
+
+def _is_current_lesson(
+    lesson: LessonDTO,
+    *,
+    now_base: datetime | None,
+) -> bool:
+    """
+    Current state определяется только на сервере, в локальном времени школы.
+
+    Никакого datetime.now() внутри mapper: now_base приходит из TimeService
+    через route и остаётся полностью детерминированным в тестах.
+    """
+    if now_base is None:
+        return False
+
+    if lesson.date_iso != now_base.date().isoformat():
+        return False
+
+    if lesson.is_cancelled:
+        return False
+
+    if _lesson_kind(lesson) == LessonKind.WINDOW:
+        return False
+
+    start_minutes = _minutes_from_time(lesson.start_time)
+    end_minutes = _minutes_from_time(lesson.end_time)
+
+    if start_minutes is None or end_minutes is None:
+        return False
+
+    if end_minutes <= start_minutes:
+        return False
+
+    now_minutes = now_base.hour * 60 + now_base.minute
+
+    return start_minutes <= now_minutes < end_minutes
+
 def _display_number(lesson: LessonDTO) -> str | None:
     """
     User-facing lesson number prepared by ScheduleService.
@@ -505,7 +563,7 @@ def _slot_to_web(
     lessons: list[LessonDTO],
     *,
     view_mode: LessonViewMode,
-    is_current: bool,
+    now_base: datetime | None,
     show_profile_groups: bool,
 ) -> list[WebLesson]:
     if not lessons:
@@ -537,7 +595,10 @@ def _slot_to_web(
 
     for lesson_set in grouped_lesson_sets:
         first_entry_lesson = lesson_set[0]
-
+        slot_is_current = _is_current_lesson(
+            first_entry_lesson,
+            now_base=now_base,
+        )        
         entries = [
             lesson_entry_to_web(
                 lesson,
@@ -562,7 +623,7 @@ def _slot_to_web(
                 view_mode=view_mode,
                 kind=kind,
                 status=status,
-                is_current=is_current,
+                is_current=slot_is_current,
                 entries=entries,
                 shared_subject=_shared_subject(entries),
                 shared_room=_shared_room(entries),
@@ -593,8 +654,8 @@ def lessons_to_web(
     lessons: Iterable[LessonDTO],
     *,
     view_mode: LessonViewMode,
-    is_current: bool = False,
     show_profile_groups: bool,
+    now_base: datetime | None = None,
 ) -> list[WebLesson]:
     grouped: dict[
         tuple[
@@ -628,7 +689,7 @@ def lessons_to_web(
             _slot_to_web(
                 slot_lessons,
                 view_mode=view_mode,
-                is_current=is_current,
+                now_base=now_base,
                 show_profile_groups=show_profile_groups,
             )
         )
@@ -679,6 +740,7 @@ def day_to_web(
     *,
     target: ScheduleTarget,
     today_iso: str,
+    now_base: datetime,
     is_smart_today: bool = False,
     stale_warning: str | None = None,
 ) -> WebDaySchedule:
@@ -695,6 +757,7 @@ def day_to_web(
     lessons = lessons_to_web(
         dto.lessons,
         view_mode=view_mode,
+        now_base=now_base,
         show_profile_groups=show_profile_groups,
     )
     d = _parse(dto.date_iso)
@@ -740,6 +803,7 @@ def school_day_to_web(
     *,
     title: str,
     today_iso: str,
+    now_base: datetime,
     view_mode: LessonViewMode,
     stale_warning: str | None = None,
 ) -> WebDaySchedule:
@@ -747,6 +811,7 @@ def school_day_to_web(
     lessons = lessons_to_web(
         dto.lessons,
         view_mode=view_mode,
+        now_base=now_base,
         show_profile_groups=True,
     )
     d = _parse(dto.date_iso)

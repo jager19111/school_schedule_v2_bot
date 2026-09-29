@@ -276,12 +276,14 @@ async def _render_school_day(
         else title
     )
 
-    today_iso = _today_iso(request)
+    now_base = _time_service(request).get_now_base()
+    today_iso = now_base.date().isoformat()
 
     view = school_day_to_web(
         dto,
         title=header_context,
         today_iso=today_iso,
+        now_base=now_base,
         view_mode=view_mode,
         stale_warning=await _nika_stale_warning(request),
     )

@@ -674,12 +674,14 @@ async def dashboard(
             student_id=target.student_id,
         )
         
-    today_iso = _today_iso(request)
+    now_base = _time_service(request).get_now_base()
+    today_iso = now_base.date().isoformat()
 
     view = day_to_web(
         dto,
         target=target,
         today_iso=today_iso,
+        now_base=now_base,
         is_smart_today=True,
         stale_warning=await _nika_stale_warning(request),
     )
@@ -769,12 +771,14 @@ async def day_page(
             student_id=target.student_id,
         )
         
-    today_iso = _today_iso(request)
+    now_base = _time_service(request).get_now_base()
+    today_iso = now_base.date().isoformat()
 
     view = day_to_web(
         dto,
         target=target,
         today_iso=today_iso,
+        now_base=now_base,
         stale_warning=await _nika_stale_warning(request),
     )
 
