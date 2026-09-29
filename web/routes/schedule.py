@@ -29,6 +29,7 @@ from services.web_sessions_service import WebSessionContext
 from web.deps import require_family_allowed
 from web.mappers import (
     changes_to_web,
+    day_navigation_label,
     day_to_web,
     student_to_web,
     week_summary_to_web,
@@ -71,8 +72,9 @@ def _day_navigation(
     """
     Контекст навигации для дневного расписания.
 
-    Все ссылки рассчитываются на сервере. Шаблон и JavaScript не
-    выполняют арифметику с датами и не знают правил URL-роутинга.
+    URL и human-readable подписи соседних дней формируются на сервере.
+    JavaScript получает готовые data-day-label и не знает правил
+    календаря, локализации или формирования адресов.
     """
     selected_date = date.fromisoformat(selected_date_iso)
 
@@ -90,6 +92,12 @@ def _day_navigation(
         ),
         "next_url": (
             f"/schedule/day/{next_date_iso}"
+        ),
+        "previous_label": day_navigation_label(
+            previous_date_iso
+        ),
+        "next_label": day_navigation_label(
+            next_date_iso
         ),
         "today_url": "/",
         "is_today": selected_date_iso == today_iso,

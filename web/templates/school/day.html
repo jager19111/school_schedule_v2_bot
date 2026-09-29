@@ -25,7 +25,13 @@
 {% endblock %}
 
 {% block content %}
-  {% include "school/_day_content.html" %}
+  <div
+    class="day-swipe-stage"
+    data-day-swipe-stage
+  >
+    {% include "school/_day_content.html" %}
+    {% include "components/schedule/swipe_neighbor.html" %}
+  </div>
 {% endblock %}
 
 {% block extra_scripts %}

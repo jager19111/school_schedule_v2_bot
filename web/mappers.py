@@ -967,6 +967,25 @@ def prev_next_dates(date_iso: str) -> tuple[str, str]:
     return prev, nxt
 
 
+def day_navigation_label(date_iso: str) -> str:
+    """
+    Подпись соседнего дня для server-rendered day navigation.
+
+    Используется только presentation layer:
+    - route кладёт значение в day_navigation;
+    - Jinja рендерит data-day-label;
+    - JavaScript только читает готовую строку.
+
+    JavaScript не вычисляет и не форматирует даты.
+    """
+    d = _parse(date_iso)
+
+    return (
+        f"{_WEEKDAYS_FULL[d.weekday()].capitalize()}, "
+        f"{d.day} {_MONTHS_GEN[d.month - 1]}"
+    )
+
+
 # Phase 3: «Школа»
 
 

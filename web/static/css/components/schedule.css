@@ -329,7 +329,7 @@
 .htmx-request.htmx-indicator { 
   display: flex !important; 
   opacity: 0;
-  animation: show-skeleton-delay 0s 0.15s forwards; 
+  animation: show-skeleton-delay 0s 0.5s forwards; 
 }
 
 @keyframes show-skeleton-delay {
@@ -1032,4 +1032,257 @@
  */
 .app-content:has(.day-schedule) {
   touch-action: pan-y;
+}
+/* ==========================================================================
+   16. INTERACTIVE DAY SWIPE STAGE
+   ========================================================================== */
+
+/*
+ * main становится flex-container только на full day screen.
+ *
+ * Это позволяет stage занимать свободную рабочую область main:
+ * - при коротком расписании — до нижней navigation;
+ * - при длинном расписании — по высоте real content.
+ *
+ * .day-schedule искусственно не растягивается только ради gesture area.
+ */
+.app-content:has([data-day-swipe-stage]) {
+  display: flex;
+  flex-direction: column;
+}
+
+
+/*
+ * Stable visual viewport interactive day navigation.
+ *
+ * HTMX заменяет #day-content, но stage остаётся на месте.
+ * Header и bottom navigation находятся вне stage и не двигаются.
+ */
+.day-swipe-stage {
+  position: relative;
+  flex: 1 0 auto;
+  min-width: 0;
+  overflow: hidden;
+  isolation: isolate;
+}
+
+
+/*
+ * Current panel.
+ *
+ * transform управляется только schedule.js через requestAnimationFrame.
+ * transition включается только после pointerup/pointercancel.
+ */
+.day-swipe-stage > .day-schedule {
+  position: relative;
+  z-index: 1;
+  min-width: 0;
+  background: var(--bg);
+  will-change: transform;
+}
+
+
+/*
+ * Neighbour panel всегда существует в DOM, но до horizontal drag
+ * находится за левой или правой границей stage.
+ */
+.day-swipe-neighbor {
+  position: absolute;
+  z-index: 2;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding: 0;
+  overflow: hidden;
+  background: var(--bg);
+  opacity: 0;
+  pointer-events: none;
+  will-change: transform, opacity;
+}
+
+
+/*
+ * Neighbour становится visible только после horizontal intent.
+ * До этого пользователь не видит hidden skeleton.
+ */
+.day-swipe-stage.is-day-swipe-active .day-swipe-neighbor {
+  opacity: 1;
+}
+
+
+/*
+ * Во время direct manipulation transition отсутствует:
+ * content должен следовать за пальцем 1:1.
+ */
+.day-swipe-stage.is-day-swipe-dragging > .day-schedule,
+.day-swipe-stage.is-day-swipe-dragging .day-swipe-neighbor {
+  transition: none;
+}
+
+
+/*
+ * После release:
+ * - cancel возвращает current panel на место;
+ * - commit доводит current/neighbor panel до соседних позиций.
+ * - вемя задержки появления страницы после свайпа
+ */
+.day-swipe-stage.is-day-swipe-settling > .day-schedule,
+.day-swipe-stage.is-day-swipe-settling .day-swipe-neighbor {
+  transition: transform 100ms ease-out, opacity 80ms ease-out;
+}
+
+
+.day-swipe-neighbor__header {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 69px;
+  padding: 2px 50px 7px;
+  text-align: center;
+}
+
+
+.day-swipe-neighbor__title {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--lesson-content-color);
+  font-size: clamp(18px, 4.8vw, 20px);
+  font-weight: 800;
+  line-height: 1.05;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+
+.day-swipe-neighbor__status {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1;
+}
+
+
+.day-swipe-neighbor__skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 0;
+}
+
+
+.day-swipe-neighbor__skeleton .skel-card {
+  min-height: 70px;
+}
+
+
+@media (prefers-reduced-motion: reduce) {
+  .day-swipe-stage.is-day-swipe-settling > .day-schedule,
+  .day-swipe-stage.is-day-swipe-settling .day-swipe-neighbor {
+    transition: none;
+  }
+}
+
+/* ==========================================================================
+   17. SKELETON-ONLY NEIGHBOUR CHROME
+   ========================================================================== */
+
+/*
+ * Neighbour panel повторяет vertical geometry canonical day:
+ *
+ * current:
+ * child selector
+ * date navigation
+ * Today slot
+ *
+ * neighbour:
+ * visual child selector copy
+ * adjacent date
+ * «Загрузка расписания»
+ *
+ * Поэтому при HTMX swap lesson list не прыгает вверх/вниз.
+ */
+.day-swipe-neighbor__chrome {
+  min-width: 0;
+}
+
+
+/*
+ * Визуальная child panel строится JavaScript cloneNode(true).
+ * Она не интерактивна: родитель .day-swipe-neighbor уже имеет
+ * pointer-events: none.
+ */
+.day-swipe-neighbor__students:empty {
+  min-height: 0;
+}
+
+
+/*
+ * Static span arrows используют exact same visual geometry, что
+ * canonical a.day-navigation__arrow.
+ */
+.day-swipe-neighbor .day-navigation__arrow {
+  cursor: default;
+}
+
+
+/*
+ * Skeleton не виден сразу при drag.
+ *
+ * Он становится visible только после delayed HTMX loading state.
+ * Это устраняет короткое мелькание skeleton на быстрых ответах.
+ */
+.day-swipe-neighbor__skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 0;
+  visibility: hidden;
+  opacity: 0;
+  transition: opacity 120ms ease-out;
+}
+
+
+.day-swipe-stage.is-day-swipe-slow-loading
+.day-swipe-neighbor__skeleton {
+  visibility: visible;
+  opacity: 1;
+}
+
+
+/*
+ * Пока skeleton hidden, neighbour остаётся clean blank area ниже
+ * date header. Это intentional fast-navigation state.
+ */
+.day-swipe-neighbor__skeleton .skel-card {
+  min-height: 70px;
+}
+
+
+@media (prefers-reduced-motion: reduce) {
+  .day-swipe-neighbor__skeleton {
+    transition: none;
+  }
+}
+
+/*
+ * Сохраняет exact grid column geometry day navigation,
+ * но не показывает вторую пару декоративных arrows.
+ */
+.day-swipe-neighbor__arrow-spacer {
+  display: block;
+  width: 44px;
+  min-width: 44px;
+  min-height: 44px;
+}
+
+
+@media (min-width: 431px) {
+  .day-swipe-neighbor__arrow-spacer {
+    width: 44px;
+    min-width: 44px;
+    min-height: 44px;
+  }
 }

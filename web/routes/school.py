@@ -6,11 +6,6 @@
 # - свободные кабинеты сейчас;
 # - поиск по справочникам с группировкой результатов.
 #
-# Только существующие сервисные методы (верифицированы по 588700f):
-# get_classes_list / get_teachers_list / get_rooms_list,
-# get_daily_schedule_for_class/teacher/room,
-# get_class/teacher/room_week_schedule_summary,
-# get_smart_room_target_date, get_currently_free_rooms.
 # Никакого SQL в routes и дублирования domain-логики.
 
 from __future__ import annotations
@@ -24,6 +19,7 @@ from fastapi.responses import HTMLResponse
 from services.web_sessions_service import WebSessionContext
 from web.deps import require_family_allowed
 from web.mappers import (
+    day_navigation_label,
     free_rooms_to_web,
     school_day_to_web,
     school_items_to_web,
@@ -67,8 +63,8 @@ def _school_day_navigation(
     """
     Навигация между датами school schedule.
 
-    URL строятся на сервере: шаблон не содержит арифметики с датами
-    и не зависит от Jinja-фильтров prev_date / next_date.
+    URL и подписи соседних дней формируются на сервере. Шаблон получает
+    готовые labels, а JavaScript не работает с календарной арифметикой.
     """
     selected_date = date.fromisoformat(selected_date_iso)
 
@@ -88,6 +84,12 @@ def _school_day_navigation(
         ),
         "next_url": (
             f"{root_url}/day/{next_date_iso}"
+        ),
+        "previous_label": day_navigation_label(
+            previous_date_iso
+        ),
+        "next_label": day_navigation_label(
+            next_date_iso
         ),
         "today_url": root_url,
         "is_today": selected_date_iso == today_iso,

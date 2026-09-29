@@ -1,0 +1,114 @@
+
+  {# web/templates/components/schedule/swipe_neighbor.html #}
+{#
+  Визуальная соседняя panel для interactive day swipe.
+
+  Это НЕ второе расписание:
+  - здесь нет реальных lesson cards;
+  - здесь нет рабочих navigation controls;
+  - здесь нет child selector actions;
+  - panel всегда pointer-events: none.
+
+  Содержимое panel:
+  - visual copy current child selector;
+  - соседняя дата из data-day-label;
+  - статус «Загрузка расписания»;
+  - skeleton, который становится visible только при slow HTMX request.
+#}
+
+<aside
+  class="day-swipe-neighbor"
+  data-day-swipe-neighbor
+  aria-hidden="true"
+>
+  <div class="day-swipe-neighbor__chrome day-schedule">
+    <div
+      class="day-swipe-neighbor__students"
+      data-day-swipe-neighbor-students
+    ></div>
+
+    <header class="day-header">
+      <nav
+        class="day-navigation"
+        aria-hidden="true"
+      >
+        <span
+          class="day-swipe-neighbor__arrow-spacer"
+          aria-hidden="true"
+        ></span>
+
+        <div class="day-navigation__heading">
+          <h2
+            class="day-title"
+            data-day-swipe-neighbor-label
+          ></h2>
+
+          <div class="day-navigation__today-slot">
+            <span class="day-navigation__today-status">
+              Загрузка расписания
+            </span>
+          </div>
+        </div>
+
+        <span
+          class="day-swipe-neighbor__arrow-spacer"
+          aria-hidden="true"
+        ></span>
+      </nav>
+    </header>
+  </div>
+
+  <div
+    class="day-swipe-neighbor__skeleton"
+    data-day-swipe-neighbor-skeleton
+    aria-hidden="true"
+  >
+    <article class="skel-card">
+      <div class="skel-time-col">
+        <span class="skel-block skel-time"></span>
+        <span class="skel-block skel-num"></span>
+      </div>
+
+      <div class="skel-body-col">
+        <div class="skel-row-main">
+          <span class="skel-block skel-subject"></span>
+          <span class="skel-block skel-room"></span>
+        </div>
+
+        <span class="skel-block skel-teacher"></span>
+      </div>
+    </article>
+
+    <article class="skel-card">
+      <div class="skel-time-col">
+        <span class="skel-block skel-time"></span>
+        <span class="skel-block skel-num"></span>
+      </div>
+
+      <div class="skel-body-col">
+        <div class="skel-row-main">
+          <span class="skel-block skel-subject"></span>
+          <span class="skel-block skel-room"></span>
+        </div>
+
+        <span class="skel-block skel-teacher"></span>
+      </div>
+    </article>
+
+    <article class="skel-card">
+      <div class="skel-time-col">
+        <span class="skel-block skel-time"></span>
+        <span class="skel-block skel-num"></span>
+      </div>
+
+      <div class="skel-body-col">
+        <div class="skel-row-main">
+          <span class="skel-block skel-subject"></span>
+          <span class="skel-block skel-room"></span>
+        </div>
+
+        <span class="skel-block skel-teacher"></span>
+      </div>
+    </article>
+  </div>
+</aside>
