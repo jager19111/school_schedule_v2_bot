@@ -868,24 +868,6 @@ class ScheduleService:
             class_name=room_name,
         )
 
-    async def get_smart_room_target_date(self, room_id: str) -> str:
-        """
-        Умная дата для кабинета.
-        Для кабинетов пустой день — это полезная информация ("свободен весь день"),
-        поэтому мы не ищем следующий день с уроками, а просто откидываем вечер и выходные.
-        """
-        now = self.time_service.get_now_base()
-        target = now
-        
-        # Если время после 19:00, переключаем на завтра
-        if target.hour >= 19:
-            target += timedelta(days=1)
-            
-        # Если попадаем на воскресенье, переключаем на понедельник
-        if target.isoweekday() == 7:
-            target += timedelta(days=1)
-            
-        return target.date().isoformat()
     # ==========================================================
     # Smart date: возвращает ГОТОВЫЙ день (без повторного запроса)
     # ==========================================================
@@ -897,119 +879,56 @@ class ScheduleService:
         group_id: str,
         student_id: int | None = None,
     ) -> DayScheduleDTO:
-        """
-        Ближайший актуальный день ученика.
-
-        Проба дней идёт по сырым LessonInstance (дёшево), полный
-        конвейер DTO запускается один раз — для выбранного дня.
-        Правила: сегодня с незаконченными занятиями -> сегодня;
-        иначе первый непустой день в пределах 8 дней.
-        """
-        today = self.time_service.get_now_base().date()
-        now_time = self.time_service.get_now_base().time()
-
-        first_lessons: List[LessonInstance] = []
-        first_extras: List[ExtraClassItemDTO] = []
-        metadata = await self.schedule_repo.get_metadata()
-
-        for offset in range(SMART_DATE_HORIZON_DAYS):
-            date = today + timedelta(days=offset)
-            date_iso = date.isoformat()
-
-            lessons = self._filter_by_groups(
-                await self.schedule_repo.get_lessons_for_class(class_id=class_id, date_iso=date_iso),
-                group_id, metadata.groups
-            )
-            extra_items = await self._fetch_extra_items(student_id, date_iso)
-
-            if offset == 0:
-                first_lessons, first_extras = lessons, extra_items
-
-            if not lessons and not extra_items:
-                continue
-
-            if date != today:
-                return await self._assemble_day_schedule(lessons=lessons, date_iso=date_iso, extra_items=extra_items, origin="student", class_id=class_id, group_id=group_id)
-
-            end_times = [self._parse_hhmm(l.end_time) for l in lessons if l.end_time] + [self._parse_hhmm(e.time_end) for e in extra_items if e.time_end]
-            if not end_times: continue
-
-            if now_time <= max(end_times):
-                return await self._assemble_day_schedule(lessons=lessons, date_iso=date_iso, extra_items=extra_items, origin="student", class_id=class_id, group_id=group_id)
-
-        return await self._assemble_day_schedule(lessons=first_lessons, date_iso=today.isoformat(), extra_items=first_extras, origin="student", class_id=class_id, group_id=group_id)
-    
-    
-    async def get_smart_day_schedule_for_teacher(self, *, teacher_id: str) -> DayScheduleDTO:
-        """Ближайший актуальный день учителя."""
-        today = self.time_service.get_now_base().date()
-        now_time = self.time_service.get_now_base().time()
-        first_lessons: List[LessonInstance] = []
-
-        for offset in range(SMART_DATE_HORIZON_DAYS):
-            date = today + timedelta(days=offset)
-            date_iso = date.isoformat()
-            lessons = await self.schedule_repo.get_lessons_for_teacher(teacher_id=teacher_id, date_iso=date_iso)
-
-            if offset == 0:
-                first_lessons = lessons
-
-            if not self._has_actual_resource_lessons(lessons):
-                continue
-
-            if date != today:
-                return await self._assemble_day_schedule(
-                    lessons=lessons,
-                    date_iso=date_iso,
-                    origin="teacher",
-                    resource_key=f"teacher-{teacher_id}",
-                    window_label="Свободное время",
-                )
-
-            end_times = [self._parse_hhmm(l.end_time) for l in lessons if l.end_time]
-            if not end_times: continue
-
-            if now_time <= max(end_times):
-                return await self._assemble_day_schedule(
-                    lessons=lessons,
-                    date_iso=date_iso,
-                    origin="teacher",
-                    resource_key=f"teacher-{teacher_id}",
-                    window_label="Свободное время",
-                )
-
-        return await self._assemble_day_schedule(
-                    lessons=lessons,
-                    date_iso=date_iso,
-                    origin="teacher",
-                    resource_key=f"teacher-{teacher_id}",
-                    window_label="Свободное время",
-                )
-    
-
-    async def get_smart_target_date(
-        self,
-        *,
-        class_id: str,
-        group_id: str,
-        student_id: int | None = None,
-    ) -> str:
-        """Совместимость: только дата (день собирается один раз)."""
-        return (
-            await self.get_smart_day_schedule_for_student(
+        async def fetch_day(date_iso: str) -> DayScheduleDTO:
+            return await self.get_daily_schedule_for_student(
                 class_id=class_id,
                 group_id=group_id,
+                date_iso=date_iso,
                 student_id=student_id,
             )
-        ).date_iso
 
-    async def get_smart_teacher_target_date(self, *, teacher_id: str) -> str:
-        """Совместимость: только дата."""
-        return (
-            await self.get_smart_day_schedule_for_teacher(
+        return await self._resolve_smart_day(fetch_day)
+
+
+    async def get_smart_day_schedule_for_teacher(
+        self,
+        *,
+        teacher_id: str,
+    ) -> DayScheduleDTO:
+        async def fetch_day(date_iso: str) -> DayScheduleDTO:
+            return await self.get_daily_schedule_for_teacher(
                 teacher_id=teacher_id,
+                date_iso=date_iso,
             )
-        ).date_iso
+
+        return await self._resolve_smart_day(fetch_day)
+
+
+    async def get_smart_class_target_date(
+        self,
+        class_id: str,
+    ) -> str:
+        async def fetch_day(date_iso: str) -> DayScheduleDTO:
+            return await self.get_daily_schedule_for_class(
+                class_id=class_id,
+                date_iso=date_iso,
+            )
+
+        dto = await self._resolve_smart_day(fetch_day)
+        return dto.date_iso
+
+    async def get_smart_room_target_date(
+        self,
+        room_id: str,
+    ) -> str:
+        async def fetch_day(date_iso: str) -> DayScheduleDTO:
+            return await self.get_daily_schedule_for_room(
+                room_id=room_id,
+                date_iso=date_iso,
+            )
+
+        dto = await self._resolve_smart_day(fetch_day)
+        return dto.date_iso
 
     async def get_smart_week_start(self) -> str:
         """
@@ -1028,6 +947,112 @@ class ScheduleService:
         monday = target_date - timedelta(days=target_date.isoweekday() - 1)
         return monday.date().isoformat()
 
+    @staticmethod
+    def _has_real_activities(
+        day_dto: DayScheduleDTO,
+    ) -> bool:
+        """
+        Есть ли на дату реальное занятие.
+        Используется только для Sunday policy.
+        Окна, методические слоты и отменённые уроки не удерживают
+        personal/school smart opening на воскресенье.
+        """
+        return any(
+            not lesson.is_window
+            and not lesson.is_methodological
+            and not lesson.is_cancelled
+            for lesson in day_dto.lessons
+        )
+
+    @staticmethod
+    def _is_day_finished_for_target(
+        day_dto: DayScheduleDTO,
+        *,
+        now_time: time,
+    ) -> bool:
+        """
+        True только если сегодня есть реальные занятия и последнее из них
+        уже закончилось.
+        Пустой будний день не переключает пользователя вперёд.
+        """
+        end_times: list[time] = []
+
+        for lesson in day_dto.lessons:
+            if getattr(lesson, 'is_window', False):
+                continue
+            if lesson.is_methodological:
+                continue
+            if lesson.is_cancelled:
+                continue
+            if not lesson.end_time:
+                continue
+
+            try:
+                end_times.append(
+                    ScheduleService._parse_hhmm(lesson.end_time)
+                )
+            except ValueError:
+                continue
+
+        return bool(end_times) and now_time >= max(end_times)
+
+    async def _resolve_sunday_policy(
+        self,
+        *,
+        candidate_dto: DayScheduleDTO,
+        fetch_day, # Type hint is tricky here due to circular dependencies/generics, keeping it generic or using a Callable if defined. Assuming DayFetcher is defined elsewhere or using Callable[[str], Awaitable[DayScheduleDTO]]
+    ) -> DayScheduleDTO:
+        """
+        Только smart/default opening policy.
+        Explicit /day/{date} routes сюда не вызывают.
+        """
+        candidate_date = self.time_service.date_from_iso(
+            candidate_dto.date_iso
+        )
+
+        if candidate_date.isoweekday() != 7:
+            return candidate_dto
+
+        if self._has_real_activities(candidate_dto):
+            return candidate_dto
+
+        monday_iso = (
+            candidate_date + timedelta(days=1)
+        ).isoformat()
+
+        return await fetch_day(monday_iso)
+
+    async def _resolve_smart_day(
+        self,
+        fetch_day: DayFetcher,
+    ) -> DayScheduleDTO:
+        """
+        Общая smart-date policy.
+
+        Только для default opening.
+        Exact date routes никогда не используют этот метод.
+        """
+        now = self.time_service.get_now_base()
+        today_iso = now.date().isoformat()
+
+        today_dto = await fetch_day(today_iso)
+
+        if self._is_day_finished_for_target(
+            today_dto,
+            now_time=now.time(),
+        ):
+            tomorrow_iso = (
+                now.date() + timedelta(days=1)
+            ).isoformat()
+
+            candidate_dto = await fetch_day(tomorrow_iso)
+        else:
+            candidate_dto = today_dto
+
+        return await self._resolve_sunday_policy(
+            candidate_dto=candidate_dto,
+            fetch_day=fetch_day,
+        )
     # ==========================================================
     # Неделя: полные расписания и сводные
     # ==========================================================

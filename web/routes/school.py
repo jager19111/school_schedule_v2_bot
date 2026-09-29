@@ -223,11 +223,20 @@ async def school_item_today(
 ):
     """День по умолчанию: сегодня (кабинет — smart date из сервиса)."""
     _kind(kind_name)
-    if kind_name == "room":
-        # Существующая smart-логика кабинета (после 19:00/вс -> след. день).
-        date_iso = await _schedule_service(request).get_smart_room_target_date(item_id)
+    if kind_name == "class":
+        date_iso = await _schedule_service(
+            request
+        ).get_smart_class_target_date(item_id)
+
+    elif kind_name == "teacher":
+        date_iso = await _schedule_service(
+            request
+        ).get_smart_teacher_target_date(item_id)
+
     else:
-        date_iso = _today_iso(request)
+        date_iso = await _schedule_service(
+            request
+        ).get_smart_room_target_date(item_id)
     return await _render_school_day(request, context, kind_name, item_id, date_iso)
 
 
