@@ -31,22 +31,8 @@ from web.deps import (
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-_AUTH_PAGE = """<!DOCTYPE html>
-<html lang="ru">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Вход — School Schedule</title>
-</head>
-<body class="auth-page">
-<main class="auth-card">
-  <h1>📅 School Schedule</h1>
-  <p id="status">Открываем веб-версию…</p>
-</main>
-<script src="/static/js/auth.js"></script>
-</body>
-</html>
-"""
+def _templates(request: Request):
+    return request.app.state.templates
 
 def _session_ref(context) -> str:
     # Корреляция без раскрытия токена (OWASP: salted/partial hash).
@@ -84,9 +70,21 @@ class WebSessionItem(BaseModel):
 
 
 @router.get("/auth", response_class=HTMLResponse)
-async def auth_page() -> HTMLResponse:
-    """Страница входа: работает и в Safari, и во встроенном браузере Telegram."""
-    return HTMLResponse(_AUTH_PAGE)
+async def auth_page(
+    request: Request,
+) -> HTMLResponse:
+    """
+    Public neutral auth gate.
+
+    Никакой пользовательской информации и никакой проверки magic token
+    на GET: raw token находится только во fragment URL и не уходит
+    на сервер. exchange выполняется только в auth.js.
+    """
+    return _templates(request).TemplateResponse(
+        request,
+        "auth/login.html",
+        {},
+    )
 
 
 @router.post("/api/v1/auth/exchange", response_model=ExchangeResponse)

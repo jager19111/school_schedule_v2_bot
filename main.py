@@ -777,6 +777,8 @@ async def main():
                 id="web_auth_cleanup_job",
                 replace_existing=True,
                 coalesce=True,
+                max_instances=1,
+                misfire_grace_time=900,
             )
 
         scheduler.start()

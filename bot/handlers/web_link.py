@@ -7,6 +7,7 @@ from aiogram import Bot, F, Router
 from aiogram.types import CallbackQuery
 
 from bot import callbacks
+from bot.utils.ui_renderer import UIRenderer
 from config import Config
 from services.profiles_service import ProfileService
 from services.web_sessions_service import WebSessionsService
@@ -40,10 +41,9 @@ async def open_web_version(
         base_url=config.WEB_PUBLIC_URL,
     )
     message = await callback.message.answer(
-        "🌐 <b>Вход в веб-версию</b>\n\n"
-        "Ссылка одноразовая и действует 5 минут. "
-        "Никому её не пересылайте.\n\n"
-        f"{link}",
+        UIRenderer.render_web_login_instructions(
+            login_link=link,
+        ),
         parse_mode="HTML",
         protect_content=True,
     )

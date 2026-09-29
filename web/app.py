@@ -99,42 +99,58 @@ def create_web_app(
     )
 
     @app.exception_handler(StarletteHTTPException)
-    async def custom_http_exception_handler(request: Request, exc: StarletteHTTPException):
-        is_page_request = not request.url.path.startswith("/api/") and not request.headers.get("hx-request")
-        
-        # 1. Заглушка для браузера. Отдаем со статусом 200 OK, чтобы не ломать кнопку установки PWA!
-        if is_page_request and exc.status_code in (401, 403):
-            title = "Требуется вход" if exc.status_code == 401 else "Доступ закрыт"
-            msg = "Пожалуйста, откройте Telegram-бота и нажмите кнопку «Веб-версия» для входа." if exc.status_code == 401 else "Режим закрытого тестирования. Ваша семья не в списке."
-            
-            return HTMLResponse(
-                content=f"""<!DOCTYPE html>
-                <html lang="ru">
-                <head>
-                    <meta charset="utf-8">
-                    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-                    <meta name="theme-color" content="#1a56db">
-                    <title>{title}</title>
-                </head>
-                <body style="font-family: -apple-system, BlinkMacSystemFont, sans-serif; text-align: center; padding: 40px 20px; background: #f9fafb; color: #111827; margin: 0;">
-                    <div style="max-width: 400px; margin: 40px auto; background: white; padding: 30px; border-radius: 16px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1);">
-                        <h2 style="color: #ef4444; margin-top: 0;">🔒 {title}</h2>
-                        <p style="font-size: 1.1rem; color: #4b5563;">{exc.detail}</p>
-                        <p style="margin-top: 24px; font-size: 0.95rem; color: #6b7280; line-height: 1.5;">{msg}</p>
-                    </div>
-                </body>
-                </html>""",
-                # ВАЖНО: Принудительно 200, чтобы Chrome/Safari предложили установить приложение
-                status_code=200
+    async def custom_http_exception_handler(
+        request: Request,
+        exc: StarletteHTTPException,
+    ):
+        """
+        Разделяет browser navigation и programmatic requests.
+
+        Browser navigation:
+        - 401 -> /auth;
+        - 403 -> спокойная access-denied page.
+
+        API / HTMX:
+        - strict JSON 401/403;
+        - без HTML redirect, чтобы client мог сам корректно обработать ошибку.
+        """
+        is_api_request = request.url.path.startswith("/api/")
+        is_htmx_request = request.headers.get("HX-Request") == "true"
+        is_page_request = not is_api_request and not is_htmx_request
+
+        if is_page_request and exc.status_code == 401:
+            return RedirectResponse(
+                url="/auth",
+                status_code=303,
+                headers={
+                    "Cache-Control": "no-store",
+                },
             )
-            
-        # 2. Для API и внутренних запросов HTMX отдаем строгие ошибки (401/403)
+
+        if is_page_request and exc.status_code == 403:
+            templates = request.app.state.templates
+
+            return templates.TemplateResponse(
+                request,
+                "auth/access_denied.html",
+                {},
+                status_code=403,
+                headers={
+                    "Cache-Control": "no-store",
+                },
+            )
+
         return JSONResponse(
             status_code=exc.status_code,
-            content={"detail": exc.detail},
-            headers={"Content-Type": "application/json; charset=utf-8"}
+            content={
+                "detail": exc.detail,
+            },
+            headers={
+                "Content-Type": "application/json; charset=utf-8",
+                "Cache-Control": "no-store",
+            },
         )
-        
+            
     # --- app.state: зависимости, доступные всем route'ам ---
     app.state.web_settings = web_settings
     app.state.sessions_service = sessions_service

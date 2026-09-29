@@ -39,7 +39,7 @@ _LOGIN_TOKEN_BYTES = 32  # >= 32 random bytes по ТЗ
 _SESSION_TOKEN_BYTES = 32
 
 _LOGIN_TOKEN_TTL = timedelta(minutes=5)
-_SESSION_IDLE_TTL = timedelta(days=90)
+_SESSION_IDLE_TTL = timedelta(days=30)
 _SESSION_ABSOLUTE_TTL = timedelta(days=365)
 # last_seen_at обновляется не чаще одного раза в ~5 минут (решение Phase 0).
 _TOUCH_THRESHOLD = timedelta(minutes=5)

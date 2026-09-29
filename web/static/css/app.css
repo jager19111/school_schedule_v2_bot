@@ -281,3 +281,89 @@ body {
 .time-row input { min-height: 44px; padding: 8px; font-size: 16px;
   border: 1px solid var(--border); border-radius: 10px; background: var(--card); color: var(--text-main); }
 .form-hint { font-size: 13px; color: var(--text-muted); margin-bottom: 8px; }
+
+/* ==========================================================================
+   AUTH GATE
+   ========================================================================== */
+
+.auth-page {
+  display: grid;
+  min-height: 100vh;
+  min-height: 100dvh;
+  place-items: center;
+  padding:
+    calc(24px + env(safe-area-inset-top))
+    20px
+    calc(24px + env(safe-area-inset-bottom));
+  background:
+    radial-gradient(
+      circle at top,
+      #eff6ff 0,
+      var(--bg) 52%
+    );
+}
+
+.auth-card {
+  width: min(100%, 430px);
+  padding: 28px 22px;
+  text-align: center;
+  background: var(--card);
+  border: 1px solid #dbeafe;
+  border-radius: 22px;
+  box-shadow: 0 12px 36px rgb(15 23 42 / 0.10);
+}
+
+.auth-card__icon {
+  display: grid;
+  width: 52px;
+  height: 52px;
+  place-items: center;
+  margin: 0 auto 14px;
+  background: #eff6ff;
+  border-radius: 16px;
+  font-size: 28px;
+}
+
+.auth-card__title {
+  margin: 0;
+  color: var(--text);
+  font-size: 21px;
+  line-height: 1.2;
+}
+
+.auth-card__status {
+  margin: 12px 0 0;
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 1.45;
+}
+
+.auth-card__help {
+  margin-top: 18px;
+  padding: 16px;
+  text-align: left;
+  color: var(--text);
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.auth-card__help p {
+  margin: 0;
+}
+
+.auth-card__help ol {
+  margin: 10px 0;
+  padding-left: 22px;
+}
+
+.auth-card__help li + li {
+  margin-top: 5px;
+}
+
+.auth-card__note {
+  color: var(--muted);
+  font-size: 13px;
+}
