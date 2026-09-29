@@ -85,7 +85,7 @@ def _text_or_none(value: str | None) -> str | None:
         return None
 
     normalized = value.strip()
-    if not normalized or normalized in {"—", "Нет занятий"}:
+    if not normalized or normalized in {"—", "нет занятий", "Нет занятий"}:
         return None
 
     return normalized
@@ -698,7 +698,6 @@ def day_to_web(
         show_profile_groups=show_profile_groups,
     )
     d = _parse(dto.date_iso)
-    d = _parse(dto.date_iso)
 
     class_name = dto.class_name or ""
     group_name = _group_or_none(dto.group_name) or ""
@@ -1005,34 +1004,6 @@ def school_items_to_web(
         result,
         key=lambda item: item.name,
     )
-
-
-def _search_school_items(
-    items: Dict[str, str],
-    *,
-    query: str,
-    limit: int,
-) -> list[WebSchoolItem]:
-    normalized_query = query.strip().lower()
-
-    matches = [
-        WebSchoolItem(
-            id=str(item_id),
-            name=str(item_name),
-        )
-        for item_id, item_name in items.items()
-        if str(item_name).strip()
-        and str(item_name) != "—"
-        and (
-            normalized_query in str(item_id).lower()
-            or normalized_query in str(item_name).lower()
-        )
-    ]
-
-    return sorted(
-        matches,
-        key=lambda item: item.name,
-    )[:limit]
 
 
 def _search_school_items(

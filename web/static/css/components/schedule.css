@@ -1286,3 +1286,40 @@
     min-height: 44px;
   }
 }
+
+/* ==========================================================================
+   19. COMPACT MULTI-CHILD SCHEDULE SELECTOR
+   ========================================================================== */
+
+/*
+ * Day screens начинают content ближе к fixed app header.
+ *
+ * Не влияет на другие разделы: Семья, Допы, Школа, формы.
+ * Neighbour panel находится внутри same day swipe stage и сохраняет
+ * identical vertical geometry.
+ */
+.app-content:has([data-day-swipe-stage]) {
+  padding-top: 5px;
+}
+
+
+/*
+ * Chips показываются только при students.length > 1.
+ *
+ * Сохраняем wrap behavior: это надёжнее horizontal carousel и не
+ * конфликтует с interactive day swipe.
+ */
+.day-schedule .student-switch {
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+
+/*
+ * Neighbour chrome использует .day-schedule context, поэтому same
+ * spacing применяется к visual child clone автоматически.
+ */
+.day-swipe-neighbor__chrome.day-schedule .student-switch {
+  gap: 10px;
+  margin-bottom: 8px;
+}

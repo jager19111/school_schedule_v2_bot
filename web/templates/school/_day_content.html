@@ -91,13 +91,30 @@
 
   <div class="htmx-request-hide">
     {% if not day.lessons %}
-      <div class="empty-day">
+      <section
+        class="empty-day"
+        aria-labelledby="empty-day-title"
+      >
+        <div class="empty-day__icon" aria-hidden="true">○</div>
+
         {% if kind == "room" %}
-          🏖 Кабинет свободен весь день
+          <h3 id="empty-day-title" class="empty-day__title">
+            Кабинет свободен
+          </h3>
+
+          <p class="empty-day__text">
+            На этот день занятий в кабинете нет.
+          </p>
         {% else %}
-          Нет занятий
+          <h3 id="empty-day-title" class="empty-day__title">
+            Занятий нет
+          </h3>
+
+          <p class="empty-day__text">
+            На эту дату расписание пустое.
+          </p>
         {% endif %}
-      </div>
+      </section>
     {% else %}
       <section
         class="lessons-list"

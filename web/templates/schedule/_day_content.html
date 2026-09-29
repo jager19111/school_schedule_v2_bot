@@ -21,8 +21,6 @@
     </button>
     {% endfor %}
   </div>
-  {% elif students %}
-  <div class="student-switch single">{{ students[0].name }}</div>
   {% endif %}
 
   <header class="day-header">
@@ -103,7 +101,20 @@
   {# ДОБАВЛЕНО: Класс htmx-request-hide скроет этот блок во время загрузки следующего дня #}
   <div class="htmx-request-hide">
     {% if not day.lessons %}
-      <div class="empty-day">Нет занятий 🎉</div>
+      <section
+        class="empty-day"
+        aria-labelledby="empty-day-title"
+      >
+        <div class="empty-day__icon" aria-hidden="true">○</div>
+
+        <h3 id="empty-day-title" class="empty-day__title">
+          Уроков нет
+        </h3>
+
+        <p class="empty-day__text">
+          На этот день занятий нет.
+        </p>
+      </section>
     {% else %}
       <section class="lessons-list" aria-label="Расписание на {{ day.date_display }}">
         {% for lesson in day.lessons %}
