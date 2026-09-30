@@ -12,13 +12,18 @@
 
 "use strict";
 
-const CACHE_VERSION = "school-schedule-shell-v4";
+
+const CACHE_VERSION = "school-schedule-shell-v5";
+
 const SHELL_ASSETS = [
   "/offline.html",
   "/manifest.webmanifest",
+
   "/static/css/app.css",
   "/static/js/htmx.min.js",
-  "/static/js/app.js",
+  "/static/js/htmx-ext-sse.min.js?v=2",
+  "/static/js/app.js?v=5",
+
   "/static/icons/icon-192.png",
   "/static/icons/icon-512.png",
   "/static/icons/icon-maskable-512.png",

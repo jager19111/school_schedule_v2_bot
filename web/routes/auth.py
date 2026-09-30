@@ -135,39 +135,43 @@ async def logout(
     sessions: WebSessionsService = Depends(get_sessions_service),
 ) -> LogoutResponse:
     """
-    Выход с текущего web device.
+    Logout только current web device.
 
-    Отзывается только current server-side session.
-    Другие устройства того же пользователя остаются active.
+    Другие sessions и browser tabs на других устройствах остаются active.
+    Browser tabs именно current session получат SessionRevoked с её ID.
     """
     raw = request.cookies.get(
         SESSION_COOKIE_NAME,
         "",
     )
 
-    await sessions.revoke_session(
+    revoked = await sessions.revoke_session(
         raw_token=raw,
         user_id=context.user_id,
     )
 
+    # Cookie удаляем всегда: даже если session уже была revoked другим
+    # запросом, browser не должен продолжать отправлять старый cookie.
     response.delete_cookie(
         SESSION_COOKIE_NAME,
         path="/",
     )
 
-    bus = getattr(
-        request.app.state,
-        "event_bus",
-        None,
-    )
-
-    if bus is not None:
-        await bus.publish(
-            SessionRevoked(
-                user_id=context.user_id,
-                session_id=context.session_id,
-            )
+    # Event публикуется только при фактическом server-side revoke.
+    if revoked:
+        bus = getattr(
+            request.app.state,
+            "event_bus",
+            None,
         )
+
+        if bus is not None:
+            await bus.publish(
+                SessionRevoked(
+                    user_id=context.user_id,
+                    session_id=context.session_id,
+                )
+            )
 
     if request.headers.get("HX-Request") == "true":
         response.headers["HX-Redirect"] = "/auth"
@@ -176,19 +180,36 @@ async def logout(
 
 @router.post("/api/v1/auth/logout-all", response_model=LogoutResponse)
 async def logout_all(
-    request: Request,  # ИСПРАВЛЕНО: Добавлен request
+    request: Request,
     response: Response,
     context: WebSessionContext = Depends(require_family_allowed),
     sessions: WebSessionsService = Depends(get_sessions_service),
 ) -> LogoutResponse:
-    """Logout на всех устройствах."""
-    await sessions.revoke_all_sessions(user_id=context.user_id)
-    
-    bus = getattr(request.app.state, "event_bus", None)
-    if bus is not None:
-        await bus.publish(SessionRevoked(user_id=context.user_id))
-        
-    response.delete_cookie(SESSION_COOKIE_NAME, path="/")
+    """Logout на всех web devices current user."""
+    revoked_count = await sessions.revoke_all_sessions(
+        user_id=context.user_id,
+    )
+
+    response.delete_cookie(
+        SESSION_COOKIE_NAME,
+        path="/",
+    )
+
+    if revoked_count > 0:
+        bus = getattr(
+            request.app.state,
+            "event_bus",
+            None,
+        )
+
+        if bus is not None:
+            await bus.publish(
+                SessionRevoked(
+                    user_id=context.user_id,
+                    session_id=None,
+                )
+            )
+
     return LogoutResponse(ok=True)
 
 

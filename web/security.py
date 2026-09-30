@@ -133,9 +133,17 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         "exchange": (0.2, 10),        # ~12/мин, burst 10
         "mutation": (1.0, 60),        # 60/мин
         "get": (5.0, 300),            # 300/мин
-        "sse_establish": (0.1, 10),   # только установка соединения
-    }
 
+        # SSE: manager уже ограничивает число одновременно active streams
+        # до MAX_CONNECTIONS_PER_USER=5. Здесь ограничиваем только
+        # reconnect storm / abusive establishment attempts.
+        #
+        # 1 token/sec + initial burst 30:
+        # - normal reload/HTMX navigation не ломает live updates;
+        # - 5 tabs могут безопасно заново подключиться после deployment;
+        # - бесконечный reconnect storm всё равно ограничен.
+        "sse_establish": (1.0, 30),
+    }
     def __init__(self, app) -> None:
         super().__init__(app)
         self._buckets: Dict[Tuple[str, str], _TokenBucket] = {}

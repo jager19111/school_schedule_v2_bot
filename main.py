@@ -80,6 +80,7 @@ from services.notifications.dispatcher import NotificationDispatcher
 
 from bot.middlewares.antiflood import AntiFloodMiddleware
 from bot.middlewares.error_middleware import GlobalErrorMiddleware
+from web.events import ApplicationEventBus
 
 from bot.handlers import web_link
 
@@ -117,6 +118,7 @@ async def refresh_schedule_cache(
     notification_service: NotificationService,
     tz: ZoneInfo,
     config: Config,
+    web_event_bus: ApplicationEventBus | None = None,
 ) -> None:
     # Админ-алерт: парсер NIKA работает в обход TLS-проверки.
     # Флаг обновляется фетчером при каждой попытке; проверка в начале
@@ -218,6 +220,30 @@ async def refresh_schedule_cache(
         result.lesson_count,
     )
 
+    # Web live updates: только после того, как refresh_if_changed()
+    # успешно завершился. К этому моменту schedule cache уже committed.
+    #
+    # ScheduleChanged — это invalidation-only signal: он не передаёт
+    # расписание, семейные данные или Telegram user IDs.
+    if result.schedule_changed and web_event_bus is not None:
+        try:
+            from web.events import ScheduleChanged
+
+            await web_event_bus.publish(
+                ScheduleChanged(
+                    revision=web_event_bus.next_revision(),
+                )
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            # Успешный refresh cache не должен откатываться или считаться
+            # failed из-за best-effort live invalidation.
+            logger.exception(
+                "NIKA refresh succeeded, but SSE schedule invalidation "
+                "could not be published."
+            )
+            
     if not result.schedule_changed:
         return
 
@@ -378,6 +404,7 @@ async def main():
     # --- ДОБАВЛЕНО (Phase 1: Web Layer Variables) ---
     web_server = None
     web_task = None
+    web_app = None
     web_sessions_service = None
     web_event_bus = None
     
@@ -558,7 +585,7 @@ async def main():
                 reload=False,
                 proxy_headers=True,
                 forwarded_allow_ips=config.WEB_TRUSTED_PROXY_IPS,
-                timeout_graceful_shutdown=10,
+                timeout_graceful_shutdown=20,
                 log_level="info",
             )
             web_server = uvicorn.Server(uvicorn_config)
@@ -633,6 +660,7 @@ async def main():
             notification_service=notification_service,
             tz=tz,
             config=config,
+            web_event_bus=web_event_bus,
         )
 
         # 8. Настройка планировщика задач (APScheduler)
@@ -709,6 +737,7 @@ async def main():
                 "notification_service": notification_service,
                 "tz": tz,
                 "config": config,
+                "web_event_bus": web_event_bus,
             },
             id="nika_refresh",
             replace_existing=True,
@@ -840,15 +869,34 @@ async def main():
         # Порядок: web_server -> scheduler -> браузер -> БД -> HTTP-сессия -> aiogram
         
         # --- ДОБАВЛЕНО (Phase 1: Web Shutdown) ---
+        # Сначала завершаем SSE streams, пока Uvicorn и FastAPI ещё живы.
+        # Иначе Uvicorn ждёт бесконечные StreamingResponse до истечения
+        # timeout_graceful_shutdown и затем отменяет ASGI tasks принудительно.
+        if web_app is not None:
+            try:
+                web_app.state.sse_manager.close_all()
+                logger.info(
+                    "SSE manager closed before Uvicorn shutdown."
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to close SSE manager before shutdown."
+                )
+
+        # Отдаём event loop один tick: generators получают None sentinel,
+        # выходят из queue.get(), заходят в finally и unregister().
+        await asyncio.sleep(0)
+
         if web_server is not None:
             web_server.should_exit = True
+
         if web_task is not None:
             try:
                 await asyncio.wait_for(web_task, timeout=15)
             except asyncio.TimeoutError:
                 logger.warning("Web server shutdown timed out")
 
-        if scheduler is not None:
+        if scheduler is not None and scheduler.running:
             scheduler.shutdown(wait=False)
         # Корректное завершение Chromium — осиротевшие
         # chrome-процессы после каждого деплоя недопустимы.

@@ -2,15 +2,12 @@
 #
 # SSE endpoint Phase 7 (ТЗ 51).
 #
-# - Аутентификация при установке соединения (require_family_allowed).
-# - Периодическая server-side revalidation сессии (~60 сек): открытая
-#   вкладка не продлевает idle session бесконечно (ТЗ 51.6).
-# - Heartbeat (SSE comment) — без пользовательских данных (ТЗ 51.11).
-# - logout/revoke закрывает соединение через SessionRevoked (ТЗ 51.7).
-# - Персональные данные через SSE не передаются: только
-#   {\"revision\": N} (ТЗ 51.4).
-# - Rate limiting для SSE — отдельная политика establishment rate
-#   (Phase 1, RateLimitMiddleware.SSE_PREFIX), не RPS-bucket.
+# - Аутентификация при установке соединения.
+# - Периодическая server-side revalidation сессии (~60 сек).
+# - Heartbeat каждые 15 сек.
+# - logout/revoke закрывает соединение через SessionRevoked.
+# - персональные данные через SSE не передаются.
+# - rate-limit SSE establishment применяется внешним middleware.
 
 from __future__ import annotations
 
@@ -20,17 +17,30 @@ import logging
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from services.web_sessions_service import SESSION_COOKIE_NAME, WebSessionContext
-from web.deps import get_sessions_service, require_family_allowed
-from web.sse import HEARTBEAT_INTERVAL, SESSION_REVALIDATION_EVERY
+from services.web_sessions_service import (
+    SESSION_COOKIE_NAME,
+    WebSessionContext,
+)
+from web.deps import require_family_allowed
+from web.sse import (
+    HEARTBEAT_INTERVAL,
+    SESSION_REVALIDATION_EVERY,
+)
+
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
+
 _SSE_HEADERS = {
     "Cache-Control": "no-store",
-    "X-Accel-Buffering": "no",  # nginx proxy_buffering off (ТЗ 51.10)
+    "X-Accel-Buffering": "no",
 }
+
+_SESSION_REVALIDATION_INTERVAL = (
+    HEARTBEAT_INTERVAL
+    * SESSION_REVALIDATION_EVERY
+)
 
 
 def _sse_manager(request: Request):
@@ -43,12 +53,19 @@ async def schedule_stream(
     context: WebSessionContext = Depends(require_family_allowed),
 ):
     manager = _sse_manager(request)
+
     connection = manager.try_register(
-        session_id=context.session_id, user_id=context.user_id
+        session_id=context.session_id,
+        user_id=context.user_id,
     )
+
     if connection is None:
         return JSONResponse(
-            {"detail": "Слишком много открытых обновлений расписания."},
+            {
+                "detail": (
+                    "Слишком много открытых обновлений расписания."
+                ),
+            },
             status_code=429,
             headers=_SSE_HEADERS,
         )
@@ -57,32 +74,80 @@ async def schedule_stream(
     raw_cookie = request.cookies.get(SESSION_COOKIE_NAME, "")
 
     async def event_stream():
+        """
+        SSE loop.
+
+        Важно: next_revalidation_at считается по monotonic loop.time(),
+        а не по количеству heartbeat timeout. Иначе частые ScheduleChanged
+        могли бы навсегда отложить server-side session revalidation.
+        """
+        loop = asyncio.get_running_loop()
+        next_heartbeat_at = loop.time() + HEARTBEAT_INTERVAL
+        next_revalidation_at = (
+            loop.time()
+            + _SESSION_REVALIDATION_INTERVAL
+        )
+
         try:
-            ticks = 0
             while True:
+                now = loop.time()
+                wait_seconds = max(
+                    0.0,
+                    next_heartbeat_at - now,
+                )
+
+                timed_out = False
+                message = None
+
                 try:
                     message = await asyncio.wait_for(
-                        connection.queue.get(), timeout=HEARTBEAT_INTERVAL
+                        connection.queue.get(),
+                        timeout=wait_seconds,
                     )
                 except asyncio.TimeoutError:
-                    # Клиент ушёл — корректно завершаем (FastAPI не
-                    # уведомляет генератор сам; нужен явный poll).
+                    timed_out = True
+
+                now = loop.time()
+
+                # Проверка session не должна зависеть от того, приходят ли
+                # schedule events чаще heartbeat interval.
+                if now >= next_revalidation_at:
+                    resolved = await sessions_service.resolve_session(
+                        raw_cookie,
+                    )
+
+                    if resolved is None:
+                        break
+
+                    next_revalidation_at = (
+                        now
+                        + _SESSION_REVALIDATION_INTERVAL
+                    )
+
+                if timed_out:
                     if await request.is_disconnected():
                         break
 
-                    ticks += 1
-                    # Revalidation сессии ~раз в минуту (ТЗ 51.6):
-                    # touch_session внутри не чаще 1 раза в 5 минут.
-                    if ticks % SESSION_REVALIDATION_EVERY == 0:
-                        resolved = await sessions_service.resolve_session(raw_cookie)
-                        if resolved is None:
-                            break  # сессия истекла или отозвана
                     yield ": heartbeat\n\n"
+                    next_heartbeat_at = now + HEARTBEAT_INTERVAL
                     continue
 
                 if message is None:
-                    break  # закрытие сервером (logout/revoke/close_all)
+                    # Server-side close: logout/revoke/queue overflow/shutdown.
+                    break
+
                 yield message
+
+                # При непрерывном event traffic timeout может не случаться.
+                # Heartbeat всё равно должен появляться регулярно, а также
+                # служит точкой проверки disconnected client.
+                if now >= next_heartbeat_at:
+                    if await request.is_disconnected():
+                        break
+
+                    yield ": heartbeat\n\n"
+                    next_heartbeat_at = now + HEARTBEAT_INTERVAL
+
         finally:
             manager.unregister(connection)
 
@@ -98,8 +163,9 @@ async def live_revalidate(
     context: WebSessionContext = Depends(require_family_allowed),
 ):
     """
-    Лёгкий 204-эндпоинт для #live-monitor: htmx выполняет этот GET при
-    событии sse:schedule_changed; app.js по завершении запроса делает
-    revalidate текущего экрана. Персональных данных не содержит.
+    Лёгкий authenticated endpoint для #live-monitor.
+
+    htmx вызывает его после schedule_changed; app.js после 204 выполняет
+    reload current page. Endpoint не возвращает расписание или user data.
     """
     return None

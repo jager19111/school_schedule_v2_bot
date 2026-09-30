@@ -23,7 +23,12 @@ from fastapi.templating import Jinja2Templates
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.staticfiles import StaticFiles
 
-from fastapi.responses import RedirectResponse, JSONResponse, HTMLResponse
+from fastapi.responses import (
+    HTMLResponse,
+    JSONResponse,
+    RedirectResponse,
+    Response,
+)
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from fastapi import Request
 
@@ -117,7 +122,27 @@ def create_web_app(
         is_api_request = request.url.path.startswith("/api/")
         is_htmx_request = request.headers.get("HX-Request") == "true"
         is_page_request = not is_api_request and not is_htmx_request
-
+        # P7.3: server-authoritative forced logout.
+        #
+        # session_revoked event запускает HTMX GET
+        # /api/v1/live/revalidate. К этому моменту session уже отозвана
+        # server-side, dependency возвращает 401 ещё до вызова route.
+        #
+        # Обычный JSON 401 не заставляет HTMX надёжно сменить page.
+        # HX-Redirect на successful control response гарантирует full
+        # navigation к public auth gate.
+        if (
+            request.url.path == "/api/v1/live/revalidate"
+            and is_htmx_request
+            and exc.status_code == 401
+        ):
+            return Response(
+                status_code=200,
+                headers={
+                    "HX-Redirect": "/auth",
+                    "Cache-Control": "no-store",
+                },
+            )
         if is_page_request and exc.status_code == 401:
             return RedirectResponse(
                 url="/auth",

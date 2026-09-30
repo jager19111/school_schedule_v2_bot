@@ -17,11 +17,11 @@
   
   {# ПРАВИЛЬНЫЙ ПОРЯДОК ПОДКЛЮЧЕНИЯ CSS #}
 <!-- app.css дает оболочку, system font и навигацию -->
-  <link rel="stylesheet" href="{{ url_for('static', path='css/app.css') }}?v=5">
+  <link rel="stylesheet" href="{{ url_for('static', path='css/app.css') }}?v=6">
   <!-- schedule.css является ЕДИНСТВЕННЫМ владельцем .lesson-card -->
-  <link rel="stylesheet" href="{{ url_for('static', path='css/components/schedule.css') }}?v=5">
+  <link rel="stylesheet" href="{{ url_for('static', path='css/components/schedule.css') }}?v=6">
    <!-- extra.css добавляет footer ниже card. --> 
-  <link rel="stylesheet" href="{{ url_for('static', path='css/components/extra.css') }}?v=1"
+  <link rel="stylesheet" href="{{ url_for('static', path='css/components/extra.css') }}?v=2"
 >
   {% block extra_head %}{% endblock %}
 </head>
@@ -29,8 +29,13 @@
    ТЗ 51.5: SSE-подключение через htmx-ext-sse (reconnect c exponential backoff).
    Элемент с sse-connect держит класс htmx-request, пока соединение открыто
    (используется app.js как health-check для polling fallback, ТЗ 51.12). #}
-<body hx-ext="sse" sse-connect="/api/v1/schedule/stream"
-      hx-headers='{"X-CSRF-Token": "{{ csrf_token }}"}'>
+<body
+  {% if csrf_token is defined and csrf_token %}
+    hx-ext="sse"
+    sse-connect="/api/v1/schedule/stream"
+    hx-headers='{"X-CSRF-Token": "{{ csrf_token }}"}'
+  {% endif %}
+>
 
 <header class="app-header">
   <div class="header-title">
@@ -79,15 +84,21 @@
 
 {# ТЗ 51.4: SSE invalidation signal -> htmx GET (лёгкий 204) ->
    app.js revalidate текущего экрана (authenticated reload). #}
-<div id="live-monitor" hidden
-     hx-trigger="sse:schedule_changed"
-     hx-get="/api/v1/live/revalidate" hx-swap="none"
-     aria-hidden="true"></div>
+{% if csrf_token is defined and csrf_token %}
+  <div
+    id="live-monitor"
+    hidden
+    hx-trigger="sse:schedule_changed, sse:session_revoked"
+    hx-get="/api/v1/live/revalidate"
+    hx-swap="none"
+    aria-hidden="true"
+  ></div>
+{% endif %}
 
 {# Все production JS локальны (ТЗ 48.1). #}
 <script src="/static/js/htmx.min.js"></script>
-<script src="/static/js/htmx-ext-sse.min.js"></script>
-<script src="/static/js/app.js?v=4"></script>
+<script src="/static/js/htmx-ext-sse.min.js?v=2"></script>
+<script src="/static/js/app.js?v=5"></script>
 {% block extra_scripts %}{% endblock %}
 </body>
 </html>

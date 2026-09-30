@@ -2,13 +2,16 @@
 #
 # SSEConnectionManager (Phase 7, ТЗ 51.6-51.7).
 #
-# Правила (решения Phase 0 + ТЗ):
+# Правила:
 # - каждый процесс один, connections хранятся in-memory;
-# - максимальное число SSE connections на пользователя (anti-abuse);
-# - закрытые connections обязательно удаляются (нет утечек памяти);
-# - invalidation signal НЕ содержит персональных данных;
-# - SessionRevoked -> закрыть все SSE пользователя best effort;
-# - жизненный цикл SSE НЕ связан с NotificationService.
+# - максимум пять SSE connections на пользователя;
+# - одна web session может иметь несколько browser tabs;
+# - каждая connection имеет уникальный connection_id;
+# - очереди bounded: slow client не может бесконечно копить RAM;
+# - закрытые connections удаляются из всех индексов;
+# - ScheduleChanged не содержит персональных данных;
+# - SessionRevoked закрывает одну session либо все sessions пользователя;
+# - жизненный цикл SSE не связан с NotificationService.
 
 from __future__ import annotations
 
@@ -16,28 +19,39 @@ import asyncio
 import json
 import logging
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import Dict, Optional
 
 from web.events import ApplicationEventBus, ScheduleChanged, SessionRevoked
 
+
 logger = logging.getLogger(__name__)
 
-# Heartbeat каждые 15 секунд; revalidation сессии ~раз в минуту.
+
+# Heartbeat каждые 15 секунд; revalidation session — примерно раз в минуту.
 HEARTBEAT_INTERVAL = 15.0
 SESSION_REVALIDATION_EVERY = 4  # 4 * 15s = 60s
+
+# ScheduleChanged — invalidation-only event. Очередь больше этого размера
+# не имеет ценности: slow client должен reconnect/reload, а не копить RAM.
+SSE_QUEUE_MAXSIZE = 32
 
 
 @dataclass(slots=True)
 class SSEConnection:
-    """Одно SSE-соединение, привязанное к web session (ТЗ 51.6)."""
+    """
+    Одно SSE-соединение.
 
+    connection_id идентифицирует конкретный HTTP/SSE stream.
+    session_id идентифицирует web session и может иметь несколько tabs.
+    """
+
+    connection_id: int
     session_id: int
     user_id: int
-    queue: "asyncio.Queue[Optional[str]]" = field(default_factory=asyncio.Queue)
-
-    @property
-    def closed(self) -> bool:
-        return self.queue is None
+    queue: asyncio.Queue[Optional[str]] = field(
+        default_factory=lambda: asyncio.Queue(maxsize=SSE_QUEUE_MAXSIZE),
+    )
+    closed: bool = False
 
 
 class SSEConnectionManager:
@@ -45,12 +59,20 @@ class SSEConnectionManager:
 
     def __init__(self, event_bus: ApplicationEventBus) -> None:
         self._bus = event_bus
-        # session_id -> connection; user_id -> set(session_id)
-        self._by_session: Dict[int, SSEConnection] = {}
-        self._by_user: Dict[int, set] = {}
+
+        # connection_id -> connection
+        self._by_connection: Dict[int, SSEConnection] = {}
+
+        # session_id -> множество connection_id.
+        # Одна сессия может быть открыта в нескольких browser tabs.
+        self._connection_ids_by_session: Dict[int, set[int]] = {}
+
+        # user_id -> множество connection_id.
+        self._connection_ids_by_user: Dict[int, set[int]] = {}
+
+        self._next_connection_id = 0
         self._closed = False
 
-        # Подписки: события шины -> действия над соединениями.
         self._bus.subscribe(ScheduleChanged, self._on_schedule_changed)
         self._bus.subscribe(SessionRevoked, self._on_session_revoked)
 
@@ -58,119 +80,284 @@ class SSEConnectionManager:
     # Регистрация/удаление
     # ==========================================================
 
-    def try_register(self, *, session_id: int, user_id: int) -> Optional[SSEConnection]:
-        """None — превышен лимит соединений пользователя (anti-abuse)."""
-        active = self._by_user.setdefault(user_id, set())
-        if len(active) >= self.MAX_CONNECTIONS_PER_USER:
+    def try_register(
+        self,
+        *,
+        session_id: int,
+        user_id: int,
+    ) -> Optional[SSEConnection]:
+        """
+        Регистрирует конкретный SSE stream.
+
+        None означает:
+        - web server уже остановлен; либо
+        - пользователь превысил лимит connections.
+
+        Лимит считается по реальным connection_id, а не по session_id:
+        две вкладки одного browser учитываются как две SSE connections.
+        """
+        if self._closed:
             logger.warning(
-                "SSE connection limit reached: user_id=%s", user_id
+                "SSE registration rejected during shutdown: user_id=%s",
+                user_id,
             )
             return None
-        connection = SSEConnection(session_id=session_id, user_id=user_id)
-        self._by_session[session_id] = connection
-        active.add(session_id)
+
+        active_connection_ids = self._connection_ids_by_user.get(
+            user_id,
+            set(),
+        )
+
+        if len(active_connection_ids) >= self.MAX_CONNECTIONS_PER_USER:
+            logger.warning(
+                "SSE connection limit reached: user_id=%s",
+                user_id,
+            )
+            return None
+
+        self._next_connection_id += 1
+
+        connection = SSEConnection(
+            connection_id=self._next_connection_id,
+            session_id=session_id,
+            user_id=user_id,
+        )
+
+        self._by_connection[connection.connection_id] = connection
+
+        self._connection_ids_by_session.setdefault(
+            session_id,
+            set(),
+        ).add(connection.connection_id)
+
+        self._connection_ids_by_user.setdefault(
+            user_id,
+            set(),
+        ).add(connection.connection_id)
+
+        logger.debug(
+            "SSE registered: connection_id=%s session_id=%s "
+            "user_id=%s active_for_user=%s total_active=%s",
+            connection.connection_id,
+            connection.session_id,
+            connection.user_id,
+            len(self._connection_ids_by_user.get(user_id, set())),
+            self.active_count(),
+        )
+        
         return connection
 
     def unregister(self, connection: SSEConnection) -> None:
-        """Обязательная очистка: соединение закрыто (нет утечек памяти)."""
-        self._by_session.pop(connection.session_id, None)
-        active = self._by_user.get(connection.user_id)
-        if active is not None:
-            active.discard(connection.session_id)
-            if not active:
-                self._by_user.pop(connection.user_id, None)
+        """
+        Удаляет connection из всех indexes.
+
+        Метод идемпотентен: его безопасно вызвать после _close() и затем
+        повторно из finally SSE generator.
+        """
+        stored = self._by_connection.pop(
+            connection.connection_id,
+            None,
+        )
+
+        if stored is None:
+            return
+
+        session_connections = self._connection_ids_by_session.get(
+            stored.session_id,
+        )
+        if session_connections is not None:
+            session_connections.discard(stored.connection_id)
+
+            if not session_connections:
+                self._connection_ids_by_session.pop(
+                    stored.session_id,
+                    None,
+                )
+
+        user_connections = self._connection_ids_by_user.get(
+            stored.user_id,
+        )
+        if user_connections is not None:
+            user_connections.discard(stored.connection_id)
+
+            if not user_connections:
+                self._connection_ids_by_user.pop(
+                    stored.user_id,
+                    None,
+                )
 
     def active_count(self) -> int:
-        return len(self._by_session)
+        """Количество реально отслеживаемых SSE streams."""
+        return len(self._by_connection)
 
     # ==========================================================
     # Реакция на события шины
     # ==========================================================
 
-    async def _on_schedule_changed(self, event: ScheduleChanged) -> None:
-        """Минимальный invalidation signal всем открытым экранам (ТЗ 51.4)."""
-        payload = json.dumps({"revision": event.revision})
-        message = f"event: schedule_changed\ndata: {payload}\n\n"
-        await self._broadcast(message)
+    async def _on_schedule_changed(
+        self,
+        event: ScheduleChanged,
+    ) -> None:
+        """
+        Отправляет всем открытым экранам минимальный invalidation signal.
+
+        Payload намеренно содержит только revision. Расписание, family data,
+        user ID, class/group и permissions в SSE не передаются.
+        """
+        payload = json.dumps(
+            {"revision": event.revision},
+            separators=(",", ":"),
+        )
+        message = (
+            "event: schedule_changed\n"
+            f"data: {payload}\n\n"
+        )
+        self._broadcast(message)
 
     async def _on_session_revoked(
         self,
         event: SessionRevoked,
     ) -> None:
         """
-        Закрывает SSE stream после server-side session revoke.
-
-        session_id is None:
-        - отозваны все web sessions пользователя;
-        - закрываем все SSE connections этого пользователя.
+        Завершает streams после server-side revoke.
 
         session_id задан:
-        - отозвана одна конкретная web session;
-        - закрываем SSE только этой session.
+        - закрываются все browser tabs конкретной web session.
 
-        Даже если закрытие не сработало мгновенно, следующая session
-        revalidation в stream-цикле завершит connection, а reconnect
-        отозванной session получит 401.
+        session_id is None:
+        - закрываются все SSE connections пользователя.
         """
-
         if event.session_id is not None:
-            connection = self._by_session.get(
-                event.session_id
+            connection_ids = list(
+                self._connection_ids_by_session.get(
+                    event.session_id,
+                    set(),
+                )
             )
 
-            if connection is None:
-                return
+            for connection_id in connection_ids:
+                connection = self._by_connection.get(connection_id)
 
-            # Защита от ошибочного internal event payload.
-            if connection.user_id != event.user_id:
-                logger.warning(
-                    "SSE session revoke user mismatch: "
-                    "session_id=%s event_user_id=%s connection_user_id=%s",
-                    event.session_id,
-                    event.user_id,
-                    connection.user_id,
+                if connection is None:
+                    continue
+
+                # Защита от некорректного internal event payload.
+                if connection.user_id != event.user_id:
+                    logger.warning(
+                        "SSE session revoke user mismatch: "
+                        "connection_id=%s session_id=%s "
+                        "event_user_id=%s connection_user_id=%s",
+                        connection.connection_id,
+                        event.session_id,
+                        event.user_id,
+                        connection.user_id,
+                    )
+                    continue
+                self._close(
+                    connection,
+                    notify_session_revoked=True,
                 )
-                return
 
-            await self._close(connection)
             return
 
-        session_ids = list(
-            self._by_user.get(event.user_id, ())
+        connection_ids = list(
+            self._connection_ids_by_user.get(
+                event.user_id,
+                set(),
+            )
         )
 
-        for session_id in session_ids:
-            connection = self._by_session.get(session_id)
+        for connection_id in connection_ids:
+            connection = self._by_connection.get(connection_id)
 
             if connection is not None:
-                await self._close(connection)
+                self._close(
+                    connection,
+                    notify_session_revoked=True,
+                )
 
     # ==========================================================
     # Внутреннее
     # ==========================================================
 
-    async def _broadcast(self, message: str) -> None:
-        for connection in list(self._by_session.values()):
+    def _broadcast(self, message: str) -> None:
+        """
+        Доставляет invalidation всем active streams.
+
+        QueueFull означает slow/dead consumer. Старые invalidation events
+        бесполезны: connection принудительно закрывается и browser после
+        reconnect получает fresh authenticated state.
+        """
+        for connection in list(self._by_connection.values()):
+            if connection.closed:
+                continue
+
             try:
                 connection.queue.put_nowait(message)
             except asyncio.QueueFull:
-                # Переполненная очередь = «мёртвый» клиент: закрываем.
-                logger.warning("SSE queue overflow, closing session %s", connection.session_id)
-                await self._close(connection)
+                logger.warning(
+                    "SSE queue overflow; closing slow connection: "
+                    "connection_id=%s session_id=%s user_id=%s",
+                    connection.connection_id,
+                    connection.session_id,
+                    connection.user_id,
+                )
+                self._close(connection)
 
-    async def _close(self, connection: SSEConnection) -> None:
-        """Sentinel None завершает stream-генератор."""
+    def _close(
+        self,
+        connection: SSEConnection,
+        *,
+        notify_session_revoked: bool = False,
+    ) -> None:
+        """
+        Гарантированно завершает SSE generator sentinel-ом.
+
+        Метод синхронный и не содержит await, поэтому между очисткой queue
+        и постановкой None не возникает interleaving других coroutine
+        текущего event loop.
+        """
+        if connection.closed:
+            return
+
+        connection.closed = True
+
+        # При overflow старые ScheduleChanged больше не важны. Очищаем
+        # очередь, чтобы None дошёл до stream generator немедленно.
+        while True:
+            try:
+                connection.queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+
         try:
+            if notify_session_revoked:
+                # Никаких user ID, session ID, tokens, roles, family data
+                # или расписания в SSE payload.
+                connection.queue.put_nowait(
+                    "event: session_revoked\n"
+                    "data: {}\n\n"
+                )
+
+            # Sentinel завершает server-side stream generator.
             connection.queue.put_nowait(None)
+
         except asyncio.QueueFull:
-            self.unregister(connection)
+            logger.exception(
+                "Unable to enqueue SSE close sequence: "
+                "connection_id=%s",
+                connection.connection_id,
+            )
+
+        self.unregister(connection)
 
     def close_all(self) -> None:
-        """Вызывается из shutdown main.py при остановке web-сервера."""
-        for connection in list(self._by_session.values()):
-            try:
-                connection.queue.put_nowait(None)
-            except asyncio.QueueFull:
-                pass
-        self._by_session.clear()
-        self._by_user.clear()
+        """
+        Вызывается при shutdown web-сервера.
+
+        Streams получают sentinel, а все in-memory indexes очищаются.
+        """
+        self._closed = True
+
+        for connection in list(self._by_connection.values()):
+            self._close(connection)
