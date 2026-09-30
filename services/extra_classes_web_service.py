@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import logging
+from enum import Enum
 from dataclasses import dataclass
 from typing import Optional
 
@@ -34,6 +35,19 @@ WEEKDAYS_RU = {
     5: "Пятница", 6: "Суббота", 7: "Воскресенье",
 }
 
+class ExtraClassesUnavailableReason(str, Enum):
+    """
+    Причины, по которым authenticated user не может открыть раздел «Допы».
+
+    Это НЕ security violation: user успешно вошёл в web version,
+    но у него нет применимой student target для extra classes.
+    """
+
+    NO_CHILDREN = "no_children"
+    TEACHER = "teacher"
+    CHILD_NO_PROFILE = "child_no_profile"
+    UNSUPPORTED_PROFILE = "unsupported_profile"
+    
 @dataclass(frozen=True, slots=True)
 class ExtraClassesAccess:
     """Разрешённый actor -> target-student доступ для доп. занятий."""
@@ -64,7 +78,34 @@ class ExtraClassesWebService:
         self.student_repo = student_repo
         self.time_service = time_service
 
+    async def get_unavailable_reason(
+        self,
+        *,
+        actor_user_id: int,
+    ) -> ExtraClassesUnavailableReason:
+        """
+        Возвращает friendly reason только для UI empty state.
 
+        Этот method НЕ выдаёт доступ к student data и НЕ заменяет
+        resolve_access(). Любая явная подстановка чужого student_id
+        по-прежнему валидируется через resolve_access() и приводит к 403.
+        """
+        dto = await self.profile_service.get_user_profile_dto(
+            actor_user_id,
+        )
+        role = getattr(dto, "role", None) if dto is not None else None
+
+        if role == "teacher":
+            return ExtraClassesUnavailableReason.TEACHER
+
+        if role in ("parent", "observer"):
+            return ExtraClassesUnavailableReason.NO_CHILDREN
+
+        if role == "child":
+            return ExtraClassesUnavailableReason.CHILD_NO_PROFILE
+
+        return ExtraClassesUnavailableReason.UNSUPPORTED_PROFILE
+    
     async def resolve_access(
         self,
         *,

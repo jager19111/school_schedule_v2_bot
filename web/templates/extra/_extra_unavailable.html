@@ -1,0 +1,77 @@
+{#
+  PWA-friendly empty state для раздела «Доп. занятия».
+
+  Это не auth/access-denied page:
+  user имеет valid web access, но feature неприменима
+  к его current role/target state.
+#}
+
+<section
+  id="extra-content"
+  class="extra-page extra-page--list"
+>
+  <div class="empty-day">
+    {% if unavailable_reason == "no_children" %}
+      <p>
+        Пока не удалось найти детей, для которых можно посмотреть
+        дополнительные занятия.
+      </p>
+
+      <p>
+        Сначала добавьте ребёнка в разделе «Семья».
+      </p>
+
+      <a
+        href="/family"
+        class="student-chip current"
+      >
+        Открыть «Семью»
+      </a>
+
+    {% elif unavailable_reason == "teacher" %}
+      <p>
+        Дополнительные занятия доступны ученикам и родителям.
+      </p>
+
+      <p>
+        Для просмотра школьных уроков используйте раздел расписания.
+      </p>
+
+      <a
+        href="/"
+        class="student-chip current"
+      >
+        Открыть расписание
+      </a>
+
+    {% elif unavailable_reason == "child_no_profile" %}
+      <p>
+        Для этого профиля ещё не найден ученик.
+      </p>
+
+      <p>
+        Завершите настройку профиля в Telegram-боте, затем обновите
+        веб-страницу.
+      </p>
+
+      <a
+        href="/settings"
+        class="student-chip current"
+      >
+        Открыть настройки
+      </a>
+
+    {% else %}
+      <p>
+        Дополнительные занятия пока недоступны для этого профиля.
+      </p>
+
+      <a
+        href="/"
+        class="student-chip current"
+      >
+        Открыть расписание
+      </a>
+    {% endif %}
+  </div>
+</section>

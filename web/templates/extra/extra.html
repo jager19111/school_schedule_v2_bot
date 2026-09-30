@@ -14,7 +14,11 @@
 {% endblock %}
 
 {% block content %}
-  {% include "extra/_extra_content.html" %}
+  {% if unavailable_reason %}
+    {% include "extra/_extra_unavailable.html" %}
+  {% else %}
+    {% include "extra/_extra_content.html" %}
+  {% endif %}
 {% endblock %}
 
 {% block extra_scripts %}

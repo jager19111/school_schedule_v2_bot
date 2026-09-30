@@ -21,7 +21,9 @@ from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, Response
 
 from web.events import ScheduleChanged
-
+from services.extra_classes_web_service import (
+    ExtraClassesUnavailableReason,
+)
 from services.web_sessions_service import WebSessionContext
 from web.deps import require_family_allowed
 from web.extra_classes_helpers import (
@@ -52,6 +54,40 @@ def _idempotency(request: Request) -> IdempotencyStore:
 def _is_htmx(request: Request) -> bool:
     return request.headers.get("HX-Request") == "true"
 
+async def _render_unavailable(
+    request: Request,
+    context: WebSessionContext,
+):
+    """
+    PWA-friendly page для user без применимого student target.
+
+    Это normal 200 UI state, а не 403:
+    - parent/observer без детей;
+    - teacher;
+    - child без student profile.
+
+    Foreign explicit student_id сюда не попадает: он остаётся 403
+    через resolve_access().
+    """
+    reason = await _extra_service(request).get_unavailable_reason(
+        actor_user_id=context.user_id,
+    )
+
+    template = (
+        "extra/_extra_unavailable.html"
+        if _is_htmx(request)
+        else "extra/extra.html"
+    )
+
+    return _templates(request).TemplateResponse(
+        request,
+        template,
+        {
+            "unavailable_reason": reason.value,
+            "csrf_token": context.csrf_token,
+        },
+    )
+    
 async def _resolve_access(
     request: Request,
     context: WebSessionContext,
@@ -204,12 +240,75 @@ async def extra_classes_list(
     context: WebSessionContext = Depends(require_family_allowed),
     student: Optional[int] = None,
 ):
-    access = await _resolve_access(request, context, student)
-    items = await _extra_service(request).list_items(access)
-    view = [extra_class_to_web(row) for row in items]
-    template = (
-        "extra/_extra_content.html" if _is_htmx(request) else "extra/extra.html"
+    """
+    Список extra classes.
+
+    Friendly empty state применяется только когда user НЕ передал
+    explicit student target и у него нет student target вообще.
+
+    Explicit ?student=... или valid cookie selection продолжает идти
+    через resolve_access(): подстановка чужого student_id остаётся 403.
+    """
+    selected_student_id = student
+
+    if selected_student_id is None:
+        raw_student_id = request.cookies.get(
+            _STUDENT_COOKIE,
+            "",
+        )
+
+        try:
+            selected_student_id = (
+                int(raw_student_id)
+                if raw_student_id
+                else None
+            )
+        except ValueError:
+            selected_student_id = None
+
+    if selected_student_id is None:
+        targets = await (
+            request.app.state.schedule_targets_service
+            .get_targets_for_user(
+                user_id=context.user_id,
+            )
+        )
+
+        student_target = next(
+            (
+                target
+                for target in targets
+                if target.student_id is not None
+            ),
+            None,
+        )
+
+        if student_target is None:
+            return await _render_unavailable(
+                request,
+                context,
+            )
+
+        selected_student_id = student_target.student_id
+
+    access = await _resolve_access(
+        request,
+        context,
+        selected_student_id,
     )
+
+    items = await _extra_service(request).list_items(access)
+    view = [
+        extra_class_to_web(row)
+        for row in items
+    ]
+
+    template = (
+        "extra/_extra_content.html"
+        if _is_htmx(request)
+        else "extra/extra.html"
+    )
+
     return _templates(request).TemplateResponse(
         request,
         template,
@@ -224,10 +323,9 @@ async def extra_classes_list(
             "student_id": access.student_id,
             "can_manage": access.can_manage,
             "csrf_token": context.csrf_token,
+            "unavailable_reason": None,
         },
     )
-
-
 # ==============================================================
 # Формы
 # ==============================================================
