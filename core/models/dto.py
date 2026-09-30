@@ -401,6 +401,18 @@ class AdminStatsDTO:
     total_users: int
     role_distribution: Dict[str, int]
 
+@dataclass
+class WebAuthStatsDTO:
+    """
+    Read-only статистика web-аутентификации для admin monitoring.
+
+    Не содержит tokens, hashes, user IDs, IP и user-agent.
+    """
+
+    active_sessions: int
+    active_login_tokens: int
+    revoked_sessions_pending_cleanup: int
+    
 
 @dataclass
 class NikaSourceHealthDTO:

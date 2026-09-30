@@ -26,7 +26,7 @@ import secrets
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import List, Optional
-
+from core.models.dto import WebAuthStatsDTO
 from core.repository.web_auth_repository import WebAuthRepository
 from services.time_service import TimeService
 
@@ -266,6 +266,42 @@ class WebSessionsService:
             for r in rows
         ]
 
+    async def get_active_session_count(
+        self,
+        *,
+        user_id: int,
+    ) -> int:
+        """
+        Возвращает количество действующих web-сеансов пользователя.
+
+        Используется для информационного индикатора в Telegram settings.
+        Никакие session identifiers, user-agent или secrets наружу не
+        возвращаются.
+        """
+        return await self.repo.count_active_sessions_for_user(
+            user_id=user_id,
+            now_utc=self._now_str(),
+        )
+
+    async def get_admin_statistics(self) -> WebAuthStatsDTO:
+        """
+        Возвращает обезличенную operational статистику web-auth для /stats.
+
+        Метод не раскрывает tokens, session hashes, user IDs, user-agent
+        или данные отдельных устройств.
+        """
+        raw = await self.repo.get_admin_statistics(
+            now_utc=self._now_str(),
+        )
+
+        return WebAuthStatsDTO(
+            active_sessions=raw["active_sessions"],
+            active_login_tokens=raw["active_login_tokens"],
+            revoked_sessions_pending_cleanup=raw[
+                "revoked_sessions_pending_cleanup"
+            ],
+        )
+                
     # ==========================================================
     # CSRF (stateless HMAC; session-bound, не совпадает с session token)
     # ==========================================================

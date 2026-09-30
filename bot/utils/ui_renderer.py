@@ -14,7 +14,7 @@ from core.models.dto import (ClassListDTO, AdminStatsDTO, DayScheduleDTO, ExtraC
                             AdultStudentExtraClassesPermissionDTO, StudentTelegramSettingsDTO, NikaSourceHealthDTO, FreeRoomsStatusDTO,  
                             StudentProfileViewModel, WatchTargetViewModel, ExtraClassViewModel, FamilyMemberViewModel, StudentTelegramSettingsViewModel,
                             ParentStudentNotificationSettingsViewModel, DayChangesDetailDTO, LessonDTO, MorningLessonDTO, DailyChangeSummaryDTO,
-                            SettingsAuditDTO, FamilyAuditDTO, ExtraClassAuditDTO, AuditLogDTO,
+                            SettingsAuditDTO, FamilyAuditDTO, ExtraClassAuditDTO, AuditLogDTO, WebAuthStatsDTO
 )
 
 from datetime import datetime
@@ -976,6 +976,34 @@ class UIRenderer:
         for role, count in dto.role_distribution.items():
             text += f"- {role}: {count}\n"
         return text
+
+    @staticmethod
+    def render_web_auth_stats(
+        dto: WebAuthStatsDTO | None,
+    ) -> str:
+        """
+        Рендерит admin-only snapshot web-аутентификации.
+
+        None означает, что web layer отключён и WebSessionsService
+        не был создан при старте приложения.
+        """
+        if dto is None:
+            return (
+                "🌐 <b>Web-аутентификация</b>\n"
+                "Веб-версия отключена на сервере."
+            )
+
+        return "\n".join(
+            [
+                "🌐 <b>Web-аутентификация</b>",
+                f"Активных веб-сеансов: {dto.active_sessions}",
+                f"Активных magic links: {dto.active_login_tokens}",
+                (
+                    "Отозванных сеансов до очистки: "
+                    f"{dto.revoked_sessions_pending_cleanup}"
+                ),
+            ]
+        )
 # Меню
     @staticmethod
     def render_school_search_menu() -> str:
@@ -1079,6 +1107,7 @@ class UIRenderer:
         class_name: str | None = None,
         group_names: str | None = None,
         is_family_admin: bool = False,   # <-- новый параметр
+        active_web_sessions: int | None = None,
     ) -> str:
         role_map = {"parent": "🧑‍🧒 Родитель", "child": "👶 Ребёнок", "observer": "👁 Наблюдатель", "teacher": "Учитель",}
         role_name = role_map.get(user_dto.role, "Незарегистрирован")
@@ -1099,9 +1128,11 @@ class UIRenderer:
         lines = [
             f"⚙️ <b>Ваши настройки профиля, {safe_name}</b>!",
             "",
-            #f"👤 Роль: <b>{role_name}</b>",
-            f"<b>{role_name}</b>",            
+            f"<b>{role_name}</b>",
             family_line,
+            UIRenderer.render_web_session_status(
+                active_web_sessions,
+            ),
         ]
         if class_name:
             lines.append(
@@ -1117,6 +1148,38 @@ class UIRenderer:
         ])
         return "\n".join(lines)
 
+    @staticmethod
+    def render_web_session_status(
+        active_web_sessions: int | None,
+    ) -> str:
+        """
+        Возвращает русскоязычный статус действующих web-сеансов.
+
+        None означает, что web layer отключён или temporary unavailable.
+        """
+        if active_web_sessions is None:
+            return "🌐 Веб-версия: временно недоступна"
+
+        if active_web_sessions == 0:
+            return "🌐 Веб-версия: нет активных веб-сеансов"
+
+        if active_web_sessions == 1:
+            return "🌐 Веб-версия: 1 активный веб-сеанс"
+
+        last_two_digits = active_web_sessions % 100
+        last_digit = active_web_sessions % 10
+
+        if 11 <= last_two_digits <= 14:
+            suffix = "активных веб-сеансов"
+        elif 2 <= last_digit <= 4:
+            suffix = "активных веб-сеанса"
+        else:
+            suffix = "активных веб-сеансов"
+
+        return (
+            f"🌐 Веб-версия: {active_web_sessions} {suffix}"
+        )
+        
 # меню семьи
     @staticmethod
     def render_family_members_menu(
@@ -1953,4 +2016,40 @@ class UIRenderer:
             "и не работает в Safari/Chrome, вернитесь в бот и запросите "
             "новую ссылку.\n\n"
             f"{safe_link}"
+        )
+        
+    @staticmethod
+    def render_web_sessions_revoke_all_confirmation(
+        active_web_sessions: int,
+    ) -> str:
+        """
+        Confirm screen для emergency revoke всех web-сеансов.
+
+        Count передаётся только как UX context, не является security input.
+        Перед actual revoke backend всё равно отзывает все valid sessions user-а.
+        """
+        if active_web_sessions == 1:
+            session_label = "1 активный веб-сеанс"
+        else:
+            last_two_digits = active_web_sessions % 100
+            last_digit = active_web_sessions % 10
+
+            if 11 <= last_two_digits <= 14:
+                suffix = "активных веб-сеансов"
+            elif 2 <= last_digit <= 4:
+                suffix = "активных веб-сеанса"
+            else:
+                suffix = "активных веб-сеансов"
+
+            session_label = (
+                f"{active_web_sessions} {suffix}"
+            )
+
+        return (
+            "🔒 <b>Завершить все веб-сеансы?</b>\n\n"
+            f"Сейчас активно: <b>{session_label}</b>.\n\n"
+            "Будет закрыт доступ к веб-версии на всех устройствах, "
+            "включая текущее.\n\n"
+            "Для повторного входа потребуется новая одноразовая "
+            "ссылка из Telegram-бота."
         )

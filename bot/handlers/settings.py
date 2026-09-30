@@ -27,6 +27,7 @@ import logging
 import contextlib
 from urllib.parse import quote
 from aiogram import Router, F, Bot
+from typing import Optional
 from aiogram.types import Message, CallbackQuery
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
@@ -41,6 +42,8 @@ from services.profiles_service import ProfileService
 from services.schedule_service import ScheduleService
 from services.students_service import StudentsService
 from services.image_preferences import ImagePreferencesService
+from services.web_sessions_service import WebSessionsService
+from web.events import ApplicationEventBus, SessionRevoked
 from bot.utils.fsm_guard import validate_fsm_session
 from bot.utils.safe_send import _safe_edit_text, _safe_callback_answer
 
@@ -112,9 +115,10 @@ async def settings_main_menu(
     profile_service: ProfileService, 
     schedule_service: ScheduleService,
     image_prefs: ImagePreferencesService,
+    web_sessions_service: Optional[WebSessionsService] = None,
 ):
     """Главное меню настроек. Вызывается из главного меню и после изменения настроек."""
-    await _show_settings_menu(message, message.from_user.id, profile_service, schedule_service, image_prefs, is_callback=False)
+    await _show_settings_menu(message, message.from_user.id, profile_service, schedule_service, image_prefs, is_callback=False, web_sessions_service=web_sessions_service,)
 
 @router.callback_query(F.data == callbacks.SETTINGS_MAIN)
 async def settings_main_menu_cb(
@@ -122,9 +126,10 @@ async def settings_main_menu_cb(
     profile_service: ProfileService, 
     schedule_service: ScheduleService,
     image_prefs: ImagePreferencesService,
+    web_sessions_service: Optional[WebSessionsService] = None,
 ):
     """Главное меню настроек. Вызывается из коллбэка после изменения настроек."""
-    await _show_settings_menu(callback.message, callback.from_user.id, profile_service, schedule_service, image_prefs, is_callback=True)
+    await _show_settings_menu(callback.message, callback.from_user.id, profile_service, schedule_service, image_prefs, is_callback=True, web_sessions_service=web_sessions_service,)
     await callback.answer()
 
 async def _show_settings_menu(
@@ -133,7 +138,8 @@ async def _show_settings_menu(
     profile_service: ProfileService, 
     schedule_service: ScheduleService,
     image_prefs: ImagePreferencesService,
-    is_callback: bool
+    is_callback: bool,
+    web_sessions_service: Optional[WebSessionsService] = None,
 ):
     user_dto = await profile_service.get_user_profile_dto(user_id)
     is_family_admin = False
@@ -167,18 +173,35 @@ async def _show_settings_menu(
     
     # Получаем формат расписания пользователя
     prefer_image = await image_prefs.prefers_image(user_id)
-            
+
+    active_web_sessions: int | None = None
+
+    if web_sessions_service is not None:
+        try:
+            active_web_sessions = (
+                await web_sessions_service.get_active_session_count(
+                    user_id=user_id,
+                )
+            )
+        except Exception:
+            logger.exception(
+                "Не удалось получить число web-сеансов: user_id=%s",
+                user_id,
+            )
+                        
     text = UIRenderer.render_settings_main(
         user_dto=user_dto, 
         class_name=class_name, 
         group_names=group_names,
         is_family_admin=is_family_admin,
+        active_web_sessions=active_web_sessions,
     )
     # Передаем статус в клавиатуру
     kb = Keyboards.get_settings_main_kb(
         user_dto=user_dto,
         prefer_image=prefer_image,
-        image_generation_enabled=config.ENABLE_IMAGE_GENERATION
+        image_generation_enabled=config.ENABLE_IMAGE_GENERATION,
+        active_web_sessions=active_web_sessions,
     )
     
     if is_callback:
@@ -193,6 +216,7 @@ async def toggle_schedule_format(
     profile_service: ProfileService,
     schedule_service: ScheduleService,
     image_prefs: ImagePreferencesService,
+    web_sessions_service: Optional[WebSessionsService] = None,
 ) -> None:
     """Переключает формат расписания (Текст/Картинка) из главного меню настроек."""
     
@@ -214,7 +238,8 @@ async def toggle_schedule_format(
         profile_service=profile_service, 
         schedule_service=schedule_service, 
         image_prefs=image_prefs, 
-        is_callback=True
+        is_callback=True,
+        web_sessions_service=web_sessions_service,
     )
     
     status_text = "🖼 картинка" if new_status else "📝 текст"
@@ -356,7 +381,108 @@ async def confirm_restart(
         callback,
         "Профиль успешно сброшен.",
     )
+# ================= WEB-СЕАНСЫ =================
 
+@router.callback_query(
+    F.data == callbacks.WEB_REVOKE_ALL_SESSIONS,
+)
+async def confirm_revoke_all_web_sessions(
+    callback: CallbackQuery,
+    web_sessions_service: Optional[WebSessionsService] = None,
+) -> None:
+    """
+    Показывает confirmation screen перед отзывом всех web-сеансов.
+    """
+    if web_sessions_service is None:
+        await _safe_callback_answer(
+            callback,
+            "Веб-версия сейчас отключена на сервере.",
+            show_alert=True,
+        )
+        return
+
+    active_web_sessions = (
+        await web_sessions_service.get_active_session_count(
+            user_id=callback.from_user.id,
+        )
+    )
+
+    if active_web_sessions <= 0:
+        await _safe_callback_answer(
+            callback,
+            "У вас нет активных веб-сеансов.",
+            show_alert=True,
+        )
+        return
+
+    await _safe_edit_text(
+        callback.message,
+        UIRenderer.render_web_sessions_revoke_all_confirmation(
+            active_web_sessions,
+        ),
+        reply_markup=(
+            Keyboards.get_web_sessions_revoke_all_confirm_kb()
+        ),
+    )
+
+    await _safe_callback_answer(callback)
+
+@router.callback_query(
+    F.data == callbacks.WEB_REVOKE_ALL_SESSIONS_CONFIRM,
+)
+async def revoke_all_web_sessions(
+    callback: CallbackQuery,
+    profile_service: ProfileService,
+    schedule_service: ScheduleService,
+    image_prefs: ImagePreferencesService,
+    web_sessions_service: Optional[WebSessionsService] = None,
+    web_event_bus: Optional[ApplicationEventBus] = None,
+) -> None:
+    """
+    Отзывает все valid web-сеансы текущего Telegram user-а.
+
+    Telegram account и bot session не затрагиваются.
+    """
+    if web_sessions_service is None:
+        await _safe_callback_answer(
+            callback,
+            "Веб-версия сейчас отключена на сервере.",
+            show_alert=True,
+        )
+        return
+
+    revoked_count = await web_sessions_service.revoke_all_sessions(
+        user_id=callback.from_user.id,
+    )
+
+    if revoked_count > 0 and web_event_bus is not None:
+        await web_event_bus.publish(
+            SessionRevoked(
+                user_id=callback.from_user.id,
+            )
+        )
+
+    await _show_settings_menu(
+        message_obj=callback.message,
+        user_id=callback.from_user.id,
+        profile_service=profile_service,
+        schedule_service=schedule_service,
+        image_prefs=image_prefs,
+        is_callback=True,
+        web_sessions_service=web_sessions_service,
+    )
+
+    if revoked_count > 0:
+        await _safe_callback_answer(
+            callback,
+            "✅ Все веб-сеансы завершены.",
+        )
+    else:
+        await _safe_callback_answer(
+            callback,
+            "Активных веб-сеансов уже нет.",
+        )
+            
 # ================= 5. СМЕНА КЛАССА И ГРУППЫ =================
    
     
@@ -524,6 +650,7 @@ async def cancel_self_edit_class_group(
     profile_service: ProfileService,
     schedule_service: ScheduleService,
     image_prefs: ImagePreferencesService,
+    web_sessions_service: Optional[WebSessionsService] = None,
 ) -> None:
     """
     Отменяет изменение класса/группы ребёнка.
@@ -546,6 +673,7 @@ async def cancel_self_edit_class_group(
         schedule_service=schedule_service,
         image_prefs=image_prefs,
         is_callback=True,
+        web_sessions_service=web_sessions_service,
     )
 
     await _safe_callback_answer(callback)
@@ -562,6 +690,7 @@ async def save_self_edit_group(
     students_service: StudentsService,
     schedule_service: ScheduleService,
     image_prefs: ImagePreferencesService,
+    web_sessions_service: Optional[WebSessionsService] = None,
 ) -> None:
     """
     Сохраняет новый class_id/group_id child и синхронизирует
@@ -640,6 +769,7 @@ async def save_self_edit_group(
         schedule_service=schedule_service,
         image_prefs=image_prefs,
         is_callback=True,
+        web_sessions_service=web_sessions_service,
     )
 
     await _safe_callback_answer(
@@ -719,6 +849,7 @@ async def save_teacher_change(
     profile_service: ProfileService,
     schedule_service: ScheduleService,
     image_prefs: ImagePreferencesService,
+    web_sessions_service: Optional[WebSessionsService] = None,
 ) -> None:
     """
     Сохраняет новый NIKA teacher_id для теку Telegram teacher.
@@ -782,6 +913,7 @@ async def save_teacher_change(
         schedule_service=schedule_service,
         image_prefs=image_prefs,
         is_callback=True,
+        web_sessions_service=web_sessions_service,
     )
 
     teacher_name_text = getattr(

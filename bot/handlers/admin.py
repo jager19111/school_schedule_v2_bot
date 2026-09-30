@@ -36,7 +36,7 @@ from services.image_render.poster_factory import build_poster_request
 from services.image_render.service import ImageGenerationService
 from services.schedule_service import ScheduleService
 from services.time_service import TimeService
-
+from services.web_sessions_service import WebSessionsService
 
 from bot.middlewares.antiflood import AntiFloodMiddleware, AntiFloodStatsDTO
 
@@ -92,7 +92,7 @@ async def cmd_admin_help(message: Message, admin_service: AdminService) -> None:
     text = (
         "🛠 <b>Панель администратора</b>\n\n"
         "<b>Доступные команды:</b>\n"
-        "🔸 /stats — Статистика пользователей, ролей и антифлуда\n"
+        "🔸 /stats — Статистика пользователей, anti-flood и web-аутентификации\n"
         "🔸 /user <i>[id]</i> — Подробная информация о конкретном пользователе (Telegram + БД)\n"
         "🔸 /users — Скачать CSV-отчет со всеми пользователями бота\n"
         "🔸 /source_status — Состояние кэша NIKA (актуальность расписания, здоровье парсера)\n"
@@ -110,13 +110,34 @@ async def cmd_stats(
     message: Message,
     admin_service: AdminService,
     antiflood: AntiFloodMiddleware,
+    web_sessions_service: WebSessionsService | None,
 ) -> None:
-    if not await _require_admin(message=message, admin_service=admin_service):
+    if not await _require_admin(
+        message=message,
+        admin_service=admin_service,
+    ):
         return
+
     dto = await admin_service.get_statistics()
+
+    web_auth_stats = (
+        await web_sessions_service.get_admin_statistics()
+        if web_sessions_service is not None
+        else None
+    )
+
     text = UIRenderer.render_admin_stats(dto)
-    text += "\n\n" + _render_antiflood_section(antiflood.stats_snapshot())
-    await message.answer(text, parse_mode="HTML")
+    text += "\n\n" + _render_antiflood_section(
+        antiflood.stats_snapshot(),
+    )
+    text += "\n\n" + UIRenderer.render_web_auth_stats(
+        web_auth_stats,
+    )
+
+    await message.answer(
+        text,
+        parse_mode="HTML",
+    )
 
 
 @router.message(Command("source_status"))
@@ -496,77 +517,3 @@ async def cmd_admin_users_list(
         caption="👥 <b>Полная выгрузка базы пользователей</b>\nФормат CSV. Можно открыть в Excel.",
         parse_mode="HTML"
     )
-
-if False:
-    @router.message(Command("stress_render"))
-    async def cmd_stress_render_long(
-        message: Message,
-        admin_service: AdminService,
-        schedule_service: ScheduleService,
-        image_service: ImageGenerationService,
-        time_service: TimeService,
-    ) -> None:
-        """Долгосрочный стресс-тест: непрерывный поток рендеров для проверки утечек RAM."""
-        if not await _require_admin(message=message, admin_service=admin_service):
-            return
-
-        parts = (message.text or "").split()
-        count = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 100
-        count = max(1, min(count, 2000)) # Защита от бесконечного цикла
-
-        status_msg = await message.answer(
-            f"🔥 Запускаю долгосрочный стресс-тест на {count} постеров...\n"
-            "Откройте `htop` на сервере. Рендер займет время."
-        )
-        
-        today_iso = time_service.get_now_base().date().isoformat()
-        
-        # 1. Получаем DTO один раз, чтобы тестировать именно графику, 
-        # а не нагружать SQLite одинаковыми SELECT-запросами.
-        base_dto = await schedule_service.get_daily_schedule_for_student(
-            class_id="016", 
-            group_id="ALL",
-            date_iso=today_iso,
-            student_id=None
-        )
-        
-        # 2. Шлюз-дозатор. 
-        # Пропускает в сервис не более 15 задач одновременно. 
-        # Это значение должно быть МЕНЬШЕ вашего IMAGE_QUEUE_CAPACITY, 
-        # чтобы очередь никогда не переполнялась.
-        feeder_semaphore = asyncio.Semaphore(15)
-        
-        async def render_with_throttle(i: int):
-            async with feeder_semaphore:
-                # Уникальный request_id пробивает in-memory кэш 
-                # и заставляет браузер рисовать каждый постер с нуля
-                request = build_poster_request(
-                    request_id=f"stress_long_{today_iso}_{i}", 
-                    dto=base_dto,
-                    title=f"Стресс-тест #{i}",
-                    date_text=today_iso,
-                    width=1080
-                )
-                return await image_service.get_poster(request, user_id=None)
-
-        # 3. Запускаем конвейер
-        tasks = [render_with_throttle(i) for i in range(count)]
-        
-        start_time = time_service.get_now_base()
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        duration = (time_service.get_now_base() - start_time).total_seconds()
-
-        success = sum(1 for r in results if not isinstance(r, Exception))
-        failed = count - success
-
-        error_msg = ""
-        if failed > 0:
-            first_err = next(r for r in results if isinstance(r, Exception))
-            error_msg = f"\n\n🛑 <b>Первая ошибка:</b>\n<code>{repr(first_err)}</code>"
-
-        await status_msg.edit_text(
-            f"🏁 **Марафон завершен за {duration:.2f} сек**\n\n"
-            f"Успешно: {success}\n"
-            f"Ошибок: {failed}{error_msg}\n"
-            f"Средняя скорость: {(duration/max(1, success)):.3f} сек/постер"
-        )

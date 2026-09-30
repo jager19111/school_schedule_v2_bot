@@ -202,6 +202,38 @@ class WebAuthRepository(BaseRepository):
             (user_id, now_utc, now_utc),
         )
 
+    async def count_active_sessions_for_user(
+        self,
+        *,
+        user_id: int,
+        now_utc: str,
+    ) -> int:
+        """
+        Возвращает количество valid web sessions пользователя.
+
+        Session считается active только если:
+        - не отозвана;
+        - не истекла по idle timeout;
+        - не истекла по absolute timeout.
+        """
+        row = await self._fetch_one(
+            """
+            SELECT COUNT(*) AS count
+            FROM web_sessions
+            WHERE user_id = ?
+            AND revoked_at IS NULL
+            AND idle_expires_at > ?
+            AND absolute_expires_at > ?
+            """,
+            (
+                user_id,
+                now_utc,
+                now_utc,
+            ),
+        )
+
+        return int(row["count"]) if row is not None else 0
+
     async def revoke_session_by_hash(
         self,
         *,
@@ -249,6 +281,59 @@ class WebAuthRepository(BaseRepository):
             (self._now_utc_str(), user_id),
         )
 
+    async def get_admin_statistics(
+        self,
+        *,
+        now_utc: str,
+    ) -> Dict[str, int]:
+        """
+        Возвращает обезличенный read-only snapshot web-аутентификации.
+
+        Вся проверка времени передаётся параметром от service:
+        repository не получает текущее время самостоятельно и не использует
+        SQLite CURRENT_TIMESTAMP.
+        """
+        row = await self._fetch_one(
+            """
+            SELECT
+                (
+                    SELECT COUNT(*)
+                    FROM web_sessions
+                    WHERE revoked_at IS NULL
+                      AND idle_expires_at > ?
+                      AND absolute_expires_at > ?
+                ) AS active_sessions,
+
+                (
+                    SELECT COUNT(*)
+                    FROM web_login_tokens
+                    WHERE used = 0
+                      AND expires_at > ?
+                ) AS active_login_tokens,
+
+                (
+                    SELECT COUNT(*)
+                    FROM web_sessions
+                    WHERE revoked_at IS NOT NULL
+                ) AS revoked_sessions_pending_cleanup
+            """,
+            (
+                now_utc,
+                now_utc,
+                now_utc,
+            ),
+        )
+
+        return {
+            "active_sessions": int(row["active_sessions"]) if row else 0,
+            "active_login_tokens": (
+                int(row["active_login_tokens"]) if row else 0
+            ),
+            "revoked_sessions_pending_cleanup": (
+                int(row["revoked_sessions_pending_cleanup"]) if row else 0
+            ),
+        }
+        
     # ==========================================================
     # Cleanup (scheduled-задачей, не из HTTP request)
     # ==========================================================

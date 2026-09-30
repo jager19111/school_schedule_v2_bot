@@ -39,6 +39,10 @@ CLAIM_CANCEL = "cx"
 # Web Link
 WEB_OPEN = "web"
 
+# Web-сеансы
+WEB_REVOKE_ALL_SESSIONS = "wra"
+WEB_REVOKE_ALL_SESSIONS_CONFIRM = "wrac"
+
 # Настройки
 SETTINGS_FAMILY = "sf"
 SETTINGS_NOTIFICATIONS = "sn"

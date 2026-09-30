@@ -128,7 +128,7 @@ class Keyboards:
         return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text='👨\u200d👩\u200d👧 Семья', callback_data=callbacks.SETTINGS_FAMILY)], [InlineKeyboardButton(text=f'⏰ Время моей утренней сводки: {summary_time}', callback_data=callbacks.SETTINGS_MY_SUMMARY_TIME)], [InlineKeyboardButton(text=f'🔔 Мои уведомления об изменениях: {changes_status}', callback_data=callbacks.SETTINGS_MY_NOTIFICATIONS)], [InlineKeyboardButton(text='🔄 Перерегистрироваться / Выйти', callback_data=callbacks.AUTH_RESTART)]])
 
     @staticmethod
-    def get_settings_main_kb(user_dto: 'UserProfileDTO', prefer_image: bool = False, image_generation_enabled: bool = True) -> InlineKeyboardMarkup:
+    def get_settings_main_kb(user_dto: 'UserProfileDTO', prefer_image: bool = False, image_generation_enabled: bool = True, active_web_sessions: int | None = None,) -> InlineKeyboardMarkup:
         """Главное меню настроек пользователя."""
         buttons = []
         if user_dto.role == 'child':
@@ -150,11 +150,30 @@ class Keyboards:
         buttons.append([InlineKeyboardButton(text=format_text, callback_data=callbacks.SETTINGS_TOGGLE_FORMAT)])
         # --------------------------------------------------------
         
-        # --- ДОБАВЛЕНО (Phase 1: Кнопка Web) ---
-        buttons.append([InlineKeyboardButton(text='🌐 Веб-версия', callback_data=callbacks.WEB_OPEN)])
-        # ---------------------------------------
+        # --- Веб-версия и число действующих web-сеансов ---
+        if active_web_sessions is not None and active_web_sessions > 0:
+            web_button_text = (
+                f"🌐 Веб-версия · {active_web_sessions}"
+            )
+        else:
+            web_button_text = "🌐 Веб-версия"
+
+        buttons.append([
+            InlineKeyboardButton(
+                text=web_button_text,
+                callback_data=callbacks.WEB_OPEN,
+            )
+        ])
+        # ---------------------------------------------------
         
         buttons.append([InlineKeyboardButton(text='ℹ️ Справка', callback_data=callbacks.HelpCD(section='main').pack())])
+        if active_web_sessions is not None and active_web_sessions > 0:
+            buttons.append([
+                InlineKeyboardButton(
+                    text="🔒 Завершить все веб-сеансы",
+                    callback_data=callbacks.WEB_REVOKE_ALL_SESSIONS,
+                )
+            ])
         buttons.append([InlineKeyboardButton(text='♻️ Перерегистрация/Выход', callback_data=callbacks.AUTH_RESTART)])
         return InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -1272,4 +1291,26 @@ class Keyboards:
                     )
                 ]
             ]
+        )
+        
+    @staticmethod
+    def get_web_sessions_revoke_all_confirm_kb() -> InlineKeyboardMarkup:
+        """Подтверждение завершения всех web-сеансов."""
+        return InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="🔒 Да, завершить все",
+                        callback_data=(
+                            callbacks.WEB_REVOKE_ALL_SESSIONS_CONFIRM
+                        ),
+                    ),
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="← Отмена",
+                        callback_data=callbacks.SETTINGS_MAIN,
+                    ),
+                ],
+            ],
         )

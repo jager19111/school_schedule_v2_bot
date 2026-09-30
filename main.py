@@ -67,6 +67,7 @@ from services.students_service import StudentsService
 from services.audit_service import AuditService
 from services.help_service import HelpService
 from services.backup_service import BackupService
+from services.web_sessions_service import WebSessionsService
 from services.image_render.setup import setup_image_generation
 from services.image_render.warmup import warmup_day_posters
 from database.migrations import apply_migrations
@@ -230,6 +231,40 @@ async def refresh_schedule_cache(
             "change notifications failed."
         )
 
+async def cleanup_web_auth_sessions(
+    *,
+    web_sessions_service: WebSessionsService,
+    notification_service: NotificationService,
+) -> None:
+    """
+    Очистка истёкших magic links и web-сеансов.
+
+    Security semantics не зависят от cleanup:
+    expired/revoked credentials всё равно отклоняются при каждом request.
+    Job нужен для физического удаления stale rows из SQLite.
+    """
+    try:
+        await web_sessions_service.cleanup()
+    except Exception:
+        logger.exception("WebAuth cleanup failed")
+
+        try:
+            await notification_service.send_admin_alert(
+                alert_key="web_auth_cleanup_failed",
+                text=(
+                    "⚠️ <b>Ошибка очистки веб-сеансов</b>\n\n"
+                    "Не удалось выполнить плановую очистку "
+                    "истёкших magic links и веб-сеансов.\n\n"
+                    "Доступ пользователей не должен быть открыт: "
+                    "истёкшие и отозванные сеансы всё равно "
+                    "проверяются сервером при каждом запросе.\n\n"
+                    "Проверьте файл логов сервера."
+                ),
+            )
+        except Exception:
+            logger.exception(
+                "WebAuth cleanup admin alert failed"
+            )
 
 async def run_wal_checkpoint(db_connection: aiosqlite.Connection) -> None:
     """
@@ -344,6 +379,8 @@ async def main():
     web_server = None
     web_task = None
     web_sessions_service = None
+    web_event_bus = None
+    
     # ------------------------------------------------
 
     try:
@@ -440,7 +477,6 @@ async def main():
         # --- ДОБАВЛЕНО (Phase 1, 2, 2.1: Инициализация Web Layer) ---
         if config.WEB_ENABLED:
             from core.repository.web_auth_repository import WebAuthRepository
-            from services.web_sessions_service import WebSessionsService
             from services.schedule_targets_service import ScheduleTargetsService
             from services.extra_classes_web_service import ExtraClassesWebService
             from web.app import WebSettings, create_web_app
@@ -511,7 +547,8 @@ async def main():
                 db_liveness=_db_liveness,
                 extra_classes_web_service=extra_classes_web_service,
             )
-
+            web_event_bus = web_app.state.event_bus
+            
             uvicorn_config = uvicorn.Config(
                 web_app,
                 host=config.WEB_HOST,
@@ -586,6 +623,7 @@ async def main():
             image_service=image_service,
             image_prefs=image_prefs,
             web_sessions_service=web_sessions_service,
+            web_event_bus=web_event_bus,
         )
 
         # 7. Первоначальная синхронизация кэша при старте
@@ -770,10 +808,14 @@ async def main():
 
         if config.WEB_ENABLED and web_sessions_service is not None:
             scheduler.add_job(
-                web_sessions_service.cleanup,
+                cleanup_web_auth_sessions,
                 trigger="cron",
                 hour=4,
                 minute=10,
+                kwargs={
+                    "web_sessions_service": web_sessions_service,
+                    "notification_service": notification_service,
+                },
                 id="web_auth_cleanup_job",
                 replace_existing=True,
                 coalesce=True,
