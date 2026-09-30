@@ -1,0 +1,131 @@
+{# web/templates/schedule/_no_target_content.html #}
+{#
+  HTMX-compatible no-target schedule state.
+
+  Contract:
+  - target_state:
+      parent_empty | observer_empty | other_empty
+  - can_manage_family: bool
+#}
+
+<section id="day-content" class="day-schedule">
+  <section class="empty-day">
+    {% if target_state == "parent_empty" %}
+      <div class="empty-day__icon" aria-hidden="true">
+        👨‍👩‍👧
+      </div>
+
+      <h2 class="empty-day__title">
+        Семья готова к настройке
+      </h2>
+
+      {% if can_manage_family %}
+        <p class="empty-day__text">
+          Чтобы увидеть расписание, добавьте ребёнка.
+        </p>
+
+        <div
+        class="student-switch"
+        role="group"
+        aria-label="Настройка семьи"
+        >
+        <button
+            type="button"
+            class="student-chip current"
+            hx-get="/family/students/new"
+            hx-target="#day-content"
+            hx-swap="outerHTML"
+        >
+            Добавить виртуальный профиль
+        </button>
+
+        <a
+            href="/family"
+            class="student-chip current"
+        >
+            Пригласить ребёнка из Telegram
+        </a>
+
+        <a
+            href="/family"
+            class="student-chip current"
+        >
+            Открыть Семью
+        </a>
+        </div>
+
+      {% else %}
+        <p class="empty-day__text">
+          В семье пока нет детей для отслеживания.
+          Обратитесь к администратору семьи.
+        </p>
+
+        <div
+        class="student-switch single"
+        role="group"
+        aria-label="Семья"
+        >
+        <a
+            href="/family"
+            class="student-chip current"
+        >
+            Открыть Семью
+        </a>
+        </div>
+      {% endif %}
+
+    {% elif target_state == "observer_empty" %}
+      <div class="empty-day__icon" aria-hidden="true">
+        👀
+      </div>
+
+      <h2 class="empty-day__title">
+        Пока нечего отслеживать
+      </h2>
+
+      <p class="empty-day__text">
+        Родители ещё не добавили детей в семью.
+        Когда ребёнок появится, его расписание станет доступно здесь.
+      </p>
+
+        <div
+        class="student-switch single"
+        role="group"
+        aria-label="Семья"
+        >
+        <a
+            href="/family"
+            class="student-chip current"
+        >
+            Открыть Семью
+        </a>
+        </div>
+
+    {% else %}
+      <div class="empty-day__icon" aria-hidden="true">
+        📅
+      </div>
+
+      <h2 class="empty-day__title">
+        Расписание пока недоступно
+      </h2>
+
+      <p class="empty-day__text">
+        Завершите настройку профиля в Telegram-боте.
+      </p>
+
+        <div
+        class="student-switch single"
+        role="group"
+        aria-label="Настройки"
+        >
+        <a
+            href="/settings"
+            class="student-chip current"
+        >
+            Открыть настройки
+        </a>
+        </div>
+    {% endif %}
+  </section>
+</section>

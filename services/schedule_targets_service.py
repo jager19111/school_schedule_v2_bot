@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from enum import Enum
 from typing import List, Optional
 
 from core.repository.student_repository import StudentRepository
@@ -32,7 +33,34 @@ class ScheduleTarget:
     name: str
     teacher_id: Optional[str] = None  # <-- ДОБАВЛЕНО ДЛЯ ФАЗЫ 3
 
+class ScheduleTargetState(str, Enum):
+    """
+    Runtime state schedule target для web actor.
 
+    Не является DB role и не меняет семейные permissions.
+    """
+
+    READY = "ready"
+    PARENT_EMPTY = "parent_empty"
+    OBSERVER_EMPTY = "observer_empty"
+    OTHER_EMPTY = "other_empty"
+
+
+@dataclass(frozen=True, slots=True)
+class ScheduleTargetResolution:
+    """
+    Результат target resolution для schedule UI.
+
+    target=None может быть normal PWA state:
+    parent/observer допущен к web и состоит в семье, но student profiles
+    пока отсутствуют.
+    """
+
+    targets: List[ScheduleTarget]
+    target: Optional[ScheduleTarget]
+    state: ScheduleTargetState
+    can_manage_family: bool
+    
 class ScheduleTargetsService:
     def __init__(
         self,
@@ -130,3 +158,85 @@ class ScheduleTargetsService:
             if target.student_id == student_id:
                 return target
         return None
+    
+    async def resolve_for_web_user(
+        self,
+        *,
+        user_id: int,
+        requested_student_id: Optional[int],
+    ) -> ScheduleTargetResolution:
+        """
+        Разрешает current schedule target либо возвращает friendly no-target
+        state для parent/observer без student profiles.
+
+        Security boundary остаётся прежней:
+        - require_family_allowed() уже проверил family allowlist;
+        - explicit target selection валидируется через find_target();
+        - target другой семьи сюда не попадёт.
+        """
+        dto = await self.profile_service.get_user_profile_dto(
+            user_id,
+        )
+
+        if dto is None:
+            return ScheduleTargetResolution(
+                targets=[],
+                target=None,
+                state=ScheduleTargetState.OTHER_EMPTY,
+                can_manage_family=False,
+            )
+
+        role = getattr(dto, "role", None)
+
+        targets = await self.get_targets_for_user(
+            user_id=user_id,
+        )
+
+        if targets:
+            target = self.find_target(
+                targets,
+                requested_student_id,
+            )
+
+            if target is None:
+                target = targets[0]
+
+            return ScheduleTargetResolution(
+                targets=targets,
+                target=target,
+                state=ScheduleTargetState.READY,
+                can_manage_family=False,
+            )
+
+        family_id = getattr(dto, "family_id", None)
+
+        if role == "parent":
+            can_manage_family = bool(
+                family_id
+                and await self.profile_service.is_family_admin(
+                    user_id=user_id,
+                    family_id=int(family_id),
+                )
+            )
+
+            return ScheduleTargetResolution(
+                targets=[],
+                target=None,
+                state=ScheduleTargetState.PARENT_EMPTY,
+                can_manage_family=can_manage_family,
+            )
+
+        if role == "observer":
+            return ScheduleTargetResolution(
+                targets=[],
+                target=None,
+                state=ScheduleTargetState.OBSERVER_EMPTY,
+                can_manage_family=False,
+            )
+
+        return ScheduleTargetResolution(
+            targets=[],
+            target=None,
+            state=ScheduleTargetState.OTHER_EMPTY,
+            can_manage_family=False,
+        )

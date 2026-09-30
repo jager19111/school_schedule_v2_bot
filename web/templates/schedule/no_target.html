@@ -1,0 +1,18 @@
+{# web/templates/schedule/no_target.html #}
+{# Full PWA page: valid family member, but no student schedule target. #}
+
+{% extends "base.html" %}
+
+{% set nav = "today" %}
+
+{% block title %}
+  Расписание
+{% endblock %}
+
+{% block header %}
+  Расписание
+{% endblock %}
+
+{% block content %}
+  {% include "schedule/_no_target_content.html" %}
+{% endblock %}

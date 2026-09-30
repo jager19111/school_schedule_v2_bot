@@ -23,6 +23,7 @@ from fastapi.responses import HTMLResponse
 
 from services.schedule_targets_service import (
     ScheduleTarget,
+    ScheduleTargetResolution,
     ScheduleTargetsService,
 )
 from services.web_sessions_service import WebSessionContext
@@ -64,6 +65,41 @@ def _templates(request: Request):
 def _today_iso(request: Request) -> str:
     return _time_service(request).get_now_base().date().isoformat()
 
+def _is_htmx(request: Request) -> bool:
+    return request.headers.get("HX-Request") == "true"
+
+
+async def _render_no_target_page(
+    request: Request,
+    context: WebSessionContext,
+    resolution: ScheduleTargetResolution,
+):
+    """
+    Friendly schedule state для valid parent/observer без детей.
+
+    Это normal 200 PWA page, а не access-denied/403:
+    user уже допущен require_family_allowed(), но schedule target пока
+    отсутствует.
+    """
+    template_name = (
+        "schedule/_no_target_content.html"
+        if _is_htmx(request)
+        else "schedule/no_target.html"
+    )
+
+    return _templates(request).TemplateResponse(
+        request,
+        template_name,
+        _ctx(
+            request,
+            context,
+            {
+                "target_state": resolution.state.value,
+                "can_manage_family": resolution.can_manage_family,
+            },
+        ),
+    )
+    
 def _day_navigation(
     *,
     selected_date_iso: str,
@@ -607,34 +643,39 @@ async def _nika_stale_warning(request: Request) -> str | None:
 async def _resolve_target(
     request: Request,
     context: WebSessionContext,
-) -> tuple[list, ScheduleTarget]:
-    targets = await _targets_service(request).get_targets_for_user(
-        user_id=context.user_id
-    )
-    if not targets:
-        raise HTTPException(
-            status_code=403,
-            detail="Нет доступных профилей.",
-        )
+) -> tuple[ScheduleTargetResolution, ScheduleTarget | None]:
+    """
+    Возвращает target resolution.
 
+    target=None — допустимый PWA state для parent/observer без children.
+    Routes должны рендерить onboarding page, а не бросать 403.
+    """
     raw = request.cookies.get(_STUDENT_COOKIE, "")
-    try:
-        requested = int(raw) if raw else None
-    except ValueError:
-        requested = None
 
-    target = _targets_service(request).find_target(
-        targets,
-        requested,
+    try:
+        requested_student_id = int(raw) if raw else None
+    except ValueError:
+        requested_student_id = None
+
+    resolution = await _targets_service(
+        request,
+    ).resolve_for_web_user(
+        user_id=context.user_id,
+        requested_student_id=requested_student_id,
     )
+
+    target = resolution.target
+
     if target is None:
-        target = targets[0]
+        return resolution, None
 
     if target.teacher_id:
         try:
             teacher_name = await _schedule_service(
-                request
-            ).get_teacher_name(target.teacher_id)
+                request,
+            ).get_teacher_name(
+                target.teacher_id,
+            )
         except Exception as exc:
             logger.warning(
                 "get_teacher_name failed for %s: %s",
@@ -652,14 +693,25 @@ async def _resolve_target(
             ),
         )
 
-    return targets, target
-
+    return resolution, target
 @router.get("/", response_class=HTMLResponse)
 async def dashboard(
     request: Request,
     context: WebSessionContext = Depends(require_family_allowed),
 ):
-    targets, target = await _resolve_target(request, context)
+    resolution, target = await _resolve_target(
+        request,
+        context,
+    )
+
+    if target is None:
+        return await _render_no_target_page(
+            request,
+            context,
+            resolution,
+        )
+
+    targets = resolution.targets
     schedule_service = _schedule_service(request)
 
     # Роутинг: Учитель или Ученик
@@ -755,7 +807,19 @@ async def day_page(
     except ValueError:
         raise HTTPException(status_code=404, detail="Некорректная дата.")
 
-    targets, target = await _resolve_target(request, context)
+    resolution, target = await _resolve_target(
+        request,
+        context,
+    )
+
+    if target is None:
+        return await _render_no_target_page(
+            request,
+            context,
+            resolution,
+        )
+
+    targets = resolution.targets
     
     # Роутинг: Учитель или Ученик
     if target.teacher_id:
@@ -832,7 +896,19 @@ async def day_changes(
     except ValueError:
         raise HTTPException(status_code=404, detail="Некорректная дата.")
 
-    targets, target = await _resolve_target(request, context)
+    resolution, target = await _resolve_target(
+        request,
+        context,
+    )
+
+    if target is None:
+        return await _render_no_target_page(
+            request,
+            context,
+            resolution,
+        )
+
+    targets = resolution.targets
     
     # Роутинг: Учитель или Ученик
     if target.teacher_id:
@@ -866,7 +942,19 @@ async def week_page(
     context: WebSessionContext = Depends(require_family_allowed),
     week: str | None = None,
 ):
-    targets, target = await _resolve_target(request, context)
+    resolution, target = await _resolve_target(
+        request,
+        context,
+    )
+
+    if target is None:
+        return await _render_no_target_page(
+            request,
+            context,
+            resolution,
+        )
+
+    targets = resolution.targets
     schedule_service = _schedule_service(request)
 
     if week:
