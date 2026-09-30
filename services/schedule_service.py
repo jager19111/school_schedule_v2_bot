@@ -889,7 +889,30 @@ class ScheduleService:
 
         return await self._resolve_smart_day(fetch_day)
 
+    async def get_smart_target_date(
+        self,
+        *,
+        class_id: str,
+        group_id: str,
+        student_id: int | None = None,
+    ) -> str:
+        """Совместимость: только дата (день собирается один раз)."""
+        return (
+            await self.get_smart_day_schedule_for_student(
+                class_id=class_id,
+                group_id=group_id,
+                student_id=student_id,
+            )
+        ).date_iso
 
+    async def get_smart_teacher_target_date(self, *, teacher_id: str) -> str:
+        """Совместимость: только дата."""
+        return (
+            await self.get_smart_day_schedule_for_teacher(
+                teacher_id=teacher_id,
+            )
+        ).date_iso
+        
     async def get_smart_day_schedule_for_teacher(
         self,
         *,
