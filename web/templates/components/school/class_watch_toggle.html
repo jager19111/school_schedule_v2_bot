@@ -1,0 +1,47 @@
+  {# web/templates/components/school/class_watch_toggle.html #}
+  <span
+  id="class-watch-toggle"
+  class="class-watch-toggle"
+>
+  {% if is_whole_class_watched %}
+  <button
+    type="button"
+    class="class-watch-toggle__button class-watch-toggle__button--active"
+    hx-post="/school/class/{{ watch_class_id }}/watch/delete"
+    hx-target="#class-watch-toggle"
+    hx-swap="outerHTML"
+    hx-indicator="#class-watch-toggle"
+    hx-confirm="Удалить класс из отслеживаемых?"
+    hx-disabled-elt="this"
+    aria-label="Удалить класс из отслеживаемых"
+    aria-pressed="true"
+    title="Убрать из отслеживаемых классов"
+  >
+    ★
+  </button>
+  {% else %}
+  <button
+    type="button"
+    class="class-watch-toggle__button"
+    hx-post="/school/class/{{ watch_class_id }}/watch"
+    hx-target="#class-watch-toggle"
+    hx-swap="outerHTML"
+    hx-indicator="#class-watch-toggle"
+    hx-disabled-elt="this"
+    aria-label="Добавить класс в отслеживаемые"
+    aria-pressed="false"
+    title="Добавить в отслеживаемые классы"
+  >
+    ☆
+  </button>
+  {% endif %}
+
+  {% if class_watch_error %}
+  <span
+    class="class-watch-toggle__error"
+    role="alert"
+  >
+    ⚠️ {{ class_watch_error }}
+  </span>
+  {% endif %}
+</span>

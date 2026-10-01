@@ -14,9 +14,13 @@ import logging
 from datetime import date, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import (
+    HTMLResponse,
+    RedirectResponse,
+)
 
 from services.web_sessions_service import WebSessionContext
+from services.watch_targets_service import WatchTargetsService
 from web.deps import require_family_allowed
 from web.mappers import (
     day_navigation_label,
@@ -42,6 +46,10 @@ _KINDS = {
 def _schedule_service(request: Request):
     return request.app.state.schedule_service
 
+def _watch_targets_service(
+    request: Request,
+) -> WatchTargetsService:
+    return request.app.state.watch_targets_service
 
 def _time_service(request: Request):
     return request.app.state.time_service
@@ -53,6 +61,9 @@ def _templates(request: Request):
 
 def _today_iso(request: Request) -> str:
     return _time_service(request).get_now_base().date().isoformat()
+
+def _is_htmx(request: Request) -> bool:
+    return request.headers.get("HX-Request") == "true"
 
 def _school_day_navigation(
     *,
@@ -137,6 +148,77 @@ def _ctx(request: Request, context: WebSessionContext, extra: dict) -> dict:
     base.update(extra)
     return base
 
+async def _class_watch_context(
+    request: Request,
+    context: WebSessionContext,
+    *,
+    class_id: str,
+    error: str | None = None,
+) -> dict:
+    """
+    Подготавливает owner-specific whole-class star state.
+
+    Star всегда относится только к:
+    class_id=<class_id>, group_id="ALL".
+
+    Group-specific watch targets здесь намеренно игнорируются.
+    """
+    whole_class_target = (
+        await _watch_targets_service(
+            request,
+        ).get_whole_class_target(
+            owner_user_id=context.user_id,
+            class_id=class_id,
+        )
+    )
+
+    return {
+        "show_class_watch_toggle": True,
+        "watch_class_id": class_id,
+        "is_whole_class_watched": (
+            whole_class_target is not None
+        ),
+        "whole_class_watch_target_id": (
+            whole_class_target.id
+            if whole_class_target is not None
+            else None
+        ),
+        "class_watch_error": error,
+    }
+
+
+async def _render_class_watch_toggle(
+    request: Request,
+    context: WebSessionContext,
+    *,
+    class_id: str,
+    error: str | None = None,
+):
+    """
+    Возвращает только small HTMX star fragment.
+
+    Normal browser POST получает redirect на class day page.
+    """
+    if not _is_htmx(request):
+        return RedirectResponse(
+            url=f"/school/class/{class_id}",
+            status_code=303,
+        )
+
+    return _templates(request).TemplateResponse(
+        request,
+        "components/school/class_watch_toggle.html",
+        _ctx(
+            request,
+            context,
+            await _class_watch_context(
+                request,
+                context,
+                class_id=class_id,
+                error=error,
+            ),
+        ),
+    )
 
 # ==============================================================
 # Меню «Школа» + поиск
@@ -327,6 +409,21 @@ async def _render_school_day(
                 "kind": kind_name,
                 "item_id": item_id,
                 "item_title": title,
+                **(
+                    await _class_watch_context(
+                        request,
+                        context,
+                        class_id=item_id,
+                    )
+                    if kind_name == "class"
+                    else {
+                        "show_class_watch_toggle": False,
+                        "watch_class_id": None,
+                        "is_whole_class_watched": False,
+                        "whole_class_watch_target_id": None,
+                        "class_watch_error": None,
+                    }
+                ),
             },
         ),
     )
@@ -371,7 +468,8 @@ async def school_item_week(
     next_week = (date.fromisoformat(week_start) + timedelta(days=7)).isoformat()
     return _templates(request).TemplateResponse(
         request, "school/week.html",
-        _ctx(request, context, {
+        _ctx(request, context, 
+        {
             "week": view,
             "kind": kind_name,
             "item_id": item_id,
@@ -379,10 +477,169 @@ async def school_item_week(
             "kind_icon": kind["icon"],
             "prev_week": prev_week,
             "next_week": next_week,
-        }),
+            **(
+                await _class_watch_context(
+                    request,
+                    context,
+                    class_id=item_id,
+                )
+                if kind_name == "class"
+                else {
+                    "show_class_watch_toggle": False,
+                    "watch_class_id": None,
+                    "is_whole_class_watched": False,
+                    "whole_class_watch_target_id": None,
+                    "class_watch_error": None,
+                }
+            ),
+        },
+      ),
+    )
+
+# ==============================================================
+# Whole-class watch star
+# ==============================================================
+
+
+@router.post(
+    "/school/class/{class_id}/watch",
+    response_class=HTMLResponse,
+)
+async def add_whole_class_watch_target(
+    request: Request,
+    class_id: str,
+    context: WebSessionContext = Depends(require_family_allowed),
+):
+    """
+    Добавляет whole-class watch target.
+
+    Target всегда создаётся с group_id="ALL".
+    Class ID проверяется WatchTargetsService по current NIKA dictionaries.
+    """
+    schedule_service = _schedule_service(request)
+
+    try:
+        dictionaries = (
+            await schedule_service.get_school_dictionaries()
+        )
+    except Exception as exc:
+        logger.warning(
+            "Не удалось получить school dictionaries "
+            "для class watch add user=%s class=%s: %s",
+            context.user_id,
+            class_id,
+            exc,
+        )
+        return await _render_class_watch_toggle(
+            request,
+            context,
+            class_id=class_id,
+            error=(
+                "Не удалось загрузить справочник школы. "
+                "Попробуйте позже."
+            ),
+        )
+
+    response = (
+        await _watch_targets_service(
+            request,
+        ).add_target_from_school_dictionaries(
+            owner_user_id=context.user_id,
+            class_id=class_id,
+            group_id="ALL",
+            dictionaries=dictionaries,
+        )
+    )
+
+    if not response.success:
+        errors = {
+            "duplicate": (
+                "Этот класс уже добавлен в отслеживание."
+            ),
+            "limit_reached": (
+                "Достигнут лимит отслеживаемых классов: 10."
+            ),
+            "invalid_class": (
+                "Этот класс больше не найден "
+                "в расписании школы."
+            ),
+        }
+
+        return await _render_class_watch_toggle(
+            request,
+            context,
+            class_id=class_id,
+            error=errors.get(
+                response.error_code,
+                "Не удалось добавить класс в отслеживание.",
+            ),
+        )
+
+    return await _render_class_watch_toggle(
+        request,
+        context,
+        class_id=class_id,
     )
 
 
+@router.post(
+    "/school/class/{class_id}/watch/delete",
+    response_class=HTMLResponse,
+)
+async def delete_whole_class_watch_target(
+    request: Request,
+    class_id: str,
+    context: WebSessionContext = Depends(require_family_allowed),
+):
+    """
+    Удаляет whole-class target current user.
+
+    target_id не принимается от client:
+    service заново разрешает owner-specific class_id + ALL target.
+    """
+    whole_class_target = (
+        await _watch_targets_service(
+            request,
+        ).get_whole_class_target(
+            owner_user_id=context.user_id,
+            class_id=class_id,
+        )
+    )
+
+    if whole_class_target is None:
+        return await _render_class_watch_toggle(
+            request,
+            context,
+            class_id=class_id,
+            error=(
+                "Отслеживаемый класс уже удалён "
+                "или недоступен."
+            ),
+        )
+
+    response = await _watch_targets_service(
+        request,
+    ).delete_target(
+        owner_user_id=context.user_id,
+        target_id=whole_class_target.id,
+    )
+
+    if not response.success:
+        return await _render_class_watch_toggle(
+            request,
+            context,
+            class_id=class_id,
+            error=(
+                "Не удалось удалить отслеживаемый класс."
+            ),
+        )
+
+    return await _render_class_watch_toggle(
+        request,
+        context,
+        class_id=class_id,
+    )
+    
 # ==============================================================
 # Свободные кабинеты сейчас (ТЗ 32)
 # ==============================================================

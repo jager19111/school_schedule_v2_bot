@@ -22,6 +22,10 @@
     {{ day.header_context }}
   </span>
   {% endif %}
+
+  {% if show_class_watch_toggle %}
+    {% include "components/school/class_watch_toggle.html" %}
+  {% endif %}
 {% endblock %}
 
 {% block content %}

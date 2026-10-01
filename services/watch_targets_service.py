@@ -41,6 +41,42 @@ class WatchTargetsService:
             enabled_only=enabled_only,
         )
 
+    async def get_whole_class_target(
+        self,
+        *,
+        owner_user_id: int,
+        class_id: str,
+    ) -> ScheduleWatchTargetDTO | None:
+        """
+        Возвращает personal target всего класса.
+
+        Используется star toggle на school class pages.
+
+        Group-specific targets не считаются whole-class target:
+        - class_id="016", group_id="G1" → None;
+        - class_id="016", group_id="ALL" → target.
+        """
+        normalized_class_id = self._normalize_class_id(
+            class_id,
+        )
+
+        if not normalized_class_id:
+            return None
+
+        targets = await self.get_targets(
+            owner_user_id=owner_user_id,
+            enabled_only=False,
+        )
+
+        for target in targets:
+            if (
+                target.class_id == normalized_class_id
+                and target.group_id.strip().upper() == "ALL"
+            ):
+                return target
+
+        return None
+    
     async def add_target_from_school_dictionaries(
         self,
         *,

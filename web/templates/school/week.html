@@ -17,6 +17,10 @@
 
 {% block header %}
   {{ kind_icon }} {{ item_title }} · {{ week.week_display }}
+
+  {% if show_class_watch_toggle %}
+    {% include "components/school/class_watch_toggle.html" %}
+  {% endif %}
 {% endblock %}
 
 {% block content %}
