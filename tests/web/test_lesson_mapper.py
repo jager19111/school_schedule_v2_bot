@@ -1,7 +1,7 @@
 from __future__ import annotations
+from datetime import datetime
 
-from core.models.dto import DayChangesDetailDTO, LessonDTO
-from services.schedule_targets_service import ScheduleTarget
+from core.models.dto import DayChangesDetailDTO, LessonDTO, ScheduleTargetDTO, ScheduleTargetKind
 from web.mappers import changes_to_web, lesson_entry_to_web, lessons_to_web
 from web.schemas import LessonKind, LessonStatus, LessonViewMode, WebLesson
 
@@ -51,6 +51,7 @@ def test_normal_student_lesson_is_typed() -> None:
     result = lessons_to_web(
         [lesson()],
         view_mode=LessonViewMode.STUDENT,
+        show_profile_groups=False,
     )
 
     assert len(result) == 1
@@ -66,6 +67,7 @@ def test_long_subject_is_not_truncated_by_mapper() -> None:
     result = lessons_to_web(
         [lesson(subject=subject)],
         view_mode=LessonViewMode.STUDENT,
+        show_profile_groups=False,
     )
 
     assert result[0].entries[0].subject.value == subject
@@ -78,7 +80,9 @@ def test_empty_optional_values_become_none() -> None:
             group="",
             class_name="",
             room="",
-        )
+        ),
+        view_mode=LessonViewMode.STUDENT,
+        show_profile_groups=False,
     )
 
     assert entry.teacher is None
@@ -104,6 +108,7 @@ def test_same_subject_two_groups_keep_individual_rooms() -> None:
             ),
         ],
         view_mode=LessonViewMode.CLASS,
+        show_profile_groups=True,
     )
 
     assert len(result) == 1
@@ -119,6 +124,7 @@ def test_same_subject_three_groups_is_one_slot() -> None:
             lesson(lesson_id="g3", group="Группа 3", room="325"),
         ],
         view_mode=LessonViewMode.CLASS,
+        show_profile_groups=True,
     )
 
     assert len(result) == 1
@@ -143,6 +149,7 @@ def test_different_subjects_remain_entries_in_one_slot() -> None:
             ),
         ],
         view_mode=LessonViewMode.CLASS,
+        show_profile_groups=True,
     )
 
     assert len(result) == 1
@@ -164,7 +171,9 @@ def test_changed_subject_teacher_and_room_are_marked() -> None:
             original_subject="Биология",
             original_teacher="Иванов И.И.",
             original_room="305",
-        )
+        ),
+        view_mode=LessonViewMode.STUDENT,
+        show_profile_groups=False,
     )
 
     assert entry.subject.changed is True
@@ -181,6 +190,7 @@ def test_added_cancelled_and_extra_statuses() -> None:
             )
         ],
         view_mode=LessonViewMode.STUDENT,
+        show_profile_groups=False,
     )[0]
     cancelled = lessons_to_web(
         [
@@ -190,6 +200,7 @@ def test_added_cancelled_and_extra_statuses() -> None:
             )
         ],
         view_mode=LessonViewMode.STUDENT,
+        show_profile_groups=False,
     )[0]
     extra = lessons_to_web(
         [
@@ -199,6 +210,7 @@ def test_added_cancelled_and_extra_statuses() -> None:
             )
         ],
         view_mode=LessonViewMode.STUDENT,
+        show_profile_groups=False,
     )[0]
 
     assert added.status is LessonStatus.ADDED
@@ -207,11 +219,13 @@ def test_added_cancelled_and_extra_statuses() -> None:
     assert extra.kind is LessonKind.EXTRA
 
 
-def test_current_is_explicit_mapper_input() -> None:
+def test_current_is_calculated_from_now_base() -> None:
+    # Заменяем старый флаг is_current=True на вычисление из now_base
     result = lessons_to_web(
-        [lesson()],
+        [lesson(start_time="16:40", end_time="17:20", date_iso="2026-09-28")],
         view_mode=LessonViewMode.STUDENT,
-        is_current=True,
+        show_profile_groups=False,
+        now_base=datetime(2026, 9, 28, 17, 0),
     )
 
     assert result[0].is_current is True
@@ -236,6 +250,7 @@ def test_teacher_two_classes_same_slot_are_aggregated() -> None:
             ),
         ],
         view_mode=LessonViewMode.TEACHER,
+        show_profile_groups=True,
     )
 
     assert len(result) == 1
@@ -253,13 +268,16 @@ def test_same_number_with_different_time_is_not_aggregated() -> None:
             lesson(lesson_id="second", start_time="10:15", end_time="11:00"),
         ],
         view_mode=LessonViewMode.TEACHER,
+        show_profile_groups=True,
     )
 
     assert len(result) == 2
 
 
 def test_changes_mapper_uses_existing_change_dto() -> None:
-    target = ScheduleTarget(
+    target = ScheduleTargetDTO(
+        kind=ScheduleTargetKind.STUDENT,
+        selection_key="student:1",
         student_id=1,
         class_id="6a",
         group_id="1",
@@ -284,6 +302,7 @@ def test_changes_mapper_uses_existing_change_dto() -> None:
     assert result.changes[0].changes[0].field == "subject"
     assert result.changes[0].changes[0].old_value == "Биология"
     assert result.changes[0].changes[0].new_value == "История"
+
 
 def test_teacher_three_classes_same_slot_are_aggregated() -> None:
     result = lessons_to_web(
@@ -311,6 +330,7 @@ def test_teacher_three_classes_same_slot_are_aggregated() -> None:
             ),
         ],
         view_mode=LessonViewMode.TEACHER,
+        show_profile_groups=True,
     )
 
     assert len(result) == 1
@@ -319,6 +339,8 @@ def test_teacher_three_classes_same_slot_are_aggregated() -> None:
         entry.class_name.value
         for entry in result[0].entries
     ] == ["6а", "6б", "7а"]
+
+
 def test_teacher_same_time_different_subjects_remain_separate_cards() -> None:
     result = lessons_to_web(
         [
@@ -336,6 +358,7 @@ def test_teacher_same_time_different_subjects_remain_separate_cards() -> None:
             ),
         ],
         view_mode=LessonViewMode.TEACHER,
+        show_profile_groups=True,
     )
 
     assert len(result) == 2
@@ -343,6 +366,7 @@ def test_teacher_same_time_different_subjects_remain_separate_cards() -> None:
         item.entries[0].subject.value
         for item in result
     ] == ["Математика", "Физика"]
+
 
 def test_teacher_same_time_different_rooms_remain_separate_cards() -> None:
     result = lessons_to_web(
@@ -361,6 +385,7 @@ def test_teacher_same_time_different_rooms_remain_separate_cards() -> None:
             ),
         ],
         view_mode=LessonViewMode.TEACHER,
+        show_profile_groups=True,
     )
 
     assert len(result) == 2

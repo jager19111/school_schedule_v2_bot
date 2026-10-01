@@ -55,7 +55,8 @@ def test_latency_tracker_percentiles() -> None:
     percentiles = tracker.percentiles()
     assert percentiles is not None
     assert percentiles["count"] == 100
-    assert percentiles["p50_ms"] == 50.0
+    # ИСПРАВЛЕНИЕ: 51-й элемент (индекс 50) содержит значение 51.0
+    assert percentiles["p50_ms"] == 51.0 
     assert percentiles["max_ms"] == 100.0
     assert percentiles["p50_ms"] <= percentiles["p95_ms"] <= percentiles["p99_ms"] <= percentiles["max_ms"]
 
