@@ -219,38 +219,36 @@ class WatchTargetsService:
         title: Optional[str],
     ) -> ActionResponseDTO:
         """
-        Persistence-часть создания уже нормализованной и проверенной цели.
+        Persistence-часть создания нормализованной и проверенной цели.
 
-        Этот метод намеренно private: публичные callers должны использовать
-        add_target_from_school_dictionaries(), а не обходить NIKA validation.
+        Repository выполняет limit check и INSERT атомарно
+        под одним write lock/transaction.
         """
-        if (
-            await self.repo.count_watch_targets(
-                owner_user_id,
+        result = (
+            await self.repo.create_watch_target_with_limit(
+                owner_user_id=owner_user_id,
+                class_id=class_id,
+                group_id=group_id,
+                title=title,
+                max_targets=MAX_TARGETS_PER_USER,
             )
-            >= MAX_TARGETS_PER_USER
-        ):
-            return ActionResponseDTO(
-                success=False,
-                error_code="limit_reached",
-            )
-
-        target = await self.repo.create_watch_target(
-            owner_user_id=owner_user_id,
-            class_id=class_id,
-            group_id=group_id,
-            title=title,
         )
 
-        if target is None:
+        if result.error_code is not None:
             return ActionResponseDTO(
                 success=False,
-                error_code="duplicate",
+                error_code=result.error_code,
+            )
+
+        if result.target is None:
+            raise RuntimeError(
+                "Repository вернул успешный результат "
+                "без созданного watch target."
             )
 
         return ActionResponseDTO(
             success=True,
-            data=target,
+            data=result.target,
         )
 
     @staticmethod

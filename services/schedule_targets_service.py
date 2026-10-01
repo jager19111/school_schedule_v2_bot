@@ -91,7 +91,7 @@ class ScheduleTargetsService:
             return [
                 ScheduleTargetDTO(
                     kind=ScheduleTargetKind.STUDENT,
-                    selection_key=f"student:{student.id}",
+                    selection_key=(ScheduleTargetKind.STUDENT.build_selection_key(student.id,)),
                     name=(
                         student.name.strip()
                         if student.name.strip()
@@ -115,7 +115,7 @@ class ScheduleTargetsService:
                 return [
                     ScheduleTargetDTO(
                         kind=ScheduleTargetKind.STUDENT,
-                        selection_key=f"student:{student.id}",
+                        selection_key=(ScheduleTargetKind.STUDENT.build_selection_key(student.id,)),
                         name=(
                             student.name.strip()
                             if student.name.strip()
@@ -138,7 +138,7 @@ class ScheduleTargetsService:
             return [
                 ScheduleTargetDTO(
                     kind=ScheduleTargetKind.STUDENT,
-                    selection_key=f"student:legacy:{user_id}",
+                    selection_key=(ScheduleTargetKind.STUDENT.build_selection_key("legacy",user_id,)),
                     name="Моё расписание",
                     student_id=None,
                     class_id=profile.class_id,
@@ -153,7 +153,7 @@ class ScheduleTargetsService:
                 return [
                     ScheduleTargetDTO(
                         kind=ScheduleTargetKind.TEACHER,
-                        selection_key=f"teacher:{teacher_id}",
+                        selection_key=(ScheduleTargetKind.TEACHER.build_selection_key(teacher_id,)),
                         name="Моё расписание",
                         student_id=None,
                         class_id="",
@@ -239,7 +239,7 @@ class ScheduleTargetsService:
             result.append(
                 ScheduleTargetDTO(
                     kind=ScheduleTargetKind.WATCH,
-                    selection_key=f"watch:{watch_target.id}",
+                    selection_key=(ScheduleTargetKind.WATCH.build_selection_key(watch_target.id,)),
                     name=display_title,
                     student_id=None,
                     class_id=class_id,

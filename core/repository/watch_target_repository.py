@@ -5,7 +5,10 @@ from __future__ import annotations
 from typing import Optional
 
 from core.mappers.watch_target_mapper import WatchTargetMapper
-from core.models.dto import ScheduleWatchTargetDTO
+from core.models.dto import (
+    ScheduleWatchTargetDTO,
+    WatchTargetCreateResultDTO,
+)
 from core.repository.base_repository import BaseRepository
 from services.time_service import TimeService
 
@@ -28,20 +31,59 @@ class WatchTargetRepository(BaseRepository):
     def __init__(self, db_path, time_service: TimeService) -> None:
         super().__init__(db_path, time_service)
 
-    async def create_watch_target(
+    async def create_watch_target_with_limit(
         self,
         *,
         owner_user_id: int,
         class_id: str,
         group_id: str,
-        title: Optional[str] = None,
-    ) -> ScheduleWatchTargetDTO | None:
-        """Создаёт target; None означает duplicate по UNIQUE-ограничению."""
+        title: Optional[str],
+        max_targets: int,
+    ) -> WatchTargetCreateResultDTO:
+        """
+        Атомарно создаёт watch target с ограничением количества целей.
+
+        В одном write lock и одной transaction выполняются:
+
+        1. COUNT целей owner.
+        2. Проверка лимита.
+        3. INSERT.
+        4. COMMIT.
+
+        UNIQUE(owner_user_id, class_id, group_id) остаётся final
+        database protection от duplicate даже при параллельных request.
+        """
         now_utc = self._now_utc_str()
 
         async with self._write_lock():
             async with self._connection() as db:
+                await db.execute("BEGIN IMMEDIATE")
+
                 try:
+                    count_cursor = await db.execute(
+                        """
+                        SELECT COUNT(*) AS count
+                        FROM schedule_watch_targets
+                        WHERE owner_user_id = ?
+                        """,
+                        (owner_user_id,),
+                    )
+                    count_row = await count_cursor.fetchone()
+
+                    current_count = int(
+                        count_row["count"]
+                        if count_row is not None
+                        else 0
+                    )
+
+                    if current_count >= max_targets:
+                        await db.rollback()
+
+                        return WatchTargetCreateResultDTO(
+                            target=None,
+                            error_code="limit_reached",
+                        )
+
                     cursor = await db.execute(
                         """
                         INSERT INTO schedule_watch_targets (
@@ -63,27 +105,35 @@ class WatchTargetRepository(BaseRepository):
                             now_utc,
                         ),
                     )
+
+                    target_id = cursor.lastrowid
                     await db.commit()
+
                 except Exception as exc:
                     await db.rollback()
-                    if "unique constraint failed" in str(exc).lower():
-                        return None
+
+                    if "unique constraint failed" in str(
+                        exc,
+                    ).lower():
+                        return WatchTargetCreateResultDTO(
+                            target=None,
+                            error_code="duplicate",
+                        )
+
                     raise
 
-                target_id = cursor.lastrowid
-
-        # Один SELECT после INSERT больше не нужен: возвращаем DTO из
-        # уже известных значений. Это экономит запрос на каждое создание.
-        return ScheduleWatchTargetDTO(
-            id=int(target_id),
-            owner_user_id=owner_user_id,
-            class_id=class_id,
-            group_id=group_id,
-            title=title,
-            is_enabled=True,
-            receive_schedule_changes=True,
-            created_at=now_utc,
-            updated_at=now_utc,
+        return WatchTargetCreateResultDTO(
+            target=ScheduleWatchTargetDTO(
+                id=int(target_id),
+                owner_user_id=owner_user_id,
+                class_id=class_id,
+                group_id=group_id,
+                title=title,
+                is_enabled=True,
+                receive_schedule_changes=True,
+                created_at=now_utc,
+                updated_at=now_utc,
+            ),
         )
 
     async def get_watch_target(
@@ -126,16 +176,16 @@ class WatchTargetRepository(BaseRepository):
         )
         return WatchTargetMapper.to_dto_list(rows)
 
-    async def count_watch_targets(self, owner_user_id: int) -> int:
-        row = await self._fetch_one(
-            """
-            SELECT COUNT(*) AS count
-            FROM schedule_watch_targets
-            WHERE owner_user_id = ?
-            """,
-            (owner_user_id,),
-        )
-        return int(row["count"]) if row else 0
+        async def count_watch_targets(self, owner_user_id: int) -> int:
+            row = await self._fetch_one(
+                """
+                SELECT COUNT(*) AS count
+                FROM schedule_watch_targets
+                WHERE owner_user_id = ?
+                """,
+                (owner_user_id,),
+            )
+            return int(row["count"]) if row else 0
 
     async def delete_watch_target(
         self,

@@ -107,7 +107,8 @@ def _requested_selection_key(
     except ValueError:
         return None
 
-    return f"student:{legacy_student_id}"
+    return (ScheduleTargetKind.STUDENT.build_selection_key(legacy_student_id,)
+)
 
 
 def _selector_context(
@@ -1142,7 +1143,7 @@ async def select_student(
     URL ID не является источником доверия:
     target ищется только среди разрешённых targets current actor.
     """
-    selection_key = f"student:{student_id}"
+    selection_key = (ScheduleTargetKind.STUDENT.build_selection_key(student_id,))
 
     targets = await _targets_service(
         request,
@@ -1188,7 +1189,7 @@ async def select_watch_target(
     Чужой, выключенный или удалённый target не найдётся в
     get_all_targets_for_user() и вернёт 403.
     """
-    selection_key = f"watch:{watch_target_id}"
+    selection_key = (ScheduleTargetKind.WATCH.build_selection_key(watch_target_id,))
 
     targets = await _targets_service(
         request,
@@ -1232,7 +1233,7 @@ async def select_student_legacy(
     Новый template использует:
     /api/v1/schedule/select/student/{student_id}.
     """
-    selection_key = f"student:{student_id}"
+    selection_key = (ScheduleTargetKind.STUDENT.build_selection_key(student_id,))
 
     targets = await _targets_service(
         request,

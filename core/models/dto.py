@@ -274,7 +274,23 @@ class ScheduleWatchTargetDTO:
     created_at: datetime | None = None  # <-- ИСПРАВЛЕНО
     updated_at: datetime | None = None  # <-- ИСПРАВЛЕНО
 
+@dataclass(frozen=True, slots=True)
+class WatchTargetCreateResultDTO:
+    """
+    Typed result атомарного создания watch target.
 
+    target:
+    - задан только при успешном INSERT.
+
+    error_code:
+    - None при успехе;
+    - duplicate при UNIQUE(owner_user_id, class_id, group_id);
+    - limit_reached при достижении MAX_TARGETS_PER_USER.
+    """
+
+    target: ScheduleWatchTargetDTO | None
+    error_code: str | None = None
+    
 @dataclass
 class ScheduleViewTargetDTO:
     """
@@ -413,6 +429,52 @@ class ScheduleTargetKind(str, Enum):
     TEACHER = "teacher"
     WATCH = "watch"
 
+    def build_selection_key(
+        self,
+        *parts: str | int,
+    ) -> str:
+        """
+        Строит canonical typed key schedule target.
+
+        Примеры:
+        - ScheduleTargetKind.STUDENT.build_selection_key(501)
+          -> student:501
+
+        - ScheduleTargetKind.STUDENT.build_selection_key(
+              "legacy",
+              123456,
+          )
+          -> student:legacy:123456
+
+        - ScheduleTargetKind.TEACHER.build_selection_key("T001")
+          -> teacher:T001
+
+        - ScheduleTargetKind.WATCH.build_selection_key(42)
+          -> watch:42
+        """
+        normalized_parts = [
+            str(part).strip()
+            for part in parts
+        ]
+
+        if (
+            not normalized_parts
+            or any(
+                not part
+                for part in normalized_parts
+            )
+        ):
+            raise ValueError(
+                "Schedule target selection key требует "
+                "непустые части."
+            )
+
+        return ":".join(
+            (
+                self.value,
+                *normalized_parts,
+            )
+        )
 
 class ScheduleTargetState(str, Enum):
     """
