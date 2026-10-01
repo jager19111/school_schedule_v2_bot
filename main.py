@@ -518,9 +518,11 @@ async def main():
 
             # Phase 2.1: Таргет сервис с student_repo
             schedule_targets_service = ScheduleTargetsService(
-                profile_service, students_service, student_repo
+                profile_service=profile_service,
+                students_service=students_service,
+                watch_targets_service=watch_targets_service,
+                schedule_service=schedule_service,
             )
-
 
             extra_classes_web_service = ExtraClassesWebService(
                 extra_classes_repo=extra_classes_repo,
@@ -570,6 +572,7 @@ async def main():
                 schedule_service=schedule_service,
                 students_service=students_service,
                 schedule_targets_service=schedule_targets_service,
+                watch_targets_service=watch_targets_service,
                 time_service=time_service,
                 db_liveness=_db_liveness,
                 extra_classes_web_service=extra_classes_web_service,

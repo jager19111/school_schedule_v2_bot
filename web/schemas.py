@@ -47,7 +47,20 @@ class WebStudent(BaseModel):
     name: str
     is_current: bool = False
 
+class WebWatchTarget(BaseModel):
+    """
+    Personal watched class/group для переключателя расписания.
 
+    Не является профилем ребёнка:
+    - не имеет student_id;
+    - не связан с extra classes;
+    - выбирается по watch_target_id.
+    """
+
+    watch_target_id: int
+    name: str
+    is_current: bool = False
+    
 class WebChangedValue(BaseModel):
     """Значение поля урока и факт его изменения относительно original_*."""
 
@@ -309,3 +322,21 @@ class WebDeviceSession(BaseModel):
     created_at_display: str
     last_seen_at_display: str
     is_current: bool
+    
+# ==============================================================
+# Отслеживаемые классы
+# ==============================================================    
+    
+class WebWatchTarget(BaseModel):
+    """
+    Personal watched class/group для переключателя расписания.
+
+    Не является профилем ребёнка:
+    - не имеет student_id;
+    - не связан с extra classes;
+    - выбирается по watch_target_id.
+    """
+
+    watch_target_id: int
+    name: str
+    is_current: bool = False

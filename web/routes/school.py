@@ -25,6 +25,7 @@ from web.mappers import (
     school_items_to_web,
     search_school,
     week_summary_to_web,
+    class_items_to_web,
 )
 from web.schemas import LessonViewMode
 
@@ -203,7 +204,11 @@ async def school_list(
                 "kind": kind_name,
                 "kind_title": kind["title"],
                 "kind_icon": kind["icon"],
-                "items": school_items_to_web(source_items),
+                "items": (
+                    class_items_to_web(source_items)
+                    if kind_name == "class"
+                    else school_items_to_web(source_items)
+                ),
             },
         ),
     )

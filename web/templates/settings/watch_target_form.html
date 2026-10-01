@@ -1,0 +1,16 @@
+  {# web/templates/settings/watch_target_form.html #}
+{% extends "base.html" %}
+
+{% set nav = "settings" %}
+
+{% block title %}
+Добавить отслеживаемый класс
+{% endblock %}
+
+{% block header %}
+Добавить класс
+{% endblock %}
+
+{% block content %}
+{% include "settings/_watch_target_form_content.html" %}
+{% endblock %}

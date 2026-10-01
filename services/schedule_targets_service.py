@@ -1,242 +1,405 @@
 # services/schedule_targets_service.py
 #
-# Разрешение schedule-целей actor'а (ТЗ 18-19: actor/target split).
+# Разрешение целей просмотра расписания для web actor.
 #
-# Phase 2.1: для роли child используется НАСТОЯЩИЙ student_profile.id
-# через СУЩЕСТВУЮЩИЙ метод StudentRepository.get_student_by_telegram_user_id
-# (проверен по baseline 588700f). Существующий service layer не меняется —
-# это тонкое web-расширение, использующее публичный метод репозитория.
+# Важные границы:
 #
-# Frontend НЕ является security boundary: target проверяется здесь
-# на каждом запросе, подмена student_id из URL невозможна.
+# - ProfileService возвращает UserProfileDTO.
+# - StudentsService возвращает StudentProfileDTO.
+# - WatchTargetsService возвращает ScheduleWatchTargetDTO.
+# - ScheduleTargetsService не читает raw database rows и не использует
+#   getattr() для typed DTO.
+#
+# Current web routes пока работают через profile targets и legacy
+# web_student cookie. Watch targets подготовлены отдельным typed method
+# и будут включены в selection flow следующим атомарным этапом.
+
 
 from __future__ import annotations
 
-import logging
-from dataclasses import dataclass
-from enum import Enum
-from typing import List, Optional
 
-from core.repository.student_repository import StudentRepository
+import logging
+
+
+from core.models.dto import (
+    ScheduleTargetDTO,
+    ScheduleTargetKind,
+    ScheduleTargetResolutionDTO,
+    ScheduleTargetState,
+)
 from services.profiles_service import ProfileService
+from services.schedule_service import ScheduleService
 from services.students_service import StudentsService
+from services.watch_targets_service import WatchTargetsService
+
 
 logger = logging.getLogger(__name__)
 
 
-@dataclass(frozen=True, slots=True)
-class ScheduleTarget:
-    """Допустимая цель просмотра расписания для actor'а."""
-    student_id: Optional[int]
-    class_id: str
-    group_id: str
-    name: str
-    teacher_id: Optional[str] = None  # <-- ДОБАВЛЕНО ДЛЯ ФАЗЫ 3
-
-class ScheduleTargetState(str, Enum):
-    """
-    Runtime state schedule target для web actor.
-
-    Не является DB role и не меняет семейные permissions.
-    """
-
-    READY = "ready"
-    PARENT_EMPTY = "parent_empty"
-    OBSERVER_EMPTY = "observer_empty"
-    OTHER_EMPTY = "other_empty"
-
-
-@dataclass(frozen=True, slots=True)
-class ScheduleTargetResolution:
-    """
-    Результат target resolution для schedule UI.
-
-    target=None может быть normal PWA state:
-    parent/observer допущен к web и состоит в семье, но student profiles
-    пока отсутствуют.
-    """
-
-    targets: List[ScheduleTarget]
-    target: Optional[ScheduleTarget]
-    state: ScheduleTargetState
-    can_manage_family: bool
-    
 class ScheduleTargetsService:
+    """
+    Собирает разрешённые schedule targets текущего web user.
+
+    Сервис не зависит от repository:
+    - profile data приходит из ProfileService;
+    - students data приходит из StudentsService;
+    - personal watch targets приходят из WatchTargetsService;
+    - NIKA display names приходят из ScheduleService.
+    """
+
     def __init__(
         self,
         profile_service: ProfileService,
         students_service: StudentsService,
-        student_repo: StudentRepository,
+        watch_targets_service: WatchTargetsService,
+        schedule_service: ScheduleService,
     ) -> None:
         self.profile_service = profile_service
         self.students_service = students_service
-        self.student_repo = student_repo
+        self.watch_targets_service = watch_targets_service
+        self.schedule_service = schedule_service
 
-    async def get_targets_for_user(self, *, user_id: int) -> List[ScheduleTarget]:
-        dto = await self.profile_service.get_user_profile_dto(user_id)
-        if dto is None:
+    async def get_targets_for_user(
+        self,
+        *,
+        user_id: int,
+    ) -> list[ScheduleTargetDTO]:
+        """
+        Existing profile targets пользователя.
+
+        На текущем этапе возвращает только:
+        - student targets;
+        - teacher target.
+
+        Watch targets специально не добавляются сюда до typed web selector:
+        current routes и templates ещё используют student_id-based cookie.
+        """
+        profile = await self.profile_service.get_user_profile_dto(
+            user_id,
+        )
+
+        # Current ProfileService всегда возвращает UserProfileDTO,
+        # но guard сохраняем на случай изменения public contract.
+        if profile is None:
             return []
 
-        role = getattr(dto, "role", None)
-
-        if role in ("parent", "observer"):
+        if profile.role in {"parent", "observer"}:
             students = await self.students_service.get_students_for_adult(
-                adult_user_id=user_id
+                adult_user_id=user_id,
             )
+
             return [
-                ScheduleTarget(
-                    student_id=int(s.id),
-                    class_id=str(s.class_id),
-                    group_id=str(s.group_id or "ALL"),
-                    name=str(s.name or f"Ученик {s.id}"),
+                ScheduleTargetDTO(
+                    kind=ScheduleTargetKind.STUDENT,
+                    selection_key=f"student:{student.id}",
+                    name=(
+                        student.name.strip()
+                        if student.name.strip()
+                        else f"Ученик {student.id}"
+                    ),
+                    student_id=student.id,
+                    class_id=student.class_id,
+                    group_id=student.group_id or "ALL",
                 )
-                for s in (students or [])
+                for student in students
             ]
 
-        if role == "child":
-            # Настоящий student profile ребёнка: доп. занятия (extra_classes
-            # по student_id) показываются так же, как у parent.
-            row = await self.student_repo.get_student_by_telegram_user_id(
-                telegram_user_id=user_id
+        if profile.role == "child":
+            student = (
+                await self.students_service.get_student_by_telegram_user_id(
+                    telegram_user_id=user_id,
+                )
             )
-            if row and row.get("id"):
+
+            if student is not None:
                 return [
-                    ScheduleTarget(
-                        student_id=int(row["id"]),
-                        class_id=str(row.get("class_id") or ""),
-                        group_id=str(row.get("group_id") or "ALL"),
-                        name=str(row.get("name") or "Моё расписание"),
+                    ScheduleTargetDTO(
+                        kind=ScheduleTargetKind.STUDENT,
+                        selection_key=f"student:{student.id}",
+                        name=(
+                            student.name.strip()
+                            if student.name.strip()
+                            else "Моё расписание"
+                        ),
+                        student_id=student.id,
+                        class_id=student.class_id,
+                        group_id=student.group_id or "ALL",
                     )
                 ]
 
-            # Legacy-fallback: child без student_profile — только класс/группа
-            # из users (доп. занятия недоступны, ровно как до Phase 2.1).
-            class_id = getattr(dto, "class_id", None)
-            if not class_id:
+            # Legacy child без student_profiles row.
+            #
+            # extra classes здесь недоступны, потому что отсутствует
+            # canonical student_id. Existing web flow уже умеет
+            # работать с student_id=None.
+            if not profile.class_id:
                 return []
+
             return [
-                ScheduleTarget(
-                    student_id=None,
-                    class_id=str(class_id),
-                    group_id=str(getattr(dto, "group_id", None) or "ALL"),
+                ScheduleTargetDTO(
+                    kind=ScheduleTargetKind.STUDENT,
+                    selection_key=f"student:legacy:{user_id}",
                     name="Моё расписание",
+                    student_id=None,
+                    class_id=profile.class_id,
+                    group_id=profile.group_id or "ALL",
                 )
             ]
 
-        # ВНЕДРЕНИЕ ФАЗЫ 3: УЧИТЕЛЬ
-        if role == "teacher":
-            teacher_id = getattr(dto, "teacher_id", None)
+        if profile.role == "teacher" and profile.teacher_id:
+            teacher_id = profile.teacher_id.strip()
+
             if teacher_id:
                 return [
-                    ScheduleTarget(
+                    ScheduleTargetDTO(
+                        kind=ScheduleTargetKind.TEACHER,
+                        selection_key=f"teacher:{teacher_id}",
+                        name="Моё расписание",
                         student_id=None,
                         class_id="",
                         group_id="",
-                        name="Моё расписание",
-                        teacher_id=str(teacher_id)
+                        teacher_id=teacher_id,
                     )
                 ]
 
         return []
 
+    async def get_watch_targets_for_user(
+        self,
+        *,
+        user_id: int,
+    ) -> list[ScheduleTargetDTO]:
+        """
+        Возвращает только enabled personal watch targets пользователя.
+
+        Watch target:
+        - принадлежит owner_user_id;
+        - не имеет student_id;
+        - не участвует в family permissions;
+        - не получает extra classes;
+        - использует отдельный typed selection key.
+        """
+        watch_targets = await self.watch_targets_service.get_targets(
+            owner_user_id=user_id,
+            enabled_only=True,
+        )
+
+        if not watch_targets:
+            return []
+
+        try:
+            dictionaries = (
+                await self.schedule_service.get_school_dictionaries()
+            )
+        except Exception as exc:
+            logger.warning(
+                "Не удалось получить school dictionaries для "
+                "watch targets пользователя %s: %s",
+                user_id,
+                exc,
+            )
+            dictionaries = None
+
+        result: list[ScheduleTargetDTO] = []
+
+        for watch_target in watch_targets:
+            class_id = watch_target.class_id.strip()
+            group_id = watch_target.group_id.strip() or "ALL"
+
+            if dictionaries is not None:
+                class_name = dictionaries.get_readable_class(
+                    class_id,
+                )
+                group_name = dictionaries.get_readable_group(
+                    group_id,
+                )
+            else:
+                class_name = class_id
+                group_name = (
+                    "Весь класс"
+                    if group_id == "ALL"
+                    else group_id
+                )
+
+            explicit_title = (
+                watch_target.title.strip()
+                if watch_target.title
+                and watch_target.title.strip()
+                else None
+            )
+
+            base_title = explicit_title or class_name
+
+            display_title = (
+                base_title
+                if group_id == "ALL"
+                else f"{base_title} · {group_name}"
+            )
+
+            result.append(
+                ScheduleTargetDTO(
+                    kind=ScheduleTargetKind.WATCH,
+                    selection_key=f"watch:{watch_target.id}",
+                    name=display_title,
+                    student_id=None,
+                    class_id=class_id,
+                    group_id=group_id,
+                    watch_target_id=watch_target.id,
+                )
+            )
+
+        return result
+
+    async def get_all_targets_for_user(
+        self,
+        *,
+        user_id: int,
+    ) -> list[ScheduleTargetDTO]:
+        """
+        Все доступные schedule targets пользователя.
+
+        Порядок фиксирован и является частью будущего UI contract:
+
+        1. Student/teacher targets.
+        2. Enabled watched classes.
+        """
+        profile_targets = await self.get_targets_for_user(
+            user_id=user_id,
+        )
+        watch_targets = await self.get_watch_targets_for_user(
+            user_id=user_id,
+        )
+
+        return [
+            *profile_targets,
+            *watch_targets,
+        ]
+
     def find_target(
         self,
-        targets: List[ScheduleTarget],
-        student_id: Optional[int],
-    ) -> Optional[ScheduleTarget]:
+        targets: list[ScheduleTargetDTO],
+        student_id: int | None,
+    ) -> ScheduleTargetDTO | None:
         """
-        Безопасный выбор target по student_id из URL/cookie.
+        Existing compatibility lookup по student_id.
 
-        None для единственного/implicit target; иначе — только
-        принадлежащий actor'у (иначе None -> route вернёт 403).
+        Используется current web_student cookie flow до следующего этапа.
         """
         if not targets:
             return None
+
         if student_id is None:
             return targets[0]
+
         for target in targets:
             if target.student_id == student_id:
                 return target
+
         return None
-    
+
+    def find_target_by_selection_key(
+        self,
+        targets: list[ScheduleTargetDTO],
+        selection_key: str,
+    ) -> ScheduleTargetDTO | None:
+        """
+        Находит target по typed selection key.
+
+        Не делает fallback по числовым ID:
+        student:42 и watch:42 — разные типы и разные security targets.
+        """
+        normalized_key = selection_key.strip()
+
+        if not normalized_key:
+            return None
+
+        for target in targets:
+            if target.selection_key == normalized_key:
+                return target
+
+        return None
+
     async def resolve_for_web_user(
         self,
         *,
         user_id: int,
-        requested_student_id: Optional[int],
-    ) -> ScheduleTargetResolution:
+        requested_selection_key: str | None,
+    ) -> ScheduleTargetResolutionDTO:
         """
-        Разрешает current schedule target либо возвращает friendly no-target
-        state для parent/observer без student profiles.
+        Разрешает current target для web user по typed selection key.
 
-        Security boundary остаётся прежней:
-        - require_family_allowed() уже проверил family allowlist;
-        - explicit target selection валидируется через find_target();
-        - target другой семьи сюда не попадёт.
+        Target sources:
+        - student profile;
+        - teacher profile;
+        - enabled personal watch targets.
+
+        Если cookie устарел, target выключен, удалён или принадлежит
+        другому пользователю, выбор безопасно падает на первый разрешённый
+        target текущего actor.
         """
-        dto = await self.profile_service.get_user_profile_dto(
+        profile = await self.profile_service.get_user_profile_dto(
             user_id,
         )
 
-        if dto is None:
-            return ScheduleTargetResolution(
+        if profile is None:
+            return ScheduleTargetResolutionDTO(
                 targets=[],
-                target=None,
+                selected_target=None,
                 state=ScheduleTargetState.OTHER_EMPTY,
                 can_manage_family=False,
             )
 
-        role = getattr(dto, "role", None)
-
-        targets = await self.get_targets_for_user(
+        targets = await self.get_all_targets_for_user(
             user_id=user_id,
         )
 
         if targets:
-            target = self.find_target(
-                targets,
-                requested_student_id,
+            selected_target = (
+                self.find_target_by_selection_key(
+                    targets,
+                    requested_selection_key,
+                )
+                if requested_selection_key
+                else None
             )
 
-            if target is None:
-                target = targets[0]
+            if selected_target is None:
+                selected_target = targets[0]
 
-            return ScheduleTargetResolution(
+            return ScheduleTargetResolutionDTO(
                 targets=targets,
-                target=target,
+                selected_target=selected_target,
                 state=ScheduleTargetState.READY,
                 can_manage_family=False,
             )
 
-        family_id = getattr(dto, "family_id", None)
-
-        if role == "parent":
+        if profile.role == "parent":
             can_manage_family = bool(
-                family_id
+                profile.family_id is not None
                 and await self.profile_service.is_family_admin(
                     user_id=user_id,
-                    family_id=int(family_id),
+                    family_id=profile.family_id,
                 )
             )
 
-            return ScheduleTargetResolution(
+            return ScheduleTargetResolutionDTO(
                 targets=[],
-                target=None,
+                selected_target=None,
                 state=ScheduleTargetState.PARENT_EMPTY,
                 can_manage_family=can_manage_family,
             )
 
-        if role == "observer":
-            return ScheduleTargetResolution(
+        if profile.role == "observer":
+            return ScheduleTargetResolutionDTO(
                 targets=[],
-                target=None,
+                selected_target=None,
                 state=ScheduleTargetState.OBSERVER_EMPTY,
                 can_manage_family=False,
             )
 
-        return ScheduleTargetResolution(
+        return ScheduleTargetResolutionDTO(
             targets=[],
-            target=None,
+            selected_target=None,
             state=ScheduleTargetState.OTHER_EMPTY,
             can_manage_family=False,
         )

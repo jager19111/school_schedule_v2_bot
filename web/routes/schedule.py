@@ -21,9 +21,12 @@ from dataclasses import replace
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse
 
+from core.models.dto import (
+    ScheduleTargetDTO,
+    ScheduleTargetKind,
+    ScheduleTargetResolutionDTO,
+)
 from services.schedule_targets_service import (
-    ScheduleTarget,
-    ScheduleTargetResolution,
     ScheduleTargetsService,
 )
 from services.web_sessions_service import WebSessionContext
@@ -34,6 +37,7 @@ from web.mappers import (
     day_to_web,
     student_to_web,
     week_summary_to_web,
+    watch_target_to_web,
 )
 from web.schemas import (
     LessonKind,
@@ -48,7 +52,8 @@ from web.schemas import (
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-_STUDENT_COOKIE = "web_student"
+_TARGET_COOKIE = "web_schedule_target"
+_LEGACY_STUDENT_COOKIE = "web_student"
 
 def _targets_service(request: Request) -> ScheduleTargetsService:
     return request.app.state.schedule_targets_service
@@ -68,11 +73,132 @@ def _today_iso(request: Request) -> str:
 def _is_htmx(request: Request) -> bool:
     return request.headers.get("HX-Request") == "true"
 
+def _requested_selection_key(
+    request: Request,
+) -> str | None:
+    """
+    Извлекает typed schedule target key из cookie.
 
+    Новая cookie имеет формат:
+    - student:123
+    - teacher:T001
+    - watch:42
+
+    Старый web_student поддерживается только как migration fallback.
+    """
+    current_value = request.cookies.get(
+        _TARGET_COOKIE,
+        "",
+    ).strip()
+
+    if current_value:
+        return current_value
+
+    legacy_value = request.cookies.get(
+        _LEGACY_STUDENT_COOKIE,
+        "",
+    ).strip()
+
+    if not legacy_value:
+        return None
+
+    try:
+        legacy_student_id = int(legacy_value)
+    except ValueError:
+        return None
+
+    return f"student:{legacy_student_id}"
+
+
+def _selector_context(
+    *,
+    targets: list[ScheduleTargetDTO],
+    current_target: ScheduleTargetDTO,
+) -> dict:
+    """
+    Формирует раздельный template context для children и watch targets.
+
+    Teacher не попадает ни в один selector block:
+    teacher account остаётся single-target schedule mode.
+    """
+    current_selection_key = current_target.selection_key
+
+    student_targets = [
+        item
+        for item in targets
+        if (
+            item.kind == ScheduleTargetKind.STUDENT
+            and item.student_id is not None
+        )
+    ]
+
+    watch_targets = [
+        item
+        for item in targets
+        if item.kind == ScheduleTargetKind.WATCH
+    ]
+
+    return {
+        "students": [
+            student_to_web(
+                item,
+                current_selection_key=current_selection_key,
+            )
+            for item in student_targets
+        ],
+        "watch_targets": [
+            watch_target_to_web(
+                item,
+                current_selection_key=current_selection_key,
+            )
+            for item in watch_targets
+        ],
+    }
+
+
+def _selection_response(
+    request: Request,
+    *,
+    selection_key: str,
+    next_url: str | None,
+) -> Response:
+    """
+    Устанавливает typed schedule-target cookie и возвращает redirect.
+
+    POST route уже защищён global CSRF middleware.
+    """
+    redirect_url = _safe_next_url(next_url)
+
+    if request.headers.get("HX-Request") == "true":
+        response = Response(status_code=200)
+        response.headers["HX-Redirect"] = redirect_url
+    else:
+        response = Response(
+            status_code=303,
+            headers={"Location": redirect_url},
+        )
+
+    response.set_cookie(
+        _TARGET_COOKIE,
+        selection_key,
+        max_age=90 * 24 * 3600,
+        httponly=True,
+        samesite="lax",
+        secure=request.app.state.web_settings.cookie_secure,
+        path="/",
+    )
+
+    # После первого explicit selection используем только typed cookie.
+    response.delete_cookie(
+        _LEGACY_STUDENT_COOKIE,
+        path="/",
+    )
+
+    return response
 async def _render_no_target_page(
     request: Request,
     context: WebSessionContext,
-    resolution: ScheduleTargetResolution,
+    resolution: ScheduleTargetResolutionDTO,
 ):
     """
     Friendly schedule state для valid parent/observer без детей.
@@ -639,32 +765,30 @@ async def _nika_stale_warning(request: Request) -> str | None:
         f"⚠️ Последнее обновление расписания: {formatted}. "
         "Расписание может быть неактуальным."
     )
-
+    
 async def _resolve_target(
     request: Request,
     context: WebSessionContext,
-) -> tuple[ScheduleTargetResolution, ScheduleTarget | None]:
+) -> tuple[
+    ScheduleTargetResolutionDTO,
+    ScheduleTargetDTO | None,
+]:
     """
     Возвращает target resolution.
 
     target=None — допустимый PWA state для parent/observer без children.
     Routes должны рендерить onboarding page, а не бросать 403.
     """
-    raw = request.cookies.get(_STUDENT_COOKIE, "")
-
-    try:
-        requested_student_id = int(raw) if raw else None
-    except ValueError:
-        requested_student_id = None
+    selection_key = _requested_selection_key(request)
 
     resolution = await _targets_service(
         request,
     ).resolve_for_web_user(
         user_id=context.user_id,
-        requested_student_id=requested_student_id,
+        requested_selection_key=selection_key,
     )
 
-    target = resolution.target
+    target = resolution.selected_target
 
     if target is None:
         return resolution, None
@@ -757,13 +881,10 @@ async def dashboard(
             {
                 "day": view,
                 "day_navigation": day_navigation,
-                "students": [
-                    student_to_web(
-                        target_item,
-                        current_id=target.student_id,
-                    )
-                    for target_item in targets
-                ],
+                **_selector_context(
+                    targets=targets,
+                    current_target=target,
+                ),
                 "selection_redirect": "/",
             },
         ),
@@ -865,13 +986,10 @@ async def day_page(
             {
                 "day": view,
                 "day_navigation": day_navigation,
-                "students": [
-                    student_to_web(
-                        target_item,
-                        current_id=target.student_id,
-                    )
-                    for target_item in targets
-                ],
+                **_selector_context(
+                    targets=targets,
+                    current_target=target,
+                ),
                 "selection_redirect": (
                     f"/schedule/day/{date_iso}"
                 ),
@@ -990,13 +1108,10 @@ async def week_page(
             context,
             {
                 "week": view,
-                "students": [
-                    student_to_web(
-                        target_item,
-                        current_id=target.student_id,
-                    )
-                    for target_item in targets
-                ],
+                **_selector_context(
+                    targets=targets,
+                    current_target=target,
+                ),
                 "prev_week": prev_week,
                 "next_week": next_week,
                 "selection_redirect": (
@@ -1012,7 +1127,9 @@ async def week_page(
 # ==============================================================
 
 
-@router.post("/api/v1/schedule/select/{student_id}")
+@router.post(
+    "/api/v1/schedule/select/student/{student_id}",
+)
 async def select_student(
     request: Request,
     student_id: int,
@@ -1020,50 +1137,130 @@ async def select_student(
     next_url: str | None = None,
 ):
     """
-    Смена schedule target.
+    Выбирает доступный student target.
 
-    POST-only:
-    - access actor -> selected student validated server-side;
-    - CSRF is handled by global hx-headers / middleware;
-    - redirect stays strictly internal and preserves current page context.
+    URL ID не является источником доверия:
+    target ищется только среди разрешённых targets current actor.
     """
-    targets = await _targets_service(request).get_targets_for_user(
-        user_id=context.user_id
-    )
-    target = _targets_service(request).find_target(
-        targets,
-        student_id,
+    selection_key = f"student:{student_id}"
+
+    targets = await _targets_service(
+        request,
+    ).get_all_targets_for_user(
+        user_id=context.user_id,
     )
 
-    if target is None:
+    target = _targets_service(
+        request,
+    ).find_target_by_selection_key(
+        targets,
+        selection_key,
+    )
+
+    if (
+        target is None
+        or target.kind != ScheduleTargetKind.STUDENT
+    ):
         raise HTTPException(
             status_code=403,
             detail="Профиль недоступен.",
         )
 
-    redirect_url = _safe_next_url(next_url)
-
-    if request.headers.get("HX-Request") == "true":
-        response = Response(status_code=200)
-        response.headers["HX-Redirect"] = redirect_url
-    else:
-        response = Response(
-            status_code=303,
-            headers={"Location": redirect_url},
-        )
-
-    response.set_cookie(
-        _STUDENT_COOKIE,
-        str(student_id),
-        max_age=90 * 24 * 3600,
-        httponly=True,
-        samesite="lax",
-        secure=request.app.state.web_settings.cookie_secure,
-        path="/",
+    return _selection_response(
+        request,
+        selection_key=target.selection_key,
+        next_url=next_url,
     )
 
-    return response
 
+@router.post(
+    "/api/v1/schedule/select/watch/{watch_target_id}",
+)
+async def select_watch_target(
+    request: Request,
+    watch_target_id: int,
+    context: WebSessionContext = Depends(require_family_allowed),
+    next_url: str | None = None,
+):
+    """
+    Выбирает enabled personal watch target текущего пользователя.
+
+    Чужой, выключенный или удалённый target не найдётся в
+    get_all_targets_for_user() и вернёт 403.
+    """
+    selection_key = f"watch:{watch_target_id}"
+
+    targets = await _targets_service(
+        request,
+    ).get_all_targets_for_user(
+        user_id=context.user_id,
+    )
+
+    target = _targets_service(
+        request,
+    ).find_target_by_selection_key(
+        targets,
+        selection_key,
+    )
+
+    if (
+        target is None
+        or target.kind != ScheduleTargetKind.WATCH
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="Отслеживаемый класс недоступен.",
+        )
+
+    return _selection_response(
+        request,
+        selection_key=target.selection_key,
+        next_url=next_url,
+    )
+
+
+@router.post("/api/v1/schedule/select/{student_id}")
+async def select_student_legacy(
+    request: Request,
+    student_id: int,
+    context: WebSessionContext = Depends(require_family_allowed),
+    next_url: str | None = None,
+):
+    """
+    Temporary compatibility alias для уже загруженных старых страниц.
+
+    Новый template использует:
+    /api/v1/schedule/select/student/{student_id}.
+    """
+    selection_key = f"student:{student_id}"
+
+    targets = await _targets_service(
+        request,
+    ).get_all_targets_for_user(
+        user_id=context.user_id,
+    )
+
+    target = _targets_service(
+        request,
+    ).find_target_by_selection_key(
+        targets,
+        selection_key,
+    )
+
+    if (
+        target is None
+        or target.kind != ScheduleTargetKind.STUDENT
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="Профиль недоступен.",
+        )
+
+    return _selection_response(
+        request,
+        selection_key=target.selection_key,
+        next_url=next_url,
+    )
 def _ctx(request: Request, context: WebSessionContext, extra: dict) -> dict:
     """Общий контекст шаблонов: CSRF для hx-headers."""
     base = {

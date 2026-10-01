@@ -39,6 +39,7 @@ from services.schedule_targets_service import ScheduleTargetsService
 from services.students_service import StudentsService
 from services.time_service import TimeService
 from services.web_sessions_service import WebSessionsService
+from services.watch_targets_service import WatchTargetsService
 from web.events import ApplicationEventBus
 from web.idempotency import IdempotencyStore
 from web.mappers import prev_next_dates
@@ -84,6 +85,7 @@ def create_web_app(
     schedule_service: ScheduleService,
     students_service: StudentsService,
     schedule_targets_service: ScheduleTargetsService,
+    watch_targets_service: WatchTargetsService,
     extra_classes_web_service: ExtraClassesWebService,
     time_service: TimeService,
     db_liveness: Callable[[], Awaitable[bool]],
@@ -183,6 +185,7 @@ def create_web_app(
     app.state.schedule_service = schedule_service
     app.state.students_service = students_service
     app.state.schedule_targets_service = schedule_targets_service
+    app.state.watch_targets_service = watch_targets_service
     app.state.extra_classes_web_service = extra_classes_web_service
     app.state.time_service = time_service
     app.state.db_liveness = db_liveness

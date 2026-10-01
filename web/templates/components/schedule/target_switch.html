@@ -1,0 +1,49 @@
+  {# web/templates/components/schedule/window_card.html #}
+{#
+  Unified schedule target switch.
+
+  Правила:
+  - один ребёнок не показывается;
+  - два и более ребёнка показываются;
+  - watched classes добавляются в конец общего списка;
+  - watched class визуально выделяется watch-target-chip;
+  - все chips остаются одной logical группой выбора расписания.
+#}
+
+{% if students|length > 1 or watch_targets %}
+<div
+  class="student-switch schedule-target-switch"
+  role="group"
+  aria-label="Выбор расписания"
+>
+  {% if students|length > 1 %}
+    {% for student in students %}
+    <button
+      type="button"
+      class="student-chip{% if student.is_current %} current{% endif %}"
+      {% if not student.is_current %}
+      hx-post="/api/v1/schedule/select/student/{{ student.student_id }}?next_url={{ selection_redirect|urlencode }}"
+      hx-indicator="#page-loading"
+      {% endif %}
+      aria-pressed="{{ 'true' if student.is_current else 'false' }}"
+    >
+      {{ student.name }}
+    </button>
+    {% endfor %}
+  {% endif %}
+
+  {% for target in watch_targets %}
+  <button
+    type="button"
+    class="student-chip watch-target-chip{% if target.is_current %} current{% endif %}"
+    {% if not target.is_current %}
+    hx-post="/api/v1/schedule/select/watch/{{ target.watch_target_id }}?next_url={{ selection_redirect|urlencode }}"
+    hx-indicator="#page-loading"
+    {% endif %}
+    aria-pressed="{{ 'true' if target.is_current else 'false' }}"
+  >
+    {{ target.name }}
+  </button>
+  {% endfor %}
+</div>
+{% endif %}

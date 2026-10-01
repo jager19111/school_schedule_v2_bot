@@ -394,6 +394,81 @@ class UserProfileDTO:
     is_notifications_enabled: bool = True
     global_extra_reminder: int = 30
 
+class ScheduleTargetKind(str, Enum):
+    """
+    Тип цели просмотра расписания.
+
+    STUDENT:
+    Профиль ребёнка, для которого могут существовать extra classes.
+
+    TEACHER:
+    Собственное расписание преподавателя.
+
+    WATCH:
+    Личный отслеживаемый класс/группа пользователя.
+    Не связан с family или student profile.
+    """
+
+    STUDENT = "student"
+    TEACHER = "teacher"
+    WATCH = "watch"
+
+
+class ScheduleTargetState(str, Enum):
+    """
+    Runtime state цели расписания в web UI.
+
+    Не является role пользователя в БД.
+    """
+
+    READY = "ready"
+    PARENT_EMPTY = "parent_empty"
+    OBSERVER_EMPTY = "observer_empty"
+    OTHER_EMPTY = "other_empty"
+
+
+@dataclass(frozen=True, slots=True)
+class ScheduleTargetDTO:
+    """
+    Разрешённая цель просмотра расписания для web actor.
+
+    selection_key — typed identifier будущего unified selector:
+
+    - student:501
+    - student:legacy:123456789
+    - teacher:T001
+    - watch:42
+
+    student_id не заменяется selection_key:
+    он остаётся необходимым для extra classes и student-specific logic.
+    """
+
+    kind: ScheduleTargetKind
+    selection_key: str
+    name: str
+
+    class_id: str
+    group_id: str
+
+    student_id: int | None = None
+    teacher_id: str | None = None
+    watch_target_id: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ScheduleTargetResolutionDTO:
+    """
+    Результат разрешения current schedule target для web actor.
+
+    selected_target=None — нормальное состояние, например:
+    parent/observer допущен к web, но у него пока нет student profile.
+    """
+
+    targets: list[ScheduleTargetDTO]
+    selected_target: ScheduleTargetDTO | None
+    state: ScheduleTargetState
+    can_manage_family: bool
+    
 
 @dataclass
 class AdminStatsDTO:

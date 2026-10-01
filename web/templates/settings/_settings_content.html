@@ -7,6 +7,44 @@
     Настройки
   </h2>
 
+    <section
+    class="settings-section"
+    aria-labelledby="watch-targets-settings-title"
+  >
+    <h3
+      id="watch-targets-settings-title"
+      class="settings-section__title"
+    >
+      Расписание
+    </h3>
+
+    <a
+      href="/settings/watch-targets"
+      class="settings-card settings-card--link"
+      hx-get="/settings/watch-targets"
+      hx-target="#main"
+      hx-swap="innerHTML"
+      hx-push-url="true"
+    >
+      <div class="settings-card__content">
+        <div class="settings-card__title">
+          Отслеживаемые классы
+        </div>
+
+        <p class="settings-card__description">
+          Быстрый доступ к расписанию выбранных классов и групп.
+        </p>
+      </div>
+
+      <span
+        class="settings-card__chevron"
+        aria-hidden="true"
+      >
+        ›
+      </span>
+    </a>
+  </section>
+  
   <section
     class="settings-section"
     aria-labelledby="security-settings-title"

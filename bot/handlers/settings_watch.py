@@ -192,13 +192,13 @@ async def select_watch_target_group(
     dicts_dto = await schedule_service.get_school_dictionaries()
 
     # 2. Получаем читаемое название класса через хелпер DTO
-    title = dicts_dto.get_readable_class(class_id)
-
-    response = await watch_targets_service.add_target(
-        owner_user_id=owner_user_id,
-        class_id=class_id,
-        group_id=group_id,
-        title=title,
+    response = (
+        await watch_targets_service.add_target_from_school_dictionaries(
+            owner_user_id=owner_user_id,
+            class_id=class_id,
+            group_id=group_id,
+            dictionaries=dicts_dto,
+        )
     )
 
     await state.clear()
@@ -213,6 +213,16 @@ async def select_watch_target_group(
             error_text = (
                 "⚠️ Достигнут лимит отслеживаемых классов "
                 "(10)."
+            )
+        elif response.error_code == "invalid_class":
+            error_text = (
+                "⚠️ Выбранный класс больше не найден "
+                "в расписании школы."
+            )
+        elif response.error_code == "invalid_group":
+            error_text = (
+                "⚠️ Выбранная группа больше не найдена "
+                "в расписании школы."
             )
         else:
             error_text = (

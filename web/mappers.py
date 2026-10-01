@@ -6,7 +6,8 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import Dict, Iterable, List, Optional
+import re
+from typing import Callable, Dict, Iterable, List, Optional
 
 from core.models.dto import (
     AdultStudentExtraClassesPermissionDTO,
@@ -24,7 +25,7 @@ from core.models.dto import (
     WeekSummaryDTO,
 )
 
-from services.schedule_targets_service import ScheduleTarget
+from core.models.dto import ScheduleTargetDTO
 from services.time_service import TimeService
 from services.web_sessions_service import WebDeviceInfo
 from web.schemas import (
@@ -52,7 +53,8 @@ from web.schemas import (
     WebExtraClass,
     WebExtraClassDay,
     WebLessonEntry,
-    WebRoomBadge, 
+    WebRoomBadge,
+    WebWatchTarget, 
 )
 
 _WEEKDAYS_FULL = [
@@ -740,7 +742,7 @@ def _class_schedule_header_context(
 def day_to_web(
     dto: DayScheduleDTO,
     *,
-    target: ScheduleTarget,
+    target: ScheduleTargetDTO,
     today_iso: str,
     now_base: datetime,
     is_smart_today: bool = False,
@@ -947,7 +949,7 @@ def _inline_change_details(
 def changes_to_web(
     dto: DayChangesDetailDTO,
     *,
-    target: ScheduleTarget,
+    target: ScheduleTargetDTO,
 ) -> WebDayChanges:
     view_mode = (
         LessonViewMode.TEACHER
@@ -1014,18 +1016,66 @@ def week_summary_to_web(dto: WeekSummaryDTO) -> WebWeekSchedule:
     )
 
 
-def student_to_web(target: ScheduleTarget, *, current_id: int | None) -> WebStudent:
+def student_to_web(
+    target: ScheduleTargetDTO,
+    *,
+    current_selection_key: str | None = None,
+    current_id: int | None = None,
+) -> WebStudent:
+    """
+    Student target → web chip.
+
+    Новый schedule selector определяет active state через typed
+    `current_selection_key`.
+
+    `current_id` временно сохраняется для existing child-only screens,
+    например extra_classes routes, которые ещё работают с student_id.
+    Watch target сюда не попадает: он должен отображаться только через
+    watch_target_to_web().
+    """
+    if target.student_id is None:
+        raise ValueError(
+            "WebStudent требует target со student_id."
+        )
+
+    if current_selection_key is not None:
+        is_current = (
+            target.selection_key == current_selection_key
+        )
+    else:
+        is_current = target.student_id == current_id
+
     return WebStudent(
         student_id=target.student_id,
         name=target.name,
+        is_current=is_current,
+    )
+    
+    
+def watch_target_to_web(
+    target: ScheduleTargetDTO,
+    *,
+    current_selection_key: str,
+) -> WebWatchTarget:
+    """
+    Watch schedule target → отдельный web contract.
+
+    Watch target не должен попадать в WebStudent:
+    у него нет student_id и другой endpoint выбора.
+    """
+    if target.watch_target_id is None:
+        raise ValueError(
+            "WebWatchTarget требует watch_target_id."
+        )
+
+    return WebWatchTarget(
+        watch_target_id=target.watch_target_id,
+        name=target.name,
         is_current=(
-            target.student_id == current_id
-            if target.student_id is not None
-            else current_id is None
+            target.selection_key == current_selection_key
         ),
     )
-
-
+    
 def prev_next_dates(date_iso: str) -> tuple[str, str]:
     d = _parse(date_iso)
     prev = date.fromordinal(d.toordinal() - 1).isoformat()
@@ -1054,7 +1104,67 @@ def day_navigation_label(date_iso: str) -> str:
 
 # Phase 3: «Школа»
 
+_CLASS_NAME_RE = re.compile(
+    r"^\s*(\d+)\s*(.*)$",
+)
 
+
+def _class_sort_key(
+    item: WebSchoolItem,
+) -> tuple[int, int, str, str, str]:
+    """
+    Natural sort для school class display names.
+
+    Примеры правильного порядка:
+
+    1А
+    1Б
+    2А
+    ...
+    9А
+    10А
+    11А
+
+    Нестандартные названия без leading numeric grade
+    помещаются после обычных классов и сортируются по имени.
+    """
+    normalized_name = item.name.strip()
+    match = _CLASS_NAME_RE.match(normalized_name)
+
+    if match is None:
+        return (
+            1,
+            0,
+            "",
+            normalized_name.casefold(),
+            item.id,
+        )
+
+    grade = int(match.group(1))
+    suffix = match.group(2).strip().casefold()
+
+    return (
+        0,
+        grade,
+        suffix,
+        normalized_name.casefold(),
+        item.id,
+    )
+
+
+def class_items_to_web(
+    items: Dict[str, str],
+) -> list[WebSchoolItem]:
+    """
+    Class dictionary → WebSchoolItem list в естественном порядке классов.
+
+    В отличие от generic school_items_to_web(), учитывает numeric grade.
+    Teacher и room dictionaries не используют этот mapper.
+    """
+    return sorted(
+        school_items_to_web(items),
+        key=_class_sort_key,
+    )
 def school_items_to_web(
     items: Dict[str, str],
 ) -> list[WebSchoolItem]:
@@ -1078,6 +1188,11 @@ def _search_school_items(
     *,
     query: str,
     limit: int,
+    sort_key: Callable[
+        [WebSchoolItem],
+        tuple[int, int, str, str, str],
+    ]
+    | None = None,
 ) -> list[WebSchoolItem]:
     normalized_query = query.strip().lower()
 
@@ -1095,11 +1210,20 @@ def _search_school_items(
         )
     ]
 
+    if sort_key is None:
+        return sorted(
+            matches,
+            key=lambda item: (
+                item.name.casefold(),
+                item.id,
+            ),
+        )[:limit]
+
     return sorted(
         matches,
-        key=lambda item: item.name,
+        key=sort_key,
     )[:limit]
-
+    
 
 def search_school(
     *,
@@ -1125,6 +1249,7 @@ def search_school(
             classes.classes,
             query=query,
             limit=limit,
+            sort_key=_class_sort_key,
         ),
         teachers=_search_school_items(
             teachers.teachers,

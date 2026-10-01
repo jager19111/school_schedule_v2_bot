@@ -1,0 +1,126 @@
+  {# web/templates/settings/_watch_target_form_content.html #}
+
+  <section
+  id="settings-content"
+  class="settings-page"
+>
+  <h2 class="day-title">
+    Добавить отслеживаемый класс
+  </h2>
+
+  {% if error %}
+  <div
+    class="stale-warning"
+    role="alert"
+  >
+    ⚠️ {{ error }}
+  </div>
+  {% endif %}
+
+  {% if not dictionaries_unavailable %}
+  <form
+    method="post"
+    action="/settings/watch-targets"
+    hx-post="/settings/watch-targets"
+    hx-target="#main"
+    hx-swap="innerHTML"
+  >
+    <section class="settings-section">
+      <label
+        for="watch-target-class"
+        class="settings-section__title"
+      >
+        Класс
+      </label>
+
+      <select
+        id="watch-target-class"
+        name="class_id"
+        required
+      >
+        <option value="">
+          Выберите класс
+        </option>
+
+        {% for school_class in classes %}
+        <option
+          value="{{ school_class.id }}"
+          {% if school_class.id == selected_class_id %}selected{% endif %}
+        >
+          {{ school_class.name }}
+        </option>
+        {% endfor %}
+      </select>
+    </section>
+
+    <section class="settings-section">
+      <label
+        for="watch-target-group"
+        class="settings-section__title"
+      >
+        Группа
+      </label>
+
+      <select
+        id="watch-target-group"
+        name="group_id"
+      >
+        <option
+          value="ALL"
+          {% if selected_group_id == "ALL" %}selected{% endif %}
+        >
+          Весь класс
+        </option>
+
+        {% for group in groups %}
+        <option
+          value="{{ group.id }}"
+          {% if group.id == selected_group_id %}selected{% endif %}
+        >
+          {{ group.name }}
+        </option>
+        {% endfor %}
+      </select>
+    </section>
+
+    <nav
+      class="day-nav"
+      aria-label="Действия формы"
+    >
+      <button
+        type="submit"
+        class="nav-btn today-btn"
+      >
+        Добавить
+      </button>
+
+      <a
+        href="/settings/watch-targets"
+        class="nav-btn"
+        hx-get="/settings/watch-targets"
+        hx-target="#main"
+        hx-swap="innerHTML"
+        hx-push-url="true"
+      >
+        Отмена
+      </a>
+    </nav>
+  </form>
+  {% else %}
+  <nav
+    class="day-nav"
+    aria-label="Навигация по настройкам"
+  >
+    <a
+      href="/settings/watch-targets"
+      class="nav-btn"
+      hx-get="/settings/watch-targets"
+      hx-target="#main"
+      hx-swap="innerHTML"
+      hx-push-url="true"
+    >
+      ← К отслеживаемым классам
+    </a>
+  </nav>
+  {% endif %}
+</section>

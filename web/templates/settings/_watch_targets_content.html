@@ -1,0 +1,118 @@
+  {# web/templates/settings/_watch_targets_content.html #}
+  <section
+  id="settings-content"
+  class="settings-page"
+>
+  <h2 class="day-title">
+    Отслеживаемые классы
+  </h2>
+
+  {% if error %}
+  <div
+    class="stale-warning"
+    role="alert"
+  >
+    ⚠️ {{ error }}
+  </div>
+  {% endif %}
+
+  {% if not dictionaries_unavailable %}
+    {% if targets %}
+      <section
+        class="settings-section"
+        aria-label="Список отслеживаемых классов"
+      >
+        {% for target in targets %}
+        <div class="settings-card">
+          <div class="settings-card__content">
+            <div class="settings-card__title">
+              {{ target.title }}
+            </div>
+
+            <p class="settings-card__description">
+              {{ target.class_name }} · {{ target.group_name }}
+            </p>
+
+            <p class="settings-card__description">
+              {{ target.is_enabled_text }}
+            </p>
+          </div>
+
+          <button
+            type="button"
+            class="settings-card__action settings-card__action--danger"
+            hx-post="/settings/watch-targets/{{ target.target_id }}/delete"
+            hx-target="#main"
+            hx-swap="innerHTML"
+            hx-confirm="Удалить отслеживаемый класс «{{ target.title }}»?"
+            hx-disabled-elt="this"
+          >
+            Удалить
+          </button>
+        </div>
+        {% endfor %}
+      </section>
+    {% else %}
+      <section class="empty-day">
+        <div
+          class="empty-day__icon"
+          aria-hidden="true"
+        >
+          ☆
+        </div>
+
+        <h3 class="empty-day__title">
+          Отслеживаемых классов пока нет
+        </h3>
+
+        <p class="empty-day__text">
+          Добавьте класс или группу, чтобы быстро открывать
+          их расписание на главном экране.
+        </p>
+      </section>
+    {% endif %}
+
+    <nav
+      class="day-nav"
+      aria-label="Действия с отслеживаемыми классами"
+    >
+      <a
+        href="/settings/watch-targets/new"
+        class="nav-btn today-btn"
+        hx-get="/settings/watch-targets/new"
+        hx-target="#main"
+        hx-swap="innerHTML"
+        hx-push-url="true"
+      >
+        Добавить класс
+      </a>
+
+      <a
+        href="/settings"
+        class="nav-btn"
+        hx-get="/settings"
+        hx-target="#main"
+        hx-swap="innerHTML"
+        hx-push-url="true"
+      >
+        ← К настройкам
+      </a>
+    </nav>
+  {% else %}
+    <nav
+      class="day-nav"
+      aria-label="Навигация по настройкам"
+    >
+      <a
+        href="/settings"
+        class="nav-btn"
+        hx-get="/settings"
+        hx-target="#main"
+        hx-swap="innerHTML"
+        hx-push-url="true"
+      >
+        ← К настройкам
+      </a>
+    </nav>
+  {% endif %}
+</section>
