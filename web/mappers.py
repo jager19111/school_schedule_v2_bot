@@ -89,7 +89,7 @@ def _text_or_none(value: str | None) -> str | None:
         return None
 
     normalized = value.strip()
-    if not normalized or normalized in {"—", "нет занятий", "Нет занятий"}:
+    if not normalized or normalized in {"—"}:
         return None
 
     return normalized
@@ -118,17 +118,14 @@ def _group_or_none(value: str | None) -> str | None:
 def _group_changed_value(
     current_value: str | None,
     original_value: str | None,
+    is_addition: bool = False,
 ) -> WebChangedValue | None:
     current = _group_or_none(current_value)
     original = _group_or_none(original_value)
-
     if current is None:
         return None
-
-    return WebChangedValue(
-        value=current,
-        changed=original is not None and original != current,
-    )
+    changed = (original is not None and original != current) if not is_addition else False
+    return WebChangedValue(value=current, changed=changed)
 
 
 def _is_trud_or_technology(lesson: LessonDTO) -> bool:
@@ -180,25 +177,14 @@ def _should_show_group(
     return _is_trud_or_technology(lesson)
 
 
-def _cancelled_subject_value(
-    lesson: LessonDTO,
-) -> WebChangedValue | None:
-    """
-    NIKA/DB cancellation entry may have subject_name='ОТМЕНА'.
-    User must see the actual cancelled subject from original_subject_name.
-    """
+def _cancelled_subject_value(lesson: LessonDTO) -> WebChangedValue | None:
     original_subject = _text_or_none(lesson.original_subject_name)
-
     if original_subject is not None:
-        return WebChangedValue(
-            value=original_subject,
-            changed=False,
-        )
+        if original_subject.casefold() == "нет занятий":
+            return None
+        return WebChangedValue(value=original_subject, changed=False)
 
-    return _changed_value(
-        lesson.subject_name,
-        lesson.original_subject_name,
-    )
+    return _changed_value(lesson.subject_name, lesson.original_subject_name)
     
 def _format_time(value: str) -> str:
     normalized = value.strip()
@@ -283,11 +269,17 @@ def _display_number(lesson: LessonDTO) -> str | None:
 def _lesson_kind(lesson: LessonDTO) -> LessonKind:
     if lesson.is_extra:
         return LessonKind.EXTRA
-
     if lesson.is_methodological:
         return LessonKind.METHODOLOGICAL
 
+    curr = _text_or_none(lesson.subject_name)
+    orig = _text_or_none(lesson.original_subject_name)
+    
     if lesson.is_window:
+        return LessonKind.WINDOW
+    if curr is not None and curr.casefold() == "нет занятий":
+        return LessonKind.WINDOW
+    if lesson.is_cancelled and orig is not None and orig.casefold() == "нет занятий":
         return LessonKind.WINDOW
 
     return LessonKind.REGULAR
@@ -295,11 +287,23 @@ def _lesson_kind(lesson: LessonDTO) -> LessonKind:
 
 def _lesson_status(lesson: LessonDTO) -> LessonStatus:
     if lesson.is_cancelled:
+        orig = _text_or_none(lesson.original_subject_name)
+        if orig is not None and orig.casefold() == "нет занятий":
+            return LessonStatus.NORMAL
         return LessonStatus.CANCELLED
 
     if lesson.is_exchange:
         original_subject = _text_or_none(lesson.original_subject_name)
-        if original_subject is None:
+        current_subject = _text_or_none(lesson.subject_name)
+        
+        # Защита от ложных срабатываний флага замены
+        if (original_subject == current_subject and 
+            _text_or_none(lesson.original_teacher_name) == _text_or_none(lesson.teacher_name) and
+            _text_or_none(lesson.original_room_name) == _text_or_none(lesson.room_name) and
+            _group_or_none(lesson.original_group_name) == _group_or_none(lesson.group_name)):
+            return LessonStatus.NORMAL
+
+        if original_subject is None or original_subject.casefold() == "нет занятий":
             return LessonStatus.ADDED
         return LessonStatus.CHANGED
 
@@ -309,32 +313,25 @@ def _lesson_status(lesson: LessonDTO) -> LessonStatus:
 def _changed_value(
     current_value: str | None,
     original_value: str | None,
+    is_addition: bool = False,
 ) -> WebChangedValue | None:
     current = _text_or_none(current_value)
     original = _text_or_none(original_value)
-
     if current is None:
         return None
-
-    return WebChangedValue(
-        value=current,
-        changed=original is not None and original != current,
-    )
+    changed = (original is not None and original != current) if not is_addition else False
+    return WebChangedValue(value=current, changed=changed)
 
 
-def _room_badge(lesson: LessonDTO) -> WebRoomBadge | None:
+def _room_badge(lesson: LessonDTO, is_addition: bool = False) -> WebRoomBadge | None:
     if lesson.is_cancelled:
         return None
-
     room = _text_or_none(lesson.room_name)
     if room is None:
         return None
-
     original_room = _text_or_none(lesson.original_room_name)
-    return WebRoomBadge(
-        value=room,
-        changed=original_room is not None and original_room != room,
-    )
+    changed = (original_room is not None and original_room != room) if not is_addition else False
+    return WebRoomBadge(value=room, changed=changed)
 
 
 def lesson_entry_to_web(
@@ -343,35 +340,20 @@ def lesson_entry_to_web(
     view_mode: LessonViewMode,
     show_profile_groups: bool,
 ) -> WebLessonEntry:
-    subject = (
-        _cancelled_subject_value(lesson)
-        if lesson.is_cancelled
-        else _changed_value(
-            lesson.subject_name,
-            lesson.original_subject_name,
-        )
+    orig_subj = _text_or_none(lesson.original_subject_name)
+    is_addition = (orig_subj is None or orig_subj.casefold() == "нет занятий")
+
+    subject = _cancelled_subject_value(lesson) if lesson.is_cancelled else _changed_value(
+        lesson.subject_name, lesson.original_subject_name, is_addition
     )
 
     return WebLessonEntry(
         subject=subject,
-        teacher=_changed_value(
-            lesson.teacher_name,
-            lesson.original_teacher_name,
-        ),
-        group=_group_changed_value(
-            lesson.group_name,
-            lesson.original_group_name,
-        ),
-        show_group=_should_show_group(
-            lesson,
-            view_mode=view_mode,
-            show_profile_groups=show_profile_groups,
-        ),
-        class_name=_changed_value(
-            lesson.class_name,
-            lesson.original_class_name,
-        ),
-        room=_room_badge(lesson),
+        teacher=_changed_value(lesson.teacher_name, lesson.original_teacher_name, is_addition),
+        group=_group_changed_value(lesson.group_name, lesson.original_group_name, is_addition),
+        show_group=_should_show_group(lesson, view_mode=view_mode, show_profile_groups=show_profile_groups),
+        class_name=_changed_value(lesson.class_name, lesson.original_class_name, is_addition),
+        room=_room_badge(lesson, is_addition),
     )
 
 
@@ -518,26 +500,12 @@ def _single_lesson_to_web(
     )
 
 
-def _slot_identity(
-    lesson: LessonDTO,
-    *,
-    kind: LessonKind,
-    status: LessonStatus,
-) -> tuple[
-    str | None,
-    int | None,
-    str,
-    str,
-    LessonKind,
-    LessonStatus,
-]:
+def _slot_identity(lesson: LessonDTO) -> tuple[str | None, int | None, str, str]:
     return (
         lesson.date_iso,
         lesson.lesson_num,
         _format_time(lesson.start_time),
         _format_time(lesson.end_time),
-        kind,
-        status,
     )
 
 
@@ -573,24 +541,44 @@ def _slot_to_web(
     if not lessons:
         return []
 
+    kinds = [_lesson_kind(l) for l in lessons]
+    statuses = [_lesson_status(l) for l in lessons]
+    
+    if all(k == LessonKind.WINDOW for k in kinds):
+        kind = LessonKind.WINDOW
+    elif all(k == LessonKind.METHODOLOGICAL for k in kinds):
+        kind = LessonKind.METHODOLOGICAL
+    elif all(k == LessonKind.EXTRA for k in kinds):
+        kind = LessonKind.EXTRA
+    else:
+        kind = LessonKind.REGULAR
+        
+    active_statuses = [s for s, k in zip(statuses, kinds) if k != LessonKind.WINDOW]
+    
+    if not active_statuses:
+        status = LessonStatus.NORMAL
+    elif any(s == LessonStatus.CHANGED for s in active_statuses):
+        status = LessonStatus.CHANGED
+    elif all(s == LessonStatus.ADDED for s in active_statuses):
+        status = LessonStatus.ADDED
+    elif any(s == LessonStatus.ADDED for s in active_statuses):
+        status = LessonStatus.CHANGED
+    elif all(s == LessonStatus.CANCELLED for s in active_statuses):
+        status = LessonStatus.CANCELLED
+    elif any(s == LessonStatus.CANCELLED for s in active_statuses):
+        status = LessonStatus.CHANGED
+    else:
+        status = LessonStatus.NORMAL
+
     first = lessons[0]
-    kind = _lesson_kind(first)
-    status = _lesson_status(first)
     start_time = _format_time(first.start_time)
     end_time = _format_time(first.end_time)
     display_number = _display_number(first)
+
     if view_mode == LessonViewMode.TEACHER:
-        partitions: dict[
-            tuple[str, tuple[str, ...]],
-            list[LessonDTO],
-        ] = {}
-
+        partitions: dict[tuple[str, tuple[str, ...]], list[LessonDTO]] = {}
         for lesson in lessons:
-            partitions.setdefault(
-                _teacher_entry_identity(lesson),
-                [],
-            ).append(lesson)
-
+            partitions.setdefault(_teacher_entry_identity(lesson), []).append(lesson)
         grouped_lesson_sets = list(partitions.values())
     else:
         grouped_lesson_sets = [lessons]
@@ -599,23 +587,19 @@ def _slot_to_web(
 
     for lesson_set in grouped_lesson_sets:
         first_entry_lesson = lesson_set[0]
-        slot_is_current = _is_current_lesson(
-            first_entry_lesson,
-            now_base=now_base,
-        )        
+        slot_is_current = _is_current_lesson(first_entry_lesson, now_base=now_base)        
+        
         entries = [
-            lesson_entry_to_web(
-                lesson,
-                view_mode=view_mode,
-                show_profile_groups=show_profile_groups,
-            )
+            lesson_entry_to_web(lesson, view_mode=view_mode, show_profile_groups=show_profile_groups)
             for lesson in lesson_set
         ]
 
-        change_details = _inline_change_details(
-            lesson_set,
-            status=status,
-        )
+        change_details = _inline_change_details(lesson_set, status=status)
+        
+        window_label = first_entry_lesson.window_label
+        if not window_label and kind == LessonKind.WINDOW:
+            if any(l.subject_name and l.subject_name.casefold() == "нет занятий" for l in lesson_set):
+                window_label = "Нет занятий"
 
         result.append(
             WebLesson(
@@ -631,22 +615,14 @@ def _slot_to_web(
                 entries=entries,
                 shared_subject=_shared_subject(entries),
                 shared_room=_shared_room(entries),
-                window_label=first_entry_lesson.window_label,
-
-                # Только changed card с actual readable diff является interactive.
+                window_label=window_label,
                 has_inline_changes=bool(change_details),
                 change_details=change_details,
-
                 history_url=None,
                 aria_label=_lesson_aria_label(
-                    number=first_entry_lesson.lesson_num,
-                    display_number=display_number,
-                    start_time=start_time,
-                    end_time=end_time,
-                    kind=kind,
-                    status=status,
-                    entries=entries,
-                    window_label=first_entry_lesson.window_label,
+                    number=first_entry_lesson.lesson_num, display_number=display_number,
+                    start_time=start_time, end_time=end_time, kind=kind, status=status,
+                    entries=entries, window_label=window_label,
                 ),
             )
         )
@@ -661,40 +637,17 @@ def lessons_to_web(
     show_profile_groups: bool,
     now_base: datetime | None = None,
 ) -> list[WebLesson]:
-    grouped: dict[
-        tuple[
-            str | None,
-            int | None,
-            str,
-            str,
-            LessonKind,
-            LessonStatus,
-        ],
-        list[LessonDTO],
-    ] = {}
+    grouped: dict[tuple[str | None, int | None, str, str], list[LessonDTO]] = {}
 
     for lesson in lessons:
-        kind = _lesson_kind(lesson)
-        status = _lesson_status(lesson)
-
-        grouped.setdefault(
-            _slot_identity(
-                lesson,
-                kind=kind,
-                status=status,
-            ),
-            [],
-        ).append(lesson)
+        grouped.setdefault(_slot_identity(lesson), []).append(lesson)
 
     result: list[WebLesson] = []
 
     for slot_lessons in grouped.values():
         result.extend(
             _slot_to_web(
-                slot_lessons,
-                view_mode=view_mode,
-                now_base=now_base,
-                show_profile_groups=show_profile_groups,
+                slot_lessons, view_mode=view_mode, now_base=now_base, show_profile_groups=show_profile_groups
             )
         )
 
@@ -707,7 +660,6 @@ def lessons_to_web(
             lesson.key,
         ),
     )
-
 
 def _date_parts(date_iso: str, today_iso: str) -> tuple[str, str]:
     d = _parse(date_iso)
@@ -778,6 +730,19 @@ def day_to_web(
         )
     )
 
+    exchange_count = sum(
+        1
+        for lesson in lessons
+        if lesson.status in {
+            LessonStatus.CHANGED,
+            LessonStatus.CANCELLED,
+            LessonStatus.ADDED,
+        }
+    )
+
+    # ИСПРАВЛЕНО: Выводим плашку перестановки только если у группы реально есть изменения
+    has_permutation = dto.has_permutation and exchange_count > 0
+
     return WebDaySchedule(
         date_iso=dto.date_iso,
         date_display=f"{d.day} {_MONTHS_GEN[d.month - 1]}",
@@ -787,16 +752,8 @@ def day_to_web(
         student_name=target.name,
         header_context=header_context,
         lessons=lessons,
-        has_permutation=dto.has_permutation,
-        exchange_count=sum(
-            1
-            for lesson in lessons
-            if lesson.status in {
-                LessonStatus.CHANGED,
-                LessonStatus.CANCELLED,
-                LessonStatus.ADDED,
-            }
-        ),
+        has_permutation=has_permutation,
+        exchange_count=exchange_count,
         is_smart_today=is_smart_today,
         stale_warning=stale_warning,
     )
@@ -826,6 +783,18 @@ def school_day_to_web(
 
     weekday = _WEEKDAYS_FULL[d.weekday()]
 
+    exchange_count = sum(
+        1
+        for lesson in lessons
+        if lesson.status in {
+            LessonStatus.CHANGED,
+            LessonStatus.CANCELLED,
+            LessonStatus.ADDED,
+        }
+    )
+
+    has_permutation = dto.has_permutation and exchange_count > 0
+
     return WebDaySchedule(
         date_iso=dto.date_iso,
         date_display=date_display,
@@ -835,77 +804,43 @@ def school_day_to_web(
         student_name=title,
         header_context=title,
         lessons=lessons,
-        has_permutation=dto.has_permutation,
-        exchange_count=sum(
-            1
-            for lesson in lessons
-            if lesson.status in {
-                LessonStatus.CHANGED,
-                LessonStatus.CANCELLED,
-                LessonStatus.ADDED,
-            }
-        ),
+        has_permutation=has_permutation,
+        exchange_count=exchange_count,
         stale_warning=stale_warning,
     )
 
 
 def _changes_for_lesson(lesson: LessonDTO) -> list[WebChange]:
-    changes: list[WebChange] = []
+    orig_subj = _text_or_none(lesson.original_subject_name)
+    if orig_subj is None or orig_subj.casefold() == "нет занятий":
+        return []
 
+    changes: list[WebChange] = []
+    
     current_subject = _text_or_none(lesson.subject_name)
     original_subject = _text_or_none(lesson.original_subject_name)
     if original_subject is not None and original_subject != current_subject:
-        changes.append(
-            WebChange(
-                field="subject",
-                old_value=original_subject,
-                new_value=current_subject,
-            )
-        )
+        changes.append(WebChange(field="subject", old_value=original_subject, new_value=current_subject))
 
     current_teacher = _text_or_none(lesson.teacher_name)
     original_teacher = _text_or_none(lesson.original_teacher_name)
     if original_teacher is not None and original_teacher != current_teacher:
-        changes.append(
-            WebChange(
-                field="teacher",
-                old_value=original_teacher,
-                new_value=current_teacher,
-            )
-        )
+        changes.append(WebChange(field="teacher", old_value=original_teacher, new_value=current_teacher))
 
     current_room = _text_or_none(lesson.room_name)
     original_room = _text_or_none(lesson.original_room_name)
     if original_room is not None and original_room != current_room:
-        changes.append(
-            WebChange(
-                field="room",
-                old_value=original_room,
-                new_value=current_room,
-            )
-        )
+        changes.append(WebChange(field="room", old_value=original_room, new_value=current_room))
 
     current_group = _text_or_none(lesson.group_name)
     original_group = _text_or_none(lesson.original_group_name)
     if original_group is not None and original_group != current_group:
-        changes.append(
-            WebChange(
-                field="group",
-                old_value=original_group,
-                new_value=current_group,
-            )
-        )
+        changes.append(WebChange(field="group", old_value=original_group, new_value=current_group))
 
     current_class = _text_or_none(lesson.class_name)
     original_class = _text_or_none(lesson.original_class_name)
     if original_class is not None and original_class != current_class:
-        changes.append(
-            WebChange(
-                field="class",
-                old_value=original_class,
-                new_value=current_class,
-            )
-        )
+        changes.append(WebChange(field="class", old_value=original_class, new_value=current_class))
 
     return changes
 

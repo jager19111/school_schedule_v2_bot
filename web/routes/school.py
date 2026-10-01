@@ -313,17 +313,17 @@ async def school_item_today(
     if kind_name == "class":
         date_iso = await _schedule_service(
             request
-        ).get_smart_class_target_date(item_id)
+        ).get_smart_class_target_date(class_id=item_id)
 
     elif kind_name == "teacher":
         date_iso = await _schedule_service(
             request
-        ).get_smart_teacher_target_date(item_id)
+        ).get_smart_teacher_target_date(teacher_id=item_id)
 
     else:
         date_iso = await _schedule_service(
             request
-        ).get_smart_room_target_date(item_id)
+        ).get_smart_room_target_date(room_id=item_id)
     return await _render_school_day(request, context, kind_name, item_id, date_iso)
 
 

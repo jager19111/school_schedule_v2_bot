@@ -66,7 +66,9 @@
           <div
             class="
               lesson-card__subject
-              {% if shared_entry.subject.changed %}
+              {% if shared_entry.subject.value | lower == 'нет занятий' %}
+                lesson-card__subject--window
+              {% elif shared_entry.subject.changed %}
                 lesson-card__field--changed
               {% endif %}
             "

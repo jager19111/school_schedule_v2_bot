@@ -1,10 +1,13 @@
+{% set is_empty_window = (entry.subject and entry.subject.value | string | lower | trim == 'нет занятий') %}
 <div class="lesson-entry">
   <div class="lesson-entry__content">
     {% if show_subject and entry.subject %}
     <div
       class="
         lesson-entry__subject
-        {% if entry.subject.changed %}
+        {% if is_empty_window %}
+          lesson-entry__subject--window
+        {% elif entry.subject.changed %}
           lesson-card__field--changed
         {% endif %}
       "
@@ -30,17 +33,17 @@
       {% endif %}
 
       {% if entry.show_group and entry.group %}
-    <span
-    class="
-        lesson-entry__group
-        {% if entry.group.changed %}
-        lesson-card__field--changed
-        {% endif %}
-    "
-    >
-    · {{ entry.group.value }}
-    </span>
-    {% endif %}
+      <span
+        class="
+          lesson-entry__group
+          {% if entry.group.changed %}
+            lesson-card__field--changed
+          {% endif %}
+        "
+      >
+        {% if entry.teacher %}· {% endif %}{{ entry.group.value }}
+      </span>
+      {% endif %}
     </div>
   </div>
 

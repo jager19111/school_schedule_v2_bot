@@ -91,8 +91,11 @@ class ScheduleService:
         """
         True, если изменения дня — простая перестановка (🔁).
 
-        Публичный API для notification-слоя.
-        Сравнивает мультимножества 4D-сигнатур «было»/«стало».
+        Публичный API.
+        Сравнивает мультимножества 3D-сигнатур «было»/«стало».
+        Группа исключена из сигнатуры, чтобы обмен кабинетами/учителями 
+        между подгруппами корректно считался перестановкой.
+        Все пустые значения безопасно приводятся к None (без хаков).
         """
         exchanges = [
             l for l in lessons
@@ -103,19 +106,17 @@ class ScheduleService:
 
         orig_counter = Counter(
             (
-                l.original_subject_id,
-                l.original_room_id,
-                l.original_teacher_id,
-                l.original_group_id or "ALL",
+                l.original_subject_id or None,
+                l.original_room_id or None,
+                l.original_teacher_id or None,
             )
             for l in exchanges
         )
         curr_counter = Counter(
             (
-                l.subject_id,
-                l.room_id,
-                l.teacher_id,
-                l.group_id or "ALL",
+                l.subject_id or None,
+                l.room_id or None,
+                l.teacher_id or None,
             )
             for l in exchanges
         )
