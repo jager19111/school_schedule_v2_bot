@@ -23,7 +23,7 @@ from services.web_sessions_service import WebSessionContext
 from web.deps import require_family_allowed
 from web.routes.schedule import router as schedule_router
 from web.routes.school import router as school_router
-
+from web.routes.settings import router as settings_router
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _TEMPLATES_DIR = _PROJECT_ROOT / "web" / "templates"
@@ -42,6 +42,7 @@ class FakeScheduleTargetsService:
             int,
             list[ScheduleTargetDTO],
         ] = {}
+
 
     async def get_all_targets_for_user(
         self,
@@ -83,6 +84,34 @@ class FakeWatchTargetsService:
         self.next_target_id = 1000
         self.delete_calls: list[tuple[int, int]] = []
 
+    async def get_targets(
+        self,
+        *,
+        owner_user_id: int,
+        enabled_only: bool = False,
+    ) -> list[ScheduleWatchTargetDTO]:
+        """
+        Совместимый fake public WatchTargetsService.get_targets().
+
+        Нужен Settings route для повторного рендеринга list fragment
+        после pause/resume/notification/delete actions.
+        """
+        targets = list(
+            self.targets_by_owner.get(
+                owner_user_id,
+                [],
+            )
+        )
+
+        if not enabled_only:
+            return targets
+
+        return [
+            target
+            for target in targets
+            if target.is_enabled
+        ]
+        
     async def get_whole_class_target(
         self,
         *,
@@ -101,6 +130,58 @@ class FakeWatchTargetsService:
 
         return None
 
+    async def set_target_enabled(
+        self,
+        *,
+        owner_user_id: int,
+        target_id: int,
+        is_enabled: bool,
+    ) -> ActionResponseDTO:
+        targets = self.targets_by_owner.get(
+            owner_user_id,
+            [],
+        )
+
+        for target in targets:
+            if target.id != target_id:
+                continue
+
+            target.is_enabled = is_enabled
+
+            return ActionResponseDTO(success=True)
+
+        return ActionResponseDTO(
+            success=False,
+            error_code="not_found",
+        )
+
+    async def set_target_receive_schedule_changes(
+        self,
+        *,
+        owner_user_id: int,
+        target_id: int,
+        receive_schedule_changes: bool,
+    ) -> ActionResponseDTO:
+        targets = self.targets_by_owner.get(
+            owner_user_id,
+            [],
+        )
+
+        for target in targets:
+            if target.id != target_id:
+                continue
+
+            target.receive_schedule_changes = (
+                receive_schedule_changes
+            )
+
+            return ActionResponseDTO(success=True)
+
+        return ActionResponseDTO(
+            success=False,
+            error_code="not_found",
+        )
+        
     async def add_target_from_school_dictionaries(
         self,
         *,
@@ -263,6 +344,7 @@ def web_test_app(
 
     app.include_router(schedule_router)
     app.include_router(school_router)
+    app.include_router(settings_router)
 
     return app
 

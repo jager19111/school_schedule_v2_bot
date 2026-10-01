@@ -36,19 +36,63 @@
             <p class="settings-card__description">
               {{ target.is_enabled_text }}
             </p>
+
+            <p class="settings-card__description">
+              {{ target.changes_notify_text }}
+            </p>
           </div>
 
-          <button
-            type="button"
-            class="settings-card__action settings-card__action--danger"
-            hx-post="/settings/watch-targets/{{ target.target_id }}/delete"
-            hx-target="#main"
-            hx-swap="innerHTML"
-            hx-confirm="Удалить отслеживаемый класс «{{ target.title }}»?"
-            hx-disabled-elt="this"
+          <div
+            class="settings-card__actions"
+            role="group"
+            aria-label="Настройки класса {{ target.title }}"
           >
-            Удалить
-          </button>
+            <button
+              type="button"
+              class="settings-card__action settings-card__action--toggle"
+              hx-post="/settings/watch-targets/{{ target.target_id }}/enabled"
+              hx-vals='{"is_enabled":"{{ "false" if target.is_enabled else "true" }}"}'
+              hx-target="#main"
+              hx-swap="innerHTML"
+              hx-disabled-elt="this"
+              aria-pressed="{{ "true" if target.is_enabled else "false" }}"
+            >
+              {% if target.is_enabled %}
+                Пауза
+              {% else %}
+                Включить
+              {% endif %}
+            </button>
+
+            <button
+              type="button"
+              class="settings-card__action settings-card__action--changes"
+              hx-post="/settings/watch-targets/{{ target.target_id }}/changes-notifications"
+              hx-vals='{"receive_schedule_changes":"{{ "false" if target.receive_schedule_changes else "true" }}"}'
+              hx-target="#main"
+              hx-swap="innerHTML"
+              hx-disabled-elt="this"
+              aria-pressed="{{ "true" if target.receive_schedule_changes else "false" }}"
+            >
+              {% if target.receive_schedule_changes %}
+                Изменения: выкл
+              {% else %}
+                Изменения: вкл
+              {% endif %}
+            </button>
+
+            <button
+              type="button"
+              class="settings-card__action settings-card__action--danger"
+              hx-post="/settings/watch-targets/{{ target.target_id }}/delete"
+              hx-target="#main"
+              hx-swap="innerHTML"
+              hx-confirm="Удалить отслеживаемый класс «{{ target.title }}»?"
+              hx-disabled-elt="this"
+            >
+              Удалить
+            </button>
+          </div>
         </div>
         {% endfor %}
       </section>

@@ -1,7 +1,8 @@
 /* web/static/css/app.css
    Mobile-first (ТЗ 41): iPhone ~390-430px, touch >= 44px,
    safe-area для вырезов/home indicator. Без hover-зависимости. */
-
+.htmx-indicator { opacity: 0; transition: opacity 200ms ease-in; }
+.htmx-request .htmx-indicator, .htmx-request.htmx-indicator { opacity: 1; }
 /* 1. Tokens */
 :root {
   --bg: #f3f4f6;
@@ -557,6 +558,58 @@ body {
 .settings-card__action:disabled {
   cursor: default;
   opacity: 0.55;
+}
+
+.settings-card__actions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+}
+
+
+.settings-card__action--toggle {
+  color: #1d4ed8;
+  border-color: #bfdbfe;
+  background: #f8fbff;
+}
+
+
+.settings-card__action--toggle:active {
+  background: #dbeafe;
+}
+
+
+.settings-card__action--changes {
+  color: #92400e;
+  border-color: #fde68a;
+  background: #fffbeb;
+}
+
+
+.settings-card__action--changes:active {
+  background: #fef3c7;
+}
+
+
+@media (max-width: 520px) {
+  .settings-card {
+    flex-wrap: wrap;
+  }
+
+  .settings-card__actions {
+    flex: 1 1 100%;
+    flex-direction: row;
+  }
+
+  .settings-card__action {
+    flex: 1 1 0;
+    min-width: 0;
+    padding-right: 7px;
+    padding-left: 7px;
+    font-size: 12px;
+  }
 }
 
 .settings-page__heading {

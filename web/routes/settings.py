@@ -241,6 +241,33 @@ def _watch_target_form_template_name(
         else "settings/watch_target_form.html"
     )
 
+async def _watch_targets_list_response(
+    request: Request,
+    context: WebSessionContext,
+    *,
+    error: str | None = None,
+):
+    """
+    Возвращает updated watch targets list после personal settings action.
+
+    HTMX получает fragment для #main.
+    Обычный browser POST получает normal redirect.
+    """
+    if not _is_htmx(request):
+        return RedirectResponse(
+            url="/settings/watch-targets",
+            status_code=303,
+        )
+
+    return _templates(request).TemplateResponse(
+        request,
+        "settings/_watch_targets_content.html",
+        await _watch_targets_context(
+            request,
+            context,
+            error=error,
+        ),
+    )
 
 @router.get("/settings", response_class=HTMLResponse)
 async def settings_page(
@@ -449,23 +476,89 @@ async def delete_watch_target(
     else:
         error = None
 
-    if not _is_htmx(request):
-        return RedirectResponse(
-            url="/settings/watch-targets",
-            status_code=303,
-        )
-
-    return _templates(request).TemplateResponse(
+    return await _watch_targets_list_response(
         request,
-        "settings/_watch_targets_content.html",
-        await _watch_targets_context(
-            request,
-            context,
-            error=error,
-        ),
+        context,
+        error=error,
     )
 
+@router.post(
+    "/settings/watch-targets/{target_id}/enabled",
+    response_class=HTMLResponse,
+)
+async def set_watch_target_enabled(
+    request: Request,
+    target_id: int,
+    is_enabled: bool = Form(...),
+    context: WebSessionContext = Depends(require_family_allowed),
+):
+    """
+    Явно включает или ставит на паузу personal watch target.
 
+    `is_enabled` приходит из UI как desired state, а не вычисляется
+    route-ом через not current_value. Это исключает double-click race:
+    повторная отправка того же request остаётся идемпотентной.
+    """
+    response = await _watch_targets_service(
+        request,
+    ).set_target_enabled(
+        owner_user_id=context.user_id,
+        target_id=target_id,
+        is_enabled=is_enabled,
+    )
+
+    if not response.success:
+        return await _watch_targets_list_response(
+            request,
+            context,
+            error=(
+                "Отслеживаемый класс уже удалён "
+                "или недоступен."
+            ),
+        )
+
+    return await _watch_targets_list_response(
+        request,
+        context,
+    )
+
+@router.post(
+    "/settings/watch-targets/{target_id}/changes-notifications",
+    response_class=HTMLResponse,
+)
+async def set_watch_target_changes_notifications(
+    request: Request,
+    target_id: int,
+    receive_schedule_changes: bool = Form(...),
+    context: WebSessionContext = Depends(require_family_allowed),
+):
+    """
+    Явно включает/выключает notifications об изменениях расписания
+    для одного personal watch target.
+    """
+    response = await _watch_targets_service(
+        request,
+    ).set_target_receive_schedule_changes(
+        owner_user_id=context.user_id,
+        target_id=target_id,
+        receive_schedule_changes=receive_schedule_changes,
+    )
+
+    if not response.success:
+        return await _watch_targets_list_response(
+            request,
+            context,
+            error=(
+                "Отслеживаемый класс уже удалён "
+                "или недоступен."
+            ),
+        )
+
+    return await _watch_targets_list_response(
+        request,
+        context,
+    )
+    
 @router.get(
     "/settings/devices",
     response_class=HTMLResponse,

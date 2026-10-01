@@ -9,10 +9,13 @@
   
   {# --- PWA & iOS Meta Tags (Phase 6) --- #}
   <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="Расписание">
+  <meta name="htmx-config" content='{"includeIndicatorStyles": false}'>
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
+  <link rel="icon" href="/favicon.ico" type="image/x-icon">
   <title>{% block title %}Расписание{% endblock %} — лицей НГТУ</title>
   
   {# ПРАВИЛЬНЫЙ ПОРЯДОК ПОДКЛЮЧЕНИЯ CSS #}

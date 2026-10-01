@@ -28,6 +28,7 @@ from fastapi.responses import (
     JSONResponse,
     RedirectResponse,
     Response,
+    FileResponse,
 )
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from fastapi import Request
@@ -224,6 +225,12 @@ def create_web_app(
     static_dir.mkdir(parents=True, exist_ok=True)
     app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
+    # --- Явный роут для favicon.ico ---
+    @app.get("/favicon.ico", include_in_schema=False)
+    async def favicon():
+        # Отдаем файл напрямую из папки с иконками
+        return FileResponse(str(static_dir / "icons" / "favicon.ico"))
+    
     # --- Routes ---
     from web.routes.auth import router as auth_router
     from web.routes.extra_classes import router as extra_router
