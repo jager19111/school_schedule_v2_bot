@@ -261,6 +261,7 @@ class Database:
                 CREATE TABLE IF NOT EXISTS family_invites (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     token TEXT NOT NULL UNIQUE,
+                    short_code TEXT,
                     family_id INTEGER NOT NULL,
                     created_by_user_id INTEGER NOT NULL,
                     intended_role TEXT NOT NULL
@@ -296,6 +297,10 @@ class Database:
             await db.execute("""
                 CREATE INDEX IF NOT EXISTS idx_family_invites_token
                 ON family_invites(token)
+            """)
+            await db.execute("""
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_family_invites_short_code
+                ON family_invites(short_code)
             """)
             await db.execute("""
                 CREATE INDEX IF NOT EXISTS idx_family_invites_family_active

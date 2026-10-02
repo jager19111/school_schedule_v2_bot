@@ -13,6 +13,7 @@ from core.models.dto import (
     SchoolDictionariesDTO, StudentTelegramSettingsViewModel, ParentStudentNotificationSettingsViewModel,
     StudentTelegramSettingsDTO, ParentStudentNotificationSettingsDTO, AuditAction
 )
+from core.mappers.profile_mapper import ProfileMapper
 
 logger = logging.getLogger(__name__)
 
@@ -69,14 +70,14 @@ class ProfileService:
         await self.repo.update_user_name(user_id, name)
         
     async def register_user_initial(self, user_id: int) -> None:
-        """
-        Создаёт пользователя, если его нет, и обновляет last_active_at.
-        """
-        await self.repo.register_user_initial(user_id)
-        await self.audit.log_action(
-            actor_id=user_id, target_id=user_id, 
-            action=AuditAction.USER_REGISTERED
-        )
+        created = await self.repo.register_user_initial(user_id)
+
+        if created:
+            await self.audit.log_action(
+                actor_id=user_id,
+                target_id=user_id,
+                action=AuditAction.USER_REGISTERED,
+            )
 
     async def update_last_active(self, user_id: int) -> None:
         """
@@ -97,68 +98,24 @@ class ProfileService:
     # ========== ПРОФИЛЬ ПОЛЬЗОВАТЕЛЯ ==========
 
     async def get_user_profile_dto(self, user_id: int) -> UserProfileDTO:
-            """
-            Возвращает DTO с информацией о пользователе. 
-            Логика SQL полностью изолирована в ProfileRepository.
-            """
-            row = await self.repo.get_user_profile_for_dto(user_id)
-            
-            # Троттлинг активности обновляем только если профиль уже физически есть в БД
-            if row:
-                await self._touch_last_active(user_id)
+        """
+        Возвращает DTO с информацией о пользователе.
 
-            # Безопасный словарь. Если профиля нет, подставит {} и .get() сработает штатно.
-            row_data = dict(row) if row else {}
+        SQL остаётся в ProfileRepository, а row → DTO преобразование
+        выполняется в ProfileMapper.
+        """
+        row = await self.repo.get_user_profile_for_dto(user_id)
 
-            role = row_data.get("role")
-            is_registered = False
+        # Троттлинг активности выполняется только для реально существующего
+        # пользователя. Для row=None ничего в БД не записываем.
+        if row:
+            await self._touch_last_active(user_id)
 
-            # Проверка завершенности регистрации
-            if role:
-                if role == "child" and row_data.get("class_id"):
-                    is_registered = True
-                elif role in ("parent", "observer") and row_data.get("family_id"):
-                    is_registered = True
-                elif role == "teacher" and row_data.get("teacher_id"):
-                    is_registered = True
-
-            return UserProfileDTO(
-                user_id=user_id,
-                role=role,
-                is_fully_registered=is_registered,
-                # ВАЖНО: Везде ниже используем row_data, а не row!
-                name=row_data.get("name"),
-                family_id=row_data.get("family_id"),
-                class_id=row_data.get("class_id"),
-                group_id=row_data.get("group_id"),
-                teacher_id=row_data.get("teacher_id"),
-                morning_summary_time=row_data.get("morning_summary_time"),
-                pre_lesson_offset_minutes=row_data.get(
-                    "pre_lesson_offset_minutes",
-                    10,
-                ),
-                receive_schedule_changes=bool(
-                    row_data.get("receive_schedule_changes", True)
-                ),
-                receive_extra_class_reminders=bool(
-                    row_data.get("receive_extra_class_reminders", True)
-                ),
-                can_manage_own_extra_classes=bool(
-                    row_data.get("can_manage_own_extra_classes", True)
-                ),       
-                changes_window_days=row_data.get(
-                    "changes_window_days",
-                    3,
-                ),
-                is_notifications_enabled=bool(
-                    row_data.get("is_notifications_enabled", True)
-                ),
-                global_extra_reminder=row_data.get(
-                    "global_extra_reminder",
-                    30,
-                ),
-            )
-
+        return ProfileMapper.to_user_profile_dto(
+            row,
+            user_id=user_id,
+        )
+        
     async def set_teacher_profile(
         self,
         *,
@@ -625,37 +582,67 @@ class ProfileService:
         
         if impact is not None and impact.is_family_admin:
             family_id = impact.family_id
-            
+
             successor_id = await self.repo.find_family_admin_successor(
                 family_id=family_id,
                 excluding_user_id=user_id,
             )
-            
+
             if successor_id is not None:
                 transferred = await self.repo.transfer_family_admin(
                     from_user_id=user_id,
                     to_user_id=successor_id,
                     family_id=family_id,
                 )
-                if transferred:
-                    reset_ok = await self.repo.reset_non_admin_user(user_id=user_id)
-                    await self.audit.log_action(user_id, successor_id, AuditAction.FAMILY_ADMIN_TRANSFERRED)
-                    await self.audit.log_action(user_id, user_id, AuditAction.PROFILE_RESET, {"details": "Успешная передача прав"})
-                    return reset_ok, successor_id
-                    
-            # Преемника нет (или передача не удалась) — расформировка.
-            # ИСПРАВЛЕНИЕ: строго передаём параметр по имени admin_user_id=
+
+                if not transferred:
+                    logger.error(
+                        "Family admin transfer failed: family_id=%s, "
+                        "from_user_id=%s, to_user_id=%s",
+                        family_id,
+                        user_id,
+                        successor_id,
+                    )
+                    return False, None
+
+                reset_ok = await self.repo.reset_non_admin_user(
+                    user_id=user_id,
+                )
+
+                if reset_ok:
+                    await self.audit.log_action(
+                        user_id,
+                        successor_id,
+                        AuditAction.FAMILY_ADMIN_TRANSFERRED,
+                    )
+                    await self.audit.log_action(
+                        user_id,
+                        user_id,
+                        AuditAction.PROFILE_RESET,
+                        {
+                            "details": "Успешная передача прав",
+                        },
+                    )
+
+                return reset_ok, successor_id
+
+            # Расформирование допустимо только тогда, когда другого
+            # parent в семье действительно нет.
             disbanded = await self.repo.disband_family_by_admin(
-                admin_user_id=user_id
+                admin_user_id=user_id,
             )
-            await self.audit.log_action(user_id, user_id, AuditAction.PROFILE_RESET, {"details": "Семья расформирована"})
+
+            if disbanded:
+                await self.audit.log_action(
+                    user_id,
+                    user_id,
+                    AuditAction.PROFILE_RESET,
+                    {
+                        "details": "Семья расформирована",
+                    },
+                )
+
             return disbanded, None
-            
-        # Для обычных пользователей (или если impact == None)
-        reset_ok = await self.repo.reset_non_admin_user(user_id=user_id)
-        await self.audit.log_action(user_id, user_id, AuditAction.PROFILE_RESET, {"details": "Стандартный сброс профиля"})
-        return reset_ok, None
-    
     
     # метод получения состава семьи
     async def get_family_members(self, family_id: int) -> list[FamilyMemberDTO]:
@@ -1153,11 +1140,24 @@ class ProfileService:
             or target_dto.role != "parent"
         ):
             return False
-        return await self.repo.transfer_family_admin(
+        transferred = await self.repo.transfer_family_admin(
             from_user_id=from_user_id,
             to_user_id=to_user_id,
             family_id=actor_dto.family_id,
         )
+
+        if transferred:
+            await self.audit.log_action(
+                actor_id=from_user_id,
+                target_id=to_user_id,
+                action=AuditAction.FAMILY_ADMIN_TRANSFERRED,
+                details={
+                    "family_id": actor_dto.family_id,
+                    "mode": "manual",
+                },
+            )
+
+        return transferred
 
     async def get_family_admin_successor(
         self,

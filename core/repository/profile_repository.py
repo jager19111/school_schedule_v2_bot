@@ -53,6 +53,20 @@ class ProfileRepository(BaseRepository):
     Вся работа с таблицами users и families сосредоточена здесь.
     """
 
+    _ALLOWED_USER_ROLES = frozenset(
+        {
+            "child",
+            "parent",
+            "observer",
+            "teacher",
+        }
+    )
+    
+    @classmethod
+    def _validate_role(cls, role: str) -> None:
+        if role not in cls._ALLOWED_USER_ROLES:
+            raise ValueError(f"Unsupported user role: {role}")
+        
     # users.last_active_at / created_at / updated_at и fetched_at
     # уже покрываются BaseRepository
 
@@ -97,12 +111,13 @@ class ProfileRepository(BaseRepository):
                     await db.rollback()
                     raise
 
-    # Возможно нужно удалить дублирующий метод update_user_role,
+# Возможно нужно удалить дублирующий метод update_user_role,
     # так как он уже есть в ProfileService.
     async def update_user_role(self, user_id: int, role: str) -> None:
         """
         Обновляет роль пользователя.
         """
+        self._validate_role(role)
         await self._execute(
             """
             UPDATE users
@@ -842,17 +857,26 @@ class ProfileRepository(BaseRepository):
                     user_row = await (
                         await db.execute(
                             """
-                            SELECT user_id
+                            SELECT
+                                user_id,
+                                family_id
                             FROM users
                             WHERE user_id = ?
                             """,
                             (admin_user_id,),
                         )
                     ).fetchone()
+
                     if user_row is None:
                         await db.rollback()
                         raise ValueError(
                             f"Cannot create family for missing user: {admin_user_id}"
+                        )
+
+                    if user_row["family_id"] is not None:
+                        await db.rollback()
+                        raise ValueError(
+                            f"User already belongs to a family: user_id={admin_user_id}"
                         )
                     cursor = await db.execute(
                         """
@@ -892,7 +916,6 @@ class ProfileRepository(BaseRepository):
                     raise
         return family_code
 
-    # Рабочий core method, оставить
     async def link_user_to_family(
         self,
         user_id: int,
@@ -910,9 +933,12 @@ class ProfileRepository(BaseRepository):
             parent/observer × child
         в рамках семьи существует в parent_student_settings.
         """
-        allowed_roles = {"child", "parent", "observer"}
-        if role not in allowed_roles:
-            raise ValueError(f"Unsupported family role: {role}")
+        self._validate_role(role)
+        
+        # Защита доменной модели: учитель не может состоять в семье
+        if role == "teacher":
+            raise ValueError("Teacher cannot be linked to a family")
+            
         now_utc = self._now_utc_str()
         async with self._write_lock():
             async with self._connection() as db:
@@ -934,16 +960,36 @@ class ProfileRepository(BaseRepository):
                     user_row = await (
                         await db.execute(
                             """
-                            SELECT user_id
+                            SELECT
+                                user_id,
+                                family_id
                             FROM users
                             WHERE user_id = ?
                             """,
                             (user_id,),
                         )
                     ).fetchone()
+
                     if user_row is None:
                         await db.rollback()
-                        raise ValueError(f"User does not exist: user_id={user_id}")
+                        raise ValueError(
+                            f"User does not exist: user_id={user_id}"
+                        )
+
+                    current_family_id = user_row["family_id"]
+
+                    if (
+                        current_family_id is not None
+                        and current_family_id != family_id
+                    ):
+                        await db.rollback()
+                        raise ValueError(
+                            f"User already belongs to another family: user_id={user_id}"
+                        )
+
+                    if current_family_id == family_id:
+                        await db.rollback()
+                        return
                     await db.execute(
                         """
                         UPDATE users
@@ -967,7 +1013,7 @@ class ProfileRepository(BaseRepository):
                 except Exception:
                     await db.rollback()
                     raise
-
+                
     # ========== CHILDREN LIST ==========
 
     async def update_user_name(self, user_id: int, name: str) -> None:
@@ -1476,19 +1522,38 @@ class ProfileRepository(BaseRepository):
                     await db.rollback()
                     raise
 
-    async def update_integer_setting(self, user_id: int, field_name: str, value: int) -> None:
-        """Безопасное обновление числовых настроек."""
-        allowed_fields = {"pre_lesson_offset_minutes", "global_extra_reminder"}
-        if field_name in allowed_fields:
-            await self._execute(
-                f"""
-                UPDATE users
-                SET {field_name} = ?,
-                    updated_at = ?
-                WHERE user_id = ?
-                """,
-                (value, self._now_utc_str(), user_id),
+    async def update_integer_setting(
+        self,
+        user_id: int,
+        field_name: str,
+        value: int,
+    ) -> None:
+        """Безопасно обновляет разрешённую числовую настройку пользователя."""
+        allowed_fields = {
+            "pre_lesson_offset_minutes",
+            "changes_window_days",
+            "global_extra_reminder",
+        }
+
+        if field_name not in allowed_fields:
+            raise ValueError(
+                f"Unsupported integer user field: {field_name}"
             )
+
+        await self._execute(
+            f"""
+            UPDATE users
+            SET
+                {field_name} = ?,
+                updated_at = ?
+            WHERE user_id = ?
+            """,
+            (
+                value,
+                self._now_utc_str(),
+                user_id,
+            ),
+        )
 
     # метод получения состава семьи
     async def get_family_members_rows(self, family_id: int) -> list[dict]:
@@ -1500,6 +1565,7 @@ class ProfileRepository(BaseRepository):
 
     async def update_role_and_defaults(self, user_id: int, role: str) -> None:
         """Назначает роль и выставляет дефолтные настройки</arg_key>лений."""
+        self._validate_role(role)
         now_utc = self._now_utc_str()
         async with self._write_lock():
             async with self._connection() as db:
@@ -1543,7 +1609,7 @@ class ProfileRepository(BaseRepository):
                 except Exception:
                     await db.rollback()
                     raise
-
+                
     # Виртуальный ученик
     async def get_parent_student_notification_settings_row(
         self,
@@ -2054,23 +2120,37 @@ class ProfileRepository(BaseRepository):
         family_id: int,
     ) -> bool:
         """
-        Передача полномочий администратора семьи.
+        Передаёт полномочия только другому parent той же семьи.
 
-        WHERE admin_user_id = ? гарантирует, что передачу инициирует
-        только текущий админ: после передачи повторный вызов тем же
-        пользователем молча вернёт False (rowcount = 0).
-        Права, приглашения и настройки детей читаются через
-        families.admin_user_id, поэтому остальные слои менять не нужно.
+        Инвариант контролируется в SQL, чтобы repository нельзя было
+        использовать для назначения внешнего пользователя, observer
+        или child администратором семьи.
         """
         changed = await self._execute(
             """
             UPDATE families
-            SET admin_user_id = ?, updated_at = CURRENT_TIMESTAMP
+            SET
+                admin_user_id = ?,
+                updated_at = ?
             WHERE id = ?
               AND admin_user_id = ?
+              AND EXISTS (
+                  SELECT 1
+                  FROM users AS successor
+                  WHERE successor.user_id = ?
+                    AND successor.family_id = families.id
+                    AND successor.role = 'parent'
+              )
             """,
-            (to_user_id, family_id, from_user_id),
+            (
+                to_user_id,
+                self._now_utc_str(),
+                family_id,
+                from_user_id,
+                to_user_id,
+            ),
         )
+
         return changed == 1
 
     async def find_family_admin_successor(
