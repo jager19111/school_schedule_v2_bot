@@ -630,3 +630,124 @@ async def test_link_user_to_family_is_idempotent_for_same_family(
     assert row is not None
     assert row["family_id"] == 70
     assert row["role"] == "parent"
+    
+    
+@pytest.mark.asyncio
+async def test_register_user_initial_reports_only_first_insert(
+    profile_repository: ProfileRepository,
+    sqlite_connection: Connection,
+) -> None:
+    created_first = await profile_repository.register_user_initial(
+        user_id=901,
+    )
+    created_second = await profile_repository.register_user_initial(
+        user_id=901,
+    )
+
+    cursor = await sqlite_connection.execute(
+        """
+        SELECT
+            user_id,
+            last_active_at
+        FROM users
+        WHERE user_id = ?
+        """,
+        (901,),
+    )
+    row = await cursor.fetchone()
+
+    assert created_first is True
+    assert created_second is False
+
+    assert row is not None
+    assert row["user_id"] == 901
+    assert row["last_active_at"] is not None
+    
+    
+@pytest.mark.asyncio
+async def test_register_user_initial_audits_only_new_user(
+    profile_repository: ProfileRepository,
+) -> None:
+    audit = _AuditSpy()
+
+    service = ProfileService(
+        repo=profile_repository,
+        audit_service=audit,
+    )
+
+    await service.register_user_initial(
+        user_id=902,
+    )
+    await service.register_user_initial(
+        user_id=902,
+    )
+
+    assert len(audit.calls) == 1
+
+    args, kwargs = audit.calls[0]
+
+    assert args == ()
+    assert kwargs["actor_id"] == 902
+    assert kwargs["target_id"] == 902
+    assert kwargs["action"] == AuditAction.USER_REGISTERED
+    
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "role",
+    [
+        "child",
+        "observer",
+        "teacher",
+    ],
+)
+async def test_create_family_and_link_requires_parent_role(
+    profile_repository: ProfileRepository,
+    sqlite_connection: Connection,
+    create_test_user,
+    role: str,
+) -> None:
+    user_id = {
+        "child": 1001,
+        "observer": 1002,
+        "teacher": 1003,
+    }[role]
+
+    await create_test_user(
+        user_id=user_id,
+        role=role,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="Only parent role can create a family",
+    ):
+        await profile_repository.create_family_and_link(
+            admin_user_id=user_id,
+        )
+
+    family_cursor = await sqlite_connection.execute(
+        """
+        SELECT COUNT(*) AS count
+        FROM families
+        """
+    )
+    family_row = await family_cursor.fetchone()
+
+    user_cursor = await sqlite_connection.execute(
+        """
+        SELECT
+            role,
+            family_id
+        FROM users
+        WHERE user_id = ?
+        """,
+        (user_id,),
+    )
+    user_row = await user_cursor.fetchone()
+
+    assert family_row is not None
+    assert family_row["count"] == 0
+
+    assert user_row is not None
+    assert user_row["role"] == role
+    assert user_row["family_id"] is None

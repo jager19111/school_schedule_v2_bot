@@ -1,17 +1,23 @@
 # services/profiles_service.py
 import logging
-import aiosqlite
-from typing import Dict, Any, List, Optional, Tuple
+from typing import List, Optional, Tuple
 import time
 
 from core.repository.profile_repository import ProfileRepository
 from services.audit_service import AuditService
 from core.models.dto import (
-    UserProfileDTO,
-    FamilyMemberDTO,ParentStudentNotificationSettingsDTO, AdultStudentExtraClassesPermissionDTO,
-    ProfileResetImpactDTO, FamilyInviteDTO,StudentTelegramSettingsDTO, FamilyMemberViewModel,
-    SchoolDictionariesDTO, StudentTelegramSettingsViewModel, ParentStudentNotificationSettingsViewModel,
-    StudentTelegramSettingsDTO, ParentStudentNotificationSettingsDTO, AuditAction
+    AdultStudentExtraClassesPermissionDTO,
+    AuditAction,
+    FamilyInviteDTO,
+    FamilyMemberDTO,
+    FamilyMemberViewModel,
+    ParentStudentNotificationSettingsDTO,
+    ParentStudentNotificationSettingsViewModel,
+    ProfileResetImpactDTO,
+    SchoolDictionariesDTO,
+    StudentTelegramSettingsDTO,
+    StudentTelegramSettingsViewModel,
+    UserProfileDTO,     FamilyInviteCodeLookupDTO,
 )
 from core.mappers.profile_mapper import ProfileMapper
 
@@ -70,6 +76,12 @@ class ProfileService:
         await self.repo.update_user_name(user_id, name)
         
     async def register_user_initial(self, user_id: int) -> None:
+        """
+        Создаёт пользователя, если его нет, и обновляет last_active_at.
+
+        Audit USER_REGISTERED создаётся только при фактической вставке
+        нового пользователя, а не при каждом повторном /start.
+        """
         created = await self.repo.register_user_initial(user_id)
 
         if created:
@@ -85,7 +97,7 @@ class ProfileService:
         """
         await self.repo.update_last_active(user_id)
 
-# Далее переименовать в set_user_role_with_defaults()
+
     async def update_user_role(self, user_id: int, role: str) -> None:
         """Делегирует обновление роли и настроек репозиторию."""
         await self.repo.update_role_and_defaults(user_id, role)
@@ -191,15 +203,7 @@ class ProfileService:
             action=AuditAction.INVITE_CREATED, 
             details={"role": intended_role}
         )
-        return FamilyInviteDTO(
-            id=row["id"],  # <-- Добавлено недостающее поле
-            token=row["token"],
-            family_id=row["family_id"],
-            intended_role=row["intended_role"],
-            expires_at=row["expires_at"],
-            max_uses=row["max_uses"],
-            short_code=row["short_code"],
-        )
+        return ProfileMapper.to_family_invite_dto(row)
         
     async def get_valid_family_invite(
         self,
@@ -215,16 +219,7 @@ class ProfileService:
         if row is None:
             return None
 
-        return FamilyInviteDTO(
-            id=row["id"],
-            token=row["token"],
-            family_id=row["family_id"],
-            intended_role=row["intended_role"],
-            expires_at=row["expires_at"],
-            max_uses=row["max_uses"],
-            uses_count=row["uses_count"],
-            is_revoked=bool(row["is_revoked"]),
-        )
+        return ProfileMapper.to_family_invite_dto(row)
 
     async def consume_family_invite(
         self,
@@ -261,24 +256,6 @@ class ProfileService:
         )
         return result["intended_role"]
     
-    # Helper конвертации DTO
-    @staticmethod
-    def _family_invite_dto_from_row(
-        row: Dict[str, Any],
-    ) -> FamilyInviteDTO:
-        return FamilyInviteDTO(
-            id=row["id"],
-            token=row["token"],
-            family_id=row["family_id"],
-            intended_role=row["intended_role"],
-            expires_at=row["expires_at"],
-            max_uses=row["max_uses"],
-            uses_count=row["uses_count"],
-            is_revoked=bool(row["is_revoked"]),
-            created_at=row.get("created_at"),
-            used_by_user_id=row.get("used_by_user_id"),
-            used_at=row.get("used_at"),
-        )
 
     async def get_active_family_invites(
         self,
@@ -305,10 +282,7 @@ class ProfileService:
             admin_user_id=admin_user_id,
         )
 
-        return [
-            self._family_invite_dto_from_row(row)
-            for row in rows
-        ]
+        return ProfileMapper.to_family_invite_dto_list(rows)
 
     async def get_active_family_invite_by_id(
         self,
@@ -329,7 +303,7 @@ class ProfileService:
         if row is None:
             return None
 
-        return self._family_invite_dto_from_row(row)
+        return ProfileMapper.to_family_invite_dto(row)
 
     async def revoke_family_invite(
         self,
@@ -350,9 +324,19 @@ class ProfileService:
     async def get_valid_family_invite_by_code(
         self,
         short_code: str,
-    ) -> Optional[Dict[str, Any]]:
-        """Активное приглашение по короткому коду (печатаемая форма)."""
-        return await self.repo.get_valid_family_invite_by_code(short_code)
+    ) -> FamilyInviteCodeLookupDTO | None:
+        """
+        Возвращает действующее приглашение по печатаемому short code.
+
+        DTO намеренно содержит только invite token и назначенную роль;
+        metadata семьи не выдаётся в registration layer.
+        """
+        row = await self.repo.get_valid_family_invite_by_code(short_code)
+
+        if row is None:
+            return None
+
+        return ProfileMapper.to_family_invite_code_lookup_dto(row)
     
     # ========== КЛАСС/ГРУППА ==========
 
@@ -534,33 +518,7 @@ class ProfileService:
         if row is None:
             return None
 
-        is_family_admin = bool(
-            row["is_family_admin"]
-        )
-
-        if is_family_admin:
-            extra_classes_count = int(
-                row["family_extra_classes_count"]
-            )
-        else:
-            extra_classes_count = int(
-                row["own_extra_classes_count"]
-            )
-
-
-        return ProfileResetImpactDTO(
-            user_id=row["user_id"],
-            role=row.get("role"),
-            family_id=row.get("family_id"),
-            is_family_admin=is_family_admin,
-            family_members_count=int(
-                row["family_members_count"]
-            ),
-            children_count=int(
-                row["children_count"]
-            ),
-            extra_classes_count=extra_classes_count,
-        )
+        return ProfileMapper.to_profile_reset_impact_dto(row)
           
     async def reset_user_profile(
         self,
@@ -645,18 +603,15 @@ class ProfileService:
             return disbanded, None
     
     # метод получения состава семьи
-    async def get_family_members(self, family_id: int) -> list[FamilyMemberDTO]:
+    async def get_family_members(
+        self,
+        family_id: int,
+    ) -> list[FamilyMemberDTO]:
         """Возвращает список всех участников семьи."""
         rows = await self.repo.get_family_members_rows(family_id)
-        return [
-            FamilyMemberDTO(
-                user_id=r['user_id'],
-                name=r['name'] if r['name'] else f"Участник {r['user_id']}",
-                role=r['role'],
-                class_id=r['class_id']
-            ) for r in rows
-        ]
 
+        return ProfileMapper.to_family_member_dto_list(rows)
+    
     # ========== НАСТРОЙКИ ВЗРОСЛЫЙ → STUDENT PROFILE ==========
 
     async def get_parent_student_notification_settings(
@@ -677,34 +632,7 @@ class ProfileService:
         if row is None:
             return None
 
-        return ParentStudentNotificationSettingsDTO(
-            parent_user_id=row["parent_user_id"],
-            student_id=row["student_id"],
-
-            student_name=row["student_name"] or (
-                f"Ученик {student_id}"
-            ),
-            student_class_id=row["student_class_id"] or "—",
-            student_group_id=row["student_group_id"] or "ALL",
-            telegram_user_id=row.get("telegram_user_id"),
-
-            receive_morning_summary=bool(
-                row["receive_morning_summary"]
-            ),
-            receive_pre_lesson_reminders=bool(
-                row["receive_pre_lesson_reminders"]
-            ),
-            receive_schedule_changes=bool(
-                row["receive_schedule_changes"]
-            ),
-            receive_extra_class_reminders=bool(
-                row["receive_extra_class_reminders"]
-            ),
-
-            can_manage_extra_classes=bool(
-                row["can_manage_extra_classes"]
-            ),
-        )
+        return ProfileMapper.to_parent_student_notification_settings_dto(row)
 
     async def toggle_parent_student_notification_setting(
         self,
@@ -759,18 +687,8 @@ class ProfileService:
         if rows is None:
             return None
 
-        return [
-            AdultStudentExtraClassesPermissionDTO(
-                adult_user_id=row["adult_user_id"],
-                adult_name=row["adult_name"],
-                adult_role=row["adult_role"],
-                student_id=row["student_id"],
-                can_manage_extra_classes=bool(
-                    row["can_manage_extra_classes"]
-                ),
-            )
-            for row in rows
-        ]
+        return (
+            ProfileMapper.to_adult_student_extra_classes_permission_dto_list(rows))
 
     async def set_adult_student_extra_classes_permission(
         self,
@@ -814,47 +732,7 @@ class ProfileService:
         if row is None:
             return None
 
-        return StudentTelegramSettingsDTO(
-            student_id=row["student_id"],
-            telegram_user_id=row["telegram_user_id"],
-
-            student_name=row["student_name"] or (
-                f"Ученик {student_id}"
-            ),
-            class_id=row["class_id"] or "—",
-            group_id=row["group_id"] or "ALL",
-
-            is_notifications_enabled=bool(
-                row["is_notifications_enabled"]
-            ),
-
-            morning_summary_time=row.get(
-                "morning_summary_time"
-            ),
-
-            pre_lesson_offset_minutes=int(
-                row["pre_lesson_offset_minutes"]
-            ),
-
-            receive_schedule_changes=bool(
-                row["receive_schedule_changes"]
-            ),
-
-            receive_extra_class_reminders=bool(
-                row["receive_extra_class_reminders"]
-            ),
-
-            can_manage_own_extra_classes=bool(
-                row["can_manage_own_extra_classes"]
-            ),
-
-            child_notification_settings_locked=bool(
-                row.get(
-                    "child_notification_settings_locked",
-                    False,
-                )
-            ),
-        )
+        return ProfileMapper.to_student_telegram_settings_dto(row)
         
     async def toggle_student_telegram_boolean_setting(
         self,
@@ -933,117 +811,28 @@ class ProfileService:
     # ЭТАП 5: ViewModel builders
     # ==========================================================
 
-    # Приоритет ролей для сортировки списка семьи.
-    _ROLE_PRIORITY = {
-        "parent": 1,
-        "child": 2,
-        "observer": 3,
-    }
-
-    # Отображение ролей для списка семьи.
-    _ROLE_DISPLAY = {
-        "parent": "👨‍👩‍👧 Родитель",
-        "child": "👶 Ребёнок",
-        "observer": "👁 Наблюдатель",
-    }
-
     @staticmethod
     def build_family_member_view_models(
         members: List[FamilyMemberDTO],
         current_user_id: int,
         dicts_dto: SchoolDictionariesDTO,
     ) -> List[FamilyMemberViewModel]:
-        """
-        Строит ViewModel для списка состава семьи.
-
-        Сортировка: текущий пользователь первым,
-        затем parent > child > observer.
-        Классы детей расшифрованы через SchoolDictionariesDTO.
-        """
-        view_models = []
-        for member in members:
-            # Класс — только для ребёнка
-            if member.role == "child" and member.class_id:
-                class_name = dicts_dto.get_readable_class(
-                    member.class_id,
-                )
-            elif member.role == "child":
-                class_name = "— класс не выбран —"
-            else:
-                class_name = ""
-
-            view_models.append(
-                FamilyMemberViewModel(
-                    user_id=member.user_id,
-                    name=member.name,
-                    role=member.role,
-                    role_display=ProfileService._ROLE_DISPLAY.get(
-                        member.role,
-                        member.role,
-                    ),
-                    class_name=class_name,
-                    is_current_user=(
-                        member.user_id == current_user_id
-                    ),
-                )
-            )
-
-        # Сортировка: текущий пользователь → приоритет роли
-        view_models.sort(
-            key=lambda vm: (
-                0 if vm.is_current_user else 1,
-                ProfileService._ROLE_PRIORITY.get(vm.role, 4),
-            )
+        """Compatibility facade: DTO → ViewModel logic lives in ProfileMapper."""
+        return ProfileMapper.to_family_member_view_models(
+            members,
+            current_user_id=current_user_id,
+            dictionaries=dicts_dto,
         )
-
-        return view_models
-
 
     @staticmethod
     def build_student_telegram_settings_view_model(
         dto: StudentTelegramSettingsDTO,
         dicts_dto: SchoolDictionariesDTO,
     ) -> StudentTelegramSettingsViewModel:
-        """
-        Строит ViewModel для экрана Telegram-настроек ребёнка.
-        """
-        return StudentTelegramSettingsViewModel(
-            student_id=dto.student_id,
-            student_name=dto.student_name,
-            class_name=dicts_dto.get_readable_class(dto.class_id),
-            group_name=dicts_dto.get_readable_group(dto.group_id),
-            telegram_status="📱 Telegram подключён",
-
-            is_notifications_enabled=dto.is_notifications_enabled,
-            receive_schedule_changes=dto.receive_schedule_changes,
-            receive_extra_class_reminders=(
-                dto.receive_extra_class_reminders
-            ),
-            can_manage_own_extra_classes=(
-                dto.can_manage_own_extra_classes
-            ),
-            child_notification_settings_locked=(
-                dto.child_notification_settings_locked
-            ),
-
-            morning_summary_time=(
-                dto.morning_summary_time
-                if dto.morning_summary_time
-                else "ВЫКЛ"
-            ),
-            pre_lesson_offset_minutes=(
-                dto.pre_lesson_offset_minutes
-            ),
-            pre_lesson_text=(
-                f"{dto.pre_lesson_offset_minutes} мин 🟢"
-                if dto.pre_lesson_offset_minutes > 0
-                else "ВЫКЛ 🔴"
-            ),
-            lock_text=(
-                "ВКЛ 🔒"
-                if dto.child_notification_settings_locked
-                else "ВЫКЛ 🔓"
-            ),
+        """Compatibility facade: DTO → ViewModel logic lives in ProfileMapper."""
+        return ProfileMapper.to_student_telegram_settings_view_model(
+            dto,
+            dictionaries=dicts_dto,
         )
 
     @staticmethod
@@ -1051,46 +840,11 @@ class ProfileService:
         dto: ParentStudentNotificationSettingsDTO,
         dicts_dto: SchoolDictionariesDTO,
     ) -> ParentStudentNotificationSettingsViewModel:
-        """
-        Строит ViewModel для экрана подписок взрослого.
-        """
-        telegram_connected = dto.telegram_user_id is not None
-
-        return ParentStudentNotificationSettingsViewModel(
-            student_id=dto.student_id,
-            student_name=dto.student_name,
-            class_name=dicts_dto.get_readable_class(
-                dto.student_class_id,
-            ),
-            group_name=dicts_dto.get_readable_group(
-                dto.student_group_id,
-            ),
-            telegram_status=(
-                "📱 <b>Telegram подключён</b>"
-                if telegram_connected
-                else "🧒 <b>Telegram пока не подключён</b>"
-            ),
-            telegram_connected=telegram_connected,
-
-            receive_morning_summary=dto.receive_morning_summary,
-            receive_pre_lesson_reminders=(
-                dto.receive_pre_lesson_reminders
-            ),
-            receive_schedule_changes=dto.receive_schedule_changes,
-            receive_extra_class_reminders=(
-                dto.receive_extra_class_reminders
-            ),
-
-            can_manage_extra_classes=(
-                dto.can_manage_extra_classes
-            ),
-            manage_status_text=(
-                "✅ Можно управлять"
-                if dto.can_manage_extra_classes
-                else "👁 Только просмотр"
-            ),
+        """Compatibility facade: DTO → ViewModel logic lives in ProfileMapper."""
+        return ProfileMapper.to_parent_student_notification_view_model(
+            dto,
+            dictionaries=dicts_dto,
         )
-
     # ---------------------------------------------------------
     # ADMIN TRANSFER / SUCCESSION
     # ---------------------------------------------------------

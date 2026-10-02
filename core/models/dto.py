@@ -256,6 +256,18 @@ class FamilyInviteDTO:
     used_by_user_id: Optional[int] = None
     used_at: Optional[str] = None
 
+@dataclass(frozen=True, slots=True)
+class FamilyInviteCodeLookupDTO:
+    """
+    Минимальный результат поиска действующего family invite по short code.
+
+    Не содержит family_id, family_code, admin_user_id и иных внутренних
+    метаданных семьи. Предназначен только для registration flow:
+    role validation и дальнейшего consume по invite token.
+    """
+    token: str
+    intended_role: str
+    
 
 @dataclass
 class ScheduleWatchTargetDTO:

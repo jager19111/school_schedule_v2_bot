@@ -72,16 +72,25 @@ class ProfileRepository(BaseRepository):
 
     # ========== USERS ==========
 
-    async def register_user_initial(self, user_id: int) -> None:
+    async def register_user_initial(
+        self,
+        user_id: int,
+    ) -> bool:
         """
-        Создаёт пользователя, если его нет, и проставляет last_active_at.
+        Создаёт пользователя, если его нет, и обновляет last_active_at.
+
+        Возвращает:
+        - True, если user был физически создан;
+        - False, если user уже существовал.
         """
         now_utc = self._now_utc_str()
+
         async with self._write_lock():
             async with self._connection() as db:
                 await db.execute("BEGIN")
+
                 try:
-                    await db.execute(
+                    cursor = await db.execute(
                         """
                         INSERT OR IGNORE INTO users (
                             user_id,
@@ -98,15 +107,24 @@ class ProfileRepository(BaseRepository):
                             now_utc,
                         ),
                     )
+
+                    created = cursor.rowcount == 1
+
                     await db.execute(
                         """
                         UPDATE users
                         SET last_active_at = ?
                         WHERE user_id = ?
                         """,
-                        (now_utc, user_id),
+                        (
+                            now_utc,
+                            user_id,
+                        ),
                     )
+
                     await db.commit()
+                    return created
+
                 except Exception:
                     await db.rollback()
                     raise
@@ -431,30 +449,22 @@ class ProfileRepository(BaseRepository):
         short_code: str,
     ) -> Optional[Dict[str, Any]]:
         """
-        Активное приглашение по короткому коду (печатаемая форма).
+        Возвращает активное приглашение по печатаемому short code.
 
-        Зеркало get_valid_family_invite: не отозван, не истёк,
-        есть использования, семья существует. Роль зашита админом
-        при создании; входящий её не выбирает.
+        Роль зафиксирована при создании приглашения. Метод возвращает
+        только поля, необходимые registration flow; family metadata
+        намеренно не раскрывается.
         """
         now_utc = self._now_utc_str()
+
         return await self._fetch_one(
             """
             SELECT
-                invite.id,
                 invite.token,
-                invite.short_code,
-                invite.family_id,
-                invite.intended_role,
-                invite.expires_at,
-                invite.max_uses,
-                invite.uses_count,
-                invite.is_revoked,
-                family.family_code,
-                family.admin_user_id
+                invite.intended_role
             FROM family_invites AS invite
             JOIN families AS family
-              ON family.id = invite.family_id
+                ON family.id = invite.family_id
             WHERE invite.short_code = ?
               AND invite.is_revoked = 0
               AND invite.expires_at > ?
@@ -859,6 +869,7 @@ class ProfileRepository(BaseRepository):
                             """
                             SELECT
                                 user_id,
+                                role,
                                 family_id
                             FROM users
                             WHERE user_id = ?
@@ -872,11 +883,17 @@ class ProfileRepository(BaseRepository):
                         raise ValueError(
                             f"Cannot create family for missing user: {admin_user_id}"
                         )
-
                     if user_row["family_id"] is not None:
                         await db.rollback()
                         raise ValueError(
-                            f"User already belongs to a family: user_id={admin_user_id}"
+                            f"User already belongs to a family: "
+                            f"user_id={admin_user_id}"
+                        )
+                    if user_row["role"] != "parent":
+                        await db.rollback()
+                        raise ValueError(
+                            "Only parent role can create a family: "
+                            f"user_id={admin_user_id}"
                         )
                     cursor = await db.execute(
                         """

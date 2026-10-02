@@ -18,6 +18,10 @@ import logging
 import contextlib
 
 from aiogram import Router, F
+from dataclasses import dataclass
+from collections.abc import Mapping
+from typing import Any
+
 from aiogram.types import Message, CallbackQuery
 from aiogram.filters import Command, CommandObject
 from aiogram.fsm.context import FSMContext
@@ -28,6 +32,8 @@ from services.profiles_service import ProfileService
 from services.students_service import StudentsService
 from services.schedule_service import ScheduleService
 from services.help_service import HelpService
+from core.models.dto import UserProfileDTO
+
 from bot.utils.ui_renderer import UIRenderer
 from bot.keyboards.keyboard import Keyboards
 from bot import callbacks
@@ -41,9 +47,114 @@ from  bot.utils.codes import normalize_short_code
 from bot.utils.fsm_guard import validate_fsm_session
 logger = logging.getLogger(__name__)
 router = Router()
+FSM_FAMILY_INVITE_TOKEN = "family_invite_token"
+FSM_INVITED_ROLE = "invited_role"
+FSM_FAMILY_INVITE_ACTOR_USER_ID = (
+    "family_invite_actor_user_id"
+)
+FSM_PENDING_INVITE_NAME = "pending_invite_name"
+FSM_CLAIM_TOKEN = "claim_token"
+FSM_CLAIM_ACTOR_USER_ID = "claim_actor_user_id"
+
+_ALLOWED_INVITE_ROLES = frozenset(
+    {
+        "child",
+        "parent",
+        "observer",
+    }
+)
+
+_ALLOWED_REGISTRATION_ROLES = frozenset(
+    {
+        "child",
+        "parent",
+        "observer",
+        "teacher",
+    }
+)
 
 
+def _read_registration_role(
+    data: Mapping[str, Any],
+) -> str | None:
+    """
+    Возвращает валидную роль registration FSM или None.
 
+    None означает отсутствие/повреждение state, а не default role.
+    Handler обязан остановить flow, а не угадывать роль пользователя.
+    """
+    role = data.get("role")
+
+    if role not in _ALLOWED_REGISTRATION_ROLES:
+        return None
+
+    return role
+
+
+@dataclass(frozen=True, slots=True)
+class _FamilyInviteFSMContext:
+    """
+    Typed read-model family invite state.
+
+    FSM storage остаётся dict, но handler получает только
+    валидированный typed context. Неполный/повреждённый invite state
+    приводит к ValueError, а не к частичному выполнению flow.
+    """
+
+    token: str
+    role: str
+    actor_user_id: int
+    pending_name: str | None = None
+
+    @classmethod
+    def from_fsm_data(
+        cls,
+        data: Mapping[str, Any],
+    ) -> "_FamilyInviteFSMContext | None":
+        """
+        None:
+            в FSM нет family invite flow.
+
+        ValueError:
+            invite context начат, но повреждён/неполон.
+        """
+        token = data.get(FSM_FAMILY_INVITE_TOKEN)
+
+        if token is None:
+            return None
+
+        role = data.get(FSM_INVITED_ROLE)
+        actor_user_id = data.get(
+            FSM_FAMILY_INVITE_ACTOR_USER_ID,
+        )
+        pending_name = data.get(FSM_PENDING_INVITE_NAME)
+
+        if not isinstance(token, str) or not token.strip():
+            raise ValueError("Invalid family invite token in FSM")
+
+        if role not in _ALLOWED_INVITE_ROLES:
+            raise ValueError("Invalid family invite role in FSM")
+
+        if (
+            not isinstance(actor_user_id, int)
+            or isinstance(actor_user_id, bool)
+            or actor_user_id <= 0
+        ):
+            raise ValueError("Invalid family invite actor in FSM")
+
+        if pending_name is not None and not isinstance(
+            pending_name,
+            str,
+        ):
+            raise ValueError("Invalid family invite name in FSM")
+
+        return cls(
+            token=token,
+            role=role,
+            actor_user_id=actor_user_id,
+            pending_name=pending_name,
+        )
+        
 async def _show_main_menu(
     message: Message,
     *,
@@ -64,6 +175,426 @@ async def _show_main_menu(
         parse_mode="HTML",
     )
 
+async def _show_class_selection(
+    message: Message,
+    *,
+    state: FSMContext,
+    schedule_service: ScheduleService,
+    edit_message: bool,
+) -> None:
+    """
+    Показывает выбор класса и переводит registration FSM
+    в waiting_for_class.
+
+    edit_message=False:
+        отправляет новое сообщение — используется после text input.
+
+    edit_message=True:
+        заменяет callback message — используется после callback action.
+    """
+    dictionaries = await schedule_service.get_school_dictionaries()
+
+    text = UIRenderer.render_class_selection(
+        dictionaries.as_class_list,
+    )
+    keyboard = Keyboards.get_class_selection(
+        dictionaries.as_class_list,
+    )
+
+    if edit_message:
+        await message.edit_text(
+            text,
+            reply_markup=keyboard,
+            parse_mode="HTML",
+        )
+    else:
+        await message.answer(
+            text,
+            reply_markup=keyboard,
+            parse_mode="HTML",
+        )
+
+    await state.set_state(
+        RegistrationStates.waiting_for_class,
+    )
+
+async def _show_registration_success(
+    message: Message,
+    *,
+    text: str,
+    delete_origin_message: bool,
+) -> None:
+    """
+    Завершает registration/join UI flow.
+
+    Для callback-based class/group flow origin message удаляется, чтобы
+    старые inline buttons не оставались в чате. Для message-based flow
+    исходное user message не удаляется.
+    """
+    if delete_origin_message:
+        with contextlib.suppress(TelegramBadRequest):
+            await message.delete()
+
+    await message.answer(
+        text,
+        parse_mode="HTML",
+    )
+    await _show_main_menu(message)
+
+async def _start_student_claim_from_deep_link(
+    message: Message,
+    *,
+    token: str,
+    user_id: int,
+    user_dto: UserProfileDTO,
+    state: FSMContext,
+    students_service: StudentsService,
+    schedule_service: ScheduleService,
+) -> None:
+    """
+    Запускает claim flow для virtual student profile по deep link.
+
+    Repository повторно проверяет token и target student в момент consume;
+    FSM хранит только claim token и owner user ID.
+    """
+    if user_dto.family_id is not None:
+        await message.answer(
+            "⚠️ Вы уже состоите в семье.\n\n"
+            "Для использования ссылки сначала выйдите "
+            "из текущей семьи через настройки."
+        )
+        await state.clear()
+        return
+
+    invite = await students_service.get_valid_student_claim_invite(
+        token=token,
+    )
+
+    if invite is None:
+        await message.answer(
+            "❌ Ссылка для привязки недействительна, "
+            "уже использована, отозвана или срок её действия истёк."
+        )
+        await state.clear()
+        return
+
+    current_student = await students_service.get_student_by_telegram_user_id(
+        telegram_user_id=user_id,
+    )
+
+    dictionaries = await schedule_service.get_school_dictionaries()
+
+    class_name = dictionaries.classes.get(
+        invite.student_class_id,
+        invite.student_class_id or "—",
+    )
+    group_name = dictionaries.get_readable_group(
+        invite.student_group_id,
+    )
+
+    await _store_student_claim_context(
+        state,
+        token=token,
+        actor_user_id=user_id,
+    )
+
+    await message.answer(
+        UIRenderer.render_student_claim_confirmation(
+            student_name=invite.student_name or "Ученик",
+            class_name=class_name,
+            group_name=group_name,
+            has_standalone_profile=current_student is not None,
+        ),
+        reply_markup=Keyboards.get_student_claim_confirmation_kb(),
+        parse_mode="HTML",
+    )
+    await state.set_state(
+        RegistrationStates.waiting_for_claim_confirmation,
+    )
+
+async def _start_family_invite_from_deep_link(
+    message: Message,
+    *,
+    token: str,
+    user_id: int,
+    user_dto: UserProfileDTO,
+    state: FSMContext,
+    profile_service: ProfileService,
+    students_service: StudentsService,
+) -> None:
+    """
+    Запускает family invite flow по deep link join_<token>.
+
+    Standalone child с local student profile может вступить в family:
+    repository атомарно переносит family context существующего profile.
+    Остальные fully registered users не могут быть silently moved.
+    """
+    current_student = await students_service.get_student_by_telegram_user_id(
+        telegram_user_id=user_id,
+    )
+
+    is_standalone_child = (
+        user_dto.role == "child"
+        and user_dto.family_id is None
+        and current_student is not None
+        and current_student.family_id is None
+        and current_student.is_active
+    )
+
+    if user_dto.is_fully_registered and not is_standalone_child:
+        await message.answer(
+            "⚠️ Вы уже зарегистрированы в bot.\n\n"
+            "Для использования приглашения сначала выйдите "
+            "из текущего профиля через настройки."
+        )
+        await state.clear()
+        return
+
+    invite = await profile_service.get_valid_family_invite(
+        token=token,
+    )
+
+    if invite is None:
+        await message.answer(
+            "❌ Приглашение недействительно, уже использовано "
+            "или срок его действия истёк."
+        )
+        await state.clear()
+        return
+
+    await _store_family_invite_context(
+        state,
+        token=invite.token,
+        role=invite.intended_role,
+        actor_user_id=user_id,
+        reset_existing_state=True,
+    )
+
+    await message.answer(
+        UIRenderer.render_family_invite_join_intro(
+            intended_role=invite.intended_role,
+            has_standalone_child_profile=(
+                invite.intended_role == "child"
+                and is_standalone_child
+            ),
+        ),
+        parse_mode="HTML",
+    )
+    await state.set_state(
+        RegistrationStates.waiting_for_name,
+    )
+
+async def _complete_child_family_invite_registration(
+    callback: CallbackQuery,
+    *,
+    state: FSMContext,
+    invite_context: _FamilyInviteFSMContext,
+    class_id: str | None,
+    group_id: str,
+    profile_service: ProfileService,
+    students_service: StudentsService,
+) -> None:
+    """
+    Завершает child registration через family invite.
+
+    Repository повторно валидирует invite token атомарно на consume,
+    поэтому FSM context используется только как UX-flow state.
+    """
+    actor_user_id = callback.from_user.id
+
+    if invite_context.actor_user_id != actor_user_id:
+        await state.clear()
+        await callback.answer(
+            "❌ Состояние приглашения устарело. "
+            "Откройте приглашение заново.",
+            show_alert=True,
+        )
+        return
+
+    pending_name = invite_context.pending_name
+
+    if not pending_name or not class_id:
+        await state.clear()
+        await callback.answer(
+            "❌ Данные приглашения устарели. "
+            "Откройте приглашение заново.",
+            show_alert=True,
+        )
+        return
+
+    consumed_role = await profile_service.consume_family_invite(
+        token=invite_context.token,
+        user_id=actor_user_id,
+        name=pending_name,
+        class_id=class_id,
+        group_id=group_id,
+    )
+
+    if consumed_role is None:
+        await state.clear()
+        await callback.answer(
+            "❌ Приглашение уже использовано, отозвано "
+            "или срок его действия истёк.",
+            show_alert=True,
+        )
+        return
+
+    student = await students_service.ensure_telegram_student_profile(
+        telegram_user_id=actor_user_id,
+    )
+
+    if student is None:
+        await state.clear()
+        await callback.answer(
+            "❌ Семья подключена, но не удалось "
+            "синхронизировать профиль ученика.",
+            show_alert=True,
+        )
+        return
+
+    user_dto = await profile_service.get_user_profile_dto(
+        actor_user_id,
+    )
+
+    await state.clear()
+
+    await _show_registration_success(
+        callback.message,
+        text=UIRenderer.render_final_success(
+            user_dto.name,
+        ),
+        delete_origin_message=True,
+    )
+
+    await callback.answer(
+        "✅ Регистрация через приглашение завершена.",
+    )
+
+async def _complete_standalone_child_registration(
+    callback: CallbackQuery,
+    *,
+    state: FSMContext,
+    class_id: str | None,
+    group_id: str,
+    profile_service: ProfileService,
+    students_service: StudentsService,
+) -> None:
+    """
+    Завершает standalone child registration после выбора class/group.
+    """
+    actor_user_id = callback.from_user.id
+
+    actor_dto = await profile_service.get_user_profile_dto(
+        actor_user_id,
+    )
+
+    if actor_dto.role != "child":
+        await state.clear()
+        await callback.answer(
+            "❌ Регистрация ученика недоступна для текущей роли.",
+            show_alert=True,
+        )
+        return
+
+    if not class_id:
+        await state.clear()
+        await callback.answer(
+            "❌ Не выбран класс. Начните регистрацию заново.",
+            show_alert=True,
+        )
+        return
+
+    await profile_service.set_child_class_and_group(
+        actor_user_id,
+        class_id,
+        group_id,
+    )
+
+    student = await students_service.ensure_telegram_student_profile(
+        telegram_user_id=actor_user_id,
+    )
+
+    if student is None:
+        await state.clear()
+        await callback.answer(
+            "❌ Не удалось создать профиль ученика.",
+            show_alert=True,
+        )
+        return
+
+    user_dto = await profile_service.get_user_profile_dto(
+        actor_user_id,
+    )
+
+    await state.clear()
+
+    await _show_registration_success(
+        callback.message,
+        text=UIRenderer.render_final_success(
+            user_dto.name,
+        ),
+        delete_origin_message=True,
+    )
+    await callback.answer()
+                
+async def _store_family_invite_context(
+    state: FSMContext,
+    *,
+    token: str,
+    role: str,
+    actor_user_id: int,
+    pending_name: str | None = None,
+    reset_existing_state: bool = False,
+) -> None:
+    """
+    Сохраняет минимальный invite context для family registration flow.
+
+    reset_existing_state=True используется при старте нового flow через
+    deep link либо invite short code. Это не позволяет устаревшим данным
+    предыдущего registration/claim flow попасть в новый invite flow.
+
+    pending_name задаётся только после text input пользователя.
+    """
+    if reset_existing_state:
+        await state.clear()
+
+    payload: dict[str, str | int] = {
+        FSM_FAMILY_INVITE_TOKEN: token,
+        FSM_INVITED_ROLE: role,
+        FSM_FAMILY_INVITE_ACTOR_USER_ID: actor_user_id,
+    }
+
+    if pending_name is not None:
+        payload[FSM_PENDING_INVITE_NAME] = pending_name
+
+    await state.update_data(**payload)
+
+async def _store_student_claim_context(
+    state: FSMContext,
+    *,
+    token: str,
+    actor_user_id: int,
+) -> None:
+    """
+    Сохраняет минимальный claim context.
+
+    Student profile details не хранятся в FSM: repository повторно
+    валидирует invite и actual student profile при consume operation.
+    """
+    await state.clear()
+    await state.update_data(
+        **{
+            FSM_CLAIM_TOKEN: token,
+            FSM_CLAIM_ACTOR_USER_ID: actor_user_id,
+        }
+    )
+    
+def _read_family_invite_context(
+    data: Mapping[str, Any],
+) -> _FamilyInviteFSMContext | None:
+    """Единая typed boundary для family invite data из FSM."""
+    return _FamilyInviteFSMContext.from_fsm_data(data)
+            
 @router.message(Command("menu"))
 async def cmd_menu(
     message: Message,
@@ -169,15 +700,28 @@ async def cmd_start(
     # Plain /start не должен уничтожать незавершённый invite / claim flow.
     # ---------------------------------------------------------
     if not payload:
-        pending_family_invite = current_data.get(
-            "family_invite_token",
-        )
-        pending_claim = current_data.get(
-            "claim_token",
-        )
+        try:
+            invite_context = _read_family_invite_context(
+                current_data,
+            )
+        except ValueError:
+            logger.warning(
+                "Corrupted family invite FSM cleared: user_id=%s",
+                user_id,
+            )
+            await state.clear()
+            current_data = {}
+            current_state = None
+            invite_context = None
+
+        pending_claim = current_data.get(FSM_CLAIM_TOKEN)
         pending_actor_id = (
-            current_data.get("claim_actor_user_id")
-            or current_data.get("family_invite_actor_user_id")
+            current_data.get(FSM_CLAIM_ACTOR_USER_ID)
+            or (
+                invite_context.actor_user_id
+                if invite_context is not None
+                else None
+            )
         )
         belongs_to_current_user = (
             pending_actor_id is None
@@ -198,7 +742,7 @@ async def cmd_start(
         # Не показываем лишнее служебное сообщение и, главное,
         # не очищаем FSM: пользователь продолжает начатый flow.
         if (
-            pending_family_invite
+            invite_context is not None
             and belongs_to_current_user
             and current_state in family_invite_states
         ):
@@ -230,73 +774,14 @@ async def cmd_start(
     # Deep link student claim flow
     # -------------------------------
     if payload.startswith("claim_"):
-        token = payload.removeprefix("claim_")
-        # Ребёнок, уже состоящий в семье, не может быть silently
-        # переведён в другую семью через forwarded link.
-        if user_dto.family_id is not None:
-            await message.answer(
-                "⚠️ Вы уже состоите в семье.\n\n"
-                "Для использования ссылки сначала выйдите "
-                "из текущей семьи через настройки."
-            )
-            await state.clear()
-            return
-        invite = (
-            await students_service.get_valid_student_claim_invite(
-                token=token,
-            )
-        )
-        current_student = (
-            await students_service.get_student_by_telegram_user_id(
-                telegram_user_id=user_id,
-            )
-        )
-        if invite is None:
-            await message.answer(
-                "❌ Ссылка для привязки недействительна, "
-                "уже использована, отозвана или срок её действия истёк."
-            )
-            await state.clear()
-            return
-        # --- 1. Запрашиваем справочники школы единым запросом ---
-        dicts_dto = await schedule_service.get_school_dictionaries()
-        # --- 2. Человекочитаемые имена по ID ---
-        # Этап 4, фикс: get_readable_group() возвращает "Весь класс"
-        # вместо сырого "ALL" (раньше literal уходил в UI).
-        class_name = dicts_dto.classes.get(
-            invite.student_class_id,
-            invite.student_class_id or "—",
-        )
-        group_name = dicts_dto.get_readable_group(
-            invite.student_group_id,
-        )
-        await state.clear()
-        await state.update_data(
-            claim_token=token,
-            claim_student_id=invite.student_id,
-            claim_actor_user_id=user_id,
-            # Нужен только для UX/preview.
-            # Repository всё равно повторно проверит данные
-            # непосредственно внутри transaction.
-            claim_source_student_id=(
-                current_student.id
-                if current_student is not None
-                else None
-            ),
-        )
-        text = UIRenderer.render_student_claim_confirmation(
-            student_name=invite.student_name or "Ученик",
-            class_name=class_name,
-            group_name=group_name,
-            has_standalone_profile=current_student is not None,
-        )
-        await message.answer(
-            text,
-            reply_markup=Keyboards.get_student_claim_confirmation_kb(),
-            parse_mode="HTML",
-        )
-        await state.set_state(
-            RegistrationStates.waiting_for_claim_confirmation,
+        await _start_student_claim_from_deep_link(
+            message,
+            token=payload.removeprefix("claim_"),
+            user_id=user_id,
+            user_dto=user_dto,
+            state=state,
+            students_service=students_service,
+            schedule_service=schedule_service,
         )
         return
 
@@ -304,59 +789,14 @@ async def cmd_start(
     # Deep link invite flow
     # -------------------------------
     if payload.startswith("join_"):
-        token = payload.removeprefix("join_")
-        current_student = (
-            await students_service.get_student_by_telegram_user_id(
-                telegram_user_id=user_id,
-            )
-        )
-        is_standalone_child = (
-            user_dto.role == "child"
-            and user_dto.family_id is None
-            and current_student is not None
-            and current_student.family_id is None
-            and current_student.is_active
-        )
-        # Нельзя случайно переместить уже завершённый профиль
-        # в другую семью.
-        if user_dto.is_fully_registered and not is_standalone_child:
-            await message.answer(
-                "⚠️ Вы уже зарегистрированы в bot.\n\n"
-                "Для использования приглашения сначала выйдите "
-                "из текущего профиля через настройки."
-            )
-            await state.clear()
-            return
-        invite = await profile_service.get_valid_family_invite(
-            token=token,
-        )
-        if invite is None:
-            await message.answer(
-                "❌ Приглашение недействительно, уже использовано "
-                "или срок его действия истёк."
-            )
-            await state.clear()
-            return
-        await state.update_data(
-            family_invite_token=token,
-            invited_family_id=invite.family_id,
-            invited_role=invite.intended_role,
-            family_invite_actor_user_id=user_id,
-        )
-        intro_text = UIRenderer.render_family_invite_join_intro(
-            intended_role=invite.intended_role,
-            has_standalone_child_profile=(
-                invite.intended_role == "child"
-                and is_standalone_child
-            ),
-            #via_code=False,
-        )
-        await message.answer(
-            intro_text,
-            parse_mode="HTML",
-        )
-        await state.set_state(
-            RegistrationStates.waiting_for_name,
+        await _start_family_invite_from_deep_link(
+            message,
+            token=payload.removeprefix("join_"),
+            user_id=user_id,
+            user_dto=user_dto,
+            state=state,
+            profile_service=profile_service,
+            students_service=students_service,
         )
         return
 
@@ -393,7 +833,10 @@ async def confirm_student_claim(
     Ребёнок явно подтверждает, что virtual student profile его.
     """
     data = await state.get_data()
-    if data.get("claim_actor_user_id") != callback.from_user.id:
+    if (
+        data.get(FSM_CLAIM_ACTOR_USER_ID)
+        != callback.from_user.id
+    ):
         await state.clear()
         await callback.answer(
             "❌ Состояние привязки устарело. "
@@ -447,13 +890,15 @@ async def process_student_claim_name(
     if not await validate_fsm_session(
         message,
         state,
-        expected={"claim_actor_user_id": message.from_user.id},
-        required=["claim_token"],
+        expected={
+            FSM_CLAIM_ACTOR_USER_ID: message.from_user.id,
+        },
+        required=[FSM_CLAIM_TOKEN],
     ):
         return
 
     data = await state.get_data()
-    token = data.get("claim_token")
+    token = data.get(FSM_CLAIM_TOKEN)
     # Обязательно возвращаем переменную, так как она нужна ниже
     actor_user_id = message.from_user.id
 
@@ -515,13 +960,28 @@ async def process_student_claim_name(
     RegistrationStates.waiting_for_role,
     RoleCD.filter(),
 )
-async def process_role(callback: CallbackQuery, callback_data: RoleCD, state: FSMContext, profile_service: ProfileService):
+async def process_role(
+    callback: CallbackQuery,
+    callback_data: RoleCD,
+    state: FSMContext,
+    profile_service: ProfileService,
+) -> None:
+    """Сохраняет выбранную роль и переводит пользователя к вводу имени."""
     role = callback_data.role
+
     await state.update_data(role=role)
-    await profile_service.update_user_role(callback.from_user.id, role)
-    text = UIRenderer.render_name_prompt()
-    await callback.message.edit_text(text)
-    await state.set_state(RegistrationStates.waiting_for_name)
+    await profile_service.update_user_role(
+        callback.from_user.id,
+        role,
+    )
+
+    await callback.message.edit_text(
+        UIRenderer.render_name_prompt(),
+    )
+    await state.set_state(
+        RegistrationStates.waiting_for_name,
+    )
+    await callback.answer()
 
 
 @router.message(RegistrationStates.waiting_for_name)
@@ -547,42 +1007,51 @@ async def process_name(
         )
         return
     data = await state.get_data()
-    invite_token = data.get("family_invite_token")
-    invited_role = data.get("invited_role")
+    try:
+        invite_context = _read_family_invite_context(data)
+    except ValueError:
+        await state.clear()
+        await message.answer(
+            "❌ Состояние приглашения устарело. "
+            "Откройте приглашение заново.",
+        )
+        return
+    invite_token = (
+        invite_context.token
+        if invite_context is not None
+        else None
+    )
+    invited_role = (
+        invite_context.role
+        if invite_context is not None
+        else None
+    )
     # ---------------------------------
     # Invite child: имя сохраняем в FSM,
     # class/group будут выбраны дальше.
     # Consume произойдёт только в process_group.
     # ---------------------------------
     if invite_token and invited_role == "child":
-        invite_actor_user_id = data.get(
-            "family_invite_actor_user_id",
-        )
+        invite_actor_user_id = invite_context.actor_user_id
         if invite_actor_user_id != actor_user_id:
             await state.clear()
             await message.answer(
                 "❌ Состояние приглашения устарело. "
                 "Откройте ссылку заново.",
-                show_alert=True,
             )
             return
-        await state.update_data(
-            pending_invite_name=name,
+        await _store_family_invite_context(
+            state,
+            token=invite_context.token,
+            role=invite_context.role,
+            actor_user_id=invite_context.actor_user_id,
+            pending_name=name,
         )
-        dicts_dto = await schedule_service.get_school_dictionaries()
-        text = UIRenderer.render_class_selection(
-            dicts_dto.as_class_list,
-        )
-        kb = Keyboards.get_class_selection(
-            dicts_dto.as_class_list,
-        )
-        await message.answer(
-            text,
-            reply_markup=kb,
-            parse_mode="HTML",
-        )
-        await state.set_state(
-            RegistrationStates.waiting_for_class,
+        await _show_class_selection(
+            message,
+            state=state,
+            schedule_service=schedule_service,
+            edit_message=False,
         )
         return
     # ---------------------------------
@@ -594,8 +1063,8 @@ async def process_name(
         "observer",
     ):
         consumed_role = await profile_service.consume_family_invite(
-            token=invite_token,
-            user_id=message.from_user.id,
+            token=invite_context.token,
+            user_id=actor_user_id,
             name=name,
         )
         if consumed_role is None:
@@ -606,17 +1075,18 @@ async def process_name(
             )
             return
         user_dto = await profile_service.get_user_profile_dto(
-            message.from_user.id,
+            actor_user_id,
         )
         await state.clear()
-        await message.answer(
-            UIRenderer.render_success_join(
+
+        await _show_registration_success(
+            message,
+            text=UIRenderer.render_success_join(
                 name=user_dto.name,
                 role=consumed_role,
             ),
-            parse_mode="HTML",
+            delete_origin_message=False,
         )
-        await _show_main_menu(message)
         return
     # ---------------------------------
     # Старый обычный registration flow.
@@ -625,7 +1095,7 @@ async def process_name(
         message.from_user.id,
         name,
     )
-    role = data.get("role")
+    role = _read_registration_role(data)
     if role == "teacher":
         teachers_dto = await schedule_service.get_teachers_list()
         if not teachers_dto.teachers:
@@ -671,23 +1141,36 @@ async def process_name(
         )
         return
     if role == "observer":
-            text = UIRenderer.render_family_code_join_intro(
+        await profile_service.update_user_name(
+            actor_user_id,
+            name,
+        )
+
+        await message.answer(
+            UIRenderer.render_family_code_join_intro(
                 intended_role="observer",
-            )
-            await message.answer(
-                text,
-                parse_mode="HTML",
-            )
-            await state.set_state(
-                RegistrationStates.waiting_for_family_code,
-            )
-            return
+            ),
+            parse_mode="HTML",
+        )
+
+        # Legacy FSM ID: фактически ожидается short code invitation,
+        # а не общий family_code.
+        await state.set_state(
+            RegistrationStates.waiting_for_family_code,
+        )
+        return
     await state.clear()
     await message.answer(
         "❌ Не удалось определить выбранную роль. "
         "Отправьте /start и повторите регистрацию."
     )
-
+    if role is None:
+        await state.clear()
+        await message.answer(
+            "❌ Состояние регистрации устарело. "
+            "Отправьте /start и начните заново.",
+        )
+        return
 
 @router.callback_query(
     RegistrationStates.waiting_for_family_action,
@@ -698,26 +1181,55 @@ async def process_family_create(
     state: FSMContext,
     profile_service: ProfileService,
 ) -> None:
+    """
+    Создаёт семью только в parent registration flow.
+
+    Callback data и keyboard visibility не являются security boundary:
+    роль сверяется с текущим FSM state перед service call.
+    """
+    data = await state.get_data()
+
+    if data.get("role") != "parent":
+        await state.clear()
+        await callback.answer(
+            "❌ Создать семью может только родитель. "
+            "Начните регистрацию заново.",
+            show_alert=True,
+        )
+        return
+
     user_id = callback.from_user.id
-    family_code = await profile_service.create_family_and_link(
-        admin_user_id=user_id,
-    )
+
+    try:
+        await profile_service.create_family_and_link(
+            admin_user_id=user_id,
+        )
+    except ValueError:
+        logger.warning(
+            "Family creation rejected: user_id=%s",
+            user_id,
+        )
+        await state.clear()
+        await callback.answer(
+            "❌ Не удалось создать семью. "
+            "Отправьте /start и попробуйте снова.",
+            show_alert=True,
+        )
+        return
+
     user_dto = await profile_service.get_user_profile_dto(
         user_id,
     )
-    text = UIRenderer.render_family_created(
-        user_dto.name,
-    )
+
     await callback.message.edit_text(
-        text,
+        UIRenderer.render_family_created(user_dto.name),
         parse_mode="HTML",
     )
-    # edit_text не показывает нижнее ReplyKeyboardMarkup.
-    # Поэтому отправляем меню отдельным сообщением.
-    await _show_main_menu(callback.message,)
+    await _show_main_menu(callback.message)
+
     await state.clear()
     await callback.answer()
-
+    
 
 @router.callback_query(
     RegistrationStates.waiting_for_family_action,
@@ -727,13 +1239,27 @@ async def process_family_join_btn(
     callback: CallbackQuery,
     state: FSMContext,
 ) -> None:
+    """
+    Переходит к вводу short code family invitation.
+
+    Join flow допустим только для child и parent. Observer уже
+    направляется к short-code flow из process_name().
+    """
     data = await state.get_data()
-    # Этап 4, фикс: раньше здесь выполнялись ДВА edit_text подряд —
-    # первый (render_family_join_intro) мгновенно затирался вторым.
-    # Оставлен только итоговый экран.
+    role = _read_registration_role(data)
+
+    if role not in {"child", "parent"}:
+        await state.clear()
+        await callback.answer(
+            "❌ Состояние регистрации устарело. "
+            "Отправьте /start и начните заново.",
+            show_alert=True,
+        )
+        return
+
     await callback.message.edit_text(
         UIRenderer.render_family_code_join_intro(
-            intended_role=data.get("role", "parent"),
+            intended_role=role,
         ),
         parse_mode="HTML",
     )
@@ -741,7 +1267,7 @@ async def process_family_join_btn(
         RegistrationStates.waiting_for_family_code,
     )
     await callback.answer()
-
+    
 
 @router.callback_query(
     RegistrationStates.waiting_for_family_action,
@@ -752,13 +1278,28 @@ async def process_family_skip_btn(
     state: FSMContext,
     schedule_service: ScheduleService,
 ) -> None:
-    # 1. Запрашиваем справочники школы единым запросом
-    dicts_dto = await schedule_service.get_school_dictionaries()
-    # 2. Передаем ClassListDTO через вспомогательное свойство as_class_list
-    text = UIRenderer.render_class_selection(dicts_dto.as_class_list)
-    kb = Keyboards.get_class_selection(dicts_dto.as_class_list)
-    await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
-    await state.set_state(RegistrationStates.waiting_for_class)
+    """
+    Продолжает standalone child registration с выбора класса.
+
+    FAMILY_SKIP допустим только для child flow: это защита от
+    manually forged callback data.
+    """
+    data = await state.get_data()
+
+    if data.get("role") != "child":
+        await state.clear()
+        await callback.answer(
+            "❌ Этот шаг регистрации недоступен для текущей роли.",
+            show_alert=True,
+        )
+        return
+
+    await _show_class_selection(
+        callback.message,
+        state=state,
+        schedule_service=schedule_service,
+        edit_message=True,
+    )
     await callback.answer()
 
 
@@ -783,8 +1324,16 @@ async def process_family_code_input(
     """
     code = normalize_short_code(message.text)
     data = await state.get_data()
-    role = data.get("role", "parent")
+    role = _read_registration_role(data)
     user_id = message.from_user.id
+
+    if role not in _ALLOWED_INVITE_ROLES:
+        await state.clear()
+        await message.answer(
+            "❌ Состояние регистрации устарело. "
+            "Отправьте /start и начните заново.",
+        )
+        return
 
     invite = await profile_service.get_valid_family_invite_by_code(code)
     if invite is None:
@@ -794,7 +1343,7 @@ async def process_family_code_input(
         )
         return
 
-    invite_role = invite["intended_role"]
+    invite_role = invite.intended_role
     if invite_role != role:
         role_titles = {
             "child": "для ребёнка",
@@ -815,22 +1364,25 @@ async def process_family_code_input(
     current_name = user_dto.name or message.from_user.first_name or "Пользователь"
 
     if invite_role == "child":
-        await state.update_data(
-            family_invite_token=invite["token"],
-            invited_role="child",
-            family_invite_actor_user_id=user_id,
-            pending_invite_name=current_name,
+        await _store_family_invite_context(
+            state,
+            token=invite.token,
+            role=invite_role,
+            actor_user_id=user_id,
+            pending_name=current_name,
+            reset_existing_state=True,
         )
-        dicts_dto = await schedule_service.get_school_dictionaries()
-        text = UIRenderer.render_class_selection(dicts_dto.as_class_list)
-        kb = Keyboards.get_class_selection(dicts_dto.as_class_list)
-        await message.answer(text, reply_markup=kb, parse_mode="HTML")
-        await state.set_state(RegistrationStates.waiting_for_class)
+        await _show_class_selection(
+            message,
+            state=state,
+            schedule_service=schedule_service,
+            edit_message=False,
+        )
         return
 
     # 2. Передаем current_name (которое теперь гарантированно хранит ручной ввод)
     consumed_role = await profile_service.consume_family_invite(
-        token=invite["token"],
+        token=invite.token,
         user_id=user_id,
         name=data.get("pending_invite_name") or current_name,
     )
@@ -844,14 +1396,20 @@ async def process_family_code_input(
         return
         
     # Обновляем DTO на случай, если consume_family_invite изменил другие поля
-    updated_dto = await profile_service.get_user_profile_dto(user_id)
-    await state.clear()
-    
-    await message.answer(
-        UIRenderer.render_success_join(name=updated_dto.name, role=consumed_role),
-        parse_mode="HTML",
+    updated_dto = await profile_service.get_user_profile_dto(
+        user_id,
     )
-    await _show_main_menu(message)
+    await state.clear()
+
+    await _show_registration_success(
+        message,
+        text=UIRenderer.render_success_join(
+            name=updated_dto.name,
+            role=consumed_role,
+        ),
+        delete_origin_message=False,
+    )
+    return
 
 
 @router.callback_query(
@@ -885,130 +1443,53 @@ async def process_group(
     callback_data: RegistrationGroupCD,
     state: FSMContext,
     profile_service: ProfileService,
-    schedule_service: ScheduleService,
     students_service: StudentsService,
 ) -> None:
-    # (семантика старого кода: весь хвост после "group:").
     group_id = callback_data.group_id
-    actor_user_id = callback.from_user.id
     data = await state.get_data()
-    # =========================================================
-    # 1. Child joins family through join_<token>.
-    # =========================================================
-    invite_token = data.get("family_invite_token")
-    invited_role = data.get("invited_role")
-    if invite_token and invited_role == "child":
-        pending_name = data.get("pending_invite_name")
-        class_id = data.get("class_id")
-        if not pending_name or not class_id:
+
+    try:
+        invite_context = _read_family_invite_context(data)
+    except ValueError:
+        await state.clear()
+        await callback.answer(
+            "❌ Состояние приглашения устарело. "
+            "Откройте приглашение заново.",
+            show_alert=True,
+        )
+        return
+
+    class_id = data.get("class_id")
+
+    if invite_context is not None:
+        if invite_context.role != "child":
             await state.clear()
             await callback.answer(
-                "❌ Данные приглашения устарели. "
+                "❌ Состояние приглашения устарело. "
                 "Откройте приглашение заново.",
                 show_alert=True,
             )
             return
-        consumed_role = await profile_service.consume_family_invite(
-            token=invite_token,
-            user_id=actor_user_id,
-            name=pending_name,
+
+        await _complete_child_family_invite_registration(
+            callback,
+            state=state,
+            invite_context=invite_context,
             class_id=class_id,
             group_id=group_id,
-        )
-        if consumed_role is None:
-            await state.clear()
-            await callback.answer(
-                "❌ Приглашение уже использовано, отозвано "
-                "или срок его действия истёк.",
-                show_alert=True,
-            )
-            return
-        # Для нового child создаёт profile.
-        # Для standalone child, вступившего в семью,
-        # повторно синхронизирует тот же student_profile.id.
-        student = await students_service.ensure_telegram_student_profile(
-            telegram_user_id=actor_user_id,
-        )
-        if student is None:
-            await state.clear()
-            await callback.answer(
-                "❌ Семья подключена, но не удалось "
-                "синхронизировать профиль ученика.",
-                show_alert=True,
-            )
-            return
-        user_dto = await profile_service.get_user_profile_dto(
-            actor_user_id,
-        )
-        await state.clear()
-        with contextlib.suppress(TelegramBadRequest):
-            await callback.message.delete()
-        await callback.message.answer(
-            UIRenderer.render_final_success(
-                user_dto.name,
-            ),
-            parse_mode="HTML",
-        )
-        await _show_main_menu(
-            callback.message,
-        )
-        await callback.answer(
-            "✅ Регистрация через приглашение завершена.",
+            profile_service=profile_service,
+            students_service=students_service,
         )
         return
-    # =========================================================
-    # 4. Standard standalone child registration.
-    # =========================================================
-    actor_dto = await profile_service.get_user_profile_dto(
-        actor_user_id,
-    )
-    if actor_dto.role != "child":
-        await state.clear()
-        await callback.answer(
-            "❌ Регистрация ученика недоступна для текущей роли.",
-            show_alert=True,
-        )
-        return
-    class_id = data.get("class_id")
-    if not class_id:
-        await state.clear()
-        await callback.answer(
-            "❌ Не выбран класс. Начните регистрацию заново.",
-            show_alert=True,
-        )
-        return
-    await profile_service.set_child_class_and_group(
-        actor_user_id,
-        class_id,
-        group_id,
-    )
-    student = await students_service.ensure_telegram_student_profile(
-        telegram_user_id=actor_user_id,
-    )
-    if student is None:
-        await state.clear()
-        await callback.answer(
-            "❌ Не удалось создать профиль ученика.",
-            show_alert=True,
-        )
-        return
-    user_dto = await profile_service.get_user_profile_dto(
-        actor_user_id,
-    )
-    await state.clear()
-    with contextlib.suppress(TelegramBadRequest):
-        await callback.message.delete()
-    await callback.message.answer(
-        UIRenderer.render_final_success(
-            user_dto.name,
-        ),
-        parse_mode="HTML",
-    )
-    await _show_main_menu(
-        callback.message,
-    )
-    await callback.answer()
 
+    await _complete_standalone_child_registration(
+        callback,
+        state=state,
+        class_id=class_id,
+        group_id=group_id,
+        profile_service=profile_service,
+        students_service=students_service,
+    )
 
 @router.callback_query(
     RegistrationStates.waiting_for_teacher,
@@ -1067,11 +1548,7 @@ async def process_teacher_selection(
     user_dto = await profile_service.get_user_profile_dto(
         callback.from_user.id,
     )
-    teacher_name_text = getattr(
-        teacher_name,
-        "name",
-        teacher_name,
-    )
+    teacher_name=str(teacher_name),
     try:
         await callback.message.delete()
     except TelegramBadRequest:
@@ -1079,7 +1556,7 @@ async def process_teacher_selection(
     await callback.message.answer(
         UIRenderer.render_teacher_registration_success(
             name=user_dto.name,
-            teacher_name=str(teacher_name_text),
+            teacher_name=str(teacher_name),
         ),
         parse_mode="HTML",
     )
