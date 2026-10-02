@@ -400,6 +400,35 @@ class ProfileResetImpactDTO:
     family_members_count: int = 0
     children_count: int = 0
     extra_classes_count: int = 0
+    
+@dataclass(frozen=True, slots=True)
+class ProfileResetResultDTO:
+    """
+    Результат destructive profile reset.
+    new_admin_user_id:
+        задан только при автоматической передаче прав другому parent.
+    family_disbanded:
+        True, только когда текущий admin был последним parent
+        и family была расформирована.
+    observer_user_ids:
+        Telegram IDs observers, которые были members семьи непосредственно
+        перед successful disband. Используются только post-commit notification
+        layer; после disband family membership уже отсутствует.
+    """
+    success: bool
+    new_admin_user_id: int | None = None
+    family_disbanded: bool = False
+    observer_user_ids: tuple[int, ...] = ()
+
+@dataclass(frozen=True, slots=True)
+class FamilyDisbandResultDTO:
+    """
+    Результат расформирования семьи.
+    observer_user_ids снимается в той же DB transaction, что и destructive
+    disband, до очистки users.family_id.
+    """
+    success: bool
+    observer_user_ids: tuple[int, ...] = ()
 
 
 @dataclass

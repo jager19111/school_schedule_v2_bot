@@ -43,6 +43,7 @@ import uuid
 from typing import Optional, List, Dict, Any, Tuple
 
 from core.repository.base_repository import BaseRepository
+from core.models.dto import FamilyDisbandResultDTO
 
 logger = logging.getLogger(__name__)
 
@@ -1266,12 +1267,12 @@ class ProfileRepository(BaseRepository):
                     await db.rollback()
                     raise
         return True
-
+    
     async def disband_family_by_admin(
         self,
         *,
         admin_user_id: int,
-    ) -> bool:
+    ) -> FamilyDisbandResultDTO:
         """
         Полностью расформировывает семью.
         Политика при расформировании:
@@ -1298,8 +1299,26 @@ class ProfileRepository(BaseRepository):
                     family = await family_cursor.fetchone()
                     if family is None:
                         await db.rollback()
-                        return False
+                        return FamilyDisbandResultDTO(success=False)
+                    
                     family_id = family["id"]
+
+                    # --- НОВОЕ: Получаем observers до удаления ---
+                    observer_cursor = await db.execute(
+                        """
+                        SELECT user_id
+                        FROM users
+                        WHERE family_id = ?
+                          AND role = 'observer'
+                        ORDER BY user_id
+                        """,
+                        (family_id,),
+                    )
+                    observer_rows = await observer_cursor.fetchall()
+                    observer_user_ids = tuple(
+                        int(row["user_id"])
+                        for row in observer_rows
+                    )
 
                     # -------------------------------------------------
                     # 1. Сохраняем Telegram-linked child profiles.
@@ -1348,10 +1367,6 @@ class ProfileRepository(BaseRepository):
 
                     # -------------------------------------------------
                     # 3. Удаляем family access rows.
-                    #
-                    # Нельзя оставлять parent_student_settings:
-                    # после удаления family adult и student profile
-                    # больше не принадлежат одной семье.
                     # -------------------------------------------------
                     await db.execute(
                         """
@@ -1367,24 +1382,14 @@ class ProfileRepository(BaseRepository):
                             WHERE family_id = ?
                         )
                         """,
-                        (
-                            family_id,
-                            family_id,
-                        ),
+                        (family_id, family_id),
                     )
 
                     # -------------------------------------------------
                     # 4. Отвязываем extra_classes реальных детей
-                    # от family context.
-                    #
-                    # student_id не меняется: занятия принадлежат
-                    # конкретному student_profile.
                     # -------------------------------------------------
                     if linked_student_ids:
-                        placeholders = ", ".join(
-                            "?"
-                            for _ in linked_student_ids
-                        )
+                        placeholders = ", ".join("?" for _ in linked_student_ids)
                         await db.execute(
                             f"""
                             UPDATE extra_classes
@@ -1393,23 +1398,15 @@ class ProfileRepository(BaseRepository):
                                 updated_at = ?
                             WHERE student_id IN ({placeholders})
                             """,
-                            (
-                                now_utc,
-                                *linked_student_ids,
-                            ),
+                            (now_utc, *linked_student_ids,),
                         )
 
                     # -------------------------------------------------
                     # 5. Telegram-linked child profiles становятся
                     # standalone до DELETE FROM families.
-                    #
-                    # Без этого ON DELETE CASCADE удалит их.
                     # -------------------------------------------------
                     if linked_student_ids:
-                        placeholders = ", ".join(
-                            "?"
-                            for _ in linked_student_ids
-                        )
+                        placeholders = ", ".join("?" for _ in linked_student_ids)
                         await db.execute(
                             f"""
                             UPDATE student_profiles
@@ -1420,19 +1417,11 @@ class ProfileRepository(BaseRepository):
                             AND telegram_user_id IS NOT NULL
                             AND is_active = 1
                             """,
-                            (
-                                now_utc,
-                                *linked_student_ids,
-                            ),
+                            (now_utc, *linked_student_ids,),
                         )
 
                     # -------------------------------------------------
                     # 6. Удаляем virtual profiles, оставшиеся в семье.
-                    #
-                    # Это profiles без Telegram. Они не могут стать
-                    # самостоятельыми без реального child account.
-                    #
-                    # Их extra_classes удаляются каскадно.
                     # -------------------------------------------------
                     await db.execute(
                         """
@@ -1444,9 +1433,6 @@ class ProfileRepository(BaseRepository):
 
                     # -------------------------------------------------
                     # 7. Отвязываем всех участников от family.
-                    #
-                    # Child users сохраняют class_id/group_id, поэтому
-                    # сразу остаются_whанными standalone child.
                     # -------------------------------------------------
                     await db.execute(
                         """
@@ -1456,20 +1442,14 @@ class ProfileRepository(BaseRepository):
                             updated_at = ?
                         WHERE family_id = ?
                         """,
-                        (
-                            now_utc,
-                            family_id,
-                        ),
+                        (now_utc, family_id,),
                     )
 
                     # -------------------------------------------------
                     # 8. Очищаем delivery logs всех бывших участников.
                     # -------------------------------------------------
                     if member_user_ids:
-                        placeholders = ", ".join(
-                            "?"
-                            for _ in member_user_ids
-                        )
+                        placeholders = ", ".join("?" for _ in member_user_ids)
                         await db.execute(
                             f"""
                             DELETE FROM notification_delivery_log
@@ -1480,10 +1460,6 @@ class ProfileRepository(BaseRepository):
 
                     # -------------------------------------------------
                     # 9. Теперь можно удалить семью.
-                    #
-                    # Family invites удалятся каскадно.
-                    # Virtual profiles уже удалены.
-                    # Linked child profiles уже family_id=NULL.
                     # -------------------------------------------------
                     delete_family_cursor = await db.execute(
                         """
@@ -1491,22 +1467,14 @@ class ProfileRepository(BaseRepository):
                         WHERE id = ?
                         AND admin_user_id = ?
                         """,
-                        (
-                            family_id,
-                            admin_user_id,
-                        ),
+                        (family_id, admin_user_id,),
                     )
                     if delete_family_cursor.rowcount != 1:
                         await db.rollback()
-                        return False
+                        return FamilyDisbandResultDTO(success=False)
 
                     # -------------------------------------------------
                     # 10. Бывший family admin становится незавершённым
-                    # standalone user. Он может начать новую регистрацию.
-                    #
-                    # Не меняем остальных adults принудительно:
-                    # их role остаётся parent/observer, но family_id=NULL,
-                    # поэтому /start предложит им регистрацию заново.
                     # -------------------------------------------------
                     await db.execute(
                         """
@@ -1528,17 +1496,17 @@ class ProfileRepository(BaseRepository):
                             updated_at = ?
                         WHERE user_id = ?
                         """,
-                        (
-                            now_utc,
-                            admin_user_id,
-                        ),
+                        (now_utc, admin_user_id,),
                     )
                     await db.commit()
-                    return True
+                    
+                    return FamilyDisbandResultDTO(
+                        success=True,
+                        observer_user_ids=observer_user_ids,
+                    )
                 except Exception:
                     await db.rollback()
                     raise
-
     async def update_integer_setting(
         self,
         user_id: int,

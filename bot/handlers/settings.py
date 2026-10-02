@@ -312,7 +312,7 @@ async def confirm_restart(
     user_id = callback.from_user.id
 
     try:
-        success, new_admin_id = await profile_service.reset_user_profile(
+        reset_result = await profile_service.reset_user_profile(
             user_id=user_id,
         )
         
@@ -322,7 +322,6 @@ async def confirm_restart(
             user_id,
             exc,
         )
-
         await _safe_callback_answer(
             callback,
             "Не удалось перерегистрировать профиль.",
@@ -335,7 +334,6 @@ async def confirm_restart(
             "Profile reset failed: user_id=%s",
             user_id,
         )
-
         await _safe_callback_answer(
             callback,
             "❌ Не удалось выполнить перерегистрацию. "
@@ -344,7 +342,7 @@ async def confirm_restart(
         )
         return
 
-    if not success:
+    if not reset_result.success:
         await _safe_callback_answer(
             callback,
             "Не удалось выполнить перерегистрацию.",
@@ -353,16 +351,41 @@ async def confirm_restart(
         return
     
     # Уведомление новому администратору при авто-наследовании.
-    if new_admin_id is not None:
+    if reset_result.new_admin_user_id is not None:
         with contextlib.suppress(TelegramBadRequest):
             await bot.send_message(
-                new_admin_id,
+                reset_result.new_admin_user_id,
                 "👑 <b>Администратор семьи вышел</b>\n\n"
                 "Управление семьей автоматически перешло к вам.\n"
                 "Участники и приглашения: ⚙️ Настройки → Семья.",
                 parse_mode="HTML",
             )
 
+    # Уведомление наблюдателям о расформировании семьи
+    if (
+        reset_result.family_disbanded
+        and reset_result.observer_user_ids
+    ):
+        for observer_user_id in reset_result.observer_user_ids:
+            try:
+                await bot.send_message(
+                    observer_user_id,
+                    "👁 <b>Семья расформирована</b>\n\n"
+                    "Администратор семьи вышел, а другого родителя "
+                    "для передачи прав не осталось.\n\n"
+                    "Ваша роль наблюдателя была отключена, потому что "
+                    "она работает только внутри семьи.\n\n"
+                    "Отправьте /start, чтобы пройти регистрацию заново "
+                    "или присоединиться к другой семье по приглашению.",
+                    parse_mode="HTML",
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to notify disbanded family observer: "
+                    "observer_user_id=%s disbanded_by_user_id=%s",
+                    observer_user_id,
+                    user_id,
+                )
 
     await state.clear()
 

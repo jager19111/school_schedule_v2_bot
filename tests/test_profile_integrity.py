@@ -751,3 +751,56 @@ async def test_create_family_and_link_requires_parent_role(
     assert user_row is not None
     assert user_row["role"] == role
     assert user_row["family_id"] is None
+    
+@pytest.mark.asyncio
+async def test_reset_non_admin_profile_returns_success_tuple(
+    profile_repository: ProfileRepository,
+    create_test_user,
+) -> None:
+    await create_test_user(
+        user_id=1101,
+        role="child",
+    )
+
+    audit = _AuditSpy()
+    service = ProfileService(
+        repo=profile_repository,
+        audit_service=audit,
+    )
+
+    result = await service.reset_user_profile(
+        user_id=1101,
+    )
+
+    assert result == (True, None)
+    
+class _MissingUserResetRepository:
+    async def get_profile_reset_impact(
+        self,
+        user_id: int,
+    ) -> None:
+        return None
+
+    async def reset_non_admin_user(
+        self,
+        *,
+        user_id: int,
+    ) -> bool:
+        return False
+
+
+@pytest.mark.asyncio
+async def test_reset_non_admin_failure_returns_false_tuple() -> None:
+    audit = _AuditSpy()
+
+    service = ProfileService(
+        repo=_MissingUserResetRepository(),
+        audit_service=audit,
+    )
+
+    result = await service.reset_user_profile(
+        user_id=1102,
+    )
+
+    assert result == (False, None)
+    assert audit.calls == []

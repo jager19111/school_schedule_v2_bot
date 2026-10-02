@@ -16,7 +16,7 @@ from core.models.dto import (
     ProfileResetImpactDTO,
     SchoolDictionariesDTO,
     StudentTelegramSettingsDTO,
-    StudentTelegramSettingsViewModel,
+    StudentTelegramSettingsViewModel, ProfileResetResultDTO,
     UserProfileDTO,     FamilyInviteCodeLookupDTO,
 )
 from core.mappers.profile_mapper import ProfileMapper
@@ -523,23 +523,30 @@ class ProfileService:
     async def reset_user_profile(
         self,
         user_id: int,
-    ) -> Tuple[bool, Optional[int]]:
+    ) -> ProfileResetResultDTO:
         """
-        Сброс/выход пользователя.
+        Сбрасывает/перерегистрирует профиль.
 
-        Администратор семьи:
-        - есть второй родитель -> полномочия автоматически переходят
-          ему, админ выходит как обычный пользователь (семья живёт);
-        - второго родителя нет -> семья расформировывается.
-
-        Возвращает (success, new_admin_id): new_admin_id задан только
-        при авто-передаче — хендлер шлёт по нему уведомление.
+        Возвращает ProfileResetResultDTO:
+        - success: успешна ли операция.
+        - new_admin_user_id: admin successor (если был transfer).
+        - family_disbanded: была ли удалена семья.
+        - observer_user_ids: кого из наблюдателей надо уведомить об удалении.
         """
-        # Используем метод сервиса, возвращающий DTO
         impact = await self.get_profile_reset_impact(user_id)
-        
+
+        # -----------------------------------------------------
+        # Family admin: successor transfer или family disband.
+        # -----------------------------------------------------
         if impact is not None and impact.is_family_admin:
             family_id = impact.family_id
+
+            if family_id is None:
+                logger.error(
+                    "Family admin reset has no family_id: user_id=%s",
+                    user_id,
+                )
+                return ProfileResetResultDTO(success=False)
 
             successor_id = await self.repo.find_family_admin_successor(
                 family_id=family_id,
@@ -555,13 +562,13 @@ class ProfileService:
 
                 if not transferred:
                     logger.error(
-                        "Family admin transfer failed: family_id=%s, "
-                        "from_user_id=%s, to_user_id=%s",
+                        "Family admin transfer failed: "
+                        "family_id=%s from_user_id=%s to_user_id=%s",
                         family_id,
                         user_id,
                         successor_id,
                     )
-                    return False, None
+                    return ProfileResetResultDTO(success=False)
 
                 reset_ok = await self.repo.reset_non_admin_user(
                     user_id=user_id,
@@ -569,39 +576,76 @@ class ProfileService:
 
                 if reset_ok:
                     await self.audit.log_action(
-                        user_id,
-                        successor_id,
-                        AuditAction.FAMILY_ADMIN_TRANSFERRED,
+                        actor_id=user_id,
+                        target_id=successor_id,
+                        action=AuditAction.FAMILY_ADMIN_TRANSFERRED,
+                        details={
+                            "family_id": family_id,
+                            "mode": "automatic_reset",
+                        },
                     )
                     await self.audit.log_action(
-                        user_id,
-                        user_id,
-                        AuditAction.PROFILE_RESET,
-                        {
+                        actor_id=user_id,
+                        target_id=user_id,
+                        action=AuditAction.PROFILE_RESET,
+                        details={
                             "details": "Успешная передача прав",
                         },
                     )
 
-                return reset_ok, successor_id
+                return ProfileResetResultDTO(
+                    success=reset_ok,
+                    new_admin_user_id=successor_id if reset_ok else None,
+                )
 
-            # Расформирование допустимо только тогда, когда другого
-            # parent в семье действительно нет.
-            disbanded = await self.repo.disband_family_by_admin(
+            # Другого parent нет — family можно расформировать.
+            disband_result = await self.repo.disband_family_by_admin(
                 admin_user_id=user_id,
             )
 
-            if disbanded:
+            if disband_result.success:
                 await self.audit.log_action(
-                    user_id,
-                    user_id,
-                    AuditAction.PROFILE_RESET,
-                    {
+                    actor_id=user_id,
+                    target_id=user_id,
+                    action=AuditAction.PROFILE_RESET,
+                    details={
                         "details": "Семья расформирована",
+                        "observer_count": len(disband_result.observer_user_ids),
                     },
                 )
 
-            return disbanded, None
-    
+            return ProfileResetResultDTO(
+                success=disband_result.success,
+                family_disbanded=disband_result.success,
+                observer_user_ids=(
+                    disband_result.observer_user_ids
+                    if disband_result.success
+                    else ()
+                ),
+            )
+
+        # -----------------------------------------------------
+        # Non-admin reset:
+        # child, parent, observer, teacher, standalone profile.
+        # -----------------------------------------------------
+        reset_ok = await self.repo.reset_non_admin_user(
+            user_id=user_id,
+        )
+
+        if reset_ok:
+            await self.audit.log_action(
+                actor_id=user_id,
+                target_id=user_id,
+                action=AuditAction.PROFILE_RESET,
+                details={
+                    "details": "Стандартный сброс профиля",
+                },
+            )
+
+        return ProfileResetResultDTO(
+            success=reset_ok,
+        )
+        
     # метод получения состава семьи
     async def get_family_members(
         self,
