@@ -37,9 +37,9 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 _KINDS = {
-    "class": {"title": "Класс", "icon": "🎓"},
-    "teacher": {"title": "Преподаватель", "icon": "👨‍🏫"},
-    "room": {"title": "Кабинет", "icon": "🚪"},
+    "class": {"title": "", "icon": ""},
+    "teacher": {"title": "Учитель", "icon": ""},
+    "room": {"title": "", "icon": ""},
 }
 
 

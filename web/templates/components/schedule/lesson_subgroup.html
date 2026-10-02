@@ -1,7 +1,10 @@
-{% set is_empty_window = (entry.subject and entry.subject.value | string | lower | trim == 'нет занятий') %}
+{% if entry.subject %}
+{% set subj_str = (entry.subject.value | string | lower | trim) if entry.subject.value else '' %}
+{% set is_empty_window = ('нет занятий' in subj_str) %}
+
 <div class="lesson-entry">
   <div class="lesson-entry__content">
-    {% if show_subject and entry.subject %}
+{% if show_subject %}
     <div
       class="
         lesson-entry__subject
@@ -14,12 +17,13 @@
       data-autofit="subject"
       title="{{ entry.subject.value }}"
     >
-      {{ entry.subject.value }}
+      <span>{{ entry.subject.value }}</span>
     </div>
     {% endif %}
 
     <div class="lesson-entry__meta">
-      {% if entry.teacher %}
+      {# Учителя скрываем для пустых окон #}
+      {% if entry.teacher and not is_empty_window %}
       <span
         class="
           lesson-entry__teacher
@@ -32,6 +36,7 @@
       </span>
       {% endif %}
 
+      {# ГРУППУ ВЫВОДИМ ВСЕГДА! Чтобы в расписании класса было понятно, кто отдыхает #}
       {% if entry.show_group and entry.group %}
       <span
         class="
@@ -41,11 +46,15 @@
           {% endif %}
         "
       >
-        {% if entry.teacher %}· {% endif %}{{ entry.group.value }}
+        {% if entry.teacher and not is_empty_window %}· {% endif %}{{ entry.group.value }}
       </span>
       {% endif %}
     </div>
   </div>
 
-  {% include "components/schedule/room_badge.html" %}
+  {# Кабинет скрываем для пустых окон #}
+  {% if not is_empty_window %}
+    {% include "components/schedule/room_badge.html" %}
+  {% endif %}
 </div>
+{% endif %}

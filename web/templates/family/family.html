@@ -1,8 +1,14 @@
+  {# web/templates/family/family.html #}
 {# Экран «Семья» (Phase 4, ТЗ 33-34): полная страница. #}
+  {% from "components/ui/icon.html" import icon %}
 {% extends "base.html" %}
 {% set nav = "family" %}
 {% block title %}Семья{% endblock %}
-{% block header %}👨‍👩‍👧 Семья{% endblock %}
+{% block header %}
+<span>
+  {{ icon("users-three-duotone") }} Семья
+</span>
+{% endblock %}
 {% block content %}
 {% include "family/_family_content.html" %}
 {% endblock %}

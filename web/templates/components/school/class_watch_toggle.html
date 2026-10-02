@@ -1,5 +1,7 @@
-  {# web/templates/components/school/class_watch_toggle.html #}
-  <span
+{# web/templates/components/school/class_watch_toggle.html #}
+{% from "components/ui/icon.html" import icon %}
+
+<span
   id="class-watch-toggle"
   class="class-watch-toggle"
 >
@@ -17,7 +19,7 @@
     aria-pressed="true"
     title="Убрать из отслеживаемых классов"
   >
-    ★
+    {{ icon("star-duotone", class="icon-primary") }}
   </button>
   {% else %}
   <button
@@ -32,7 +34,7 @@
     aria-pressed="false"
     title="Добавить в отслеживаемые классы"
   >
-    ☆
+    {{ icon("star-duotone", class="icon-muted") }}
   </button>
   {% endif %}
 
@@ -41,7 +43,7 @@
     class="class-watch-toggle__error"
     role="alert"
   >
-    ⚠️ {{ class_watch_error }}
+    {{ icon("warning-duotone") }} {{ class_watch_error }}
   </span>
   {% endif %}
 </span>

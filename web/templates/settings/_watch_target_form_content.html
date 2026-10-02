@@ -1,6 +1,7 @@
-  {# web/templates/settings/_watch_target_form_content.html #}
+{# web/templates/settings/_watch_target_form_content.html #}
+{% from "components/ui/icon.html" import icon %}
 
-  <section
+<section
   id="settings-content"
   class="settings-page"
 >
@@ -13,7 +14,7 @@
     class="stale-warning"
     role="alert"
   >
-    ⚠️ {{ error }}
+    {{ icon("warning-duotone") }} {{ error }}
   </div>
   {% endif %}
 

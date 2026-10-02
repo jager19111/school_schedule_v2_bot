@@ -1,8 +1,15 @@
-  {# web/templates/school/search.html #}
+{# web/templates/school/search.html #}
 {% extends "base.html" %}
+{% from "components/ui/icon.html" import icon %}
+
 {% set nav = "school" %}
 {% block title %}Поиск{% endblock %}
-{% block header %}🔎 Поиск{% endblock %}
+{% block header %}
+<span>
+  {{ icon("magnifying-glass-duotone") }} Поиск
+</span>
+{% endblock %}
+
 {% block content %}
 <section class="school-search">
   <form class="search-form" action="/school/search" method="get" role="search">
@@ -13,20 +20,22 @@
   </form>
 
   {% set groups = [
-    ('🎓 Классы', results.classes, 'class'),
-    ('👨‍🏫 Учителя', results.teachers, 'teacher'),
-    ('🚪 Кабинеты', results.rooms, 'room'),
+    ('student-duotone', 'Классы', results.classes, 'class'),
+    ('chalkboard-teacher-duotone', 'Учителя', results.teachers, 'teacher'),
+    ('door-duotone', 'Кабинеты', results.rooms, 'room'),
   ] %}
 
   {% if results.query|length < 2 %}
   <div class="empty-day">Введите минимум 2 символа.</div>
   {% else %}
     {% set found = namespace(count=0) %}
-    {% for label, items, kind in groups %}
+    {% for icon_name, label, items, kind in groups %}
       {% if found.count is defined %}{% endif %}
       {% set found.count = found.count + items|length %}
       {% if items %}
-      <h2 class="search-group-title">{{ label }}</h2>
+      <h2 class="search-group-title">
+        {{ icon(icon_name) }} {{ label }}
+      </h2>
       <div class="school-grid">
         {% for item in items %}
         <a class="school-item" href="/school/{{ kind }}/{{ item.id }}">{{ item.name }}</a>
@@ -35,7 +44,9 @@
       {% endif %}
     {% endfor %}
     {% if found.count == 0 %}
-    <div class="empty-day">Ничего не найдено 🤷</div>
+    <div class="empty-day">
+      {{ icon("info-duotone", class="icon-muted") }} Ничего не найдено
+    </div>
     {% endif %}
   {% endif %}
 </section>

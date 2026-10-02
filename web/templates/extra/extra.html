@@ -1,7 +1,8 @@
-  {# web/templates/extra/extra.html #}
+{# web/templates/extra/extra.html #}
 {# Дополнительные занятия: полная страница. #}
 
 {% extends "base.html" %}
+{% from "components/ui/icon.html" import icon %}
 
 {% set nav = "extra" %}
 
@@ -10,7 +11,9 @@
 {% endblock %}
 
 {% block header %}
-  🎯 Доп. занятия
+  <span>
+    {{ icon("palette-duotone") }} Дополнительные занятия
+  </span>
 {% endblock %}
 
 {% block content %}
@@ -22,6 +25,6 @@
 {% endblock %}
 
 {% block extra_scripts %}
-<script src="/static/js/schedule.js?v=13"></script>
-<script src="/static/js/extra.js?v=1"></script>
+<script src="/static/js/schedule.js?v=3"></script>
+<script src="/static/js/extra.js?v=3"></script>
 {% endblock %}

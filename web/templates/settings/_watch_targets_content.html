@@ -1,5 +1,7 @@
-  {# web/templates/settings/_watch_targets_content.html #}
-  <section
+{# web/templates/settings/_watch_targets_content.html #}
+{% from "components/ui/icon.html" import icon %}
+
+<section
   id="settings-content"
   class="settings-page"
 >
@@ -12,7 +14,7 @@
     class="stale-warning"
     role="alert"
   >
-    ⚠️ {{ error }}
+    {{ icon("warning-duotone") }} {{ error }}
   </div>
   {% endif %}
 
@@ -102,7 +104,7 @@
           class="empty-day__icon"
           aria-hidden="true"
         >
-          ☆
+          {{ icon("star-duotone", size="xl", class="icon-muted") }}
         </div>
 
         <h3 class="empty-day__title">

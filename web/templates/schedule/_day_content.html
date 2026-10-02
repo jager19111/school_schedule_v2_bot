@@ -3,6 +3,7 @@
   Fragment расписания дня. Используется и как HTMX-target (#day-content),
   и как содержимое полной страницы.
 #}
+{% from "components/ui/icon.html" import icon %}
 <section id="day-content" class="day-schedule">
 
   {% include "components/schedule/target_switch.html" %}
@@ -24,7 +25,8 @@
         hx-indicator="#day-content"
         aria-label="Открыть расписание на предыдущий день"
       >
-        ←
+        {# Заменили текстовую стрелку ← на Phosphor SVG #}
+        {{ icon("caret-circle-left-duotone", size="lg") }}
       </a>
 
       <div class="day-navigation__heading">
@@ -68,7 +70,8 @@
         hx-indicator="#day-content"
         aria-label="Открыть расписание на следующий день"
       >
-        →
+        {# Заменили текстовую стрелку → на Phosphor SVG #}
+        {{ icon("caret-circle-right-duotone", size="lg") }}
       </a>
     </nav>
 
@@ -89,7 +92,10 @@
         class="empty-day"
         aria-labelledby="empty-day-title"
       >
-        <div class="empty-day__icon" aria-hidden="true">○</div>
+        <div class="empty-day__icon" aria-hidden="true">
+          {# Заменили текстовый кружок ○ на семантическую иконку календаря #}
+          {{ icon("calendar-duotone", size="xl", class="icon-muted") }}
+        </div>
 
         <h3 id="empty-day-title" class="empty-day__title">
           Уроков нет
@@ -113,7 +119,10 @@
   </div>
 
   {% if day.has_permutation %}
-  <div class="permutation-note">🔁 Изменения — перестановка уроков</div>
+  <div class="permutation-note">
+    {# Заменили эмодзи 🔁 на иконку из инвентаря #}
+    {{ icon("repeat-duotone", class="icon-changed") }} Изменения — перестановка уроков
+  </div>
   {% endif %}
 
 </section>

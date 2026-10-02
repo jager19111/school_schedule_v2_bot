@@ -1,8 +1,15 @@
+  {# web/templates/family/_student_form.html #}
+
+{% from "components/ui/icon.html" import icon %}
 {# Форма создания/правки student profile (Phase 4).
    Fragment: подменяет #family-content; POST возвращает fragment/redirect. #}
 <section id="family-content" class="family-page">
   <h2 class="day-title">
-    {% if mode == 'create' %}➕ Новый ученик{% else %}✏️ Профиль ученика{% endif %}
+    {% if mode == 'create' %}
+      {{ icon("user-circle-plus-duotone") }} Новый ученик
+    {% else %}
+      {{ icon("pencil-duotone") }} Профиль ученика
+    {% endif %}
   </h2>
   {% if mode == 'edit' %}
   <div class="day-subtitle">{{ student.name }}</div>

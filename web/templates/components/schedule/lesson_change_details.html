@@ -1,3 +1,6 @@
+{# web/templates/components/schedule/lesson_change_details.html #}
+{% from "components/ui/icon.html" import icon %}
+
 {#
   Inline details для orange LessonStatus.CHANGED card.
 
@@ -17,6 +20,7 @@
 >
   <header class="lesson-change-details__header">
     <span class="lesson-change-details__title">
+      {{ icon("clock-counter-clockwise-duotone", class="icon-changed") }}
       Изменения
     </span>
 

@@ -1,4 +1,5 @@
-  {# web/templates/extra/_extra_form.html #}
+{# web/templates/extra/_extra_form.html #}
+{% from "components/ui/icon.html" import icon %}
 {# Форма доп. занятия (создание и правка). #}
 {#
   item всегда WebExtraClass | None.
@@ -6,12 +7,18 @@
   до передачи данных в Jinja.
 #}
 <section id="extra-content" class="extra-page">
-  <h2 class="day-title">{% if mode == 'create' %}➕ Новое занятие{% else %}✏️ Правка занятия{% endif %}</h2>
+  <h2 class="day-title">
+    {% if mode == 'create' %}
+      {{ icon("plus-circle-duotone") }} Новое занятие
+    {% else %}
+      {{ icon("pencil-duotone") }} Правка занятия
+    {% endif %}
+  </h2>
 
   {# Блок уведомлений об ошибках (пересечение времени, валидация) #}
   {% if error %}
-  <div class="stale-warning" style="background-color: #fee2e2; color: #b91c1c; font-weight: 600; margin-bottom: 16px;">
-      ❌ {{ error }}
+  <div class="stale-warning">
+      {{ icon("x-duotone") }} {{ error }}
   </div>
   {% endif %}
 
@@ -28,17 +35,17 @@
       <input type="hidden" name="idempotency_key" value="{{ idempotency_key }}">
       {% endif %}
       
-      <label class="form-hint" style="margin-bottom: 4px;">Название (например: Английский)</label>
+      <label class="form-hint">Название (например: Английский)</label>
       <input type="text" name="title" value="{{ item.title if item else '' }}" required maxlength="128" placeholder="Кружок робототехники">
 
-      <label class="form-hint" style="margin-bottom: 4px; margin-top: 12px;">День недели</label>
+      <label class="form-hint">День недели</label>
       <select name="day_of_week" required>
           {% for d_val, d_name in weekdays %}
           <option value="{{ d_val }}" {% if item and (item.day_of_week|string == d_val|string) %}selected{% endif %}>{{ d_name }}</option>
           {% endfor %}
       </select>
 
-      <label class="form-hint" style="margin-bottom: 4px; margin-top: 12px;">Время (Начало – Конец)</label>
+      <label class="form-hint">Время (Начало – Конец)</label>
       <div class="time-row">
             <input
             type="time"
@@ -57,7 +64,7 @@
             >
       </div>
 
-      <label class="form-hint" style="margin-bottom: 4px; margin-top: 12px;">Место (кабинет, адрес)</label>
+      <label class="form-hint">Место (кабинет, адрес)</label>
       <input type="text" name="location" value="{{ item.location or '' if item else '' }}" placeholder="Необязательно"
 >
 
@@ -129,8 +136,10 @@
     {% include "components/schedule/lesson_card.html" %}
   </section>
   
-      <div class="invite-create-buttons" style="margin-top: 24px;">
-          <button type="submit" class="nav-btn today-btn" hx-indicator="#page-loading" hx-disabled-elt="this">💾 Сохранить</button>
+      <div class="invite-create-buttons">
+          <button type="submit" class="nav-btn today-btn" hx-indicator="#page-loading" hx-disabled-elt="this">
+            {{ icon("floppy-disk-duotone", size="sm") }} Сохранить
+          </button>
           <button type="button" class="nav-btn" hx-get="/extra-classes?student={{ student_id }}" hx-target="#extra-content" hx-swap="outerHTML">Отмена</button>
       </div>
   </form>

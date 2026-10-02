@@ -1,4 +1,5 @@
 {# web/templates/school/_day_content.html #}
+{% from "components/ui/icon.html" import icon %}
 {#
   Фрагмент school day schedule.
 
@@ -32,7 +33,7 @@
         hx-indicator="#day-content"
         aria-label="Открыть расписание на предыдущий день"
       >
-        ←
+        {{ icon("caret-circle-left-duotone", size="xl") }}
       </a>
 
       <div class="day-navigation__heading">
@@ -76,7 +77,7 @@
         hx-indicator="#day-content"
         aria-label="Открыть расписание на следующий день"
       >
-        →
+        {{ icon("caret-circle-right-duotone", size="lg") }}
       </a>
     </nav>
 
@@ -95,7 +96,13 @@
         class="empty-day"
         aria-labelledby="empty-day-title"
       >
-        <div class="empty-day__icon" aria-hidden="true">○</div>
+        <div class="empty-day__icon" aria-hidden="true">
+          {% if kind == "room" %}
+            {{ icon("door-open-duotone", size="xl", class="icon-muted") }}
+          {% else %}
+            {{ icon("calendar-duotone", size="xl", class="icon-muted") }}
+          {% endif %}
+        </div>
 
         {% if kind == "room" %}
           <h3 id="empty-day-title" class="empty-day__title">
@@ -133,7 +140,7 @@
 
   {% if day.has_permutation %}
   <div class="permutation-note">
-    🔁 Изменения — перестановка уроков
+    {{ icon("repeat-duotone", class="icon-changed") }} Изменения — перестановка уроков
   </div>
   {% endif %}
 
@@ -142,14 +149,14 @@
       class="nav-btn"
       href="/school/{{ kind }}/{{ item_id }}/week"
     >
-      🗓 Неделя
+      {{ icon("calendar-dots-duotone", size="sm") }} Неделя
     </a>
 
     <a
       class="nav-btn"
       href="/school/{{ kind }}/list"
     >
-      ← К списку
+      {{ icon("caret-circle-left-duotone", size="sm") }} К списку
     </a>
   </nav>
 </section>

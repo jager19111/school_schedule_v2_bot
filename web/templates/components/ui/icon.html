@@ -1,0 +1,14 @@
+{% macro icon(name, class="", size="md", label="", collection="phosphor") %}
+{# 
+    Рендерит инлайн SVG иконку.
+    collection: "phosphor" (по умолчанию) или "lucide" (для старых иконок).
+#}
+<span class="{{ collection }}-icon icon-{{ size }} {{ class }}" 
+      {% if label %}aria-label="{{ label }}" role="img"{% else %}aria-hidden="true"{% endif %}>
+    {% if collection == "lucide" %}
+        {% include "components/icons/lucide/" ~ name ~ ".svg" ignore missing %}
+    {% else %}
+        {% include "components/icons/phosphor/" ~ name ~ ".svg" ignore missing %}
+    {% endif %}
+</span>
+{% endmacro %}

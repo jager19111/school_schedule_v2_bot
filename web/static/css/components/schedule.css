@@ -1,169 +1,340 @@
 /* web/static/css/components/schedule.css */
 /* ==========================================================================
-   1. ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ (Цвета и базовые размеры)
-   Здесь задается палитра статусов и ширина левой колонки со временем.
-   чтобы добавить темную тему (которую обожают школьники), 
-   переопределить переменные в медиа-запросе @media (prefers-color-scheme: dark) { :root { ... } }.
+   SCHEDULE COMPONENT
    ========================================================================== */
+
+/* ============================================================================
+   SCHEDULE-SPECIFIC TOKENS
+   Global palette, typography, spacing, effects and interaction primitives
+   live in app.css. This section contains only schedule-owned geometry.
+   ============================================================================ */
 :root {
-  --schedule-normal: #2f80c9;    /* Синий - обычный урок */
-  --schedule-extra: #7c3aed;     /* Фиолетовый - доп. занятие */
-  --schedule-changed: #d97706;   /* Оранжевый - замена кабинета/учителя */
-  --schedule-added: #16803c;     /* Зеленый - добавленный новый урок */
-  --schedule-cancelled: #dc2626; /* Красный - отмененный урок */
-  --schedule-current: #1d4ed8;   /* Ярко-синий - маркер идущего сейчас урока */
-
-  --room-bg: #eef2f6;            /* Фон плашки кабинета (правая часть) */
-  --room-text: #334155;          /* Цвет текста внутри плашки кабинета */
-  --room-changed: #d97706;       /* Цвет рамки кабинета при замене */
-
-  /* Ширина левой колонки со временем (идеально для "УРОК 16") */
-  --lesson-time-width: 60px;     
-  
-  --lesson-card-bg: #ffffff;
-  --lesson-card-border: #e8edf3;
-  --lesson-muted: #7b8798;       /* Серый цвет для второстепенного текста */
-  --lesson-content-color: #1d3858; /* Темно-синий/черный для названий предметов */
+  --schedule-time-width: 60px; /* для сдвига линии и текста влево */
+  --schedule-card-radius: var(--radius-2xl);
+  --schedule-card-accent-width: 5px;
+  --schedule-list-gap: 7px;
+  --schedule-entry-gap: 3px;
+  --schedule-room-max-width: 85px;
+  --schedule-room-min-height: 20px;
+  --schedule-room-padding-y: 3px;
+  --schedule-room-padding-x: 7px;
+  --schedule-window-height: 24px;
+  --schedule-skeleton-card-height: 70px;
+  --schedule-arrow-radius: 11px;
+  --schedule-compact-gap: 5px;
 }
 
-/* ==========================================================================
-   2. DEV SHOWCASE (Служебные стили для страницы тестирования)
-   ========================================================================== */
-.schedule-showcase { display: flex; flex-direction: column; gap: 8px; }
-.schedule-showcase__notice { padding: 8px 10px; border: 1px solid #bfdbfe; border-radius: 10px; background: #eff6ff; color: #1e3a5f; font-size: 13px; line-height: 1.25; }
-.schedule-showcase__viewport-label { color: var(--lesson-muted); font-size: 12px; }
-.schedule-showcase__list { display: flex; flex-direction: column; gap: 7px; }
+@media (min-width: 431px) {
+  :root {
+    --schedule-time-width: 62px; /* для сдвига линии и текста влево */
+  }
+}
 
-/* ==========================================================================
-   3. КАРКАС КАРТОЧКИ УРОКА (Основа)
-   ========================================================================== */
-/* Shared schedule list layout: production day, school day, extra list. */
+/*
+  ==========================================================================
+    DEV SHOWCASE
+    ==========================================================================
+*/
+
+.schedule-showcase {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.schedule-showcase__notice {
+  padding: var(--space-4) var(--space-5);
+  border: var(--border-width-default) solid var(--color-primary-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-primary-bg);
+  color: var(--color-text);
+  font-size: var(--font-size-md);
+  line-height: 1.25;
+}
+
+.schedule-showcase__viewport-label {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.schedule-showcase__list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--schedule-list-gap);
+}
+
+/*
+  ==========================================================================
+    LESSON CARD
+    ==========================================================================
+*/
+
 .lessons-list {
   display: flex;
   flex-direction: column;
-  gap: 7px;
-}
-   .lesson-card {
-  display: grid;
-  grid-template-columns: var(--lesson-time-width) minmax(0, 1fr);
-  min-height: 0;
-  overflow: hidden;
-  
-  /* [ИЗМЕНЕНО] Убрали margin: 0 4px; карточка теперь занимает всю ширину контейнера */
-  margin: 0; 
-  
-  border: 1px solid var(--lesson-card-border);
-  border-left: 5px solid var(--schedule-normal);
-  border-radius: 14px;
-  background: var(--lesson-card-bg);
-  box-shadow: 0 2px 10px rgb(15 23 42 / 0.04);
+  gap: var(--schedule-list-gap);
 }
 
-/* ==========================================================================
-   4. КОЛОНКА ВРЕМЕНИ (Левый блок карточки)
-   ========================================================================== */
+/*
+ * Shared LessonCard geometry for student, class, teacher and room views.
+ * The time column stays on the left and the room badge stays on the right.
+ */
+.lesson-card {
+  display: grid;
+  grid-template-columns: var(--schedule-time-width) minmax(0, 1fr);
+  min-height: 0;
+  overflow: hidden;
+  margin: 0;
+  border: var(--border-width-default) solid var(--color-border-subtle);
+  border-left: var(--schedule-card-accent-width) solid var(--color-schedule-normal);
+  border-radius: var(--schedule-card-radius);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-sm);
+  transition: transform var(--duration-fast) var(--ease-standard), background-color var(--duration-fast) var(--ease-standard);
+}
+
+@media (hover: none) and (pointer: coarse) {
+  .lesson-card:active {
+    transform: scale(0.98);
+    background-color: var(--color-surface-hover);
+  }
+}
+
+/*
+  ==========================================================================
+    TIME COLUMN
+    ==========================================================================
+*/
+
+/*
+ * Time is a structural column. Lesson number intentionally sits below the
+ * start time so this block remains visually stable across lessons.
+ */
 .lesson-card__time {
   display: flex;
-  align-self: stretch; /* Растягивает разделительную линию на всю высоту карточки */
+  align-self: stretch; /* Линия рисуется на всю высоту карточки */
   flex-direction: column;
-  justify-content: center;
-  align-items: flex-start;
+  justify-content: center; /* Центрирование по высоте при 2-3 предметах */
+  align-items: flex-start; /* Строгое выравнивание по левому краю */
   min-width: 0;
-  
-  /* Симметричные отступы (Сверху/Снизу: 4px, По бокам: 10px). */
-  padding: 4px 8px; 
-  border-right: 1px solid #edf0f4; 
+  padding: var(--space-2) var(--space-4);
+  border-right: var(--border-width-default) solid var(--color-border-subtle);
   font-variant-numeric: tabular-nums;
 }
 
 .lesson-card__now-label {
-  margin-bottom: 2px; color: var(--schedule-current); font-size: 10px; font-weight: 800; line-height: 1; white-space: nowrap;
-}
-
-/* Время начала (Снижено до 14px) */
-.lesson-card__start {
-  display: block; color: #172033; font-size: 14px; font-weight: 750; line-height: 1.05; text-align: left; white-space: nowrap;
-}
-
-/* Время окончания (Снижено до 10px) */
-.lesson-card__end {
-  display: block; color: #98a3b3; font-size: 10px; font-weight: 750; line-height: 1.1; text-align: left; white-space: nowrap; margin-top: 1px;
-}
-
-/* Номер урока */
-/* [ИЗМЕНЕНО] Номер урока. Снижен до 9px. */
-.lesson-card__number {
-  display: block; 
-  margin-top: 2px; 
-  color: #536174; 
-  font-size: 9px; 
-  font-weight: 850; 
-  line-height: 1; 
-  letter-spacing: 0.01em; 
+  margin-bottom: var(--space-1);
+  color: var(--color-schedule-current);
+  font-size: 10px;
+  font-weight: var(--weight-black);
+  line-height: 1;
   white-space: nowrap;
-  
-  /* --- НОВЫЕ СТРОКИ ДЛЯ ЦЕНТРИРОВАНИЯ --- */
-  align-self: center; /* Центрирует сам элемент внутри левой колонки */
-  text-align: center; /* На всякий случай выравниваем и сам текст */
-  margin-left: 0px;  /* Небольшая компенсация, чтобы визуально отцентрировать относительно двоеточия во времени */
 }
 
-/* ==========================================================================
-   5. ТЕЛО УРОКА (Правая большая часть карточки)
-   ========================================================================== */
-.lesson-card__body {
+.lesson-card__start {
+  display: block;
+  color: var(--color-text);
+  /* Шрифт уменьшен, чтобы не превышать стандартный шрифт урока */
+  font-size: var(--font-size-md); 
+  font-weight: var(--weight-extrabold);
+  line-height: 1.05;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.lesson-card__end {
+  display: block;
+  color: var(--color-text-muted); /* Сделано серее */
+  font-size: var(--font-size-xs);
+  font-weight: var(--weight-black); /* Жирным */
+  line-height: 1.1;
+  text-align: left;
+  white-space: nowrap;
+  margin-top: 1px;
+}
+
+.lesson-card__number { /*слово урок*/
+  display: block;
+  margin-top: var(--space-1);
+  color: var(--color-text-secondary);
+  /* Размер на несколько пунктов меньше начала для визуальной ровности ширины */
+  font-size: var(--font-size-xs);
+  font-weight: var(--weight-extrablack); /* Жирным */
+  line-height: 1;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  align-self: center;
+  text-align: center;
+  margin-left: 0px;
+}
+/*
+  ==========================================================================
+    LESSON BODY
+    ==========================================================================
+*/
+
+.lesson-card__body { /* плитка кабинета */
   min-width: 0;
-  
-  /* [ИЗМЕНЕНО] Слегка увеличили правый отступ (с 10px до 12px), 
-     чтобы бейдж кабинета не прилипал к краю расширившейся карточки */
-  padding: 4px 8px 4px 10px; 
-  
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-4);
   display: flex;
   flex-direction: column;
   justify-content: center;
 }
 
 .lesson-card__entries {
-  display: flex; flex-direction: column; gap: 3px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--schedule-entry-gap);
 }
 
 .lesson-card__subject,
 .lesson-entry__subject {
-  min-width: 0; overflow: hidden; color: var(--lesson-content-color);
-  font-size: clamp(14px, 4.4vw, 18px); font-weight: 750; line-height: 1.1; text-overflow: ellipsis; white-space: nowrap;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-text);
+  font-size: clamp(14px, 4.4vw, 18px);
+  font-weight: var(--weight-extrabold);
+  line-height: 1.1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.lesson-entry { display: flex; min-width: 0; align-items: center; gap: 6px; }
-.lesson-entry__content { min-width: 0; flex: 1 1 auto; }
+@media (min-width: 431px) {
+  .lesson-card__subject, .lesson-entry__subject {
+    font-size: var(--font-size-schedule-lesson);
+  }
+}
 
-.lesson-entry__meta { display: flex; min-width: 0; flex-wrap: wrap; gap: 3px; color: var(--lesson-muted); font-size: 13px; line-height: 1.12; }
-.lesson-entry__teacher { font-style: italic; }
-.lesson-entry__separator { color: #a5afbd; }
-.lesson-entry__group { color: #728096; }
+.lesson-entry {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--space-3);
+}
 
-.lesson-entry__class-line { min-width: 0; overflow: hidden; color: var(--lesson-content-color); font-size: 16px; font-weight: 700; line-height: 1.12; text-overflow: ellipsis; white-space: nowrap; }
-.lesson-entry__teacher-subject { min-width: 0; margin-top: 1px; overflow: hidden; color: var(--lesson-muted); font-size: 12px; font-style: italic; line-height: 1.1; text-overflow: ellipsis; white-space: nowrap; }
+.lesson-entry__content {
+  min-width: 0;
+  flex: 1 1 auto;
+}
 
-/* ==========================================================================
-   6. ПЛАШКА КАБИНЕТА
-   ========================================================================== */
+.lesson-entry__meta {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: var(--schedule-entry-gap);
+  color: var(--color-text-muted);
+  font-size: var(--font-size-md);
+  line-height: 1.12;
+}
+
+.lesson-entry__teacher {
+  font-style: italic;
+}
+
+.lesson-entry__separator {
+  color: var(--color-text-muted);
+}
+
+.lesson-entry__group {
+  color: var(--color-text-secondary);
+}
+
+.lesson-entry__class-line {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-text);
+  font-size: var(--font-size-lg);
+  font-weight: var(--weight-bold);
+  line-height: 1.12;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lesson-entry__teacher-subject {
+  min-width: 0;
+  margin-top: 1px;
+  overflow: hidden;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+  font-style: italic;
+  line-height: 1.1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/*
+ * Autofit JS can rewrite inline styles. Keep the empty-window label visually
+ * secondary even after JavaScript has measured the subject.
+ */
+.lesson-card__subject--window span,
+.lesson-entry__subject--window span,
+.lesson-card__subject--window,
+.lesson-entry__subject--window {
+  color: var(--color-text-muted) !important;
+  font-weight: var(--weight-medium) !important;
+}
+
+/*
+  ==========================================================================
+    ROOM
+    ==========================================================================
+*/
+
 .room-badge {
-  display: inline-flex; flex: 0 0 auto; align-items: center; justify-content: center;
-  max-width: 85px; min-height: 20px; margin-left: auto;
-  padding: 3px 7px; border: 0; border-radius: 10px; background: var(--room-bg); color: var(--room-text);
-  font-size: 13px; font-weight: 800; line-height: 1; text-align: center; overflow-wrap: anywhere;
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  max-width: var(--schedule-room-max-width);
+  min-height: var(--schedule-room-min-height);
+  margin-left: auto;
+  padding: var(--schedule-room-padding-y) var(--schedule-room-padding-x);
+  border: 0;
+  border-radius: var(--radius-lg);
+  background: var(--color-surface-subtle);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-md);
+  font-weight: var(--weight-black);
+  line-height: 1;
+  text-align: center;
+  overflow-wrap: anywhere;
 }
-.room-badge--changed { border: 2px solid var(--room-changed); background: #fffaf0; color: var(--room-changed); }
 
-/* ==========================================================================
-   7. ЦВЕТОВЫЕ СТАТУСЫ КАРТОЧЕК (Замены и Отмены)
-   ========================================================================== */
-.lesson-card__field--changed { color: var(--schedule-changed); }
+.room-badge--changed {
+  border: var(--border-width-thick) solid var(--color-changed);
+  background: var(--color-watch-bg);
+  color: var(--color-changed);
+}
 
-.lesson-card.lesson-card--changed { border-left-color: var(--schedule-changed); background: #fffdf8; }
-.lesson-card.lesson-card--added { border-left-color: var(--schedule-added); background: #f7fcf8; }
-.lesson-card.lesson-card--extra { border-left-color: var(--schedule-extra); background: #faf7ff; }
-.lesson-card.lesson-card--cancelled { border-left-color: var(--schedule-cancelled); background: #fff7f7; }
+/*
+  ==========================================================================
+    STATUS
+    ==========================================================================
+*/
+
+.lesson-card__field--changed {
+  color: var(--color-changed);
+}
+
+.lesson-card.lesson-card--changed {
+  border-left-color: var(--color-changed);
+  background: var(--color-changed-bg);
+}
+
+.lesson-card.lesson-card--added {
+  border-left-color: var(--color-schedule-added);
+  background: var(--color-success-bg);
+}
+
+.lesson-card.lesson-card--extra {
+  border-left-color: var(--color-extra);
+  background: var(--color-extra-bg);
+}
+
+.lesson-card.lesson-card--cancelled {
+  border-left-color: var(--color-danger);
+  background: var(--color-danger-bg);
+}
 
 .lesson-card--cancelled .lesson-card__subject,
 .lesson-card--cancelled .lesson-entry__subject,
@@ -174,49 +345,67 @@
 .lesson-card--cancelled .lesson-teacher-content__class,
 .lesson-card--cancelled .lesson-teacher-content__group,
 .lesson-card--cancelled .lesson-teacher-content__subject {
-  color: #7f8793;
+  color: var(--color-text-muted);
   text-decoration-line: line-through;
-  text-decoration-color: var(--schedule-cancelled);
-  text-decoration-thickness: 2px;
+  text-decoration-color: var(--color-danger);
+  text-decoration-thickness: var(--border-width-thick);
 }
 
 .lesson-card--current {
-  box-shadow: 0 0 0 2px rgb(59 130 246 / 0.14), 0 2px 10px rgb(15 23 42 / 0.04);
+  box-shadow: var(--shadow-current);
 }
 
-.lesson-entry__meta--location { min-width: 0; overflow: hidden; color: var(--lesson-muted); font-size: 13px; font-style: italic; line-height: 1.1; text-overflow: ellipsis; white-space: nowrap; }
+.lesson-entry__meta--location {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-md);
+  font-style: italic;
+  line-height: 1.1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
-/*
- * Extra-class location can be an address, venue, or long description.
- * Unlike a standard school room, it must not be truncated.
- */
 .lesson-card--extra .lesson-entry__meta--location {
   display: block;
   overflow: visible;
   max-width: none;
   margin-top: 1px;
-  color: var(--lesson-muted);
-  font-size: 12px;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
   font-style: italic;
   line-height: 1.1;
   overflow-wrap: anywhere;
   text-overflow: clip;
   white-space: normal;
 }
-/* ==========================================================================
-   8. СВОБОДНОЕ ВРЕМЯ И МЕТОДИЧЕСКИЙ ЧАС (Окна)
-   ========================================================================== */
-/* [ИЗМЕНЕНО] Ультра-сжатие высоты карточки до 24px */
+
+/*
+  ==========================================================================
+    WINDOW
+    ==========================================================================
+*/
+
+/*
+ * Window cards are deliberately compressed. Hidden time values preserve the
+ * grid while the visible window label remains compact.
+ */
 .lesson-card.lesson-card--window,
 .lesson-card.lesson-card--methodological {
-  min-height: 24px !important;
-  height: 24px !important;
+  min-height: var(--schedule-window-height) !important;
+  height: var(--schedule-window-height) !important;
 }
 
-.lesson-card.lesson-card--window { border-left-color: #cbd5e1; background: #f8fafc; }
-.lesson-card.lesson-card--methodological { border-left-color: var(--schedule-normal); background: #ffffff; }
+.lesson-card.lesson-card--window {
+  border-left-color: var(--color-border);
+  background: var(--color-surface-hover);
+}
 
-/* Обнуляем отступы карточки */
+.lesson-card.lesson-card--methodological {
+  border-left-color: var(--color-schedule-normal);
+  background: var(--color-surface);
+}
+
 .lesson-card--window .lesson-card__body,
 .lesson-card--methodological .lesson-card__body,
 .lesson-card--window .lesson-card__time,
@@ -225,7 +414,6 @@
   padding-bottom: 0 !important;
 }
 
-/* Скрываем время (оно работает как невидимая распорка) */
 .lesson-card--window .lesson-card__start,
 .lesson-card--window .lesson-card__end,
 .lesson-card--methodological .lesson-card__start,
@@ -233,383 +421,325 @@
   display: none !important;
 }
 
-/* Выравниваем номер урока по центру полоски */
 .lesson-card--window .lesson-card__number,
 .lesson-card--methodological .lesson-card__number {
-  margin-top: 0 !important; 
-  font-size: 9px !important; 
-  line-height: 24px !important; /* Центрируем по вертикали */
+  margin-top: 0 !important;
+  font-size: 9px !important;
+  line-height: var(--schedule-window-height) !important;
 }
 
-/* 
- * [ИСПРАВЛЕНО] Форматирование текста (обращаемся к правильному классу .lesson-card__window-label)
- */
 .lesson-card__window-label {
   min-width: 0;
   overflow: hidden;
   font-size: 13px !important;
-  font-weight: 750 !important; /* Делаем ЖИРНЫМ */
-  line-height: 24px !important; /* Ровно по высоте карточки */
+  font-weight: var(--weight-extrabold) !important;
+  line-height: var(--schedule-window-height) !important;
   text-overflow: ellipsis;
   white-space: nowrap;
   margin: 0 !important;
 }
 
-/* Свободное время: Светлый цвет (красивый серебристо-серый) */
 .lesson-card--window .lesson-card__window-label {
-  color: #8793a5 !important;
+  color: var(--color-text-muted) !important;
 }
 
-/* Методический час: Темный цвет (как обычный урок) */
 .lesson-card--methodological .lesson-card__window-label {
-  color: var(--lesson-content-color) !important;
+  color: var(--color-text) !important;
 }
 
-/* ==========================================================================
-   9. ОПТИМИЗАЦИЯ ПОД БОЛЬШИЕ ЭКРАНЫ (Планшеты)
-   ========================================================================== */
-@media (min-width: 431px) {
-  :root { --lesson-time-width: 76px; }
-  .lesson-card__start { font-size: 16px; }
-  .lesson-card__subject, .lesson-entry__subject { font-size: 18px; }
+/*
+  ==========================================================================
+    TEACHER
+    ==========================================================================
+*/
+
+.lesson-teacher-content {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--schedule-compact-gap);
+  min-width: 0;
 }
 
-/* ==========================================================================
-   10. РЕЖИМ УЧИТЕЛЯ (Специфичная сетка вывода)
-   ========================================================================== */
-.lesson-teacher-content { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 5px; min-width: 0; }
-.lesson-teacher-content__main { min-width: 0; }
-.lesson-teacher-content__classes { min-width: 0; color: var(--lesson-content-color); font-size: 15px; font-weight: 750; line-height: 1.1; overflow-wrap: anywhere; }
-.lesson-teacher-content__class { color: var(--lesson-content-color); }
-.lesson-teacher-content__group { color: #728096; font-size: 14px; font-weight: 600; line-height: 1.1; }
-.lesson-teacher-content__subject { min-width: 0; margin-top: 1px; overflow: hidden; color: var(--lesson-muted); font-size: 12px; font-style: italic; line-height: 1.08; text-overflow: ellipsis; white-space: nowrap; }
-.lesson-teacher-content__room { align-self: center; justify-self: end; }
-
-
-/* Эффект нажатия для мобильных устройств */
-.lesson-card {
-  transition: transform 0.1s ease, background-color 0.1s ease;
+.lesson-teacher-content__main {
+  min-width: 0;
 }
-@media (hover: none) and (pointer: coarse) {
-  .lesson-card:active {
-    transform: scale(0.98);
-    background-color: #f8fafc;
+
+.lesson-teacher-content__classes {
+  min-width: 0;
+  color: var(--color-text);
+  font-size: var(--font-size-body-lg);
+  font-weight: var(--weight-extrabold);
+  line-height: 1.1;
+  overflow-wrap: anywhere;
+}
+
+.lesson-teacher-content__class {
+  color: var(--color-text);
+}
+
+.lesson-teacher-content__group {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-body);
+  font-weight: var(--weight-medium);
+  line-height: 1.1;
+}
+
+.lesson-teacher-content__subject {
+  min-width: 0;
+  margin-top: 1px;
+  overflow: hidden;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+  font-style: italic;
+  line-height: 1.08;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lesson-teacher-content__room {
+  align-self: center;
+  justify-self: end;
+}
+
+/*
+  ==========================================================================
+    SKELETON
+    ==========================================================================
+*/
+
+/*
+ * Skeleton loading is delayed so fast HTMX responses do not flash a placeholder.
+ * The schedule itself is hidden while the request is pending.
+ */
+@keyframes skeleton-pulse {
+  0% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
+  100% {
+    opacity: 1;
   }
 }
 
-/* ==========================================================================
-   11. SKELETON LOADING (Индикатор загрузки)
-   Анимация пульсации и структура каркасных карточек
-   ========================================================================== */
-
-/* Анимация мягкого мерцания (пульсации) */
-@keyframes skeleton-pulse {
-  0% { opacity: 1; }
-  50% { opacity: 0.4; }
-  100% { opacity: 1; }
-}
-
-/* Базовый класс для заливки блоков */
 .skel-block {
-  background-color: #e2e8f0; /* Светло-серый цвет */
-  border-radius: 6px;
-  animation: skeleton-pulse 1.5s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  background-color: var(--color-border-subtle);
+  border-radius: var(--radius-sm);
+  animation: skeleton-pulse var(--duration-pulse) var(--ease-skeleton) infinite;
 }
 
-/* 
- * ЛОГИКА HTMX (С УМНОЙ ЗАДЕРЖКОЙ)
- */
-.htmx-indicator { 
-  display: none !important; 
+/* HTMX behavior override for schedule skeletons */
+
+.htmx-indicator {
+  display: none !important;
 }
 
-/* Показываем скелетон, но делаем его прозрачным первые 150мс. 
-   Если сервер ответит мгновенно — пользователь даже не увидит мигания скелетона! */
 .htmx-request .htmx-indicator,
-.htmx-request.htmx-indicator { 
-  display: flex !important; 
+.htmx-request.htmx-indicator {
+  display: flex !important;
   opacity: 0;
-  animation: show-skeleton-delay 0s 0.5s forwards; 
+  animation: show-skeleton-delay 0s var(--duration-skeleton-delay) forwards;
 }
 
 @keyframes show-skeleton-delay {
-  to { opacity: 1; }
+  to {
+    opacity: 1;
+  }
 }
 
-/* Контейнер списка скелетонов */
 .skeleton-list {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--space-5);
   width: 100%;
 }
 
-/* 
- * МГНОВЕННО ПРЯЧЕМ СТАРОЕ РАСПИСАНИЕ ПРИ ЗАГРУЗКЕ
- * Это избавляет от наслоения и "лагов" при листании
- */
 .htmx-request .htmx-request-hide,
 .htmx-request.htmx-request-hide {
   display: none !important;
 }
 
-/* Каркас карточки (полностью копирует сетку .lesson-card) */
 .skel-card {
   display: grid;
-  grid-template-columns: var(--lesson-time-width) minmax(0, 1fr);
-  min-height: 70px;
+  grid-template-columns: var(--schedule-time-width) minmax(0, 1fr);
+  min-height: var(--schedule-skeleton-card-height);
   margin: 0;
-  border: 1px solid var(--lesson-card-border);
-  border-left: 5px solid #cbd5e1; /* Нейтральный серый левый бордер */
-  border-radius: 14px;
-  background: var(--lesson-card-bg);
-  box-shadow: 0 2px 10px rgb(15 23 42 / 0.04);
+  border: var(--border-width-default) solid var(--color-border-subtle);
+  border-left: var(--schedule-card-accent-width) solid var(--color-border);
+  border-radius: var(--schedule-card-radius);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-sm);
 }
 
-/* Колонка времени (Левая) */
 .skel-time-col {
-  padding: 8px 10px;
-  border-right: 1px solid #edf0f4;
+  padding: var(--space-4) var(--space-5);
+  border-right: var(--border-width-default) solid var(--color-border-subtle);
   display: flex;
   flex-direction: column;
   align-items: flex-start;
   justify-content: center;
-  gap: 6px;
+  gap: var(--space-3);
 }
 
-/* Размеры заглушек времени */
-.skel-time { width: 36px; height: 12px; }
-.skel-num { width: 24px; height: 8px; margin-top: 4px; }
+.skel-time {
+  width: 36px;
+  height: 12px;
+}
 
-/* Колонка контента (Правая) */
+.skel-num {
+  width: 24px;
+  height: 8px;
+  margin-top: var(--space-2);
+}
+
 .skel-body-col {
-  padding: 8px 12px 8px 10px;
+  padding: var(--space-4) var(--space-6) var(--space-4) var(--space-5);
   display: flex;
   flex-direction: column;
   justify-content: center;
-  gap: 8px;
+  gap: var(--space-4);
 }
 
-/* Строка с заглушками предмета и кабинета */
 .skel-row-main {
   display: flex;
   justify-content: space-between;
   align-items: center;
 }
 
-/* Размеры заглушек контента */
-.skel-subject { width: 60%; height: 16px; }
-.skel-room { width: 40px; height: 18px; border-radius: 8px; }
-.skel-teacher { width: 40%; height: 10px; }
+.skel-subject {
+  width: 60%;
+  height: 16px;
+}
 
+.skel-room {
+  width: 40px;
+  height: 18px;
+  border-radius: var(--radius-md);
+}
 
-/* Прячем текст до того, как JS вычислит размер, чтобы избежать "моргания" */
+.skel-teacher {
+  width: 40%;
+  height: 10px;
+}
+
 [data-autofit="subject"]:not(.is-fitted) {
   opacity: 0;
 }
 
-/* Плавное проявление после обработки скриптом */
 [data-autofit="subject"].is-fitted {
   opacity: 1;
-  transition: opacity 0.15s ease-in;
+  transition: opacity var(--duration-autofit) var(--ease-in);
 }
 
-/* ==========================================================================
-   Inline change details
-   ==========================================================================
-   Only WebLesson.has_inline_changes cards receive:
-   - .lesson-card-wrapper--interactive
-   - .lesson-card-toggle
-   - .lesson-change-details
+/*
+  ==========================================================================
+    CHANGE DETAILS
+    ==========================================================================
+*/
 
-   Mapper contract:
-   LessonStatus.CHANGED + actual WebChange details
-   → interactive card.
-
-   Cancelled and added cards do not receive these classes.
-   ========================================================================== */
-
-
-/* One interaction unit: card plus optional disclosure panel. */
 .lesson-card-wrapper {
   min-width: 0;
 }
 
-
-/*
- * Relative positioning boundary only for visual card and transparent button.
- *
- * The details panel is OUTSIDE this shell, therefore the overlay button
- * never blocks text selection or close controls inside details.
- */
 .lesson-card-shell {
   position: relative;
   min-width: 0;
 }
 
-
-/*
- * The actual LessonCard remains visually unchanged.
- * The overlay button is an accessibility and tap-target layer above it.
- */
 .lesson-card-wrapper--interactive .lesson-card {
   cursor: pointer;
 }
 
-
-/*
- * Reserve a narrow space on the right for the chevron.
- *
- * Changed lessons are comparatively rare. A small reduction in available
- * right-side space is preferable to overlaying the room badge or lesson text.
- */
 .lesson-card-wrapper--interactive .lesson-card__body {
-  padding-right: 8px;
+  padding-right: var(--space-4);
 }
 
-
 /*
- * Transparent full-card button.
-
- * It is real button semantics:
- * - keyboard Enter / Space work automatically;
- * - VoiceOver/TalkBack announce the aria-label;
- * - touch target covers all visual card space.
+ * Full-card change disclosure uses a real button for keyboard and screen-reader
+ * access. The visual card itself remains the same component.
  */
 .lesson-card-toggle {
   position: absolute;
-  z-index: 2;
+  z-index: var(--z-schedule-card-toggle);
   inset: 0;
   display: block;
   width: 100%;
   min-width: 0;
-  min-height: 44px;
+  min-height: var(--touch-target);
   margin: 0;
   padding: 0;
   border: 0;
-  border-radius: 14px;
+  border-radius: var(--schedule-card-radius);
   background: transparent;
   color: inherit;
   cursor: pointer;
 }
 
-
-/*
- * Focus is intentionally visible only for keyboard navigation.
- * Mobile tap does not leave a persistent outline.
- */
 .lesson-card-toggle:focus {
   outline: none;
 }
 
 .lesson-card-toggle:focus-visible {
-  outline: 3px solid rgb(37 99 235 / 0.58);
+  outline: var(--focus-outline-strong);
   outline-offset: 3px;
 }
 
-
-/*
- * Subtle disclosure affordance.
-
- * Bottom-right placement avoids the main teacher/subject line.
- * Right padding above reserves its visual territory.
- */
-.lesson-card-toggle__chevron {
+.lesson-card-toggle__icon {
   position: absolute;
-  right: 8px;
-  bottom: 5px;
-  width: 7px;
-  height: 7px;
-  border-right: 2px solid var(--schedule-changed);
-  border-bottom: 2px solid var(--schedule-changed);
-  opacity: 0.85;
+  right: 18px;
+  bottom: -4px;
   pointer-events: none;
-  transform: rotate(45deg);
-  transition: transform 0.16s ease;
+  transition: transform var(--duration-slow) var(--ease-standard);
+  display: inline-flex;
 }
 
-
-/*
- * Open state is applied by schedule.js on the wrapper.
- * Chevron points up after disclosure opens.
- */
-.lesson-card-wrapper--open .lesson-card-toggle__chevron {
-  transform: translateY(3px) rotate(225deg);
+.lesson-card-wrapper--open .lesson-card-toggle__icon {
+  transform: rotate(180deg);
 }
 
-
-/*
- * Open card gets a subtle visual connection to its detail panel.
- * Orange state remains dominant; no extra status label is introduced.
- */
 .lesson-card-wrapper--open .lesson-card {
-  box-shadow:
-    0 0 0 2px rgb(217 119 6 / 0.16),
-    0 2px 10px rgb(15 23 42 / 0.05);
+  box-shadow: var(--shadow-focus-changed), var(--shadow-md);
 }
 
+.lesson-card-wrapper--interactive:active .lesson-card {
+  filter: brightness(0.985);
+}
 
 /*
- * Touch feedback.
- *
- * Uses the overlay button rather than `.lesson-card:active`, because
- * card itself is a visual div and the real interaction element is button.
+ * Change details stay outside the visual card shell so the overlay button never
+ * blocks text selection or the explicit close control.
  */
-
-
-  .lesson-card-wrapper--interactive:active .lesson-card {
-    filter: brightness(0.985);
-  }
-
-
-
-/* --------------------------------------------------------------------------
-   Details panel
-   -------------------------------------------------------------------------- */
-
 .lesson-change-details {
   margin: 4px 4px 0;
-  padding: 8px 9px;
-  border: 1px solid #f3dfc1;
-  border-radius: 10px;
-  background: #fffdf8;
-  color: var(--lesson-content-color);
+  padding: var(--space-4) 9px;
+  border: var(--border-width-default) solid var(--color-changed-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-changed-bg);
+  color: var(--color-text);
 }
 
-
-/*
- * Defensive rule: browser already applies [hidden] { display: none; },
- * but this protects the component from a reset stylesheet overriding it.
- */
 .lesson-change-details[hidden] {
   display: none;
 }
-
 
 .lesson-change-details__header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: var(--space-4);
   min-width: 0;
-  margin-bottom: 6px;
+  margin-bottom: var(--space-3);
 }
 
-
 .lesson-change-details__title {
-  color: var(--schedule-changed);
-  font-size: 12px;
-  font-weight: 800;
+  color: var(--color-changed);
+  font-size: var(--font-size-sm);
+  font-weight: var(--weight-black);
   line-height: 1.1;
 }
 
-
-/*
- * Explicit close control for accessibility and discoverability.
- *
- * It remains compact because repeat tap on the card, outside tap, and Escape
- * will also close the panel after schedule.js is added.
- */
 .lesson-change-details__close {
   display: inline-flex;
   flex: 0 0 auto;
@@ -621,179 +751,147 @@
   border: 0;
   border-radius: 7px;
   background: transparent;
-  color: #778395;
+  color: var(--color-text-muted);
   cursor: pointer;
   font-size: 20px;
   line-height: 1;
 }
 
-
 .lesson-change-details__close:focus {
   outline: none;
 }
 
-
 .lesson-change-details__close:focus-visible {
-  outline: 2px solid rgb(37 99 235 / 0.58);
+  outline: var(--focus-outline-strong);
   outline-offset: 2px;
 }
 
-
 @media (hover: hover) {
   .lesson-change-details__close:hover {
-    background: #f8ead9;
-    color: var(--schedule-changed);
+    background: var(--color-changed-bg-hover);
+    color: var(--color-changed);
   }
 }
-
 
 .lesson-change-details__rows {
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: var(--schedule-compact-gap);
 }
 
-
-/*
- * Field label stays compact on the left.
- * Values occupy remaining space and align to the right.
- */
 .lesson-change-row {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: 8px;
+  gap: var(--space-4);
   min-width: 0;
-  color: var(--lesson-muted);
-  font-size: 12px;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
   line-height: 1.2;
 }
 
-
 .lesson-change-row__field {
   flex: 0 0 auto;
-  color: #536174;
-  font-weight: 750;
+  color: var(--color-text-secondary);
+  font-weight: var(--weight-extrabold);
 }
-
 
 .lesson-change-row__values {
   display: flex;
   justify-content: flex-end;
-  gap: 4px;
+  gap: var(--space-2);
   min-width: 0;
   text-align: right;
 }
 
-
-.lesson-change-row__old,
-.lesson-change-row__new {
+.lesson-change-row__old, .lesson-change-row__new {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-
 .lesson-change-row__old {
-  color: #8b95a3;
+  color: var(--color-text-muted);
   text-decoration-line: line-through;
-  text-decoration-color: #b7c0cb;
-  text-decoration-thickness: 1px;
+  text-decoration-color: var(--color-border-subtle);
+  text-decoration-thickness: var(--border-width-default);
 }
-
 
 .lesson-change-row__arrow {
   flex: 0 0 auto;
-  color: #a5afbd;
-  font-weight: 800;
+  color: var(--color-text-muted);
+  font-weight: var(--weight-black);
 }
-
 
 .lesson-change-row__new {
-  color: var(--lesson-content-color);
-  font-weight: 750;
+  color: var(--color-text);
+  font-weight: var(--weight-extrabold);
 }
 
-/* ==========================================================================
-   12. НАВИГАЦИЯ ПО ДНЯМ РАСПИСАНИЯ
-   ========================================================================== */
+/*
+  ==========================================================================
+    DAY NAVIGATION (SCHEDULE OVERRIDES)
+    ==========================================================================
+*/
 
-.day-header {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  margin-bottom: 12px;
-}
-
-
+/*
+ * Canonical day-navigation geometry. schedule.js owns navigation state and swipe
+ * behavior; this file only defines visual geometry and feedback.
+ */
 .day-navigation {
   display: grid;
-  grid-template-columns: 44px minmax(0, 1fr) 44px;
+  grid-template-columns: var(--touch-target) minmax(0, 1fr) var(--touch-target);
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
   min-width: 0;
 }
-
 
 .day-navigation__arrow {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 44px;
-  min-width: 44px;
-  min-height: 44px;
+  width: var(--touch-target);
+  min-width: var(--touch-target);
+  min-height: var(--touch-target);
   padding: 0;
-  border: 1px solid #dce4ee;
-  border-radius: 12px;
-  background: var(--card);
-  color: #35506d;
+  border: var(--border-width-default) solid var(--color-border-subtle);
+  border-radius: var(--radius-xl);
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
   cursor: pointer;
-  font-size: 24px;
-  font-weight: 650;
+  font-size: var(--font-size-schedule-navigation);
+  font-weight: var(--weight-semibold);
   line-height: 1;
   text-decoration: none;
-  transition:
-    border-color 0.16s ease,
-    background-color 0.16s ease,
-    color 0.16s ease,
-    transform 0.1s ease;
+  transition: border-color var(--duration-normal) var(--ease-standard), background-color var(--duration-normal) var(--ease-standard), color var(--duration-normal) var(--ease-standard), transform var(--duration-fast) var(--ease-standard);
 }
-
 
 .day-navigation__arrow:focus {
   outline: none;
 }
 
-
 .day-navigation__arrow:focus-visible {
   position: relative;
   z-index: 1;
-  outline: 3px solid rgb(37 99 235 / 0.52);
+  outline: 3px solid var(--color-focus);
   outline-offset: 2px;
 }
-
 
 .day-navigation__heading {
   min-width: 0;
   text-align: center;
 }
 
-
 .day-navigation__heading .day-title {
   margin: 0;
   overflow-wrap: anywhere;
-  color: var(--lesson-content-color);
+  color: var(--color-text);
   font-size: clamp(17px, 4.7vw, 21px);
-  font-weight: 800;
+  font-weight: var(--weight-black);
   line-height: 1.15;
 }
 
-
-/*
- * Контейнер существует на любой выбранной дате.
- * Поэтому переход между «• Сегодня» и кнопкой не двигает карточки.
- */
 .day-navigation__today-slot {
   display: flex;
   align-items: center;
@@ -802,94 +900,74 @@
   margin-top: 5px;
 }
 
-
 .day-navigation__today-status {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: var(--schedule-compact-gap);
   min-height: 32px;
-  color: var(--accent);
-  font-size: 13px;
-  font-weight: 750;
+  color: var(--color-primary);
+  font-size: var(--font-size-md);
+  font-weight: var(--weight-extrabold);
   line-height: 1;
 }
-
 
 .day-navigation__today-status span[aria-hidden="true"] {
-  font-size: 16px;
+  font-size: var(--font-size-lg);
   line-height: 1;
 }
-
 
 .day-navigation__today-action {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 30px;
-  padding: 6px 12px;
-  border: 1px solid #dce4ee;
+  min-height: var(--touch-target-sm);
+  padding: var(--space-3) var(--space-6);
+  border: var(--border-width-default) solid var(--color-border-subtle);
   border-radius: 9px;
-  background: #f8fafc;
-  color: #35506d;
+  background: var(--color-surface-hover);
+  color: var(--color-text-secondary);
   cursor: pointer;
-  font-size: 13px;
-  font-weight: 750;
+  font-size: var(--font-size-md);
+  font-weight: var(--weight-extrabold);
   line-height: 1;
   text-decoration: none;
-  transition:
-    border-color 0.16s ease,
-    background-color 0.16s ease,
-    color 0.16s ease,
-    transform 0.1s ease;
+  transition: border-color var(--duration-normal) var(--ease-standard), background-color var(--duration-normal) var(--ease-standard), color var(--duration-normal) var(--ease-standard), transform var(--duration-fast) var(--ease-standard);
 }
-
 
 .day-navigation__today-action:focus {
   outline: none;
 }
 
-
 .day-navigation__today-action:focus-visible {
-  outline: 3px solid rgb(37 99 235 / 0.52);
+  outline: 3px solid var(--color-focus);
   outline-offset: 2px;
 }
 
-
-.day-header .stale-warning {
-  margin-top: 8px;
-}
-
-
 @media (hover: hover) {
   .day-navigation__arrow:hover {
-    border-color: #b9c8da;
-    background: #f3f7fb;
-    color: var(--accent);
+    border-color: var(--color-border-hover);
+    background: var(--color-surface-hover);
+    color: var(--color-primary);
   }
-
   .day-navigation__today-action:hover {
-    border-color: #b9c8da;
-    background: #eef4fa;
-    color: var(--accent);
+    border-color: var(--color-border-hover);
+    background: var(--color-surface-hover);
+    color: var(--color-primary);
   }
 }
 
-
 @media (hover: none) and (pointer: coarse) {
-  .day-navigation__arrow:active,
-  .day-navigation__today-action:active {
-    background: #e8f0f8;
+  .day-navigation__arrow:active, .day-navigation__today-action:active {
+    background: var(--color-surface-hover);
     transform: scale(0.96);
   }
 }
 
-
 @media (min-width: 431px) {
   .day-navigation {
     grid-template-columns: 46px minmax(0, 1fr) 46px;
-    gap: 8px;
+    gap: var(--space-4);
   }
-
   .day-navigation__arrow {
     width: 46px;
     min-width: 46px;
@@ -897,166 +975,103 @@
   }
 }
 
-
 @media (prefers-reduced-motion: reduce) {
-  .day-navigation__arrow,
-  .day-navigation__today-action {
+  .day-navigation__arrow, .day-navigation__today-action {
     transition: none;
   }
 }
 
-/* ==========================================================================
-   13. УПЛОТНЕНИЕ ДНЕВНОЙ НАВИГАЦИИ
-   ========================================================================== */
-
 /*
- * Уменьшаем расстояние между выбором ребёнка и датой.
- * На экране дня чипы являются контекстом, а не отдельной секцией.
- */
+  ==========================================================================
+    DAY COMPACTNESS
+    ==========================================================================
+*/
+
 .day-schedule .student-switch {
-  margin-bottom: 10px;
+  margin-bottom: var(--space-5);
 }
 
-
-/*
- * Header больше не должен создавать крупный пустой промежуток
- * между статусом «Сегодня» и первой карточкой урока.
- */
 .day-schedule .day-header {
-  margin-bottom: 10px;
+  margin-bottom: var(--space-5);
 }
 
-
-/*
- * У стрелок сохраняется доступная touch-area 44 × 44 px,
- * но сетка становится компактнее за счёт меньшего промежутка.
- */
 .day-schedule .day-navigation {
-  grid-template-columns: 44px minmax(0, 1fr) 44px;
-  gap: 5px;
+  grid-template-columns: var(--touch-target) minmax(0, 1fr) var(--touch-target);
+  gap: var(--schedule-compact-gap);
 }
 
-
-/*
- * Визуально стрелка становится легче и аккуратнее.
- * Размер интерактивной области остаётся 44 × 44 px.
- */
 .day-schedule .day-navigation__arrow {
-  width: 44px;
-  min-width: 44px;
-  min-height: 44px;
-  border-radius: 11px;
-  font-size: 22px;
+  width: var(--touch-target);
+  min-width: var(--touch-target);
+  min-height: var(--touch-target);
+  border-radius: var(--schedule-arrow-radius);
+  font-size: var(--font-size-schedule-arrow);
 }
 
-
-/*
- * Дата поднимается визуально: меньше line-height, меньше размер,
- * нет лишней высоты внутри центральной колонки.
- */
 .day-schedule .day-navigation__heading .day-title {
   font-size: clamp(18px, 4.8vw, 20px);
   line-height: 1.05;
   margin-bottom: 5px;
 }
 
-
-/*
- * Постоянный слот остаётся всегда — это исключает прыжок уроков,
- * но его высота уменьшается с 32 px до 28 px.
- */
 .day-schedule .day-navigation__today-slot {
   min-height: 25px;
-  margin-top: -0;
+  margin-top: 0;
 }
 
-
-/*
- * Текущий день — только спокойный статус, а не крупный элемент UI.
- */
 .day-schedule .day-navigation__today-status {
   min-height: 28px;
-  gap: 4px;
-  font-size: 12px;
+  gap: var(--space-2);
+  font-size: var(--font-size-sm);
   line-height: 1;
 }
 
-
 .day-schedule .day-navigation__today-status span[aria-hidden="true"] {
-  font-size: 14px;
+  font-size: var(--font-size-body);
 }
 
-
-/*
- * Другой день — компактное действие.
- * Визуальная высота меньше, но элемент остаётся достаточно заметным
- * и находится строго в том же месте, что и статус текущего дня.
- */
 .day-schedule .day-navigation__today-action {
   min-height: 25px;
-  padding: 4px 10px;
-  border-radius: 8px;
-  font-size: 12px;
+  padding: var(--space-2) var(--space-5);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
 }
 
-
-/*
- * При ширине от 431 px не расширяем навигацию обратно до 46 px:
- * для дневного расписания компактность важнее.
- */
 @media (min-width: 431px) {
   .day-schedule .day-navigation {
-    grid-template-columns: 44px minmax(0, 1fr) 44px;
-    gap: 5px;
+    grid-template-columns: var(--touch-target) minmax(0, 1fr) var(--touch-target);
+    gap: var(--schedule-compact-gap);
   }
-
   .day-schedule .day-navigation__arrow {
-    width: 44px;
-    min-width: 44px;
-    min-height: 44px;
+    width: var(--touch-target);
+    min-width: var(--touch-target);
+    min-height: var(--touch-target);
   }
 }
 
-/* ==========================================================================
-   15. SWIPE-ОБЛАСТЬ ДНЕВНОГО РАСПИСАНИЯ
-   ========================================================================== */
+/*
+  ==========================================================================
+    SWIPE
+    ==========================================================================
+*/
 
 /*
- * Gesture viewport — весь <main>, но только на day schedule screens.
- *
- * :has(.day-schedule) динамически перестаёт совпадать после HTMX swap,
- * если текущий экран когда-либо будет заменён не-дневным содержимым.
- *
- * pan-y сохраняет browser-native vertical scrolling. Мы намеренно
- * не используем touch-action: none.
+ * The entire day work area is the gesture surface. Header and bottom navigation
+ * stay outside it; native vertical scrolling remains enabled.
  */
 .app-content:has(.day-schedule) {
   touch-action: pan-y;
 }
-/* ==========================================================================
-   16. INTERACTIVE DAY SWIPE STAGE
-   ========================================================================== */
 
-/*
- * main становится flex-container только на full day screen.
- *
- * Это позволяет stage занимать свободную рабочую область main:
- * - при коротком расписании — до нижней navigation;
- * - при длинном расписании — по высоте real content.
- *
- * .day-schedule искусственно не растягивается только ради gesture area.
- */
 .app-content:has([data-day-swipe-stage]) {
   display: flex;
   flex-direction: column;
+  padding-top: 5px;
 }
 
-
 /*
- * Stable visual viewport interactive day navigation.
- *
- * HTMX заменяет #day-content, но stage остаётся на месте.
- * Header и bottom navigation находятся вне stage и не двигаются.
+ * Stable swipe stage. HTMX replaces the canonical current panel while the stage
+ * itself stays mounted so the gesture does not move the application shell.
  */
 .day-swipe-stage {
   position: relative;
@@ -1066,72 +1081,44 @@
   isolation: isolate;
 }
 
-
-/*
- * Current panel.
- *
- * transform управляется только schedule.js через requestAnimationFrame.
- * transition включается только после pointerup/pointercancel.
- */
 .day-swipe-stage > .day-schedule {
   position: relative;
-  z-index: 1;
+  z-index: var(--z-schedule-stage);
   min-width: 0;
-  background: var(--bg);
+  background: var(--color-bg);
   will-change: transform;
 }
 
-
 /*
- * Neighbour panel всегда существует в DOM, но до horizontal drag
- * находится за левой или правой границей stage.
+ * The neighbor panel is visual-only and pointer-events:none. It must never become
+ * a second canonical source of schedule state.
  */
 .day-swipe-neighbor {
   position: absolute;
-  z-index: 2;
+  z-index: var(--z-schedule-neighbor);
   inset: 0;
   display: flex;
   flex-direction: column;
   min-width: 0;
   padding: 0;
   overflow: hidden;
-  background: var(--bg);
+  background: var(--color-bg);
   opacity: 0;
   pointer-events: none;
   will-change: transform, opacity;
 }
 
-
-/*
- * Neighbour становится visible только после horizontal intent.
- * До этого пользователь не видит hidden skeleton.
- */
 .day-swipe-stage.is-day-swipe-active .day-swipe-neighbor {
   opacity: 1;
 }
 
-
-/*
- * Во время direct manipulation transition отсутствует:
- * content должен следовать за пальцем 1:1.
- */
-.day-swipe-stage.is-day-swipe-dragging > .day-schedule,
-.day-swipe-stage.is-day-swipe-dragging .day-swipe-neighbor {
+.day-swipe-stage.is-day-swipe-dragging > .day-schedule, .day-swipe-stage.is-day-swipe-dragging .day-swipe-neighbor {
   transition: none;
 }
 
-
-/*
- * После release:
- * - cancel возвращает current panel на место;
- * - commit доводит current/neighbor panel до соседних позиций.
- * - вемя задержки появления страницы после свайпа
- */
-.day-swipe-stage.is-day-swipe-settling > .day-schedule,
-.day-swipe-stage.is-day-swipe-settling .day-swipe-neighbor {
-  transition: transform 100ms ease-out, opacity 80ms ease-out;
+.day-swipe-stage.is-day-swipe-settling > .day-schedule, .day-swipe-stage.is-day-swipe-settling .day-swipe-neighbor {
+  transition: transform var(--duration-fast) var(--ease-out), opacity var(--duration-very-fast) var(--ease-out);
 }
-
 
 .day-swipe-neighbor__header {
   display: flex;
@@ -1143,123 +1130,67 @@
   text-align: center;
 }
 
-
 .day-swipe-neighbor__title {
   min-width: 0;
   overflow: hidden;
-  color: var(--lesson-content-color);
+  color: var(--color-text);
   font-size: clamp(18px, 4.8vw, 20px);
-  font-weight: 800;
+  font-weight: var(--weight-black);
   line-height: 1.05;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-
 .day-swipe-neighbor__status {
-  margin-top: 4px;
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 650;
+  margin-top: var(--space-2);
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+  font-weight: var(--weight-semibold);
   line-height: 1;
 }
 
-
-.day-swipe-neighbor__skeleton {
-  display: flex;
-  flex-direction: column;
-  gap: 7px;
-  padding: 0;
-}
-
-
-.day-swipe-neighbor__skeleton .skel-card {
-  min-height: 70px;
-}
-
-
 @media (prefers-reduced-motion: reduce) {
-  .day-swipe-stage.is-day-swipe-settling > .day-schedule,
-  .day-swipe-stage.is-day-swipe-settling .day-swipe-neighbor {
+  .day-swipe-stage.is-day-swipe-settling > .day-schedule, .day-swipe-stage.is-day-swipe-settling .day-swipe-neighbor {
     transition: none;
   }
 }
 
-/* ==========================================================================
-   17. SKELETON-ONLY NEIGHBOUR CHROME
-   ========================================================================== */
-
 /*
- * Neighbour panel повторяет vertical geometry canonical day:
- *
- * current:
- * child selector
- * date navigation
- * Today slot
- *
- * neighbour:
- * visual child selector copy
- * adjacent date
- * «Загрузка расписания»
- *
- * Поэтому при HTMX swap lesson list не прыгает вверх/вниз.
- */
+  ==========================================================================
+    NEIGHBOR CHROME
+    ==========================================================================
+*/
+
 .day-swipe-neighbor__chrome {
   min-width: 0;
 }
 
-
-/*
- * Визуальная child panel строится JavaScript cloneNode(true).
- * Она не интерактивна: родитель .day-swipe-neighbor уже имеет
- * pointer-events: none.
- */
 .day-swipe-neighbor__students:empty {
   min-height: 0;
 }
 
-
-/*
- * Static span arrows используют exact same visual geometry, что
- * canonical a.day-navigation__arrow.
- */
 .day-swipe-neighbor .day-navigation__arrow {
   cursor: default;
 }
 
-
-/*
- * Skeleton не виден сразу при drag.
- *
- * Он становится visible только после delayed HTMX loading state.
- * Это устраняет короткое мелькание skeleton на быстрых ответах.
- */
 .day-swipe-neighbor__skeleton {
   display: flex;
   flex-direction: column;
-  gap: 7px;
+  gap: var(--schedule-list-gap);
   padding: 0;
   visibility: hidden;
   opacity: 0;
-  transition: opacity 120ms ease-out;
+  transition: opacity var(--duration-skeleton-fade) var(--ease-out);
 }
 
-
-.day-swipe-stage.is-day-swipe-slow-loading
-.day-swipe-neighbor__skeleton {
+.day-swipe-stage.is-day-swipe-slow-loading .day-swipe-neighbor__skeleton {
   visibility: visible;
   opacity: 1;
 }
 
-
-/*
- * Пока skeleton hidden, neighbour остаётся clean blank area ниже
- * date header. Это intentional fast-navigation state.
- */
 .day-swipe-neighbor__skeleton .skel-card {
-  min-height: 70px;
+  min-height: var(--schedule-skeleton-card-height);
 }
-
 
 @media (prefers-reduced-motion: reduce) {
   .day-swipe-neighbor__skeleton {
@@ -1267,59 +1198,22 @@
   }
 }
 
-/*
- * Сохраняет exact grid column geometry day navigation,
- * но не показывает вторую пару декоративных arrows.
- */
 .day-swipe-neighbor__arrow-spacer {
   display: block;
-  width: 44px;
-  min-width: 44px;
-  min-height: 44px;
+  width: var(--touch-target);
+  min-width: var(--touch-target);
+  min-height: var(--touch-target);
 }
-
 
 @media (min-width: 431px) {
   .day-swipe-neighbor__arrow-spacer {
-    width: 44px;
-    min-width: 44px;
-    min-height: 44px;
+    width: var(--touch-target);
+    min-width: var(--touch-target);
+    min-height: var(--touch-target);
   }
 }
 
-/* ==========================================================================
-   19. COMPACT MULTI-CHILD SCHEDULE SELECTOR
-   ========================================================================== */
-
-/*
- * Day screens начинают content ближе к fixed app header.
- *
- * Не влияет на другие разделы: Семья, Допы, Школа, формы.
- * Neighbour panel находится внутри same day swipe stage и сохраняет
- * identical vertical geometry.
- */
-.app-content:has([data-day-swipe-stage]) {
-  padding-top: 5px;
-}
-
-
-/*
- * Chips показываются только при students.length > 1.
- *
- * Сохраняем wrap behavior: это надёжнее horizontal carousel и не
- * конфликтует с interactive day swipe.
- */
-.day-schedule .student-switch {
-  gap: 10px;
-  margin-bottom: 8px;
-}
-
-
-/*
- * Neighbour chrome использует .day-schedule context, поэтому same
- * spacing применяется к visual child clone автоматически.
- */
 .day-swipe-neighbor__chrome.day-schedule .student-switch {
-  gap: 10px;
-  margin-bottom: 8px;
+  gap: var(--space-5);
+  margin-bottom: var(--space-4);
 }

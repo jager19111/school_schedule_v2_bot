@@ -9,7 +9,7 @@
 .extra-page {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: var(--space-7);
 }
 
 .extra-day-group {
@@ -19,13 +19,12 @@
 }
 
 .extra-day-group + .extra-day-group {
-  margin-top: 2px;
+  margin-top: var(--space-1);
 }
 
 .extra-day-group .search-group-title {
   margin: 0;
 }
-
 
 /* --------------------------------------------------------------------------
    Extra class management wrapper
@@ -34,10 +33,9 @@
 .extra-class-card {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-2);
   min-width: 0;
 }
-
 
 /*
  * LessonCard is intentionally not restyled here.
@@ -48,7 +46,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: var(--space-4);
   min-width: 0;
   padding: 1px 5px 0;
 }
@@ -56,10 +54,10 @@
 .extra-class-card__reminder {
   min-width: 0;
   overflow: hidden;
-  color: var(--lesson-muted, #7b8798);
-  font-size: 12px;
-  font-weight: 650;
-  line-height: 1.1;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+  font-weight: var(--weight-semibold);
+  line-height: var(--line-height-tight);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -71,7 +69,6 @@
   gap: 5px;
 }
 
-
 /*
  * Existing .nav-btn.small owns baseline button behavior.
  * These rules only make action buttons visually compact and consistent
@@ -80,25 +77,24 @@
 .extra-class-card__actions .nav-btn.small {
   min-width: 34px;
   min-height: 34px;
-  padding: 5px 8px;
+  padding: 5px var(--space-4);
   border-radius: 9px;
 }
 
 @media (hover: hover) {
   .extra-class-card__actions .nav-btn.small:hover {
-    background: #f8fafc;
+    background: var(--color-surface-hover);
   }
 
   .extra-class-card__actions .nav-btn.small.danger:hover {
-    background: #fef2f2;
+    background: var(--color-danger-bg);
   }
 }
 
 .extra-class-card__actions .nav-btn.small:focus-visible {
-  outline: 2px solid rgb(37 99 235 / 0.58);
+  outline: var(--focus-outline-strong);
   outline-offset: 2px;
 }
-
 
 /* --------------------------------------------------------------------------
    Extra class form preview
@@ -113,9 +109,9 @@
 
 .extra-class-preview__title {
   margin: 0;
-  color: var(--lesson-muted, #7b8798);
-  font-size: 13px;
-  font-weight: 750;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-md);
+  font-weight: var(--weight-extrabold);
   line-height: 1.2;
 }
 
@@ -123,6 +119,7 @@
    Extra-list floating action button
    -------------------------------------------------------------------------- */
 
+/* FAB occupies fixed space above bottom navigation */
 .extra-page--list {
   padding-bottom: 88px;
 }
@@ -130,7 +127,7 @@
 .extra-fab {
   position: fixed;
   z-index: 15;
-  right: 16px;
+  right: var(--space-8);
   bottom: calc(env(safe-area-inset-bottom) + 72px);
   display: inline-flex;
   align-items: center;
@@ -140,17 +137,17 @@
   min-height: 56px;
   padding: 0;
   border: 0;
-  border-radius: 50%;
-  background: var(--schedule-extra, #7c3aed);
-  box-shadow: 0 6px 16px rgb(76 29 149 / 0.3);
-  color: #ffffff;
+  border-radius: var(--radius-pill);
+  background: var(--color-extra);
+  box-shadow: 0 6px 16px color-mix(in srgb, var(--color-extra) 30%, transparent);
+  color: var(--color-text-inverse);
   cursor: pointer;
 }
 
 .extra-fab__icon {
   display: block;
   font-size: 31px;
-  font-weight: 400;
+  font-weight: var(--weight-regular);
   line-height: 1;
   transform: translateY(-1px);
 }
@@ -160,14 +157,14 @@
 }
 
 .extra-fab:focus-visible {
-  outline: 3px solid rgb(37 99 235 / 0.58);
+  outline: var(--focus-outline-strong);
   outline-offset: 3px;
 }
 
 @media (hover: hover) {
   .extra-fab:hover {
-    background: #6d28d9;
-    box-shadow: 0 8px 20px rgb(76 29 149 / 0.36);
+    background: var(--color-extra-hover);
+    box-shadow: 0 8px 20px color-mix(in srgb, var(--color-extra) 36%, transparent);
     transform: translateY(-1px);
   }
 }
@@ -185,26 +182,27 @@
 .reminder-field {
   display: flex;
   align-items: center;
-  gap: 10px;
-  min-height: 44px;
+  gap: var(--space-5);
+  min-height: var(--touch-target);
 }
 
 .reminder-label {
   flex: 0 0 auto;
-  color: var(--muted, #6b7280);
-  font-size: 16px;
-  font-weight: 500;
-  line-height: 1.1;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-lg);
+  font-weight: var(--weight-medium);
+  line-height: var(--line-height-tight);
 }
 
+/* Compact structural control wrapping */
 .reminder-stepper {
   display: inline-flex;
   align-items: stretch;
-  min-height: 44px;
+  min-height: var(--touch-target);
   overflow: hidden;
-  border: 1px solid var(--border, #d1d5db);
-  border-radius: 10px;
-  background: var(--card, #ffffff);
+  border: var(--border-width-default) solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
 }
 
 .reminder-stepper__button {
@@ -216,20 +214,20 @@
   min-height: 42px;
   padding: 0;
   border: 0;
-  background: #f8fafc;
-  color: #536174;
+  background: var(--color-surface-subtle);
+  color: var(--color-text-secondary);
   cursor: pointer;
-  font-size: 23px;
-  font-weight: 500;
+  font-size: var(--font-size-toolbar-icon);
+  font-weight: var(--weight-medium);
   line-height: 1;
 }
 
 .reminder-stepper__button:first-child {
-  border-right: 1px solid var(--border, #d1d5db);
+  border-right: var(--border-width-default) solid var(--color-border);
 }
 
 .reminder-stepper__button:last-child {
-  border-left: 1px solid var(--border, #d1d5db);
+  border-left: var(--border-width-default) solid var(--color-border);
 }
 
 .reminder-stepper__button:focus {
@@ -239,7 +237,7 @@
 .reminder-stepper__button:focus-visible {
   position: relative;
   z-index: 1;
-  outline: 2px solid rgb(37 99 235 / 0.58);
+  outline: var(--focus-outline);
   outline-offset: -2px;
 }
 
@@ -247,19 +245,19 @@
   width: 60px;
   min-width: 54px;
   min-height: 42px;
-  padding: 6px 3px;
+  padding: var(--space-3) 3px;
   border: 0;
   background: transparent;
-  color: var(--text, #111827);
+  color: var(--color-text);
   font: inherit;
   font-size: 17px;
-  font-weight: 750;
+  font-weight: var(--weight-extrabold);
   font-variant-numeric: tabular-nums;
   line-height: 1;
   text-align: center;
 }
 
-/* Input is editable manually but browser-specific arrows are hidden. */
+/* Browser-specific number arrows are explicitly hidden for UX */
 .reminder-stepper__input::-webkit-inner-spin-button,
 .reminder-stepper__input::-webkit-outer-spin-button {
   margin: 0;
@@ -276,26 +274,26 @@
 }
 
 .reminder-stepper:focus-within {
-  border-color: var(--accent, #1a56db);
-  box-shadow: 0 0 0 2px rgb(37 99 235 / 0.12);
+  border-color: var(--color-primary);
+  box-shadow: var(--shadow-focus-soft);
 }
 
 .reminder-suffix {
-  color: var(--muted, #6b7280);
-  font-size: 16px;
-  font-weight: 650;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-lg);
+  font-weight: var(--weight-semibold);
   white-space: nowrap;
 }
 
 @media (hover: hover) {
   .reminder-stepper__button:hover {
-    background: #e9eef5;
-    color: var(--text, #111827);
+    background: var(--color-surface-hover);
+    color: var(--color-text);
   }
 }
 
 @media (hover: none) and (pointer: coarse) {
   .reminder-stepper__button:active {
-    background: #dfe7f0;
+    background: var(--color-surface-active);
   }
 }

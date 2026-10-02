@@ -1,4 +1,5 @@
-  {# web/templates/components/extra/extra_class_card.html #}
+{# web/templates/components/extra/extra_class_card.html #}
+{% from "components/ui/icon.html" import icon %}
 {#
   Management wrapper for one persisted extra class.
 
@@ -23,7 +24,7 @@
       class="extra-class-card__reminder"
       aria-label="Напоминание за {{ item.reminder_minutes or 30 }} минут"
     >
-      🔔 За {{ item.reminder_minutes or 30 }} мин.
+      {{ icon("bell-duotone", class="icon-muted") }} За {{ item.reminder_minutes or 30 }} мин.
     </span>
 
     {% if can_manage %}
@@ -39,7 +40,7 @@
         hx-swap="outerHTML"
         aria-label="Редактировать занятие {{ item.title }}"
       >
-        ✏️
+        {{ icon("pencil-duotone", size="sm") }}
         <span class="visually-hidden">
           Редактировать
         </span>
@@ -54,7 +55,7 @@
         hx-swap="outerHTML"
         aria-label="Удалить занятие {{ item.title }}"
       >
-        🗑
+        {{ icon("trash-duotone", size="sm") }}
         <span class="visually-hidden">
           Удалить
         </span>

@@ -1,3 +1,6 @@
+  {# web/templates/family/_family_content.html #}
+{% from "components/ui/icon.html" import icon %}
+
 {#
   Fragment «Семья» (Phase 4). Используется как содержимое страницы
   и как HTMX-target (#family-content) для mutations.
@@ -13,11 +16,17 @@
   {% if invite_result %}
   <div class="invite-result card-ok" role="status">
     {% if invite_result.kind == 'claim' %}
-    <b>📎 Ссылка для привязки Telegram — {{ invite_result.role_label }}</b>
+    <b>
+      {{ icon("paperclip-duotone", class="icon-primary") }} Ссылка для привязки Telegram — {{ invite_result.role_label }}
+    </b>
     {% else %}
-    <b>✅ Приглашение создано — {{ invite_result.role_label }}</b>
+    <b>
+      {{ icon("check-duotone", class="icon-ok") }} Приглашение создано — {{ invite_result.role_label }}
+    </b>
     {% endif %}
-    <div class="invite-code">📋 Код: <code>{{ invite_result.short_code }}</code></div>
+    <div class="invite-code">
+      {{ icon("clipboard-text-duotone", class="icon-muted") }} Код: <code>{{ invite_result.short_code }}</code>
+    </div>
     {% if invite_result.deep_link %}
     <div class="invite-link"><a href="{{ invite_result.deep_link }}" rel="noopener">Открыть в Telegram</a></div>
     {% else %}
@@ -66,26 +75,42 @@
         <div class="student-actions">
           <button type="button" class="nav-btn small"
                   hx-post="/api/v1/schedule/select/{{ s.student_id }}"
-                  hx-indicator="#page-loading">📅 Расписание</button>
+                  hx-indicator="#page-loading" >
+            {{ icon("calendar-duotone", size="sm") }} Расписание
+          </button>
           
           {# ДОБАВЛЕНА КНОПКА ДОП. ЗАНЯТИЙ #}
-          <a class="nav-btn small" href="/extra-classes?student={{ s.student_id }}">🎯 Кружки</a>
+          <a class="nav-btn small" href="/extra-classes?student={{ s.student_id }}">
+            {{ icon("palette-duotone", size="sm") }} Кружки
+          </a>
           
           {% if is_admin %}
           <button type="button" class="nav-btn small"
                   hx-get="/family/students/{{ s.student_id }}/edit"
-                  hx-target="#family-content" hx-swap="outerHTML">✏️ Класс</button>
+                  hx-target="#family-content" hx-swap="outerHTML">
+            {{ icon("pencil-duotone", size="sm") }} Класс
+          </button>
+          
           <button type="button" class="nav-btn small"
                   hx-get="/family/students/{{ s.student_id }}/permissions"
-                  hx-target="#family-content" hx-swap="outerHTML">🔑 Права</button>
+                  hx-target="#family-content" hx-swap="outerHTML">
+            {{ icon("key-duotone", size="sm") }} Права
+          </button>
+          
           {% if s.is_virtual %}
           <button type="button" class="nav-btn small"
                   hx-post="/family/students/{{ s.student_id }}/claim"
-                  hx-target="#family-content" hx-swap="outerHTML">📎 Привязать Telegram</button>
+                  hx-target="#family-content" hx-swap="outerHTML" >
+            {{ icon("link-duotone", size="sm") }} Привязать Telegram
+          </button>
+          
           <button type="button" class="nav-btn small danger"
                   hx-confirm="Удалить ученика {{ s.name }}?"
                   hx-post="/family/students/{{ s.student_id }}/delete"
-                  hx-target="#family-content" hx-swap="outerHTML">🗑</button>
+                  hx-target="#family-content" hx-swap="outerHTML"
+                  aria-label="Удалить">
+            {{ icon("trash-duotone", size="sm", label="Удалить") }}
+          </button>
           {% endif %}
           {% endif %}
         </div>
@@ -119,21 +144,27 @@
   <div class="invite-create">
     <div class="day-subtitle">Создать приглашение (одноразовое, 24 часа):</div>
     <div class="invite-create-buttons">
-      {% for role, label in [('child', '👶 Ребёнок'), ('parent', '🧑‍🧒 Родитель'), ('observer', '👁 Наблюдатель')] %}
+      {# Мы добавили третий элемент в кортеж — имя иконки из инвентаря #}
+      {% for role, label, icon_name in [('child', 'Ребёнок', 'baby-duotone'), ('parent', 'Родитель', 'user-circle-duotone'), ('observer', 'Наблюдатель', 'eye-duotone')] %}
       <button type="button" class="nav-btn small"
               hx-post="/family/invites" hx-vals='{"role": "{{ role }}"}'
               hx-target="#family-content" hx-swap="outerHTML"
-              hx-disabled-elt="this">{{ label }}</button>
+              hx-disabled-elt="this">
+        {{ icon(icon_name, size="sm") }} {{ label }}
+      </button>
       {% endfor %}
     </div>
   </div>
 
-  <div class="invite-create" style="margin-top: 10px;">
+  <div class="invite-create">
     <button type="button" class="nav-btn small"
             hx-get="/family/students/new"
-            hx-target="#family-content" hx-swap="outerHTML">➕ Добавить ученика (без Telegram)</button>
+            hx-target="#family-content" hx-swap="outerHTML">
+      {{ icon("user-circle-plus-duotone", size="sm") }} Добавить ученика (без Telegram)
+    </button>
   </div>
   {% endif %}
 
   {% endif %}
 </section>
+

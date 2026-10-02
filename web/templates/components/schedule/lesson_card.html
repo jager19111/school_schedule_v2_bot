@@ -1,3 +1,5 @@
+{# web/templates/components/schedule/lesson_card.html #}
+{% from "components/ui/icon.html" import icon %}
 {#
   Standard LessonCard.
 
@@ -63,10 +65,11 @@
           {% set shared_entry = lesson.entries[0] %}
 
           {% if shared_entry.subject %}
+          {% set is_shared_empty = (shared_entry.subject.value | string | lower | trim == 'нет занятий') %}
           <div
             class="
               lesson-card__subject
-              {% if shared_entry.subject.value | lower == 'нет занятий' %}
+              {% if is_shared_empty %}
                 lesson-card__subject--window
               {% elif shared_entry.subject.changed %}
                 lesson-card__field--changed
@@ -75,10 +78,10 @@
             data-autofit="subject"
             title="{{ shared_entry.subject.value }}"
           >
-            {{ shared_entry.subject.value }}
+            <span>{{ shared_entry.subject.value }}</span>
           </div>
           {% endif %}
-        {% endif %}
+          {% endif %}
 
         <div class="lesson-card__entries">
           {% if lesson.kind.value == "extra" %}
@@ -135,10 +138,10 @@
       <span class="visually-hidden">
         Показать изменения урока
       </span>
-      <span
-        class="lesson-card-toggle__chevron"
-        aria-hidden="true"
-      ></span>
+      {# ЗАМЕНА: Инлайн-SVG вместо CSS-шеврончика #}
+      <span class="lesson-card-toggle__icon" aria-hidden="true">
+        {{ icon("caret-down-duotone", class="icon-changed") }}
+      </span>
     </button>
     {% endif %}
   </div>

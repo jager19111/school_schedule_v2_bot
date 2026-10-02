@@ -1,7 +1,12 @@
+  {# web/templates/family/_permissions.html #}
+
+{% from "components/ui/icon.html" import icon %}
 {# Права взрослых на доп. занятия student profile (Phase 4, ТЗ 33).
    Fragment: GET открывает, POST-toggle перерисовывает этот же fragment. #}
 <section id="family-content" class="family-page">
-  <h2 class="day-title">🔑 Права на доп. занятия</h2>
+  <h2 class="day-title">
+    {{ icon("key-duotone") }} Права на доп. занятия
+  </h2>
   <div class="day-subtitle">{{ student_name }}</div>
 
   <div class="permissions-list">
@@ -23,6 +28,8 @@
 
   <nav class="day-nav">
     <a class="nav-btn" href="/family"
-       hx-get="/family" hx-target="#family-content" hx-swap="outerHTML">← Семья</a>
+       hx-get="/family" hx-target="#family-content" hx-swap="outerHTML">
+      {{ icon("caret-circle-left-duotone", size="sm") }} Семья
+    </a>
   </nav>
 </section>

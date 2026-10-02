@@ -1,4 +1,5 @@
-  {# web/templates/extra/_extra_content.html #}
+{# web/templates/extra/_extra_content.html #}
+{% from "components/ui/icon.html" import icon %}
 {#
   HTMX fragment списка дополнительных занятий.
 
@@ -46,7 +47,7 @@
 
   {% if not groups %}
   <div class="empty-day">
-    Доп. занятий пока нет 🎯
+    {{ icon("palette-duotone", class="icon-muted") }} Дополнительных занятий пока нет 
   </div>
   {% endif %}
 
@@ -83,7 +84,7 @@
       class="extra-fab__icon"
       aria-hidden="true"
     >
-      +
+      {{ icon("plus-circle-duotone") }}
     </span>
 
     <span class="visually-hidden">

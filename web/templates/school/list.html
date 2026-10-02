@@ -1,15 +1,40 @@
-  {# web/templates/school/list.html #}
+{# web/templates/school/list.html #}
 {% extends "base.html" %}
+{% from "components/ui/icon.html" import icon %}
+
 {% set nav = "school" %}
-{% block title %}{{ kind_title }}ы{% endblock %}
-{% block header %}{{ kind_icon }} {{ kind_title }}ы{% endblock %}
+
+{% block title %}
+  {% if kind == "class" %}
+    Класс
+  {% elif kind == "teacher" %}
+    Преподаватель
+  {% elif kind == "room" %}
+    Кабинет
+  {% endif %}
+{% endblock %}
+
+{% block header %}
+<span>
+  {% if kind == "class" %}
+    {{ icon("student-duotone") }} Класс
+  {% elif kind == "teacher" %}
+    {{ icon("chalkboard-teacher-duotone") }} Преподаватель
+  {% elif kind == "room" %}
+    {{ icon("door-duotone") }} Кабинет
+  {% endif %}
+</span>
+{% endblock %}
+
 {% block content %}
 <section class="school-list">
   <div class="school-grid">
     {% for item in items %}
     <a class="school-item" href="/school/{{ kind }}/{{ item.id }}">{{ item.name }}</a>
     {% else %}
-    <div class="empty-day">Список пуст (расписание школы ещё не загружено).</div>
+    <div class="empty-day">
+      {{ icon("info-duotone", class="icon-muted") }} Список пуст (расписание школы ещё не загружено).
+    </div>
     {% endfor %}
   </div>
 </section>

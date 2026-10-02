@@ -19,13 +19,12 @@
   <title>{% block title %}Расписание{% endblock %} — лицей НГТУ</title>
   
   {# ПРАВИЛЬНЫЙ ПОРЯДОК ПОДКЛЮЧЕНИЯ CSS #}
-<!-- app.css дает оболочку, system font и навигацию -->
-  <link rel="stylesheet" href="{{ url_for('static', path='css/app.css') }}?v=6">
+  <!-- app.css дает оболочку, system font и навигацию -->
+  <link rel="stylesheet" href="{{ url_for('static', path='css/app.css') }}?v=3">
   <!-- schedule.css является ЕДИНСТВЕННЫМ владельцем .lesson-card -->
-  <link rel="stylesheet" href="{{ url_for('static', path='css/components/schedule.css') }}?v=6">
-   <!-- extra.css добавляет footer ниже card. --> 
-  <link rel="stylesheet" href="{{ url_for('static', path='css/components/extra.css') }}?v=2"
->
+  <link rel="stylesheet" href="{{ url_for('static', path='css/components/schedule.css') }}?v=3">
+  <!-- extra.css добавляет footer ниже card. --> 
+  <link rel="stylesheet" href="{{ url_for('static', path='css/components/extra.css') }}?v=3">
   {% block extra_head %}{% endblock %}
 </head>
 {# ТЗ 16.1: CSRF во ВСЕ HTMX-запросы.
@@ -39,6 +38,8 @@
     hx-headers='{"X-CSRF-Token": "{{ csrf_token }}"}'
   {% endif %}
 >
+{# Импортируем макрос один раз в самом начале body #}
+{% from "components/ui/icon.html" import icon %} 
 
 <header class="app-header">
   <div class="header-title">
@@ -57,7 +58,8 @@
     {% endif %}
     aria-label="Открыть настройки"
   >
-    <span aria-hidden="true" class="header-settings__icon">⚙</span>
+    {# Заменили эмодзи на вызов макроса #}
+    {{ icon("gear-duotone", size="xl", class="header-settings__icon") }}
     <span class="visually-hidden">Настройки</span>
   </a>
 </header>
@@ -69,19 +71,24 @@
 {# ТЗ 41: bottom navigation, touch targets >= 44px #}
 <nav class="bottom-nav" aria-label="Основная навигация">
   <a href="/" class="nav-item{% if nav == 'today' %} active{% endif %}">
-    <span class="nav-icon">📅</span><span class="nav-label">Сегодня</span>
+    {{ icon("calendar-duotone", class="nav-icon") }}
+    <span class="nav-label">Сегодня</span>
   </a>
   <a href="/schedule/week" class="nav-item{% if nav == 'week' %} active{% endif %}">
-    <span class="nav-icon">🗓</span><span class="nav-label">Неделя</span>
+    {{ icon("calendar-dots-duotone", class="nav-icon") }}
+    <span class="nav-label">Неделя</span>
   </a>
   <a href="/school" class="nav-item{% if nav == 'school' %} active{% endif %}">
-    <span class="nav-icon">🏫</span><span class="nav-label">Школа</span>
+    {{ icon("building-apartment-duotone", class="nav-icon") }}
+    <span class="nav-label">Школа</span>
   </a>
   <a href="/extra-classes" class="nav-item{% if nav == 'extra' %} active{% endif %}">
-    <span class="nav-icon">🎯</span><span class="nav-label">Допы</span>
+    {{ icon("palette-duotone", class="nav-icon") }}
+    <span class="nav-label">Кружки</span>
   </a>
   <a href="/family" class="nav-item{% if nav == 'family' %} active{% endif %}">
-    <span class="nav-icon">👨‍👩‍👧</span><span class="nav-label">Семья</span>
+    {{ icon("users-three-duotone", class="nav-icon") }}
+    <span class="nav-label">Семья</span>
   </a>
 </nav>
 
@@ -100,8 +107,8 @@
 
 {# Все production JS локальны (ТЗ 48.1). #}
 <script src="/static/js/htmx.min.js"></script>
-<script src="/static/js/htmx-ext-sse.min.js?v=2"></script>
-<script src="/static/js/app.js?v=5"></script>
+<script src="/static/js/htmx-ext-sse.min.js?v=3"></script>
+<script src="/static/js/app.js?v=3"></script>
 {% block extra_scripts %}{% endblock %}
 </body>
 </html>

@@ -1,4 +1,4 @@
-  {# web/templates/school/week.html #}
+{# web/templates/school/week.html #}
 {#
   Weekly summary school entity.
 
@@ -8,6 +8,7 @@
 #}
 
 {% extends "base.html" %}
+{% from "components/ui/icon.html" import icon %}
 
 {% set nav = "school" %}
 
@@ -16,7 +17,23 @@
 {% endblock %}
 
 {% block header %}
-  {{ kind_icon }} {{ item_title }} · {{ week.week_display }}
+  <span>
+    {% if kind == "class" %}
+      Класс
+    {% elif kind == "teacher" %}
+      Учитель
+    {% elif kind == "room" %}
+      Кабинет
+    {% endif %}
+    {% if kind == "class" %}
+      {{ icon("student-duotone") }}
+    {% elif kind == "teacher" %}
+      {{ icon("chalkboard-teacher-duotone") }}
+    {% elif kind == "room" %}
+      {{ icon("door-duotone") }}
+    {% endif %}
+    {{ item_title }} · {{ week.week_display }}
+  </span>
 
   {% if show_class_watch_toggle %}
     {% include "components/school/class_watch_toggle.html" %}
@@ -48,7 +65,7 @@
         {% if day.has_changes %}
           ·
           <span class="week-changes">
-            🔄 {{ day.exchange_count }}
+            {{ icon("arrows-clockwise-duotone", size="sm", class="icon-changed") }} {{ day.exchange_count }}
           </span>
         {% endif %}
       </div>
@@ -61,7 +78,7 @@
       class="nav-btn"
       href="/school/{{ kind }}/{{ item_id }}/week?week={{ prev_week }}"
     >
-      ← Пред. нед.
+      {{ icon("caret-circle-left-duotone", size="sm") }} Пред. нед.
     </a>
 
     <a
@@ -75,7 +92,7 @@
       class="nav-btn"
       href="/school/{{ kind }}/{{ item_id }}/week?week={{ next_week }}"
     >
-      След. нед. →
+      След. нед. {{ icon("caret-circle-right-duotone", size="sm") }}
     </a>
   </nav>
 
@@ -84,7 +101,7 @@
       class="nav-btn"
       href="/school/{{ kind }}/{{ item_id }}"
     >
-      ← День
+      {{ icon("caret-circle-left-duotone", size="sm") }} День
     </a>
 
     <a
