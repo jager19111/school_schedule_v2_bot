@@ -16,20 +16,20 @@
     <label class="visually-hidden" for="school-q">Поиск</label>
     <input id="school-q" class="search-input" type="search" name="q"
            placeholder="Класс, учитель, кабинет…" autocomplete="off">
-    <button class="nav-btn today-btn" type="submit">Найти</button>
+    <button class="nav-btn today-btn text-action" type="submit">Найти</button>
   </form>
 
   <nav class="school-menu">
-    <a class="school-menu-item" href="/school/class/list">
+    <a class="school-menu-item text-action" href="/school/class/list">
       {{ icon("student-duotone", class="nav-icon") }}<span>Классы</span>
     </a>
-    <a class="school-menu-item" href="/school/teacher/list">
+    <a class="school-menu-item text-action" href="/school/teacher/list">
       {{ icon("chalkboard-teacher-duotone", class="nav-icon") }}<span>Учителя</span>
     </a>
-    <a class="school-menu-item" href="/school/room/list">
+    <a class="school-menu-item text-action" href="/school/room/list">
       {{ icon("door-duotone", class="nav-icon") }}<span>Кабинеты</span>
     </a>
-    <a class="school-menu-item" href="/school/free-rooms">
+    <a class="school-menu-item text-action" href="/school/free-rooms">
       {{ icon("door-open-duotone", class="nav-icon") }}<span>Свободные кабинеты</span>
     </a>
   </nav>

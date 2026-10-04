@@ -666,18 +666,6 @@
   outline-offset: 3px;
 }
 
-.lesson-card-toggle__icon {
-  position: absolute;
-  right: 18px;
-  bottom: -4px;
-  pointer-events: none;
-  transition: transform var(--duration-slow) var(--ease-standard);
-  display: inline-flex;
-}
-
-.lesson-card-wrapper--open .lesson-card-toggle__icon {
-  transform: rotate(180deg);
-}
 
 .lesson-card-wrapper--open .lesson-card {
   box-shadow: var(--shadow-focus-changed), var(--shadow-card);
@@ -810,15 +798,34 @@
 }
 
 /*
+    INTERACTIVE CHEVRON (В потоке документа)
+    Естественно расширяет карточку, всегда соблюдает фиксированный 
+    отступ от угла карточки и не зависит от высоты колонки времени
+*/
+.lesson-card__chevron {
+  display: flex;
+  justify-content: flex-end; /* Прижимаем вправо */
+  margin-top: -4px; /* Строго фиксированный отступ от последнего кабинета */
+  margin: -4px; /* Строго фиксированный отступ от последнего кабинета */
+  color: var(--color-changed); /* Оранжевый цвет как на скрине */
+  pointer-events: none; /* Пропускает клики сквозь себя на основную кнопку */
+}
+
+.lesson-card__chevron .phosphor-icon {
+  transition: transform var(--duration-normal) var(--ease-standard);
+  display: inline-flex;
+}
+
+/* Анимация переворота опирается на класс открытой карточки-обертки */
+.lesson-card-wrapper--open .lesson-card__chevron .phosphor-icon {
+  transform: rotate(180deg);
+}
+
+/*
   ==========================================================================
     DAY NAVIGATION (SCHEDULE OVERRIDES)
     ==========================================================================
 */
-
-/*
- * Canonical day-navigation geometry. schedule.js owns navigation state and swipe
- * behavior; this file only defines visual geometry and feedback.
- */
 .day-navigation {
   display: grid;
   grid-template-columns: var(--touch-target) minmax(0, 1fr) var(--touch-target);
@@ -828,40 +835,22 @@
 }
 
 .day-navigation__arrow {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
+  /* Вся механика тапов, цветов и анимаций вынесена в глобальный .icon-action в app.css.
+     Здесь оставляем только жесткую геометрию (width/height) для сетки расписания */
   width: var(--touch-target);
   min-width: var(--touch-target);
   min-height: var(--touch-target);
-  padding: 0;
-  border: var(--border-width-default) solid var(--color-border-subtle);
-  border-radius: var(--radius-xl);
-  background: var(--color-surface);
-  color: var(--color-text-secondary);
-  cursor: pointer;
-  font-size: var(--font-size-lg);
-  font-weight: var(--weight-medium);
-  line-height: 1;
-  text-decoration: none;
-  transition: border-color var(--duration-normal) var(--ease-standard), background-color var(--duration-normal) var(--ease-standard), color var(--duration-normal) var(--ease-standard), transform var(--duration-fast) var(--ease-standard);
 }
 
-.day-navigation__arrow:focus {
-  outline: none;
-}
-
-.day-navigation__arrow:focus-visible {
-  position: relative;
-  z-index: 1;
-  outline: 3px solid var(--color-focus);
-  outline-offset: 2px;
+.day-navigation__arrow .phosphor-icon {
+  font-size: var(--font-size-nav-icon, 44px) !important;
 }
 
 .day-navigation__heading {
   min-width: 0;
   text-align: center;
 }
+
 
 .day-navigation__heading .day-title {
   margin: 0;
@@ -911,37 +900,10 @@
   font-weight: var(--weight-bold);
   line-height: 1;
   text-decoration: none;
-  transition: border-color var(--duration-normal) var(--ease-standard), background-color var(--duration-normal) var(--ease-standard), color var(--duration-normal) var(--ease-standard), transform var(--duration-fast) var(--ease-standard);
+
 }
 
-.day-navigation__today-action:focus {
-  outline: none;
-}
 
-.day-navigation__today-action:focus-visible {
-  outline: 3px solid var(--color-focus);
-  outline-offset: 2px;
-}
-
-@media (hover: hover) {
-  .day-navigation__arrow:hover {
-    border-color: var(--color-border-hover);
-    background: var(--color-surface-hover);
-    color: var(--color-primary);
-  }
-  .day-navigation__today-action:hover {
-    border-color: var(--color-border-hover);
-    background: var(--color-surface-hover);
-    color: var(--color-primary);
-  }
-}
-
-@media (hover: none) and (pointer: coarse) {
-  .day-navigation__arrow:active, .day-navigation__today-action:active {
-    background: var(--color-surface-hover);
-    transform: scale(0.96);
-  }
-}
 
 @media (min-width: 431px) {
   .day-navigation {
@@ -955,11 +917,6 @@
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .day-navigation__arrow, .day-navigation__today-action {
-    transition: none;
-  }
-}
 
 /*
   ==========================================================================
@@ -967,58 +924,57 @@
     ==========================================================================
 */
 
-.day-schedule .student-switch {
+.day-schedule .student-switch,
+.week-schedule .student-switch {
   /* Задаем единый отступ между чипами (8px) и снизу (10px) для всех экранов расписания */
   gap: var(--space-4);
   margin-bottom: var(--space-5);
 }
 
-.day-schedule .day-header {
+.day-schedule .day-header,
+.week-schedule .day-header {
   margin-bottom: var(--space-5);
 }
 
-.day-schedule .day-navigation {
+.day-schedule .day-navigation,
+.week-schedule .day-navigation {
   grid-template-columns: var(--touch-target) minmax(0, 1fr) var(--touch-target);
   gap: var(--schedule-compact-gap);
 }
 
-.day-schedule .day-navigation__arrow {
-  width: var(--touch-target);
-  min-width: var(--touch-target);
-  min-height: var(--touch-target);
-  border-radius: var(--radius-lg);
-  font-size: var(--font-size-lg);
-}
-
-.day-schedule .day-navigation__heading .day-title {
+.day-schedule .day-navigation__heading .day-title,
+.week-schedule .day-navigation__heading .day-title {
   font-size: clamp(18px, 4.8vw, 20px);
   line-height: 1.05;
   margin-bottom: 5px;
 }
 
-.day-schedule .day-navigation__today-slot {
+.day-schedule .day-navigation__today-slot,
+.week-schedule .day-navigation__today-slot {
   min-height: 25px;
   margin-top: 0;
 }
 
-.day-schedule .day-navigation__today-status {
+.day-schedule .day-navigation__today-status,
+.week-schedule .day-navigation__today-status {
   min-height: 25px;
   gap: var(--space-2);
   font-size: var(--font-size-sm);
   line-height: 1;
 }
 
-.day-schedule .day-navigation__today-status span[aria-hidden="true"] {
+.day-schedule .day-navigation__today-status span[aria-hidden="true"],
+.week-schedule .day-navigation__today-status span[aria-hidden="true"] {
   font-size: var(--font-size-body);
 }
 
-.day-schedule .day-navigation__today-action {
+.day-schedule .day-navigation__today-action,
+.week-schedule .day-navigation__today-action {
   min-height: 25px;
   padding: var(--space-2) var(--space-5);
   border-radius: var(--radius-md);
   font-size: var(--font-size-sm);
 }
-
 /*
   ==========================================================================
     SWIPE

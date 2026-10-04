@@ -20,15 +20,58 @@
 {% endblock %}
 
 {% block header %}
-  <span>
-    {{ icon("calendar-dots-duotone") }} Неделя · {{ week.week_display }}
+  <span class="header-title__main">
+    Расписание
+  </span>
+  <span class="header-title__context">
+    На неделю
   </span>
 {% endblock %}
 
 {% block content %}
-
 <section class="week-schedule">
   {% include "components/schedule/target_switch.html" %}
+
+  {# Новая шапка навигации (идентична дневной) #}
+  <header class="day-header">
+    <nav class="day-navigation week-navigation" aria-label="Навигация по неделям">
+      <a
+        class="day-navigation__arrow icon-action"
+        href="/schedule/week?week={{ prev_week }}"
+        aria-label="Предыдущая неделя"
+      >
+        {{ icon("caret-circle-left-duotone") }}
+      </a>
+
+      <div class="day-navigation__heading">
+        <h2 class="day-title">
+          {{ week.week_display }}
+        </h2>
+        <div class="day-navigation__today-slot">
+          {% if is_current_week %}
+          <span class="day-navigation__today-status" aria-label="Открыта текущая неделя">
+            <span aria-hidden="true">•</span> Текущая
+          </span>
+          {% else %}
+          <a
+            class="day-navigation__today-action text-action"
+            href="{{ smart_week_url }}"
+          >
+            Текущая
+          </a>
+          {% endif %}
+        </div>
+      </div>
+
+      <a
+        class="day-navigation__arrow icon-action"
+        href="/schedule/week?week={{ next_week }}"
+        aria-label="Следующая неделя"
+      >
+        {{ icon("caret-circle-right-duotone") }}
+      </a>
+    </nav>
+  </header>
 
   <div class="week-list">
     {% for day in week.days %}
@@ -52,7 +95,7 @@
 
         {% if day.has_changes %}
           ·
-          <span class="week-changes">
+          <span class="week-changes" style="display: inline-flex; align-items: center; gap: 4px;">
             {{ icon("arrows-clockwise-duotone", size="sm", class="icon-changed") }} {{ day.exchange_count }}
           </span>
         {% endif %}
@@ -60,28 +103,5 @@
     </a>
     {% endfor %}
   </div>
-
-  <nav class="day-nav" aria-label="Навигация по неделям">
-    <a
-      class="nav-btn"
-      href="/schedule/week?week={{ prev_week }}"
-    >
-      {{ icon("caret-circle-left-duotone", size="xl") }} Пред. нед.
-    </a>
-
-    <a
-      class="nav-btn today-btn"
-      href="/schedule/week"
-    >
-      Текущая
-    </a>
-
-    <a
-      class="nav-btn"
-      href="/schedule/week?week={{ next_week }}"
-    >
-      След. нед. {{ icon("caret-circle-right-duotone", size="xl") }}
-    </a>
-  </nav>
 </section>
 {% endblock %}

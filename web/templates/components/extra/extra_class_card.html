@@ -34,7 +34,7 @@
     >
       <button
         type="button"
-        class="nav-btn small"
+        class="nav-btn small text-action"
         hx-get="/extra-classes/{{ item.id }}/edit?student={{ student_id }}"
         hx-target="#extra-content"
         hx-swap="outerHTML"
@@ -48,7 +48,7 @@
 
       <button
         type="button"
-        class="nav-btn small danger"
+        class="nav-btn small danger text-action"
         hx-confirm="Удалить «{{ item.title }}»?"
         hx-post="/extra-classes/{{ item.id }}/delete?student={{ student_id }}"
         hx-target="#extra-content"

@@ -8,7 +8,7 @@
   {% if kind == "class" %}
     Класс
   {% elif kind == "teacher" %}
-    Преподаватель
+    Учитель
   {% elif kind == "room" %}
     Кабинет
   {% endif %}
@@ -19,7 +19,7 @@
   {% if kind == "class" %}
     {{ icon("student-duotone") }} Класс
   {% elif kind == "teacher" %}
-    {{ icon("chalkboard-teacher-duotone") }} Преподаватель
+    {{ icon("chalkboard-teacher-duotone") }} Учитель
   {% elif kind == "room" %}
     {{ icon("door-duotone") }} Кабинет
   {% endif %}
@@ -27,10 +27,10 @@
 {% endblock %}
 
 {% block content %}
-<section class="school-list">
+<section class="school-list ">
   <div class="school-grid">
     {% for item in items %}
-    <a class="school-item" href="/school/{{ kind }}/{{ item.id }}">{{ item.name }}</a>
+    <a class="school-item text-action" href="/school/{{ kind }}/{{ item.id }}">{{ item.name }}</a>
     {% else %}
     <div class="empty-day">
       {{ icon("info-duotone", class="icon-muted") }} Список пуст (расписание школы ещё не загружено).

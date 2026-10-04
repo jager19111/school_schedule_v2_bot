@@ -51,7 +51,7 @@
           >
             <button
               type="button"
-              class="settings-card__action settings-card__action--toggle"
+              class="settings-card__action settings-card__action--toggle text-action"
               hx-post="/settings/watch-targets/{{ target.target_id }}/enabled"
               hx-vals='{"is_enabled":"{{ "false" if target.is_enabled else "true" }}"}'
               hx-target="#main"
@@ -68,7 +68,7 @@
 
             <button
               type="button"
-              class="settings-card__action settings-card__action--changes"
+              class="settings-card__action settings-card__action--changes text-action"
               hx-post="/settings/watch-targets/{{ target.target_id }}/changes-notifications"
               hx-vals='{"receive_schedule_changes":"{{ "false" if target.receive_schedule_changes else "true" }}"}'
               hx-target="#main"
@@ -85,7 +85,7 @@
 
             <button
               type="button"
-              class="settings-card__action settings-card__action--danger"
+              class="settings-card__action settings-card__action--danger text-action"
               hx-post="/settings/watch-targets/{{ target.target_id }}/delete"
               hx-target="#main"
               hx-swap="innerHTML"
@@ -124,7 +124,7 @@
     >
       <a
         href="/settings/watch-targets/new"
-        class="nav-btn today-btn"
+        class="nav-btn today-btn text-action"
         hx-get="/settings/watch-targets/new"
         hx-target="#main"
         hx-swap="innerHTML"
@@ -135,7 +135,7 @@
 
       <a
         href="/settings"
-        class="nav-btn"
+        class="nav-btn text-action"
         hx-get="/settings"
         hx-target="#main"
         hx-swap="innerHTML"
@@ -151,7 +151,7 @@
     >
       <a
         href="/settings"
-        class="nav-btn"
+        class="nav-btn text-action"
         hx-get="/settings"
         hx-target="#main"
         hx-swap="innerHTML"

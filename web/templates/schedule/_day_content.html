@@ -14,7 +14,7 @@
       aria-label="Навигация по дням расписания"
     >
       <a
-        class="day-navigation__arrow"
+        class="day-navigation__arrow icon-action"
         data-day-direction="previous"
         data-day-label="{{ day_navigation.previous_label }}"
         href="{{ day_navigation.previous_url }}"
@@ -44,7 +44,7 @@
           </span>
           {% else %}
           <a
-            class="day-navigation__today-action"
+            class="day-navigation__today-action text-action"
             data-day-navigation
             href="{{ day_navigation.today_url }}"
             hx-get="{{ day_navigation.today_url }}"
@@ -60,7 +60,7 @@
       </div>
 
       <a
-        class="day-navigation__arrow"
+        class="day-navigation__arrow icon-action"
         data-day-direction="next"
         data-day-label="{{ day_navigation.next_label }}"
         href="{{ day_navigation.next_url }}"

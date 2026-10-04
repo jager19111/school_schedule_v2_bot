@@ -112,7 +112,7 @@
 }
 
 /* --------------------------------------------------------------------------
-   Extra-list floating action button
+   Extra-list floating action button (FAB)
    -------------------------------------------------------------------------- */
 
 /* FAB occupies fixed space above bottom navigation */
@@ -120,6 +120,10 @@
   padding-bottom: 88px;
 }
 
+/* 
+  Сама кнопка теперь и есть контейнер нужного размера (56x56).
+  Мы делаем ее флексом, чтобы иконка встала ровно по центру.
+*/
 .extra-fab {
   position: fixed;
   z-index: 15;
@@ -128,24 +132,37 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  
+  /* Физический размер иконки/кнопки */
   width: 56px;
   min-width: 56px;
   min-height: 56px;
   padding: 0;
   border: 0;
-  border-radius: var(--radius-pill);
-  background: var(--color-extra);
-  box-shadow: 0 6px 16px color-mix(in srgb, var(--color-extra) 30%, transparent);
-  color: var(--color-text-inverse);
+  border-radius: var(--radius-pill); 
+  
+  /* Цвета */
+  background: transparent;
+  color: var(--color-extra);
+  
+  /* Тень по контуру SVG-иконки */
+  filter: drop-shadow(0 6px 16px color-mix(in srgb, var(--color-extra) 30%, transparent));
+  
   cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: transform var(--duration-fast) var(--ease-standard), filter var(--duration-fast) var(--ease-standard);
 }
 
-.extra-fab__icon {
+/* 
+  Прямое обращение к Phosphor иконке внутри FAB. 
+  Мы жестко заставляем ее занять все 56px ширины и высоты кнопки.
+*/
+.extra-fab .phosphor-icon,
+.extra-fab svg {
+  width: 100% !important;
+  height: 100% !important;
+  font-size: 56px !important;
   display: block;
-  font-size: 31px;
-  font-weight: var(--weight-regular);
-  line-height: 1;
-  transform: translateY(-1px);
 }
 
 .extra-fab:focus {
@@ -154,28 +171,24 @@
 
 .extra-fab:focus-visible {
   outline: var(--focus-outline-strong);
-  outline-offset: 3px;
+  outline-offset: 2px;
 }
 
+/* Десктопный браузер: легкий подъем */
 @media (hover: hover) {
   .extra-fab:hover {
-    background: color-mix(
-      in srgb,
-      var(--color-text) 15%,
-      var(--color-extra)
-    );
-    box-shadow: 0 8px 20px
-      color-mix(in srgb, var(--color-extra) 36%, transparent);
-    transform: translateY(-1px);
+    transform: translateY(-2px);
+    filter: drop-shadow(0 8px 20px color-mix(in srgb, var(--color-extra) 40%, transparent));
   }
 }
 
+/* Мобильный PWA-тап: классическое "вдавливание" */
 @media (hover: none) and (pointer: coarse) {
   .extra-fab:active {
-    transform: scale(0.95);
+    transform: scale(0.85);
+    filter: drop-shadow(0 2px 8px color-mix(in srgb, var(--color-extra) 40%, transparent));
   }
 }
-
 /* --------------------------------------------------------------------------
    Compact reminder stepper
    -------------------------------------------------------------------------- */

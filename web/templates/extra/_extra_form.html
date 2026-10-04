@@ -82,7 +82,7 @@
     <div class="reminder-stepper">
       <button
         type="button"
-        class="reminder-stepper__button"
+        class="reminder-stepper__button text-action"
         data-reminder-adjust="-5"
         aria-label="Уменьшить время напоминания на пять минут"
       >
@@ -111,7 +111,7 @@
 
       <button
         type="button"
-        class="reminder-stepper__button"
+        class="reminder-stepper__button text-action"
         data-reminder-adjust="5"
         aria-label="Увеличить время напоминания на пять минут"
       >
@@ -137,10 +137,10 @@
   </section>
   
       <div class="invite-create-buttons">
-          <button type="submit" class="nav-btn today-btn" hx-indicator="#page-loading" hx-disabled-elt="this">
+          <button type="submit" class="nav-btn today-btn text-action" hx-indicator="#page-loading" hx-disabled-elt="this">
             {{ icon("floppy-disk-duotone", size="sm") }} Сохранить
           </button>
-          <button type="button" class="nav-btn" hx-get="/extra-classes?student={{ student_id }}" hx-target="#extra-content" hx-swap="outerHTML">Отмена</button>
+          <button type="button" class="nav-btn text-action" hx-get="/extra-classes?student={{ student_id }}" hx-target="#extra-content" hx-swap="outerHTML">Отмена</button>
       </div>
   </form>
 </section>

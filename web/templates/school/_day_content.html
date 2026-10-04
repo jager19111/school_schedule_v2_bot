@@ -22,7 +22,7 @@
       aria-label="Навигация по дням расписания"
     >
       <a
-        class="day-navigation__arrow"
+        class="day-navigation__arrow icon-action"
         data-day-direction="previous"
         data-day-label="{{ day_navigation.previous_label }}"
         href="{{ day_navigation.previous_url }}"
@@ -51,7 +51,7 @@
           </span>
           {% else %}
           <a
-            class="day-navigation__today-action"
+            class="day-navigation__today-action text-action"
             href="{{ day_navigation.today_url }}"
             hx-get="{{ day_navigation.today_url }}"
             hx-target="#day-content"
@@ -66,7 +66,7 @@
       </div>
 
       <a
-        class="day-navigation__arrow"
+        class="day-navigation__arrow icon-action"
         data-day-direction="next"
         data-day-label="{{ day_navigation.next_label }}"
         href="{{ day_navigation.next_url }}"
@@ -146,14 +146,14 @@
 
   <nav class="day-nav school-day-schedule__footer-nav" aria-label="Разделы школы">
     <a
-      class="nav-btn"
+      class="nav-btn text-action"
       href="/school/{{ kind }}/{{ item_id }}/week"
     >
       {{ icon("calendar-dots-duotone", size="sm") }} Неделя
     </a>
 
     <a
-      class="nav-btn"
+      class="nav-btn text-action"
       href="/school/{{ kind }}/list"
     >
       {{ icon("caret-circle-left-duotone", size="sm") }} К списку

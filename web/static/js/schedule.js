@@ -344,7 +344,9 @@
   function isDayNavigationTrigger(element) {
     return (
       element instanceof Element
-      && element.matches("[data-day-direction]")
+      && element.matches(
+        '[data-day-direction], [data-day-navigation]'
+      )
     );
   }
 

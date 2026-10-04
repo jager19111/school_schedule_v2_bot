@@ -72,6 +72,7 @@
   --font-size-icon-lg: 24px;
   --font-size-icon-xl: 28px;
   --font-size-toolbar-icon: 30px;
+  --font-size-nav-icon: 44px;
   
   --weight-regular: 400;
   --weight-medium: 600;
@@ -202,6 +203,102 @@ body {
 
 /*
   ==========================================================================
+    GLOBAL ICON ACTION (Универсальная кнопка-иконка)
+    Единое правило для всех интерактивных кнопок без фона.
+    Использование: добавьте класс .icon-action к <a> или <button> в HTML.
+  ==========================================================================
+*/
+.icon-action,
+.header-settings {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  text-decoration: none;
+  transition: color var(--duration-fast) var(--ease-standard), transform var(--duration-fast) var(--ease-standard);
+  -webkit-tap-highlight-color: transparent;
+}
+
+.icon-action:focus,
+.header-settings:focus {
+  outline: none;
+}
+
+.icon-action:focus-visible,
+.header-settings:focus-visible {
+  position: relative;
+  z-index: 1;
+  outline: 3px solid var(--color-focus);
+  outline-offset: -2px;
+  border-radius: var(--radius-md);
+}
+
+@media (hover: hover) {
+  .icon-action:hover,
+  .header-settings:hover {
+    background: transparent;
+    color: var(--color-primary);
+  }
+}
+
+@media (hover: none) and (pointer: coarse) {
+  .icon-action:active,
+  .header-settings:active {
+    background: transparent;
+    color: var(--color-primary);
+    transform: scale(0.85);
+  }
+}
+
+/*
+  ==========================================================================
+    GLOBAL TEXT ACTION (Универсальная текстовая кнопка)
+    Единое правило для интерактивных кнопок с текстом (например, "Текущая").
+    Использование: добавьте класс .text-action к <a> или <button>.
+  ==========================================================================
+*/
+.text-action {
+  transition: border-color var(--duration-normal) var(--ease-standard), 
+              background-color var(--duration-normal) var(--ease-standard), 
+              color var(--duration-normal) var(--ease-standard), 
+              transform var(--duration-fast) var(--ease-standard);
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Десктопный hover (плавное высветление / изменение цвета) */
+@media (hover: hover) {
+  .text-action:hover {
+    filter: brightness(1.1);
+  }
+}
+
+/* 
+ * Мобильный тап (Active)
+ * Кнопка слегка "проваливается" и заливается синим цветом (или затемняется, если уже синяя)
+ */
+@media (hover: none) and (pointer: coarse) {
+  .text-action:active {
+    transform: scale(0.96);
+  }
+  
+  /* Если кнопка была прозрачной/светлой, красим её в акцентный синий при нажатии */
+  .text-action:not(.today-btn):active {
+    background-color: var(--color-surface-hover); /* Или var(--color-primary), если хотите ярче */
+    border-color: var(--color-primary);
+    color: var(--color-primary);
+  }
+
+  /* Если кнопка УЖЕ синяя (как today-btn), мы её просто затемняем */
+  .text-action.today-btn:active {
+    filter: brightness(0.85);
+  }
+}
+/*
+  ==========================================================================
     ICON SYSTEM
     ==========================================================================
 */
@@ -315,29 +412,25 @@ body {
   white-space: nowrap;
 }
 
+/*
+ * Геометрия шестеренки настроек.
+ * Поведение (hover/active/colors) теперь наследуется из глобального .icon-action
+ */
 .header-settings {
-  display: grid;
   flex: 0 0 auto;
   width: var(--touch-target);
   min-width: var(--touch-target);
   height: var(--touch-target);
-  place-items: center;
-  color: var(--color-text-muted);
-  border-radius: var(--radius-xl);
-  text-decoration: none;
-  -webkit-tap-highlight-color: transparent;
 }
 
-.header-settings:active, .header-settings.active {
+.header-settings.active {
   color: var(--color-primary);
-  background: var(--color-primary-bg);
 }
 
 .header-settings__icon {
   font-size: var(--font-size-toolbar-icon);
   line-height: 1;
 }
-
 .header-title__main {
   flex: 0 0 auto;
   font-size: clamp(20px, 5.4vw, 24px);
@@ -499,6 +592,7 @@ body {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  gap: var(--space-3); /* НОВОЕ: Отступ на случай, если внутри чипа появится иконка */
   min-height: var(--touch-target-sm);
   padding: 7px var(--space-5);
   border: var(--border-width-default) solid var(--color-border);
@@ -580,17 +674,12 @@ body {
   gap: var(--space-3);
 }
 
-.day-nav {
-  display: flex;
-  gap: var(--space-4);
-  margin-bottom: var(--space-7);
-}
-
 .nav-btn {
   flex: 1;
   display: flex;
   align-items: center;
   justify-content: center;
+  gap: var(--space-3); /* НОВОЕ: Идеальный отступ 6px между иконкой и текстом */
   min-height: var(--touch-target);
   padding: var(--space-4);
   background: var(--color-surface);
@@ -1122,7 +1211,9 @@ body {
     flex: 1 1 100%;
     flex-direction: row;
   }
-  .settings-card__action {
+  /* ФИКС: Применяем агрессивное сжатие только к сгруппированным кнопкам.
+     Одиночные кнопки (как в device-card) сохранят свой естественный размер. */
+  .settings-card__actions .settings-card__action {
     flex: 1 1 0;
     min-width: 0;
     padding-right: 7px;

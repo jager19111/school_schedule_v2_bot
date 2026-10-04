@@ -118,6 +118,13 @@
             {% endfor %}
           {% endif %}
         </div>
+
+        {# НОВЫЙ БЛОК: Шеврон перенесен внутрь lesson-card__body (В потоке документа) #}
+        {% if lesson.has_inline_changes %}
+        <div class="lesson-card__chevron" aria-hidden="true">
+          {{ icon("caret-down-duotone", class="icon-changed") }}
+        </div>
+        {% endif %}
       </div>
 
       <div
@@ -129,7 +136,7 @@
     {% if lesson.has_inline_changes %}
     <button
       type="button"
-      class="lesson-card-toggle"
+      class="lesson-card-toggle icon-action"
       data-inline-change-toggle
       aria-expanded="false"
       aria-controls="lesson-details-{{ lesson.key }}"
@@ -138,10 +145,7 @@
       <span class="visually-hidden">
         Показать изменения урока
       </span>
-      {# ЗАМЕНА: Инлайн-SVG вместо CSS-шеврончика #}
-      <span class="lesson-card-toggle__icon" aria-hidden="true">
-        {{ icon("caret-down-duotone", class="icon-changed") }}
-      </span>
+      {# Сама кнопка теперь абсолютно прозрачная на всю карточку. Иконка отсюда удалена. #}
     </button>
     {% endif %}
   </div>

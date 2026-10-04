@@ -1076,13 +1076,19 @@ async def week_page(
     targets = resolution.targets
     schedule_service = _schedule_service(request)
 
+# Получаем базовую "умную" неделю (текущую)
+    smart_week = await schedule_service.get_smart_week_start()
+    
     if week:
         try:
             week_start = date.fromisoformat(week).isoformat()
         except ValueError:
             raise HTTPException(status_code=404, detail="Некорректная неделя.")
     else:
-        week_start = await schedule_service.get_smart_week_start()
+        week_start = smart_week
+        
+    # Определяем, смотрим ли мы сейчас на текущую неделю
+    is_current_week = (week_start == smart_week)
 
     # Роутинг: Учитель или Ученик
     if target.teacher_id:
@@ -1109,6 +1115,8 @@ async def week_page(
             context,
             {
                 "week": view,
+                "is_current_week": is_current_week,      # <-- НОВОЕ
+                "smart_week_url": "/schedule/week",
                 **_selector_context(
                     targets=targets,
                     current_target=target,

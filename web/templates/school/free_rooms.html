@@ -1,4 +1,8 @@
 {# web/templates/school/free_rooms.html #}
+{#
+  Свободные кабинеты: полная страница.
+  найти баг с возвратом обратно к списку свободных кабинетов после просмотра свободных кабинетов
+#}
 {% extends "base.html" %}
 {% from "components/ui/icon.html" import icon %}
 
@@ -23,7 +27,7 @@
   {% else %}
   <div class="school-grid">
     {% for room in free_rooms.rooms %}
-    <a class="school-item" href="/school/room/{{ room.id }}"
+    <a class="school-item text-action" href="/school/room/{{ room.id }}"
        hx-get="/school/room/{{ room.id }}" hx-target="#main" hx-swap="innerHTML"
        hx-push-url="/school/room/{{ room.id }}">{{ room.name }}</a>
     {% endfor %}
@@ -34,12 +38,12 @@
   {% endif %}
 
   <nav class="day-nav">
-    <a class="nav-btn today-btn" href="/school/free-rooms"
+    <a class="nav-btn today-btn text-action" href="/school/free-rooms"
        hx-get="/school/free-rooms" hx-target="#main" hx-swap="innerHTML"
        hx-push-url="/school/free-rooms">
       {{ icon("arrows-clockwise-duotone", size="sm") }} Обновить
     </a>
-    <a class="nav-btn" href="/school">
+    <a class="nav-btn text-action" href="/school">
       {{ icon("caret-circle-left-duotone", size="sm") }} К школе
     </a>
   </nav>

@@ -446,13 +446,17 @@ async def school_item_week(
     service = _schedule_service(request)
     title = await _item_name(request, kind_name, item_id)
 
+    smart_week = await service.get_smart_week_start()
+    
     if week:
         try:
             week_start = date.fromisoformat(week).isoformat()
         except ValueError:
             raise HTTPException(status_code=404, detail="Некорректная неделя.")
     else:
-        week_start = await service.get_smart_week_start()
+        week_start = smart_week
+        
+    is_current_week = (week_start == smart_week)
 
     if kind_name == "class":
         summary = await service.get_class_week_schedule_summary(item_id, week_start)
@@ -471,6 +475,8 @@ async def school_item_week(
         _ctx(request, context, 
         {
             "week": view,
+            "is_current_week": is_current_week,                            # <-- НОВОЕ
+            "smart_week_url": f"/school/{kind_name}/{item_id}/week",
             "kind": kind_name,
             "item_id": item_id,
             "item_title": title,
