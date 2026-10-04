@@ -9,8 +9,7 @@
    live in app.css. This section contains only schedule-owned geometry.
    ============================================================================ */
 :root {
-  --schedule-time-width: 60px; /* для сдвига линии и текста влево */
-  --schedule-card-radius: var(--radius-2xl);
+  --schedule-time-width: 58px; /* Идеальная ширина для блока времени */
   --schedule-card-accent-width: 5px;
   --schedule-list-gap: 7px;
   --schedule-entry-gap: 3px;
@@ -20,13 +19,19 @@
   --schedule-room-padding-x: 7px;
   --schedule-window-height: 24px;
   --schedule-skeleton-card-height: 70px;
-  --schedule-arrow-radius: 11px;
   --schedule-compact-gap: 5px;
+    /*
+   * Internal schedule layering.
+   * These values are intentionally below global app header/bottom navigation.
+   */
+  --z-schedule-stage: 1;
+  --z-schedule-neighbor: 2;
+  --z-schedule-card-toggle: 2;
 }
 
 @media (min-width: 431px) {
   :root {
-    --schedule-time-width: 62px; /* для сдвига линии и текста влево */
+    --schedule-time-width: 66px;
   }
 }
 
@@ -86,10 +91,10 @@
   overflow: hidden;
   margin: 0;
   border: var(--border-width-default) solid var(--color-border-subtle);
-  border-left: var(--schedule-card-accent-width) solid var(--color-schedule-normal);
-  border-radius: var(--schedule-card-radius);
+  border-left: var(--schedule-card-accent-width) solid var(--color-primary);
+  border-radius: var(--radius-2xl);
   background: var(--color-surface);
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--shadow-card);
   transition: transform var(--duration-fast) var(--ease-standard), background-color var(--duration-fast) var(--ease-standard);
 }
 
@@ -106,25 +111,21 @@
     ==========================================================================
 */
 
-/*
- * Time is a structural column. Lesson number intentionally sits below the
- * start time so this block remains visually stable across lessons.
- */
 .lesson-card__time {
   display: flex;
-  align-self: stretch; /* Линия рисуется на всю высоту карточки */
+  align-self: stretch;
   flex-direction: column;
-  justify-content: center; /* Центрирование по высоте при 2-3 предметах */
-  align-items: flex-start; /* Строгое выравнивание по левому краю */
+  justify-content: center;
+  align-items: flex-start; /* Прижимаем текст к левому краю */
   min-width: 0;
-  padding: var(--space-2) var(--space-4);
+  padding: var(--space-3) var(--space-4) var(--space-3) var(--space-5); /* Чуть больше отступ слева для воздуха */
   border-right: var(--border-width-default) solid var(--color-border-subtle);
   font-variant-numeric: tabular-nums;
 }
 
 .lesson-card__now-label {
   margin-bottom: var(--space-1);
-  color: var(--color-schedule-current);
+  color: var(--color-primary);
   font-size: 10px;
   font-weight: var(--weight-black);
   line-height: 1;
@@ -134,38 +135,41 @@
 .lesson-card__start {
   display: block;
   color: var(--color-text);
-  /* Шрифт уменьшен, чтобы не превышать стандартный шрифт урока */
-  font-size: var(--font-size-md); 
-  font-weight: var(--weight-extrabold);
-  line-height: 1.05;
+  font-size: var(--font-size-body);
+  font-weight: var(--weight-black);
+  line-height: 1.1;
   text-align: left;
   white-space: nowrap;
+  letter-spacing: -0.01em;
+}
+
+@media (min-width: 431px) {
+  .lesson-card__start {
+    font-size: var(--font-size-lg);
+  }
 }
 
 .lesson-card__end {
   display: block;
-  color: var(--color-text-muted); /* Сделано серее */
-  font-size: var(--font-size-xs);
-  font-weight: var(--weight-black); /* Жирным */
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+  font-weight: var(--weight-bold);
   line-height: 1.1;
   text-align: left;
   white-space: nowrap;
-  margin-top: 1px;
+  margin-top: var(--space-1);
 }
 
-.lesson-card__number { /*слово урок*/
+.lesson-card__number {
   display: block;
-  margin-top: var(--space-1);
+  margin-top: var(--space-2);
   color: var(--color-text-secondary);
-  /* Размер на несколько пунктов меньше начала для визуальной ровности ширины */
-  font-size: var(--font-size-xs);
-  font-weight: var(--weight-extrablack); /* Жирным */
+  font-size: 9px;
+  font-weight: var(--weight-black);
   line-height: 1;
-  letter-spacing: 0.02em;
+  letter-spacing: 0.03em;
   white-space: nowrap;
-  align-self: center;
-  text-align: center;
-  margin-left: 0px;
+  text-transform: uppercase;
 }
 /*
   ==========================================================================
@@ -193,17 +197,12 @@
   overflow: hidden;
   color: var(--color-text);
   font-size: clamp(14px, 4.4vw, 18px);
-  font-weight: var(--weight-extrabold);
+  font-weight: var(--weight-bold);
   line-height: 1.1;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-@media (min-width: 431px) {
-  .lesson-card__subject, .lesson-entry__subject {
-    font-size: var(--font-size-schedule-lesson);
-  }
-}
 
 .lesson-entry {
   display: flex;
@@ -302,7 +301,7 @@
 
 .room-badge--changed {
   border: var(--border-width-thick) solid var(--color-changed);
-  background: var(--color-watch-bg);
+  background: var(--color-changed-bg);
   color: var(--color-changed);
 }
 
@@ -322,7 +321,7 @@
 }
 
 .lesson-card.lesson-card--added {
-  border-left-color: var(--color-schedule-added);
+  border-left-color: var(--color-success);
   background: var(--color-success-bg);
 }
 
@@ -402,7 +401,7 @@
 }
 
 .lesson-card.lesson-card--methodological {
-  border-left-color: var(--color-schedule-normal);
+  border-left-color: var(--color-primary);
   background: var(--color-surface);
 }
 
@@ -431,8 +430,8 @@
 .lesson-card__window-label {
   min-width: 0;
   overflow: hidden;
-  font-size: 13px !important;
-  font-weight: var(--weight-extrabold) !important;
+  font-size: var(--font-size-md) !important;
+  font-weight: var(--weight-bold) !important;
   line-height: var(--schedule-window-height) !important;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -469,7 +468,7 @@
   min-width: 0;
   color: var(--color-text);
   font-size: var(--font-size-body-lg);
-  font-weight: var(--weight-extrabold);
+  font-weight: var(--weight-bold);
   line-height: 1.1;
   overflow-wrap: anywhere;
 }
@@ -508,20 +507,10 @@
     ==========================================================================
 */
 
-/*
- * Skeleton loading is delayed so fast HTMX responses do not flash a placeholder.
- * The schedule itself is hidden while the request is pending.
- */
 @keyframes skeleton-pulse {
-  0% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.4;
-  }
-  100% {
-    opacity: 1;
-  }
+  0% { opacity: 1; }
+  50% { opacity: 0.4; }
+  100% { opacity: 1; }
 }
 
 .skel-block {
@@ -530,34 +519,27 @@
   animation: skeleton-pulse var(--duration-pulse) var(--ease-skeleton) infinite;
 }
 
-/* HTMX behavior override for schedule skeletons */
-
-.htmx-indicator {
-  display: none !important;
-}
-
-.htmx-request .htmx-indicator,
-.htmx-request.htmx-indicator {
-  display: flex !important;
-  opacity: 0;
-  animation: show-skeleton-delay 0s var(--duration-skeleton-delay) forwards;
-}
-
-@keyframes show-skeleton-delay {
-  to {
-    opacity: 1;
-  }
-}
-
+/* 
+ * ФИКС "ПРЫЖКОВ" И СИНИХ ВСПЫШЕК:
+ * Отключаем встроенную логику HTMX, которая мгновенно прячет контент 
+ * и вызывает схлопывание высоты страницы.
+ * Скелетон покажется только при долгом интернете (>400мс) силами schedule.js.
+ */
 .skeleton-list {
-  display: flex;
+  display: none !important;
   flex-direction: column;
-  gap: var(--space-5);
+  /* Заменяем var(--space-5) на токен расписания, чтобы при 
+     смене скелетона на реальные уроки не дергалась высота */
+  gap: var(--schedule-list-gap);
   width: 100%;
 }
 
-.htmx-request .htmx-request-hide,
-.htmx-request.htmx-request-hide {
+.day-swipe-stage.is-day-swipe-slow-loading .skeleton-list {
+  display: flex !important;
+  opacity: 1 !important;
+}
+
+.day-swipe-stage.is-day-swipe-slow-loading .htmx-request-hide {
   display: none !important;
 }
 
@@ -568,9 +550,9 @@
   margin: 0;
   border: var(--border-width-default) solid var(--color-border-subtle);
   border-left: var(--schedule-card-accent-width) solid var(--color-border);
-  border-radius: var(--schedule-card-radius);
+  border-radius: var(--radius-2xl);
   background: var(--color-surface);
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--shadow-card);
 }
 
 .skel-time-col {
@@ -624,15 +606,13 @@
   height: 10px;
 }
 
-[data-autofit="subject"]:not(.is-fitted) {
-  opacity: 0;
-}
 
+
+/* Мгновенное проявление текста после расчета (анимация убрана намеренно!) */
 [data-autofit="subject"].is-fitted {
-  opacity: 1;
-  transition: opacity var(--duration-autofit) var(--ease-in);
+  opacity: 1 !important;
+  visibility: visible !important;
 }
-
 /*
   ==========================================================================
     CHANGE DETAILS
@@ -671,7 +651,7 @@
   margin: 0;
   padding: 0;
   border: 0;
-  border-radius: var(--schedule-card-radius);
+  border-radius: var(--radius-2xl);
   background: transparent;
   color: inherit;
   cursor: pointer;
@@ -700,7 +680,7 @@
 }
 
 .lesson-card-wrapper--open .lesson-card {
-  box-shadow: var(--shadow-focus-changed), var(--shadow-md);
+  box-shadow: var(--shadow-focus-changed), var(--shadow-card);
 }
 
 .lesson-card-wrapper--interactive:active .lesson-card {
@@ -712,7 +692,7 @@
  * blocks text selection or the explicit close control.
  */
 .lesson-change-details {
-  margin: 4px 4px 0;
+  margin: var(--space-2) var(--space-2) 0;
   padding: var(--space-4) 9px;
   border: var(--border-width-default) solid var(--color-changed-border);
   border-radius: var(--radius-lg);
@@ -749,11 +729,11 @@
   min-height: 24px;
   padding: 0;
   border: 0;
-  border-radius: 7px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--color-text-muted);
   cursor: pointer;
-  font-size: 20px;
+  font-size: var(--font-size-icon-md);
   line-height: 1;
 }
 
@@ -793,7 +773,7 @@
 .lesson-change-row__field {
   flex: 0 0 auto;
   color: var(--color-text-secondary);
-  font-weight: var(--weight-extrabold);
+  font-weight: var(--weight-bold);
 }
 
 .lesson-change-row__values {
@@ -826,7 +806,7 @@
 
 .lesson-change-row__new {
   color: var(--color-text);
-  font-weight: var(--weight-extrabold);
+  font-weight: var(--weight-bold);
 }
 
 /*
@@ -860,8 +840,8 @@
   background: var(--color-surface);
   color: var(--color-text-secondary);
   cursor: pointer;
-  font-size: var(--font-size-schedule-navigation);
-  font-weight: var(--weight-semibold);
+  font-size: var(--font-size-lg);
+  font-weight: var(--weight-medium);
   line-height: 1;
   text-decoration: none;
   transition: border-color var(--duration-normal) var(--ease-standard), background-color var(--duration-normal) var(--ease-standard), color var(--duration-normal) var(--ease-standard), transform var(--duration-fast) var(--ease-standard);
@@ -907,7 +887,7 @@
   min-height: 32px;
   color: var(--color-primary);
   font-size: var(--font-size-md);
-  font-weight: var(--weight-extrabold);
+  font-weight: var(--weight-bold);
   line-height: 1;
 }
 
@@ -923,12 +903,12 @@
   min-height: var(--touch-target-sm);
   padding: var(--space-3) var(--space-6);
   border: var(--border-width-default) solid var(--color-border-subtle);
-  border-radius: 9px;
+  border-radius: var(--radius-lg);
   background: var(--color-surface-hover);
   color: var(--color-text-secondary);
   cursor: pointer;
   font-size: var(--font-size-md);
-  font-weight: var(--weight-extrabold);
+  font-weight: var(--weight-bold);
   line-height: 1;
   text-decoration: none;
   transition: border-color var(--duration-normal) var(--ease-standard), background-color var(--duration-normal) var(--ease-standard), color var(--duration-normal) var(--ease-standard), transform var(--duration-fast) var(--ease-standard);
@@ -988,6 +968,8 @@
 */
 
 .day-schedule .student-switch {
+  /* Задаем единый отступ между чипами (8px) и снизу (10px) для всех экранов расписания */
+  gap: var(--space-4);
   margin-bottom: var(--space-5);
 }
 
@@ -1004,8 +986,8 @@
   width: var(--touch-target);
   min-width: var(--touch-target);
   min-height: var(--touch-target);
-  border-radius: var(--schedule-arrow-radius);
-  font-size: var(--font-size-schedule-arrow);
+  border-radius: var(--radius-lg);
+  font-size: var(--font-size-lg);
 }
 
 .day-schedule .day-navigation__heading .day-title {
@@ -1020,7 +1002,7 @@
 }
 
 .day-schedule .day-navigation__today-status {
-  min-height: 28px;
+  min-height: 25px;
   gap: var(--space-2);
   font-size: var(--font-size-sm);
   line-height: 1;
@@ -1035,18 +1017,6 @@
   padding: var(--space-2) var(--space-5);
   border-radius: var(--radius-md);
   font-size: var(--font-size-sm);
-}
-
-@media (min-width: 431px) {
-  .day-schedule .day-navigation {
-    grid-template-columns: var(--touch-target) minmax(0, 1fr) var(--touch-target);
-    gap: var(--schedule-compact-gap);
-  }
-  .day-schedule .day-navigation__arrow {
-    width: var(--touch-target);
-    min-width: var(--touch-target);
-    min-height: var(--touch-target);
-  }
 }
 
 /*
@@ -1126,7 +1096,7 @@
   align-items: center;
   justify-content: center;
   min-height: 69px;
-  padding: 2px 50px 7px;
+  padding: var(--space-1) 50px 7px;
   text-align: center;
 }
 
@@ -1145,7 +1115,7 @@
   margin-top: var(--space-2);
   color: var(--color-text-muted);
   font-size: var(--font-size-sm);
-  font-weight: var(--weight-semibold);
+  font-weight: var(--weight-medium);
   line-height: 1;
 }
 
@@ -1203,17 +1173,4 @@
   width: var(--touch-target);
   min-width: var(--touch-target);
   min-height: var(--touch-target);
-}
-
-@media (min-width: 431px) {
-  .day-swipe-neighbor__arrow-spacer {
-    width: var(--touch-target);
-    min-width: var(--touch-target);
-    min-height: var(--touch-target);
-  }
-}
-
-.day-swipe-neighbor__chrome.day-schedule .student-switch {
-  gap: var(--space-5);
-  margin-bottom: var(--space-4);
 }

@@ -20,11 +20,11 @@
   
   {# ПРАВИЛЬНЫЙ ПОРЯДОК ПОДКЛЮЧЕНИЯ CSS #}
   <!-- app.css дает оболочку, system font и навигацию -->
-  <link rel="stylesheet" href="{{ url_for('static', path='css/app.css') }}?v=3">
+  <link rel="stylesheet" href="{{ url_for('static', path='css/app.css') }}?v=4">
   <!-- schedule.css является ЕДИНСТВЕННЫМ владельцем .lesson-card -->
-  <link rel="stylesheet" href="{{ url_for('static', path='css/components/schedule.css') }}?v=3">
+  <link rel="stylesheet" href="{{ url_for('static', path='css/components/schedule.css') }}?v=4">
   <!-- extra.css добавляет footer ниже card. --> 
-  <link rel="stylesheet" href="{{ url_for('static', path='css/components/extra.css') }}?v=3">
+  <link rel="stylesheet" href="{{ url_for('static', path='css/components/extra.css') }}?v=4">
   {% block extra_head %}{% endblock %}
 </head>
 {# ТЗ 16.1: CSRF во ВСЕ HTMX-запросы.
@@ -70,10 +70,21 @@
 
 {# ТЗ 41: bottom navigation, touch targets >= 44px #}
 <nav class="bottom-nav" aria-label="Основная навигация">
-  <a href="/" class="nav-item{% if nav == 'today' %} active{% endif %}">
-    {{ icon("calendar-duotone", class="nav-icon") }}
-    <span class="nav-label">Сегодня</span>
-  </a>
+<a
+  href="/"
+  class="nav-item{% if nav == 'today' %} active{% endif %}"
+  {% if nav == "today" %}
+  hx-get="/"
+  hx-target="#day-content"
+  hx-swap="outerHTML"
+  hx-push-url="true"
+  hx-indicator="#day-content"
+  data-day-navigation
+  {% endif %}
+>
+  {{ icon("calendar-duotone", class="nav-icon") }}
+  <span class="nav-label">Сегодня</span>
+</a>
   <a href="/schedule/week" class="nav-item{% if nav == 'week' %} active{% endif %}">
     {{ icon("calendar-dots-duotone", class="nav-icon") }}
     <span class="nav-label">Неделя</span>
@@ -107,7 +118,7 @@
 
 {# Все production JS локальны (ТЗ 48.1). #}
 <script src="/static/js/htmx.min.js"></script>
-<script src="/static/js/htmx-ext-sse.min.js?v=3"></script>
+<script src="/static/js/htmx-ext-sse.min.js?v="></script>
 <script src="/static/js/app.js?v=3"></script>
 {% block extra_scripts %}{% endblock %}
 </body>

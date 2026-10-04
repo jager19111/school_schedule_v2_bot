@@ -45,6 +45,7 @@
           {% else %}
           <a
             class="day-navigation__today-action"
+            data-day-navigation
             href="{{ day_navigation.today_url }}"
             hx-get="{{ day_navigation.today_url }}"
             hx-target="#day-content"

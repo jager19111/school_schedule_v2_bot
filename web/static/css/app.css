@@ -42,7 +42,7 @@
   --color-changed-border: color-mix(in srgb, var(--color-changed) 25%, var(--color-surface));
   
   --color-extra-bg: color-mix(in srgb, var(--color-extra) 6%, var(--color-surface));
-  --color-extra-hover: color-mix(in srgb, var(--color-text) 15%, var(--color-extra));
+
   
   --color-danger-bg: color-mix(in srgb, var(--color-danger) 6%, var(--color-surface));
   --color-danger-bg-strong: color-mix(in srgb, var(--color-danger) 11%, var(--color-surface));
@@ -50,24 +50,9 @@
   
   --color-success-bg: color-mix(in srgb, var(--color-success) 6%, var(--color-surface));
   
-  --color-on-primary: var(--color-surface);
-  --color-methodical: var(--color-primary);
-  
-  /* Schedule state semantics reuse the same project colors. */
-  --color-schedule-normal: var(--color-primary);
-  --color-schedule-current: var(--color-primary);
-  --color-schedule-added: var(--color-success);
-  
-  /* Watch is an attention state and intentionally shares the changed color. */
-  --color-watch: var(--color-changed);
-  --color-watch-strong: var(--color-changed);
-  --color-watch-bg: var(--color-changed-bg);
-  --color-watch-bg-current: var(--color-changed-bg-hover);
-  --color-watch-border: var(--color-changed-border);
-  --color-watch-border-strong: var(--color-changed-border);
+  --color-on-primary: var(--color-text-inverse);
   
   --color-focus: color-mix(in srgb, var(--color-primary) 58%, transparent);
-  --color-focus-strong: color-mix(in srgb, var(--color-primary) 70%, transparent);
   --color-focus-changed: color-mix(in srgb, var(--color-changed) 16%, transparent);
   --color-focus-soft: color-mix(in srgb, var(--color-primary) 12%, transparent);
 
@@ -83,16 +68,15 @@
   --font-size-lg: 16px;
   --font-size-xl: 19px;
   --font-size-2xl: 21px;
-  --font-size-toolbar-icon: 30px;
+  --font-size-icon-md: 20px;
+  --font-size-icon-lg: 24px;
   --font-size-icon-xl: 28px;
+  --font-size-toolbar-icon: 30px;
   
   --weight-regular: 400;
   --weight-medium: 600;
-  --weight-semibold: 650;
   --weight-bold: 700;
-  --weight-extrabold: 750;
   --weight-black: 800;
-  --weight-extrablack: 850;
   
   --line-height-tight: 1.1;
   --line-height-normal: 1.3;
@@ -135,12 +119,11 @@
   /* --------------------------------------------------------------------------
      EFFECTS / BEHAVIOR
      -------------------------------------------------------------------------- */
-  --shadow-sm: 0 2px 8px rgb(15 23 42 / 0.04);
-  --shadow-md: 0 2px 10px rgb(15 23 42 / 0.04);
+  --shadow-card: 0 2px 8px rgb(15 23 42 / 0.04);
   --shadow-auth: 0 12px 36px rgb(15 23 42 / 0.10);
   --shadow-focus-changed: 0 0 0 2px var(--color-focus-changed);
   --shadow-focus-soft: 0 0 0 2px var(--color-focus-soft);
-  --shadow-current: 0 0 0 2px color-mix(in srgb, var(--color-primary) 14%, transparent), var(--shadow-md);
+  --shadow-current: 0 0 0 2px color-mix(in srgb, var(--color-primary) 14%, transparent), var(--shadow-card);
   
   --focus-outline: 2px solid var(--color-focus);
   --focus-outline-strong: 3px solid var(--color-focus);
@@ -150,9 +133,7 @@
   --duration-normal: 140ms;
   --duration-slow: 200ms;
   --duration-pulse: 1500ms;
-  --duration-skeleton-delay: 500ms;
   --duration-skeleton-fade: 120ms;
-  --duration-autofit: 150ms;
   
   --ease-skeleton: cubic-bezier(0.4, 0, 0.6, 1);
   --ease-standard: ease;
@@ -161,28 +142,7 @@
   
   --z-header: 10;
   --z-bottom-nav: 20;
-  --z-schedule-card-toggle: 2;
-  --z-schedule-neighbor: 2;
-  --z-schedule-stage: 1;
 
-  /* --------------------------------------------------------------------------
-     LEGACY ALIASES
-     Transitional aliases for older components outside these two files.
-     Will be removed after project-wide audit.
-     -------------------------------------------------------------------------- */
-  --bg: var(--color-bg);
-  --card: var(--color-surface);
-  --text: var(--color-text);
-  --text-main: var(--color-text);
-  --text-muted: var(--color-text-muted);
-  --muted: var(--color-text-muted);
-  --border: var(--color-border);
-  --accent: var(--color-primary);
-  --cancelled: var(--color-danger);
-  --exchange: var(--color-changed);
-  --extra: var(--color-extra);
-  --methodical: var(--color-primary);
-  --ok: var(--color-success);
 }
 
 /*
@@ -199,6 +159,7 @@
 
 html {
   -webkit-text-size-adjust: 100%;
+  overflow-y: scroll; /* ФИКС ПРЫЖКОВ: резервирует место под скроллбар навсегда */
 }
 
 body {
@@ -245,7 +206,8 @@ body {
     ==========================================================================
 */
 
-.phosphor-icon {
+.phosphor-icon,
+.lucide-icon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -260,16 +222,26 @@ body {
   fill: currentColor;
 }
 
+.lucide-icon svg {
+  width: 1em;
+  height: 1em;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
 .icon-sm {
   font-size: var(--font-size-lg);
 }
 
 .icon-md {
-  font-size: 20px;
+  font-size: var(--font-size-icon-md);
 }
 
 .icon-lg {
-  font-size: 24px;
+  font-size: var(--font-size-icon-lg);
 }
 
 .icon-xl {
@@ -300,24 +272,6 @@ body {
   color: var(--color-success);
 }
 
-.lucide-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  line-height: 1;
-  vertical-align: middle;
-}
-
-.lucide-icon svg {
-  width: 1em;
-  height: 1em;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 2;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
 
 .with-icon {
   display: inline-flex;
@@ -397,7 +351,7 @@ body {
   overflow: hidden;
   color: var(--color-text-secondary);
   font-size: clamp(16px, 4.35vw, 18px);
-  font-weight: var(--weight-semibold);
+  font-weight: var(--weight-medium);
   letter-spacing: -0.01em;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -459,9 +413,7 @@ body {
 }
 
 @media (hover: hover) {
-  .class-watch-toggle__button:hover {
-    color: var(--color-changed);
-  }
+  .class-watch-toggle__button:hover,
   .class-watch-toggle__button--active:hover {
     color: var(--color-changed);
   }
@@ -500,14 +452,15 @@ body {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  flex: 1; /* РЕШЕНИЕ ПРЫЖКА: жестко задаем равную ширину (20% экрана) для всех табов */
-  min-width: 0; /* Позволяет корректно сжиматься на старых узких iPhone SE */
+  flex: 1 1 0; /* ФИКС ПРЫЖКОВ: строго равная ширина (по 20%) независимо от длины и жирности текста */
+  min-width: 0;
   gap: var(--space-1);
   min-height: var(--touch-target-lg);
-  padding: var(--space-3) var(--space-2);
+  padding: var(--space-3) 0; /* Убрали боковые отступы, чтобы кнопки не распирало */
   text-decoration: none;
   color: var(--color-text-muted);
   font-size: var(--font-size-xs);
+  -webkit-tap-highlight-color: transparent; /* Убиваем синюю браузерную вспышку при тапе */
 }
 
 .nav-item.active {
@@ -555,7 +508,7 @@ body {
   cursor: pointer;
   font: inherit;
   font-size: var(--font-size-body);
-  font-weight: var(--weight-semibold);
+  font-weight: var(--weight-medium);
   line-height: 1;
   text-decoration: none;
 }
@@ -564,7 +517,7 @@ body {
   border-color: var(--color-primary);
   background: var(--color-primary-bg);
   color: var(--color-primary);
-  font-weight: var(--weight-extrabold);
+  font-weight: var(--weight-bold);
 }
 
 .student-chip:focus {
@@ -650,7 +603,7 @@ body {
 
 .nav-btn.today-btn {
   background: var(--color-primary);
-  color: var(--color-surface);
+  color: var(--color-on-primary);
   border-color: var(--color-primary);
 }
 
@@ -809,7 +762,7 @@ body {
   background: var(--color-surface);
   border-radius: var(--radius-xl);
   padding: var(--space-5) var(--space-7);
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--shadow-card);
 }
 
 .family-member.current {
@@ -826,21 +779,15 @@ body {
   margin-top: var(--space-1);
 }
 
-.you-badge, .admin-badge {
+.you-badge,
+.admin-badge {
+  margin-left: var(--space-3);
+  padding: var(--space-1) var(--space-3);
+  color: var(--color-on-primary);
+  background: var(--color-primary);
+  border-radius: var(--radius-pill);
   font-size: var(--font-size-xs);
   font-weight: var(--weight-bold);
-  padding: 2px var(--space-3);
-  border-radius: var(--radius-pill);
-  color: var(--color-surface);
-  margin-left: var(--space-3);
-}
-
-.you-badge {
-  background: var(--color-primary);
-}
-
-.admin-badge {
-  background: var(--color-primary);
 }
 
 .family-students {
@@ -854,7 +801,7 @@ body {
   background: var(--color-surface);
   border-radius: var(--radius-xl);
   padding: var(--space-6);
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--shadow-card);
 }
 
 .student-name {
@@ -906,7 +853,7 @@ body {
   border-radius: var(--radius-xl);
   padding: var(--space-5) var(--space-6);
   font-size: var(--font-size-body);
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--shadow-card);
 }
 
 .invite-create-buttons {
@@ -1007,9 +954,9 @@ body {
   width: 52px;
   height: 52px;
   place-items: center;
-  margin: 0 auto 14px;
+  margin: 0 auto var(--space-7);
   background: var(--color-primary-bg);
-  border-radius: 16px;
+  border-radius: var(--radius-3xl);
   font-size: var(--font-size-icon-xl);
 }
 
@@ -1021,15 +968,15 @@ body {
 }
 
 .auth-card__status {
-  margin: 12px 0 0;
+  margin: var(--space-6) 0 0;
   color: var(--color-text-muted);
   font-size: var(--font-size-body-lg);
   line-height: 1.45;
 }
 
 .auth-card__help {
-  margin-top: 18px;
-  padding: 16px;
+  margin-top: var(--space-9);
+  padding: var(--space-8);
   text-align: left;
   color: var(--color-text);
   background: var(--color-surface-subtle);
@@ -1044,7 +991,7 @@ body {
 }
 
 .auth-card__help ol {
-  margin: 10px 0;
+  margin: var(--space-5) 0;
   padding-left: 22px;
 }
 
@@ -1076,7 +1023,7 @@ body {
   margin: 0;
   color: var(--color-text-muted);
   font-size: var(--font-size-md);
-  font-weight: var(--weight-extrabold);
+  font-weight: var(--weight-bold);
   letter-spacing: 0.02em;
   text-transform: uppercase;
 }
@@ -1084,12 +1031,12 @@ body {
 .settings-card {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 14px;
+  gap: var(--space-6);
+  padding: var(--space-7);
   background: var(--color-surface);
   border: var(--border-width-default) solid var(--color-border-subtle);
   border-radius: var(--radius-3xl);
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--shadow-card);
 }
 
 .settings-card__content {
@@ -1105,7 +1052,7 @@ body {
 }
 
 .settings-card__description {
-  margin: 4px 0 0;
+  margin: var(--space-2) 0 0;
   color: var(--color-text-muted);
   font-size: var(--font-size-md);
   line-height: 1.4;
@@ -1114,7 +1061,7 @@ body {
 .settings-card__action {
   flex: 0 0 auto;
   min-height: 40px;
-  padding: 8px 11px;
+  padding: var(--space-4) 11px;
   background: transparent;
   border: var(--border-width-default) solid var(--color-border-subtle);
   border-radius: var(--radius-lg);
@@ -1188,7 +1135,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--space-6);
 }
 
 .settings-back-link {
@@ -1218,7 +1165,7 @@ body {
 }
 
 .settings-error {
-  padding: 10px 12px;
+  padding: var(--space-5) var(--space-6);
   color: var(--color-danger);
   background: var(--color-danger-bg);
   border: var(--border-width-default) solid var(--color-danger-border);
@@ -1228,7 +1175,7 @@ body {
 }
 
 .settings-empty-state {
-  padding: 16px;
+  padding: var(--space-8);
   color: var(--color-text-muted);
   background: var(--color-surface-hover);
   border: var(--border-width-default) dashed var(--color-border);
@@ -1241,12 +1188,12 @@ body {
 .device-card {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 14px;
+  gap: var(--space-6);
+  padding: var(--space-7);
   background: var(--color-surface);
   border: var(--border-width-default) solid var(--color-border-subtle);
   border-radius: var(--radius-3xl);
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--shadow-card);
 }
 
 .device-card--current {
@@ -1278,11 +1225,11 @@ body {
 
 .device-card__current-badge {
   flex: 0 0 auto;
-  padding: 4px 7px;
+  padding: var(--space-2) 7px;
   color: var(--color-primary);
   background: var(--color-primary-border);
   border-radius: var(--radius-pill);
   font-size: var(--font-size-xs);
-  font-weight: var(--weight-extrabold);
+  font-weight: var(--weight-bold);
   line-height: 1;
 }

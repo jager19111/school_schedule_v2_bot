@@ -56,7 +56,7 @@
   overflow: hidden;
   color: var(--color-text-muted);
   font-size: var(--font-size-sm);
-  font-weight: var(--weight-semibold);
+  font-weight: var(--weight-medium);
   line-height: var(--line-height-tight);
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -78,16 +78,12 @@
   min-width: 34px;
   min-height: 34px;
   padding: 5px var(--space-4);
-  border-radius: 9px;
+  border-radius: var(--radius-lg);
 }
 
 @media (hover: hover) {
   .extra-class-card__actions .nav-btn.small:hover {
     background: var(--color-surface-hover);
-  }
-
-  .extra-class-card__actions .nav-btn.small.danger:hover {
-    background: var(--color-danger-bg);
   }
 }
 
@@ -104,14 +100,14 @@
   display: flex;
   flex-direction: column;
   gap: 7px;
-  margin-top: 18px;
+  margin-top: var(--space-9);
 }
 
 .extra-class-preview__title {
   margin: 0;
   color: var(--color-text-muted);
   font-size: var(--font-size-md);
-  font-weight: var(--weight-extrabold);
+  font-weight: var(--weight-bold);
   line-height: 1.2;
 }
 
@@ -163,8 +159,13 @@
 
 @media (hover: hover) {
   .extra-fab:hover {
-    background: var(--color-extra-hover);
-    box-shadow: 0 8px 20px color-mix(in srgb, var(--color-extra) 36%, transparent);
+    background: color-mix(
+      in srgb,
+      var(--color-text) 15%,
+      var(--color-extra)
+    );
+    box-shadow: 0 8px 20px
+      color-mix(in srgb, var(--color-extra) 36%, transparent);
     transform: translateY(-1px);
   }
 }
@@ -251,7 +252,7 @@
   color: var(--color-text);
   font: inherit;
   font-size: 17px;
-  font-weight: var(--weight-extrabold);
+  font-weight: var(--weight-bold);
   font-variant-numeric: tabular-nums;
   line-height: 1;
   text-align: center;
@@ -281,7 +282,7 @@
 .reminder-suffix {
   color: var(--color-text-muted);
   font-size: var(--font-size-lg);
-  font-weight: var(--weight-semibold);
+  font-weight: var(--weight-medium);
   white-space: nowrap;
 }
 
