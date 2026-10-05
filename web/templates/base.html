@@ -1,112 +1,228 @@
-  {# web/templates/base.html #}
+{# web/templates/base.html #}
 <!DOCTYPE html>
 <html lang="ru">
 <head>
   <meta charset="utf-8">
+
   {# ТЗ 40: viewport-fit=cover, БЕЗ user-scalable=no / maximum-scale #}
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1, viewport-fit=cover"
+  >
   <meta name="theme-color" content="#1a56db">
-  
-  {# --- PWA & iOS Meta Tags (Phase 6) --- #}
+
+  {# PWA и iOS meta tags. #}
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="Расписание">
-  <meta name="htmx-config" content='{"includeIndicatorStyles": false}'>
+
+  {# Встроенные indicator styles HTMX выключены: styles определяет app.css. #}
+ <meta
+  name="htmx-config"
+  content='{"includeIndicatorStyles": false, "attributesToSettle": ["class", "width", "height"]}'
+>
+
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
   <link rel="icon" href="/favicon.ico" type="image/x-icon">
+
   <title>{% block title %}Расписание{% endblock %} — лицей НГТУ</title>
-  
-  {# ПРАВИЛЬНЫЙ ПОРЯДОК ПОДКЛЮЧЕНИЯ CSS #}
-  <!-- app.css дает оболочку, system font и навигацию -->
-  <link rel="stylesheet" href="{{ url_for('static', path='css/app.css') }}?v=6">
-  <!-- schedule.css является ЕДИНСТВЕННЫМ владельцем .lesson-card -->
-  <link rel="stylesheet" href="{{ url_for('static', path='css/components/schedule.css') }}?v=6">
-  <!-- extra.css добавляет footer ниже card. --> 
-  <link rel="stylesheet" href="{{ url_for('static', path='css/components/extra.css') }}?v=6">
+
+  {# Порядок CSS намеренный: shell → schedule components → extra components. #}
+  <link
+    rel="stylesheet"
+    href="{{ url_for('static', path='css/app.css') }}?v=6"
+  >
+  <link
+    rel="stylesheet"
+    href="{{ url_for('static', path='css/components/schedule.css') }}?v=6"
+  >
+  <link
+    rel="stylesheet"
+    href="{{ url_for('static', path='css/components/extra.css') }}?v=6"
+  >
+
   {% block extra_head %}{% endblock %}
 </head>
-{# ТЗ 16.1: CSRF во ВСЕ HTMX-запросы.
-   ТЗ 51.5: SSE-подключение через htmx-ext-sse (reconnect c exponential backoff).
-   Элемент с sse-connect держит класс htmx-request, пока соединение открыто
-   (используется app.js как health-check для polling fallback, ТЗ 51.12). #}
+
+{# ТЗ 16.1: CSRF header наследуется всеми HTMX requests.
+   ТЗ 51.5: SSE подключается к body и НЕ должен пересоздаваться
+   при HTMX-замене #app-shell. 
+#}
 <body
   {% if csrf_token is defined and csrf_token %}
-    ontouchstart=""
+    {#ontouchstart="" {#если перестанет работать action button на айфоне #}
     hx-ext="sse"
     sse-connect="/api/v1/schedule/stream"
     hx-headers='{"X-CSRF-Token": "{{ csrf_token }}"}'
   {% endif %}
 >
-{# Импортируем макрос один раз в самом начале body #}
-{% from "components/ui/icon.html" import icon %} 
+{% from "components/ui/icon.html" import icon %}
 
-<header class="app-header">
-  <div class="header-title">
-    {% block header %}Расписание{% endblock %}
-  </div>
-  
-  <a
-    href="/settings"
-    class="header-settings{% if nav == 'settings' %} active{% endif %}"
-    hx-get="/settings"
-    hx-target="#main"
-    hx-swap="innerHTML"
-    hx-push-url="true"
-    {% if nav == "settings" %}
-    aria-current="page"
-    {% endif %}
-    aria-label="Открыть настройки"
-  >
-    {# Заменили эмодзи на вызов макроса #}
-    {{ icon("gear-duotone", size="xl", class="header-settings__icon") }}
-    <span class="visually-hidden">Настройки</span>
-  </a>
-</header>
+{# =========================================================================
+   APP SHELL
 
-<main class="app-content" id="main">
-  {% block content %}{% endblock %}
-</main>
+   Этот контейнер является единственной заменяемой boundary верхнего уровня.
 
-{# ТЗ 41: bottom navigation, touch targets >= 44px #}
-<nav class="bottom-nav" aria-label="Основная навигация">
-<a
-  href="/"
-  class="nav-item icon-action{% if nav == 'today' %} active{% endif %}"
-  {% if nav == "today" %}
-  hx-get="/"
-  hx-target="#day-content"
-  hx-swap="outerHTML"
-  hx-push-url="true"
-  hx-indicator="#day-content"
-  data-day-navigation
-  {% endif %}
->
-  {{ icon("calendar-duotone", class="nav-icon") }}
-  <span class="nav-label">Сегодня</span>
-</a>
-  <a href="/schedule/week" class="nav-item icon-action{% if nav == 'week' %} active{% endif %}">
-    {{ icon("calendar-dots-duotone", class="nav-icon") }}
-    <span class="nav-label">Неделя</span>
-  </a>
-  <a href="/school" class="nav-item icon-action{% if nav == 'school' %} active{% endif %}">
-    {{ icon("building-apartment-duotone", class="nav-icon") }}
-    <span class="nav-label">Школа</span>
-  </a>
-  <a href="/extra-classes" class="nav-item icon-action{% if nav == 'extra' %} active{% endif %}">
-    {{ icon("palette-duotone", class="nav-icon") }}
-    <span class="nav-label">Кружки</span>
-  </a>
-  <a href="/family" class="nav-item icon-action{% if nav == 'family' %} active{% endif %}">
-    {{ icon("users-three-duotone", class="nav-icon") }}
-    <span class="nav-label">Семья</span>
-  </a>
-</nav>
+   При переходе между top-level screens HTMX выполняет:
 
-{# ТЗ 51.4: SSE invalidation signal -> htmx GET (лёгкий 204) ->
-   app.js revalidate текущего экрана (authenticated reload). #}
+   hx-get="..."
+   hx-target="#app-shell"
+   hx-select="#app-shell"
+   hx-swap="outerHTML show:top"
+
+   Server возвращает full page response, HTMX извлекает из него только
+   #app-shell и заменяет текущий shell без document unload.
+
+   ВАЖНО:
+   - #live-monitor находится ПОСЛЕ #app-shell;
+   - global scripts находятся ПОСЛЕ #app-shell;
+   - SSE и document-level JS listeners сохраняются между screen transitions.
+   ========================================================================= #}
+<div id="app-shell">
+
+  <header class="app-header">
+    <div class="header-title">
+      {% block header %}Расписание{% endblock %}
+    </div>
+
+    {# Settings — top-level screen, поэтому заменяется весь app shell. #}
+    <a
+      href="/settings"
+      class="header-settings{% if nav == 'settings' %} active{% endif %}"
+      hx-get="/settings"
+      hx-target="#app-shell"
+      hx-select="#app-shell"
+      hx-swap="outerHTML show:top"
+      hx-push-url="true"
+      hx-sync="#app-shell:replace"
+      {% if nav == "settings" %}
+      aria-current="page"
+      {% endif %}
+      aria-label="Открыть настройки"
+    >
+      {{ icon("gear-duotone", size="xl", class="header-settings__icon") }}
+      <span class="visually-hidden">Настройки</span>
+    </a>
+  </header>
+
+  <main class="app-content" id="main">
+    {% block content %}{% endblock %}
+  </main>
+
+  {# =========================================================================
+     BOTTOM NAVIGATION
+
+     Каждая ссылка сохраняет href как progressive-enhancement fallback:
+     без JavaScript или HTMX пользователь получит обычную полную страницу.
+
+     При доступном HTMX:
+     - shell заменяется без document unload;
+     - URL обновляется hx-push-url;
+     - hx-sync отменяет/заменяет предыдущий незавершённый tab request.
+     ========================================================================= #}
+  <nav class="bottom-nav" aria-label="Основная навигация">
+
+    <a
+      href="/"
+      class="nav-item icon-action{% if nav == 'today' %} active{% endif %}"
+      hx-get="/"
+      hx-target="#app-shell"
+      hx-select="#app-shell"
+      hx-swap="outerHTML show:top"
+      hx-push-url="true"
+      hx-sync="#app-shell:replace"
+      data-day-navigation
+      {% if nav == "today" %}
+      aria-current="page"
+      {% endif %}
+    >
+      {{ icon("calendar-duotone", class="nav-icon") }}
+      <span class="nav-label">Сегодня</span>
+    </a>
+
+    <a
+      href="/schedule/week"
+      class="nav-item icon-action{% if nav == 'week' %} active{% endif %}"
+      hx-get="/schedule/week"
+      hx-target="#app-shell"
+      hx-select="#app-shell"
+      hx-swap="outerHTML show:top"
+      hx-push-url="true"
+      hx-sync="#app-shell:replace"
+      {% if nav == "week" %}
+      aria-current="page"
+      {% endif %}
+    >
+      {{ icon("calendar-dots-duotone", class="nav-icon") }}
+      <span class="nav-label">Неделя</span>
+    </a>
+
+    <a
+      href="/school"
+      class="nav-item icon-action{% if nav == 'school' %} active{% endif %}"
+      hx-get="/school"
+      hx-target="#app-shell"
+      hx-select="#app-shell"
+      hx-swap="outerHTML show:top"
+      hx-push-url="true"
+      hx-sync="#app-shell:replace"
+      {% if nav == "school" %}
+      aria-current="page"
+      {% endif %}
+    >
+      {{ icon("building-apartment-duotone", class="nav-icon") }}
+      <span class="nav-label">Школа</span>
+    </a>
+
+    <a
+      href="/extra-classes"
+      class="nav-item icon-action{% if nav == 'extra' %} active{% endif %}"
+      hx-get="/extra-classes"
+      hx-target="#app-shell"
+      hx-select="#app-shell"
+      hx-swap="outerHTML show:top"
+      hx-push-url="true"
+      hx-sync="#app-shell:replace"
+      {% if nav == "extra" %}
+      aria-current="page"
+      {% endif %}
+    >
+      {{ icon("palette-duotone", class="nav-icon") }}
+      <span class="nav-label">Кружки</span>
+    </a>
+
+    <a
+      href="/family"
+      class="nav-item icon-action{% if nav == 'family' %} active{% endif %}"
+      hx-get="/family"
+      hx-target="#app-shell"
+      hx-select="#app-shell"
+      hx-swap="outerHTML show:top"
+      hx-push-url="true"
+      hx-sync="#app-shell:replace"
+      {% if nav == "family" %}
+      aria-current="page"
+      {% endif %}
+    >
+      {{ icon("users-three-duotone", class="nav-icon") }}
+      <span class="nav-label">Семья</span>
+    </a>
+
+  </nav>
+
+</div>
+
+{# =========================================================================
+   PERSISTENT RUNTIME ELEMENTS
+
+   Этот элемент намеренно не входит в #app-shell:
+   SSE connection должен переживать top-level HTMX navigation.
+   ========================================================================= #}
 {% if csrf_token is defined and csrf_token %}
+  {# SSE monitor остаётся вне #app-shell и сохраняет EventSource между
+     top-level HTMX navigation transitions. #}
   <div
     id="live-monitor"
     hidden
@@ -115,12 +231,41 @@
     hx-swap="none"
     aria-hidden="true"
   ></div>
+
+  {# Persistent source для программной shell revalidation из app.js.
+
+     Элемент не содержит hx-get/hx-trigger намеренно: URL актуального screen
+     задаётся app.js в момент revalidation через htmx.ajax().
+
+     Он находится вне #app-shell, поэтому event source и lifecycle tracking
+     не исчезают при outerHTML swap shell. #}
+  <div
+    id="shell-revalidation"
+    hidden
+    aria-hidden="true"
+  ></div>
 {% endif %}
 
-{# Все production JS локальны (ТЗ 48.1). #}
+{# =========================================================================
+   GLOBAL CLIENT RUNTIME
+
+   Scripts загружаются один раз на срок жизни document.
+
+   Не включать их внутрь #app-shell:
+   shell заменяется через HTMX, а scripts и document-level listeners должны
+   остаться живыми при переходах между top-level screens.
+   ========================================================================= #}
 <script src="/static/js/htmx.min.js"></script>
 <script src="/static/js/htmx-ext-sse.min.js?v=3"></script>
-<script src="/static/js/app.js?v=6"></script>
+<script src="/static/js/app.js?v=7"></script>
+
+{# Общий UI runtime: autofit, swipe, lesson details, student switch. #}
+<script src="/static/js/schedule.js?v=7"></script>
+<script src="/static/js/schedule-swipe.js?v=1"></script>
+{# Extra-class forms: preview и reminder stepper; безопасный no-op вне forms. #}
+<script src="/static/js/extra.js?v=7"></script>
+
+{# Для будущих действительно page-specific scripts. #}
 {% block extra_scripts %}{% endblock %}
 </body>
 </html>

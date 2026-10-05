@@ -173,7 +173,35 @@ body {
   padding-top: env(safe-area-inset-top);
   padding-bottom: calc(env(safe-area-inset-bottom) + var(--bottom-nav-offset));
 }
+/*
+  ==========================================================================
+    APP SHELL BOUNDARY
+    ==========================================================================
+*/
 
+/*
+ * #app-shell — заменяемая граница верхнеуровневой HTMX-навигации.
+ *
+ * Внутри:
+ * - .app-header;
+ * - #main;
+ * - .bottom-nav.
+ *
+ * ВНЕ контейнера намеренно остаются:
+ * - #live-monitor с SSE-подключением;
+ * - подключённые JavaScript-файлы.
+ *
+ * flex-геометрия сохраняет прежнее поведение body → main:
+ * центральный контент занимает доступную высоту, а fixed bottom-nav
+ * по-прежнему компенсируется body padding-bottom.
+ */
+#app-shell {
+  display: flex;
+  flex: 1 0 auto;
+  flex-direction: column;
+  width: 100%;
+  min-width: 0;
+}
 /*
   ==========================================================================
     SHARED PRIMITIVES
@@ -805,9 +833,14 @@ body {
   color: var(--color-text-muted);
 }
 
-.week-changes {
+.week-changes { /* Пофиксить выравнивание с текстом */
+  gap: var(--space-4);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
   color: var(--color-changed);
   font-weight: var(--weight-medium);
+  white-space: nowrap;
 }
 
 @media (min-width: 768px) {
@@ -1376,4 +1409,58 @@ body {
   font-size: var(--font-size-xs);
   font-weight: var(--weight-bold);
   line-height: 1;
+}
+
+/*
+  ==========================================================================
+    CSP-SAFE TEMPLATE LAYOUT HELPERS
+    ==========================================================================
+*/
+
+/*
+ * School free rooms status line.
+ * Заменяет inline display:flex / align-items / gap.
+ */
+.free-status--with-icon {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+/*
+ * Empty state свободных кабинетов.
+ * Заменяет inline layout, сохраняя центрирование и 8px gap.
+ */
+.free-rooms__empty-state {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-4);
+}
+
+/*
+ * Информационная подсказка под списком свободных кабинетов.
+ */
+.free-rooms__hint {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+}
+
+/*
+ * Heading формы создания/изменения student profile.
+ * Оригинальный gap был 8px.
+ */
+.student-form__heading {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+/*
+ * CSP-safe replacement для style="display: inline-flex".
+ */
+.empty-day__icon--inline {
+  display: inline-flex;
 }

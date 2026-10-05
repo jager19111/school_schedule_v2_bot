@@ -20,6 +20,7 @@ from fastapi.responses import HTMLResponse
 
 from services.web_sessions_service import WebSessionContext
 from web.deps import require_family_allowed
+from web.htmx import select_page_or_fragment_template
 from web.mappers import (
     family_members_to_web,
     invite_result_to_web,
@@ -116,15 +117,37 @@ async def _family_view(
         "csrf_token": context.csrf_token,
     }
 
-def _render_family(request: Request, context: WebSessionContext, view: dict):
-    """Fragment для HTMX, полная страница для обычного запроса."""
-    template = (
-        "family/_family_content.html"
-        if _is_htmx(request)
-        else "family/family.html"
-    )
-    return _templates(request).TemplateResponse(request, template, view)
+def _render_family(
+    request: Request,
+    context: WebSessionContext,
+    view: dict,
+):
+    """
+    Возвращает family screen в одном из трёх режимов.
 
+    Обычная browser navigation:
+        family/family.html.
+
+    Локальный HTMX request:
+        family/_family_content.html.
+
+    Верхнеуровневая app-shell navigation:
+        family/family.html.
+
+    Для app-shell server возвращает полную страницу, а HTMX на клиенте
+    извлекает только #app-shell через hx-select="#app-shell".
+    """
+    template = select_page_or_fragment_template(
+        request,
+        page_template="family/family.html",
+        fragment_template="family/_family_content.html",
+    )
+
+    return _templates(request).TemplateResponse(
+        request,
+        template,
+        view,
+    )
 # ==============================================================
 # Экран «Семья»
 # ==============================================================

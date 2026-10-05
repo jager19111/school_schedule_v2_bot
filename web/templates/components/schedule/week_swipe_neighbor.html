@@ -1,0 +1,92 @@
+{# web/templates/components/schedule/week_swipe_neighbor.html #}
+{#
+  Визуальная соседняя panel для будущего interactive week swipe.
+
+  Это НЕ второе каноническое недельное расписание:
+
+  - здесь нет рабочих links;
+  - здесь нет реальных day cards;
+  - здесь нет mutable application state;
+  - panel всегда pointer-events: none;
+  - actual week navigation по-прежнему выполняет существующие HTMX links.
+
+  JavaScript будущей week swipe реализации будет:
+  - подставлять соседний label;
+  - клонировать только visual student switch;
+  - показывать skeleton только при slow request;
+  - двигать canonical week panel и этот neighbor panel transform-ами.
+#}
+
+<aside
+  class="week-swipe-neighbor"
+  data-week-swipe-neighbor
+  aria-hidden="true"
+>
+  <section class="week-swipe-neighbor__chrome week-schedule">
+    <div
+      class="week-swipe-neighbor__students"
+      data-week-swipe-neighbor-students
+    ></div>
+
+    <header class="day-header">
+      <nav
+        class="day-navigation week-navigation"
+        aria-hidden="true"
+      >
+        <span
+          class="day-swipe-neighbor__arrow-spacer"
+          aria-hidden="true"
+        ></span>
+
+        <div class="day-navigation__heading">
+          <h2
+            class="day-title"
+            data-week-swipe-neighbor-label
+          ></h2>
+
+          <div class="day-navigation__today-slot">
+            <span class="day-navigation__today-status">
+              Загрузка недели
+            </span>
+          </div>
+        </div>
+
+        <span
+          class="day-swipe-neighbor__arrow-spacer"
+          aria-hidden="true"
+        ></span>
+      </nav>
+    </header>
+
+    <div
+      class="week-swipe-neighbor__skeleton"
+      data-week-swipe-neighbor-skeleton
+      aria-hidden="true"
+    >
+      <article class="week-skel-day">
+        <span class="skel-block week-skel-day__title"></span>
+        <span class="skel-block week-skel-day__meta"></span>
+      </article>
+
+      <article class="week-skel-day">
+        <span class="skel-block week-skel-day__title"></span>
+        <span class="skel-block week-skel-day__meta"></span>
+      </article>
+
+      <article class="week-skel-day">
+        <span class="skel-block week-skel-day__title"></span>
+        <span class="skel-block week-skel-day__meta"></span>
+      </article>
+
+      <article class="week-skel-day">
+        <span class="skel-block week-skel-day__title"></span>
+        <span class="skel-block week-skel-day__meta"></span>
+      </article>
+
+      <article class="week-skel-day">
+        <span class="skel-block week-skel-day__title"></span>
+        <span class="skel-block week-skel-day__meta"></span>
+      </article>
+    </div>
+  </section>
+</aside>

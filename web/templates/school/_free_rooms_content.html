@@ -2,36 +2,57 @@
 {% from "components/ui/icon.html" import icon %}
 
 <section class="free-rooms">
-  <div class="free-status" style="display: inline-flex; align-items: center; gap: 6px;">
-    {{ icon("clock-duotone", class="icon-muted") }} {{ free_rooms.status_line }}
+  <div class="free-status free-status--with-icon">
+    {{ icon("clock-duotone", class="icon-muted") }}
+    {{ free_rooms.status_line }}
   </div>
 
   {% if free_rooms.is_empty %}
-  <div class="empty-day" style="display: inline-flex; align-items: center; gap: 8px; justify-content: center;">
-    {{ icon("x-circle-duotone", class="icon-danger") }} Все кабинеты заняты (или школа закрыта).
+  <div class="empty-day free-rooms__empty-state">
+    {{ icon("x-circle-duotone", class="icon-danger") }}
+    Все кабинеты заняты (или школа закрыта).
   </div>
   {% else %}
   <div class="school-grid">
     {% for room in free_rooms.rooms %}
-    <a class="school-item text-action" href="/school/room/{{ room.id }}"
-       hx-get="/school/room/{{ room.id }}" hx-target="#main" hx-swap="innerHTML"
-       hx-push-url="true">{{ room.name }}</a>
+    <a
+      class="school-item text-action"
+      href="/school/room/{{ room.id }}"
+      hx-get="/school/room/{{ room.id }}"
+      hx-target="#main"
+      hx-swap="innerHTML"
+      hx-push-url="true"
+    >
+      {{ room.name }}
+    </a>
     {% endfor %}
   </div>
-  <div class="permutation-note" style="display: inline-flex; align-items: center; gap: 6px; justify-content: center;">
-    {{ icon("info-duotone", class="icon-muted") }} Нажмите на кабинет, чтобы проверить его занятость до конца дня.
+
+  <div class="permutation-note free-rooms__hint">
+    {{ icon("info-duotone", class="icon-muted") }}
+    Нажмите на кабинет, чтобы проверить его занятость до конца дня.
   </div>
   {% endif %}
 
-  <!-- Обновленная панель действий с идеальными отступами -->
   <nav class="page-footer-actions">
-    <a class="nav-btn today-btn text-action" href="/school/free-rooms"
-       hx-get="/school/free-rooms" hx-target="#main" hx-swap="innerHTML"
-       hx-push-url="true">
-      {{ icon("arrows-clockwise-duotone", size="sm") }} Обновить
+    <a
+      class="nav-btn today-btn text-action"
+      href="/school/free-rooms"
+      hx-get="/school/free-rooms"
+      hx-target="#main"
+      hx-swap="innerHTML"
+      hx-push-url="true"
+    >
+      {{ icon("arrows-clockwise-duotone", size="sm") }}
+      Обновить
     </a>
-    <a class="nav-btn text-action" href="/school">
-      {{ icon("caret-circle-left-duotone", size="sm") }} К школе
+
+    <a
+      class="nav-btn text-action"
+      href="/school"
+    >
+      {{ icon("caret-circle-left-duotone", size="sm") }}
+      К школе
     </a>
   </nav>
 </section>

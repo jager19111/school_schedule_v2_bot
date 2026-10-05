@@ -254,6 +254,8 @@ def create_web_app(
 
     # При shutdown web-сервера закрываем SSE best effort
     # (финальное закрытие ресурсов — в main.py, ТЗ 7.4).
+    # vscode зачеркивает Метод "on_event" и пишет: в классе "FastAPI" не рекомендуется к использованию on_event is deprecated, use lifespan event handlers instead.Read more about it in the
+
     @app.on_event("shutdown")
     async def _close_sse() -> None:  # pragma: no cover
         sse_manager.close_all()

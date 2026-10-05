@@ -6,16 +6,8 @@
 LessonCard · dev showcase
 {% endblock %}
 
-{% block extra_head %}
-<link rel="stylesheet" href="/static/css/components/schedule.css">
-{% endblock %}
-
-{% block extra_scripts %}
-<script src="/static/js/schedule.js"></script>
-{% endblock %}
-
 {% block content %}
-<section class="schedule-showcase">
+<section class="schedule-showcase schedule-showcase--show-skeleton">
   <header class="day-header">
     <h2 class="day-title">Компоненты расписания</h2>
     <div class="day-subtitle">
@@ -43,18 +35,13 @@ LessonCard · dev showcase
   </div>
 
   <!-- ДОБАВЬТЕ ЭТОТ БЛОК ДЛЯ ТЕСТИРОВАНИЯ СКЕЛЕТОНА -->
-  <header class="day-header" style="margin-top: 30px;">
+  <header class="day-header schedule-showcase__skeleton-heading">
     <h2 class="day-title">Анимация загрузки (Skeleton)</h2>
   </header>
   
   <div class="schedule-showcase__list">
     {% include "components/schedule/skeleton.html" %}
   </div>
-
-  <!-- Принудительно показываем скелетон в песочнице, игнорируя HTMX -->
-  <style>
-    #schedule-skeleton { display: flex !important; }
-  </style>
 
 </section>
 {% endblock %}

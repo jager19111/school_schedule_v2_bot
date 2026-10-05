@@ -13,7 +13,6 @@
   <div
     class="stale-warning"
     role="alert"
-    style="display: flex; align-items: center; gap: 6px;"
   >
     {{ icon("warning-duotone") }} {{ error }}
   </div>
@@ -102,9 +101,8 @@
     {% else %}
       <section class="empty-day">
         <div
-          class="empty-day__icon"
+          class="empty-day__icon empty-day__icon--inline"
           aria-hidden="true"
-          style="display: inline-flex;"
         >
           {{ icon("star-duotone", size="xl", class="icon-muted") }}
         </div>

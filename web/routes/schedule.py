@@ -31,6 +31,7 @@ from services.schedule_targets_service import (
 )
 from services.web_sessions_service import WebSessionContext
 from web.deps import require_family_allowed
+from web.htmx import select_page_or_fragment_template
 from web.mappers import (
     changes_to_web,
     day_navigation_label,
@@ -208,10 +209,10 @@ async def _render_no_target_page(
     user уже допущен require_family_allowed(), но schedule target пока
     отсутствует.
     """
-    template_name = (
-        "schedule/_no_target_content.html"
-        if _is_htmx(request)
-        else "schedule/no_target.html"
+    template_name = select_page_or_fragment_template(
+        request,
+        page_template="schedule/no_target.html",
+        fragment_template="schedule/_no_target_content.html",
     )
 
     return _templates(request).TemplateResponse(
@@ -265,7 +266,60 @@ def _day_navigation(
         "today_url": "/",
         "is_today": selected_date_iso == today_iso,
     }
-    
+
+_MONTHS_RU_GENITIVE = (
+    "",
+    "января",
+    "февраля",
+    "марта",
+    "апреля",
+    "мая",
+    "июня",
+    "июля",
+    "августа",
+    "сентября",
+    "октября",
+    "ноября",
+    "декабря",
+)
+
+
+def _week_navigation_label(week_start_iso: str) -> str:
+    """
+    Возвращает компактную human-readable подпись недельного диапазона.
+
+    week_start_iso — ISO дата понедельника.
+
+    Примеры:
+    - 2026-10-05 → 5–11 октября
+    - 2026-09-28 → 28 сентября — 4 октября
+    - 2026-12-28 → 28 декабря 2026 — 3 января 2027
+
+    JavaScript не выполняет календарную арифметику: он получает готовую
+    подпись для visual-only week swipe neighbor из data-week-label.
+    """
+    week_start = date.fromisoformat(week_start_iso)
+    week_end = week_start + timedelta(days=6)
+
+    start_month = _MONTHS_RU_GENITIVE[week_start.month]
+    end_month = _MONTHS_RU_GENITIVE[week_end.month]
+
+    if week_start.year != week_end.year:
+        return (
+            f"{week_start.day} {start_month} {week_start.year} "
+            f"— {week_end.day} {end_month} {week_end.year}"
+        )
+
+    if week_start.month != week_end.month:
+        return (
+            f"{week_start.day} {start_month} "
+            f"— {week_end.day} {end_month}"
+        )
+
+    return (
+        f"{week_start.day}–{week_end.day} {start_month}"
+    )
+        
 def _safe_next_url(value: str | None) -> str:
     """
     Разрешает только internal relative redirects.
@@ -883,10 +937,10 @@ async def dashboard(
         selected_date_iso=view.date_iso,
         today_iso=today_iso,
     )
-    template_name = (
-        "schedule/_day_content.html"
-        if request.headers.get("HX-Request") == "true"
-        else "schedule/day.html"
+    template_name = select_page_or_fragment_template(
+        request,
+        page_template="schedule/day.html",
+        fragment_template="schedule/_day_content.html",
     )
 
     return _templates(request).TemplateResponse(
@@ -988,10 +1042,10 @@ async def day_page(
         selected_date_iso=view.date_iso,
         today_iso=today_iso,
     )
-    template_name = (
-        "schedule/_day_content.html"
-        if request.headers.get("HX-Request") == "true"
-        else "schedule/day.html"
+    template_name = select_page_or_fragment_template(
+        request,
+        page_template="schedule/day.html",
+        fragment_template="schedule/_day_content.html",
     )
 
     return _templates(request).TemplateResponse(
@@ -1121,17 +1175,38 @@ async def week_page(
         )
         
     view = week_summary_to_web(summary)
-    prev_week = (date.fromisoformat(week_start) - timedelta(days=7)).isoformat()
-    next_week = (date.fromisoformat(week_start) + timedelta(days=7)).isoformat()
+
+    prev_week = (
+        date.fromisoformat(week_start) - timedelta(days=7)
+    ).isoformat()
+
+    next_week = (
+        date.fromisoformat(week_start) + timedelta(days=7)
+    ).isoformat()
+
+    prev_week_label = _week_navigation_label(
+        prev_week
+    )
+
+    next_week_label = _week_navigation_label(
+        next_week
+    )
+    
+    template_name = select_page_or_fragment_template(
+        request,
+        page_template="schedule/week.html",
+        fragment_template="schedule/_week_content.html",
+    )
+
     return _templates(request).TemplateResponse(
         request,
-        "schedule/week.html",
+        template_name,
         _ctx(
             request,
             context,
             {
                 "week": view,
-                "is_current_week": is_current_week,      # <-- НОВОЕ
+                "is_current_week": is_current_week,
                 "smart_week_url": "/schedule/week",
                 **_selector_context(
                     targets=targets,
@@ -1139,13 +1214,14 @@ async def week_page(
                 ),
                 "prev_week": prev_week,
                 "next_week": next_week,
+                "prev_week_label": prev_week_label,
+                "next_week_label": next_week_label,
                 "selection_redirect": (
                     f"/schedule/week?week={week_start}"
                 ),
             },
         ),
     )
-
 
 # ==============================================================
 # Переключатель ребёнка (ТЗ 28): POST + CSRF, меняет target, не identity

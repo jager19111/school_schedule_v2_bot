@@ -16,6 +16,7 @@ import logging
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse, StreamingResponse
+from starlette.background import BackgroundTask
 
 from services.web_sessions_service import (
     SESSION_COOKIE_NAME,
@@ -151,10 +152,22 @@ async def schedule_stream(
         finally:
             manager.unregister(connection)
 
+    # BackgroundTask — дополнительная гарантия cleanup.
+    #
+    # Normal flow уже вызывает manager.unregister(connection) в finally
+    # внутри event_stream(). unregister() идемпотентен, поэтому второй
+    # вызов безопасен.
+    #
+    # Это покрывает edge case, когда client disconnected после
+    # try_register(), но до первого запуска async generator.
     return StreamingResponse(
         event_stream(),
         media_type="text/event-stream",
         headers=_SSE_HEADERS,
+        background=BackgroundTask(
+            manager.unregister,
+            connection,
+        ),
     )
 
 

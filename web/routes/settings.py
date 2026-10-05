@@ -25,6 +25,7 @@ from web.deps import (
     get_sessions_service,
     require_family_allowed,
 )
+from web.htmx import select_page_or_fragment_template
 from web.events import SessionRevoked
 from web.mappers import (
     class_items_to_web,
@@ -271,10 +272,10 @@ async def settings_page(
     - web sessions;
     - logout current device.
     """
-    template_name = (
-        "settings/_settings_content.html"
-        if _is_htmx(request)
-        else "settings/settings.html"
+    template_name = select_page_or_fragment_template(
+        request,
+        page_template="settings/settings.html",
+        fragment_template="settings/_settings_content.html",
     )
 
     return _templates(request).TemplateResponse(

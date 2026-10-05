@@ -1134,3 +1134,181 @@
   min-width: var(--touch-target);
   min-height: var(--touch-target);
 }
+
+/*
+  ==========================================================================
+    WEEK SWIPE FOUNDATION
+    ==========================================================================
+*/
+
+/*
+ * Пока JavaScript week swipe ещё не добавлен.
+ *
+ * Этот CSS создаёт стабильную geometry:
+ * - canonical #week-content находится в normal flow;
+ * - neighbor panel существует, но полностью скрыта;
+ * - future JS будет управлять только class state и inline transform.
+ */
+
+/*
+ * Week screen станет gesture surface в следующей фазе.
+ *
+ * pan-y сохраняет native vertical scrolling, а horizontal pointer movement
+ * сможет использовать future week swipe controller.
+ */
+.app-content:has([data-week-swipe-stage]) {
+  display: flex;
+  flex-direction: column;
+  padding-top: 5px;
+  touch-action: pan-y;
+}
+
+/*
+ * Stable owner для canonical week panel и visual neighbor.
+ *
+ * В отличие от #week-content, stage НЕ заменяется локальным HTMX request:
+ *
+ * hx-target="#week-content"
+ * hx-swap="outerHTML"
+ *
+ * Это необходимо для будущего swipe lifecycle.
+ */
+.week-swipe-stage {
+  position: relative;
+  flex: 1 0 auto;
+  min-width: 0;
+  overflow: hidden;
+  isolation: isolate;
+}
+
+/*
+ * #week-content остаётся единственным source of truth недельного экрана.
+ */
+.week-swipe-stage > .week-schedule {
+  position: relative;
+  z-index: var(--z-schedule-stage);
+  min-width: 0;
+  background: var(--color-bg);
+  will-change: transform;
+}
+
+/*
+ * Neighbor — только visual preview будущей соседней недели.
+ *
+ * В normal state он полностью невидим, не участвует в tab order и не
+ * перехватывает pointer events.
+ */
+.week-swipe-neighbor {
+  position: absolute;
+  z-index: var(--z-schedule-neighbor);
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding: 0;
+  overflow: hidden;
+  background: var(--color-bg);
+  opacity: 0;
+  pointer-events: none;
+  will-change: transform, opacity;
+}
+
+/*
+ * Эти class states пока не устанавливаются.
+ *
+ * Они заранее фиксируют CSS contract для следующей JavaScript-фазы:
+ *
+ * is-week-swipe-active
+ * is-week-swipe-dragging
+ * is-week-swipe-settling
+ * is-week-swipe-slow-loading
+ */
+.week-swipe-stage.is-week-swipe-active .week-swipe-neighbor {
+  opacity: 1;
+}
+
+.week-swipe-stage.is-week-swipe-dragging > .week-schedule,
+.week-swipe-stage.is-week-swipe-dragging .week-swipe-neighbor {
+  transition: none;
+}
+
+.week-swipe-stage.is-week-swipe-settling > .week-schedule,
+.week-swipe-stage.is-week-swipe-settling .week-swipe-neighbor {
+  transition:
+    transform var(--duration-fast) var(--ease-out),
+    opacity var(--duration-very-fast) var(--ease-out);
+}
+
+.week-swipe-neighbor__chrome {
+  min-width: 0;
+}
+
+.week-swipe-neighbor__students:empty {
+  min-height: 0;
+}
+
+/*
+ * Week loading skeleton отличается от lesson skeleton:
+ * week screen показывает overview days, а не lesson cards.
+ */
+.week-swipe-neighbor__skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: 0;
+  visibility: hidden;
+  opacity: 0;
+  transition: opacity var(--duration-skeleton-fade) var(--ease-out);
+}
+
+.week-skel-day {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: var(--touch-target-lg);
+  padding: var(--space-5) var(--space-7);
+  background: var(--color-surface);
+  border-radius: var(--radius-xl);
+}
+
+.week-skel-day__title {
+  width: 42%;
+  height: 15px;
+}
+
+.week-skel-day__meta {
+  width: 24%;
+  height: 12px;
+}
+
+.week-swipe-stage.is-week-swipe-slow-loading
+.week-swipe-neighbor__skeleton {
+  visibility: visible;
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .week-swipe-stage.is-week-swipe-settling > .week-schedule,
+  .week-swipe-stage.is-week-swipe-settling .week-swipe-neighbor,
+  .week-swipe-neighbor__skeleton {
+    transition: none;
+  }
+}
+
+/*
+  ==========================================================================
+    DEV SHOWCASE
+    ==========================================================================
+*/
+
+/*
+ * Dev showcase принудительно показывает skeleton без inline <style>.
+ * Этот selector используется только на /dev/schedule-components.
+ */
+.schedule-showcase__skeleton-heading {
+  margin-top: 30px;
+}
+
+.schedule-showcase--show-skeleton #schedule-skeleton {
+  display: flex !important;
+}

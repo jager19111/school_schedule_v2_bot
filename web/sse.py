@@ -109,9 +109,27 @@ class SSEConnectionManager:
         )
 
         if len(active_connection_ids) >= self.MAX_CONNECTIONS_PER_USER:
+            active_connections = [
+                self._by_connection[connection_id]
+                for connection_id in sorted(active_connection_ids)
+                if connection_id in self._by_connection
+            ]
+
             logger.warning(
-                "SSE connection limit reached: user_id=%s",
+                "SSE connection limit reached: user_id=%s "
+                "active_connection_ids=%s active_session_ids=%s "
+                "active_for_user=%s total_active=%s",
                 user_id,
+                [
+                    connection.connection_id
+                    for connection in active_connections
+                ],
+                [
+                    connection.session_id
+                    for connection in active_connections
+                ],
+                len(active_connections),
+                self.active_count(),
             )
             return None
 

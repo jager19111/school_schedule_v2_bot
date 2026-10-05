@@ -4,7 +4,7 @@
    Fragment: подменяет #family-content; POST возвращает fragment/redirect. #}
 
 <section id="family-content" class="settings-page">
-  <h2 class="day-title" style="display: flex; align-items: center; gap: 8px;">
+  <h2 class="day-title student-form__heading">
     {{ icon("user-circle-plus-duotone" if mode == "create" else "user-circle-gear-duotone") }} 
     {% if mode == "create" %}Новый ученик{% else %}Редактировать профиль{% endif %}
   </h2>

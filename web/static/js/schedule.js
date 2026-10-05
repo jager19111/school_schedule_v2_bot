@@ -1,6 +1,33 @@
-  /*web/static/js/schedule.js    */
+/* web/static/js/schedule.js
+ *
+ * Общий UI runtime расписания.
+ *
+ * Файл загружается один раз из base.html и должен переживать HTMX-замену
+ * #app-shell. Поэтому document-level listeners не привязаны к конкретному
+ * #main, а каждый event работает с актуальным DOM в момент события.
+ *
+ * Возможности:
+ * - autofit subject text;
+ * - ResizeObserver для schedule containers;
+ * - direct-manipulation swipe day navigation;
+ * - inline details changed lessons;
+ * - сохранение и плавное центрирование student-switch.
+ */
+
 (function () {
   "use strict";
+
+  /*
+   * Защита от повторной регистрации listeners.
+   *
+   * Сейчас schedule.js подключается глобально из base.html. Guard сохраняет
+   * корректность и при случайном повторном включении файла в template.
+   */
+  if (window.schoolScheduleUiInstalled) {
+    return;
+  }
+
+  window.schoolScheduleUiInstalled = true;
 
   var MIN_SIZE_PX = 12;
   var MAX_SIZE_PX = 21;
@@ -9,8 +36,21 @@
   var resizeObserver = null;
   var observedContainers = new WeakSet();
 
+  /* ------------------------------------------------------------------------
+     Subject autofit
+     ------------------------------------------------------------------------ */
 
   function fitSubject(element) {
+    if (!(element instanceof HTMLElement)) {
+      return;
+    }
+
+    /*
+     * Текст всегда остаётся visible.
+     *
+     * Нельзя скрывать [data-autofit="subject"] до .is-fitted:
+     * это вызывало заметное мигание при initial render и HTMX swap.
+     */
     element.style.fontSize = "";
 
     var computed = window.getComputedStyle(element);
@@ -20,8 +60,8 @@
     element.style.fontSize = fontSize + "px";
 
     while (
-      fontSize > MIN_SIZE_PX &&
-      element.scrollWidth > element.clientWidth
+      fontSize > MIN_SIZE_PX
+      && element.scrollWidth > element.clientWidth
     ) {
       fontSize -= STEP_PX;
       element.style.fontSize = fontSize + "px";
@@ -29,7 +69,6 @@
 
     element.classList.add("is-fitted");
   }
-
 
   function fitSubjectsIn(container) {
     if (!(container instanceof Element)) {
@@ -45,13 +84,11 @@
       .forEach(fitSubject);
   }
 
-
   function fitAllSubjects() {
     document
       .querySelectorAll('[data-autofit="subject"]')
       .forEach(fitSubject);
   }
-
 
   function getScheduleContainers(root) {
     if (!(root instanceof Element)) {
@@ -76,9 +113,12 @@
     return containers;
   }
 
-
   function observeScheduleContainer(container) {
-    if (!resizeObserver || observedContainers.has(container)) {
+    if (
+      !resizeObserver
+      || !(container instanceof Element)
+      || observedContainers.has(container)
+    ) {
       return;
     }
 
@@ -86,6 +126,15 @@
     resizeObserver.observe(container);
   }
 
+  function unobserveScheduleContainers(root) {
+    if (!resizeObserver || !(root instanceof Element)) {
+      return;
+    }
+
+    getScheduleContainers(root).forEach(function (container) {
+      resizeObserver.unobserve(container);
+    });
+  }
 
   function installResizeObserver() {
     if (!("ResizeObserver" in window)) {
@@ -103,1004 +152,6 @@
     );
   }
 
-    /* ------------------------------------------------------------------------
-     Interactive day swipe
-     ------------------------------------------------------------------------ */
-
-  /*
-   * Direct manipulation day navigation.
-   *
-   * Этот controller:
-   * - не вычисляет даты;
-   * - не строит URL;
-   * - не меняет history;
-   * - не создаёт новый HTMX flow.
-   *
-   * Он читает existing navigation buttons:
-   *
-   * [data-day-direction="previous"]
-   * [data-day-direction="next"]
-   *
-   * и после visual commit вызывает button.click().
-   */
-
-  var SWIPE_AXIS_RATIO = 1.5;
-  var SWIPE_AXIS_LOCK_DISTANCE_PX = 10;
-  var SWIPE_DRAG_ACTIVATION_PX = 12;
-  var SWIPE_COMMIT_VIEWPORT_RATIO = 0.45;
-
-  var SWIPE_LEFT_EDGE_PX = 24;
-  var SWIPE_RIGHT_EDGE_PX = 16;
-
-  var swipeNavigationLocked = false;
-  var activeSwipe = null;
-  var activeNavigationTrigger = null;
-  var activeNavigationXhr = null;
-  var activeNavigationSwapHandled = false;
-  var slowLoadingTimer = null;
-  var swipeAnimationFrame = null;
-
-  var SWIPE_INTERACTIVE_SELECTOR = [
-    "button",
-    "a",
-    "input",
-    "select",
-    "textarea",
-    "summary",
-    '[role="button"]',
-    "[contenteditable]",
-  ].join(", ");
-
-
-  function prefersReducedMotion() {
-    return window.matchMedia(
-      "(prefers-reduced-motion: reduce)"
-    ).matches;
-  }
-
-
-  function resetSwipeState() {
-    activeSwipe = null;
-  }
-
-  function clearSlowLoadingState(stage) {
-  if (slowLoadingTimer !== null) {
-    window.clearTimeout(slowLoadingTimer);
-    slowLoadingTimer = null;
-  }
-
-  if (stage instanceof Element) {
-    stage.classList.remove(
-      "is-day-swipe-slow-loading"
-    );
-  }
-}
-
-
-  function scheduleSlowLoadingState(stage) {
-    clearSlowLoadingState(stage);
-
-    /*
-    * Это UI delay, а не navigation unlock.
-    *
-    * Lock и HTMX lifecycle по-прежнему определяются только реальными
-    * htmx events. Timer отвечает исключительно за visible skeleton.
-    */
-    slowLoadingTimer = window.setTimeout(function () {
-      slowLoadingTimer = null;
-
-      if (
-        swipeNavigationLocked
-        && stage instanceof Element
-      ) {
-        stage.classList.add(
-          "is-day-swipe-slow-loading"
-        );
-      }
-    }, 400);
-  }
-
-  function getActiveDaySchedule(stage) {
-    if (!(stage instanceof Element)) {
-      return null;
-    }
-
-    var schedule = stage.querySelector(
-      ":scope > .day-schedule"
-    );
-
-    return schedule instanceof Element
-      ? schedule
-      : null;
-  }
-
-
-  function getDaySwipeStage(main) {
-    if (!(main instanceof Element)) {
-      return null;
-    }
-
-    var stage = main.querySelector(
-      "[data-day-swipe-stage]"
-    );
-
-    return stage instanceof Element
-      ? stage
-      : null;
-  }
-
-
-  function getDaySwipeNeighbor(stage) {
-    if (!(stage instanceof Element)) {
-      return null;
-    }
-
-    var neighbor = stage.querySelector(
-      "[data-day-swipe-neighbor]"
-    );
-
-    return neighbor instanceof Element
-      ? neighbor
-      : null;
-  }
-
-
-  function getNeighborLabelElement(neighbor) {
-    if (!(neighbor instanceof Element)) {
-      return null;
-    }
-
-    var label = neighbor.querySelector(
-      "[data-day-swipe-neighbor-label]"
-    );
-
-    return label instanceof Element
-      ? label
-      : null;
-  }
-
-  function getNeighborStudentsElement(neighbor) {
-    if (!(neighbor instanceof Element)) {
-      return null;
-    }
-
-    var students = neighbor.querySelector(
-      "[data-day-swipe-neighbor-students]"
-    );
-
-    return students instanceof HTMLElement
-      ? students
-      : null;
-  }
-
-
-  function prepareNeighborChrome(
-    neighbor,
-    schedule,
-    label
-  ) {
-    if (
-      !(neighbor instanceof Element)
-      || !(schedule instanceof Element)
-    ) {
-      return;
-    }
-
-    setNeighborLabel(neighbor, label);
-
-    var target = getNeighborStudentsElement(neighbor);
-
-    if (!target) {
-      return;
-    }
-
-    target.replaceChildren();
-
-    /*
-    * Клонируем только visual child selector.
-    *
-    * Clone не является application state и не содержит active behavior:
-    * .day-swipe-neighbor has pointer-events: none.
-    */
-    var source = schedule.querySelector(
-      ":scope > .student-switch"
-    );
-
-    if (!source) {
-      return;
-    }
-
-    var visualCopy = source.cloneNode(true);
-
-    if (visualCopy instanceof HTMLElement) {
-      visualCopy.setAttribute("aria-hidden", "true");
-
-      visualCopy.querySelectorAll("[id]").forEach(
-        function (element) {
-          element.removeAttribute("id");
-        }
-      );
-
-      target.appendChild(visualCopy);
-    }
-  }
-
-
-  function getDayNavigationButton(schedule, direction) {
-    if (!(schedule instanceof Element)) {
-      return null;
-    }
-
-    var button = schedule.querySelector(
-      '[data-day-direction="' + direction + '"]'
-    );
-
-    return button instanceof HTMLElement
-      ? button
-      : null;
-  }
-
-
-  function isDayNavigationTrigger(element) {
-    return (
-      element instanceof Element
-      && element.matches(
-        '[data-day-direction], [data-day-navigation]'
-      )
-    );
-  }
-
-
-  function isInsideProtectedEdge(clientX) {
-    if (clientX <= SWIPE_LEFT_EDGE_PX) {
-      return true;
-    }
-
-    return (
-      clientX >= window.innerWidth - SWIPE_RIGHT_EDGE_PX
-    );
-  }
-
-
-  function isInsideHorizontalScroller(target, main) {
-    var current = target;
-
-    while (
-      current instanceof Element
-      && current !== main
-    ) {
-      var style = window.getComputedStyle(current);
-      var overflowX = style.overflowX;
-
-      var canScrollHorizontally = (
-        (overflowX === "auto" || overflowX === "scroll")
-        && current.scrollWidth > current.clientWidth
-      );
-
-      if (canScrollHorizontally) {
-        return true;
-      }
-
-      current = current.parentElement;
-    }
-
-    return false;
-  }
-
-
-  function isSwipeStartExcluded(target, main) {
-    if (!(target instanceof Element)) {
-      return true;
-    }
-
-    if (target.closest(SWIPE_INTERACTIVE_SELECTOR)) {
-      return true;
-    }
-
-    return isInsideHorizontalScroller(target, main);
-  }
-
-
-  function determineSwipeAxis(deltaX, deltaY) {
-    var absX = Math.abs(deltaX);
-    var absY = Math.abs(deltaY);
-
-    if (
-      absX < SWIPE_AXIS_LOCK_DISTANCE_PX
-      && absY < SWIPE_AXIS_LOCK_DISTANCE_PX
-    ) {
-      return null;
-    }
-
-    if (absX >= absY * SWIPE_AXIS_RATIO) {
-      return "horizontal";
-    }
-
-    if (absY >= absX * SWIPE_AXIS_RATIO) {
-      return "vertical";
-    }
-
-    return null;
-  }
-
-
-  function getStageWidth(stage) {
-    if (!(stage instanceof Element)) {
-      return 0;
-    }
-
-    return stage.getBoundingClientRect().width;
-  }
-
-
-  function getSwipeDirection(deltaX) {
-    return deltaX < 0
-      ? "next"
-      : "previous";
-  }
-
-
-  function getNeighborStartOffset(
-    stageWidth,
-    direction
-  ) {
-    return direction === "next"
-      ? stageWidth
-      : -stageWidth;
-  }
-
-
-  function setPanelTransform(panel, offsetX) {
-    if (!(panel instanceof HTMLElement)) {
-      return;
-    }
-
-    panel.style.transform = (
-      "translate3d(" + offsetX + "px, 0, 0)"
-    );
-  }
-
-
-  function queueDragRender(swipe, offsetX) {
-    swipe.pendingOffsetX = offsetX;
-
-    if (swipeAnimationFrame !== null) {
-      return;
-    }
-
-    swipeAnimationFrame = window.requestAnimationFrame(
-      function () {
-        swipeAnimationFrame = null;
-
-        if (!activeSwipe || activeSwipe !== swipe) {
-          return;
-        }
-
-        var direction = swipe.direction;
-        var width = swipe.stageWidth;
-        var neighborOffset = (
-          getNeighborStartOffset(width, direction)
-          + swipe.pendingOffsetX
-        );
-
-        setPanelTransform(
-          swipe.schedule,
-          swipe.pendingOffsetX
-        );
-
-        setPanelTransform(
-          swipe.neighbor,
-          neighborOffset
-        );
-      }
-    );
-  }
-
-
-  function setNeighborLabel(neighbor, label) {
-    var labelElement = getNeighborLabelElement(neighbor);
-
-    if (!labelElement) {
-      return;
-    }
-
-    labelElement.textContent = label || "";
-  }
-
-
-  function beginInteractiveDrag(swipe, direction) {
-    if (swipe.dragActive) {
-      return;
-    }
-
-    var button = getDayNavigationButton(
-      swipe.schedule,
-      direction
-    );
-
-    if (!button) {
-      return;
-    }
-
-    swipe.dragActive = true;
-    swipe.direction = direction;
-    swipe.navigationButton = button;
-
-    prepareNeighborChrome(
-      swipe.neighbor,
-      swipe.schedule,
-      button.dataset.dayLabel || ""
-    );
-
-    swipe.stage.dataset.daySwipeDirection = direction;
-    swipe.stage.classList.add(
-      "is-day-swipe-active",
-      "is-day-swipe-dragging"
-    );
-
-    setPanelTransform(
-      swipe.neighbor,
-      getNeighborStartOffset(
-        swipe.stageWidth,
-        direction
-      )
-    );
-  }
-
-
-  function clearPanelTransforms(stage) {
-    var schedule = getActiveDaySchedule(stage);
-    var neighbor = getDaySwipeNeighbor(stage);
-
-    if (schedule) {
-      schedule.style.transform = "";
-    }
-
-    if (neighbor) {
-      neighbor.style.transform = "";
-    }
-  }
-
-
-  function resetInteractiveStage(stage) {
-    if (!(stage instanceof Element)) {
-      return;
-    }
-
-    stage.classList.remove(
-      "is-day-swipe-active",
-      "is-day-swipe-dragging",
-      "is-day-swipe-settling"
-    );
-
-    delete stage.dataset.daySwipeDirection;
-
-    clearPanelTransforms(stage);
-    clearSlowLoadingState(stage);
-  }
-
-    function resetInteractiveStageAfterSwap(stage) {
-    if (!(stage instanceof Element)) {
-      return;
-    }
-
-    var schedule = getActiveDaySchedule(stage);
-    var neighbor = getDaySwipeNeighbor(stage);
-
-    /*
-    * В момент htmx:afterSwap stage может всё ещё иметь class
-    * is-day-swipe-settling.
-    *
-    * Safari применяет transition к newly inserted canonical
-    * .day-schedule, если просто очистить transforms. Поэтому
-    * временно отключаем transition только у текущего stage.
-    */
-    if (schedule instanceof HTMLElement) {
-      schedule.style.transition = "none";
-    }
-
-    if (neighbor instanceof HTMLElement) {
-      neighbor.style.transition = "none";
-    }
-
-    stage.classList.remove(
-      "is-day-swipe-active",
-      "is-day-swipe-dragging",
-      "is-day-swipe-settling"
-    );
-
-    delete stage.dataset.daySwipeDirection;
-
-    clearPanelTransforms(stage);
-
-    /*
-    * Synchronize style cleanup before restoring CSS ownership.
-    * Это forced layout, а не timer и не новая animation.
-    */
-    void stage.offsetWidth;
-
-    if (schedule instanceof HTMLElement) {
-      schedule.style.transition = "";
-    }
-
-    if (neighbor instanceof HTMLElement) {
-      neighbor.style.transition = "";
-    }
-  }
-
-
-  function releaseSwipeNavigationLock() {
-    swipeNavigationLocked = false;
-    activeNavigationTrigger = null;
-    activeNavigationXhr = null;
-  }
-
-
-  function finishCancelledSwipe(swipe) {
-    clearSlowLoadingState(swipe.stage);
-    resetInteractiveStage(swipe.stage);
-  }
-
-
-  function activateExistingNavigation(swipe) {
-    if (
-      swipeNavigationLocked
-      || !(swipe.navigationButton instanceof HTMLElement)
-    ) {
-      return;
-    }
-
-    swipeNavigationLocked = true;
-    activeNavigationTrigger = swipe.navigationButton;
-
-    swipe.navigationButton.click();
-  }
-
-
-  function finishCommittedSwipe(swipe) {
-    activateExistingNavigation(swipe);
-  }
-
-
-  function settleSwipe(swipe, shouldCommit) {
-    var schedule = swipe.schedule;
-    var neighbor = swipe.neighbor;
-    var stage = swipe.stage;
-
-    if (
-      !(schedule instanceof HTMLElement)
-      || !(neighbor instanceof HTMLElement)
-      || !(stage instanceof Element)
-    ) {
-      return;
-    }
-
-    var width = swipe.stageWidth;
-    var direction = swipe.direction;
-    var currentTargetOffset = shouldCommit
-      ? getNeighborStartOffset(width, direction)
-      : 0;
-
-    var neighborTargetOffset = shouldCommit
-      ? 0
-      : getNeighborStartOffset(width, direction);
-
-    stage.classList.remove("is-day-swipe-dragging");
-    stage.classList.add("is-day-swipe-settling");
-
-    setPanelTransform(schedule, currentTargetOffset);
-    setPanelTransform(neighbor, neighborTargetOffset);
-
-    /*
-    * Commit navigation запускаем сразу.
-    *
-    * Visual animation продолжает идти независимо, но HTMX request уже
-    * стартует через exact existing navigation arrow. Это устраняет
-    * Safari hang, когда transitionend не приходит.
-    */
-    if (shouldCommit) {
-      finishCommittedSwipe(swipe);
-    }
-
-    /*
-    * Reduced motion:
-    * commit уже стартовал выше;
-    * cancel нужно завершить сразу.
-    */
-    if (prefersReducedMotion()) {
-      if (!shouldCommit) {
-        finishCancelledSwipe(swipe);
-      }
-
-      return;
-    }
-
-    /*
-    * Для successful commit не ждём transitionend.
-    *
-    * transitionend нужен только cancel flow, потому что после cancel
-    * canonical navigation не запускается и state нужно вернуть в idle
-    * только после snap-back.
-    */
-    if (shouldCommit) {
-      return;
-    }
-
-    var completed = false;
-
-    function onTransitionEnd(event) {
-      if (
-        completed
-        || event.target !== schedule
-        || event.propertyName !== "transform"
-      ) {
-        return;
-      }
-
-      completed = true;
-      finishCancelledSwipe(swipe);
-    }
-
-    schedule.addEventListener(
-      "transitionend",
-      onTransitionEnd,
-      { once: true }
-    );
-  }
-
-
-  function isActiveDayNavigationRequest(event) {
-    if (!swipeNavigationLocked) {
-      return false;
-    }
-
-    var xhr = event.detail && event.detail.xhr;
-
-    if (activeNavigationXhr === null) {
-      return true;
-    }
-
-    return xhr === activeNavigationXhr;
-  }
-
-
-  function installSwipeNavigation() {
-    var main = document.getElementById("main");
-
-    if (!(main instanceof Element)) {
-      return;
-    }
-
-    if (main.dataset.swipeNavigationInstalled === "true") {
-      return;
-    }
-
-    main.dataset.swipeNavigationInstalled = "true";
-
-
-    main.addEventListener("pointerdown", function (event) {
-      if (
-        !event.isPrimary
-        || activeSwipe
-        || swipeNavigationLocked
-      ) {
-        return;
-      }
-
-      if (event.pointerType === "mouse") {
-        return;
-      }
-
-      var target = event.target;
-
-      if (!(target instanceof Element)) {
-        return;
-      }
-
-      var stage = getDaySwipeStage(main);
-      var schedule = getActiveDaySchedule(stage);
-      var neighbor = getDaySwipeNeighbor(stage);
-
-      if (
-        !stage
-        || !schedule
-        || !neighbor
-        || !main.contains(target)
-      ) {
-        return;
-      }
-
-      if (isInsideProtectedEdge(event.clientX)) {
-        return;
-      }
-
-      if (isSwipeStartExcluded(target, main)) {
-        return;
-      }
-
-      var stageWidth = getStageWidth(stage);
-
-      if (stageWidth <= 0) {
-        return;
-      }
-
-      activeSwipe = {
-        pointerId: event.pointerId,
-        stage: stage,
-        schedule: schedule,
-        neighbor: neighbor,
-        stageWidth: stageWidth,
-        startX: event.clientX,
-        startY: event.clientY,
-        axis: null,
-        direction: null,
-        dragActive: false,
-        navigationButton: null,
-        pendingOffsetX: 0,
-      };
-
-      try {
-        main.setPointerCapture(event.pointerId);
-      } catch (error) {
-        /*
-         * Pointer capture — дополнительная защита. Если браузер
-         * не поддержал capture, базовый pointer flow всё равно работает.
-         */
-      }
-    });
-
-
-    main.addEventListener("pointermove", function (event) {
-      if (
-        !activeSwipe
-        || !event.isPrimary
-        || event.pointerId !== activeSwipe.pointerId
-      ) {
-        return;
-      }
-
-      var swipe = activeSwipe;
-      var deltaX = event.clientX - swipe.startX;
-      var deltaY = event.clientY - swipe.startY;
-
-      if (!swipe.axis) {
-        swipe.axis = determineSwipeAxis(deltaX, deltaY);
-      }
-
-      if (swipe.axis !== "horizontal") {
-        return;
-      }
-
-      if (
-        !swipe.dragActive
-        && Math.abs(deltaX) >= SWIPE_DRAG_ACTIVATION_PX
-      ) {
-        beginInteractiveDrag(
-          swipe,
-          getSwipeDirection(deltaX)
-        );
-      }
-
-      if (!swipe.dragActive) {
-        return;
-      }
-
-      /*
-       * Direction lock:
-       * после activation нельзя «развернуть» gesture в обратную сторону.
-       */
-      var isDirectionConsistent = (
-        (swipe.direction === "next" && deltaX <= 0)
-        || (
-          swipe.direction === "previous"
-          && deltaX >= 0
-        )
-      );
-
-      if (!isDirectionConsistent) {
-        return;
-      }
-
-      queueDragRender(swipe, deltaX);
-
-      /*
-       * preventDefault() не вызывается.
-       * Vertical scroll сохраняет browser-native поведение.
-       */
-    });
-
-
-    main.addEventListener("pointerup", function (event) {
-      if (
-        !activeSwipe
-        || !event.isPrimary
-        || event.pointerId !== activeSwipe.pointerId
-      ) {
-        return;
-      }
-
-      var swipe = activeSwipe;
-      resetSwipeState();
-
-      try {
-        main.releasePointerCapture(event.pointerId);
-      } catch (error) {
-        /*
-         * Browser может уже снять pointer capture.
-         */
-      }
-
-      if (!swipe.dragActive) {
-        return;
-      }
-
-      var deltaX = event.clientX - swipe.startX;
-      var commitThreshold = (
-        swipe.stageWidth * SWIPE_COMMIT_VIEWPORT_RATIO
-      );
-
-      var isDirectionConsistent = (
-        (swipe.direction === "next" && deltaX <= 0)
-        || (
-          swipe.direction === "previous"
-          && deltaX >= 0
-        )
-      );
-
-      var shouldCommit = (
-        isDirectionConsistent
-        && Math.abs(deltaX) >= commitThreshold
-      );
-
-      settleSwipe(swipe, shouldCommit);
-    });
-
-
-    main.addEventListener("pointercancel", function (event) {
-      if (
-        !activeSwipe
-        || event.pointerId !== activeSwipe.pointerId
-      ) {
-        return;
-      }
-
-      var swipe = activeSwipe;
-      resetSwipeState();
-
-      try {
-        main.releasePointerCapture(event.pointerId);
-      } catch (error) {
-        /*
-         * Browser может снять capture автоматически.
-         */
-      }
-
-      if (swipe.dragActive) {
-        settleSwipe(swipe, false);
-      }
-    });
-
-
-    /*
-     * Manual arrow click также блокирует новый drag до завершения
-     * существующего HTMX navigation lifecycle.
-     */
-    document.body.addEventListener(
-      "htmx:beforeRequest",
-      function (event) {
-        var trigger = event.detail && event.detail.elt;
-
-        if (!isDayNavigationTrigger(trigger)) {
-          return;
-        }
-
-        swipeNavigationLocked = true;
-        activeNavigationTrigger = trigger;
-        activeNavigationXhr = event.detail.xhr || null;
-        activeNavigationSwapHandled = false;
-        var currentStage = getDaySwipeStage(main);
-
-        scheduleSlowLoadingState(currentStage);
-      }
-    );
-
-    /*
-     * afterSwap означает:
-     * - HTMX response уже accepted;
-     * - canonical #day-content уже заменён;
-     * - новый day DOM существует;
-     * - URL/history уже принадлежат existing HTMX navigation.
-     *
-     * Здесь только visual cleanup. Unlock делаем позже, на afterSettle.
-     */
-    document.body.addEventListener(
-      "htmx:afterSwap",
-      function (event) {
-        if (!isActiveDayNavigationRequest(event)) {
-          return;
-        }
-
-        if (activeNavigationSwapHandled) {
-          return;
-        }
-
-        activeNavigationSwapHandled = true;
-        
-
-        var currentStage = getDaySwipeStage(main);
-        clearSlowLoadingState(currentStage);
-
-        var schedule = getActiveDaySchedule(currentStage);
-
-        if (schedule) {
-          fitSubjectsIn(schedule);
-          observeScheduleContainer(schedule);
-        }
-
-        resetInteractiveStageAfterSwap(currentStage);
-      }
-    );
-
-    /*
-     * После HTMX swap new #day-content уже существует.
-     * Сбрасываем temporary transforms и neighbour skeleton.
-     */
-    document.body.addEventListener(
-      "htmx:afterSettle",
-      function (event) {
-        if (!isActiveDayNavigationRequest(event)) {
-          return;
-        }
-
-        /*
-        * Defensive fallback:
-        * если afterSwap по какой-либо причине не был получен,
-        * canonical DOM всё равно должен быть visual-clean.
-        */
-        if (!activeNavigationSwapHandled) {
-          var currentStage = getDaySwipeStage(main);
-          var schedule = getActiveDaySchedule(currentStage);
-
-          if (schedule) {
-            fitSubjectsIn(schedule);
-            observeScheduleContainer(schedule);
-          }
-
-          resetInteractiveStageAfterSwap(currentStage);
-        }
-        clearSlowLoadingState(
-          getDaySwipeStage(main)
-        );
-
-        releaseSwipeNavigationLock();
-      }
-    );
-
-
-    [
-      "htmx:responseError",
-      "htmx:sendError",
-      "htmx:timeout",
-    ].forEach(function (eventName) {
-      document.body.addEventListener(
-        eventName,
-        function (event) {
-          if (!isActiveDayNavigationRequest(event)) {
-            return;
-          }
-
-          var currentStage = getDaySwipeStage(main);
-          
-
-          activeNavigationSwapHandled = false;
-          clearSlowLoadingState(currentStage);
-
-          resetInteractiveStage(currentStage);
-          releaseSwipeNavigationLock();
-        }
-      );
-    });
-  }
 
   /* ------------------------------------------------------------------------
      Inline changed-lesson details
@@ -1110,16 +161,13 @@
     return wrapper.querySelector("[data-inline-change-toggle]");
   }
 
-
   function getDetailsPanel(wrapper) {
     return wrapper.querySelector(".lesson-change-details");
   }
 
-
   function isDetailsOpen(wrapper) {
     return wrapper.classList.contains("lesson-card-wrapper--open");
   }
-
 
   function closeInlineDetails(wrapper, returnFocus) {
     if (!(wrapper instanceof Element)) {
@@ -1144,7 +192,6 @@
     }
   }
 
-
   function closeInlineDetailsIn(scope, exceptWrapper) {
     if (!(scope instanceof Element)) {
       return;
@@ -1158,7 +205,6 @@
         }
       });
   }
-
 
   function openInlineDetails(wrapper) {
     if (!(wrapper instanceof Element)) {
@@ -1182,7 +228,6 @@
     details.hidden = false;
   }
 
-
   function toggleInlineDetails(wrapper) {
     if (isDetailsOpen(wrapper)) {
       closeInlineDetails(wrapper, false);
@@ -1191,7 +236,6 @@
 
     openInlineDetails(wrapper);
   }
-
 
   function installInlineChangeDetails() {
     document.addEventListener("click", function (event) {
@@ -1232,17 +276,16 @@
       }
 
       /*
-       * Tap inside card or inside opened details is not an outside tap.
-       * This allows reading and selecting details text without closing it.
+       * Tap внутри card/details не является outside tap.
+       * Это позволяет читать и выделять текст details.
        */
       if (event.target.closest(".lesson-card-wrapper")) {
         return;
       }
 
       /*
-       * Close only when the user taps free space within the current
-       * day-schedule screen. We do not attach global "click outside"
-       * behaviour to navigation, forms, bottom nav, or other pages.
+       * Закрываем details только при tap в свободное место текущего
+       * day screen. Bottom nav, forms и прочие screens не затрагиваются.
        */
       var schedule = event.target.closest(".day-schedule");
 
@@ -1279,142 +322,299 @@
     });
   }
 
-
   /* ------------------------------------------------------------------------
-     Lifecycle
+     HTMX lifecycle
      ------------------------------------------------------------------------ */
 
-  function initialize() {
-    fitAllSubjects();
-    installResizeObserver();
-    installInlineChangeDetails();
-    installSwipeNavigation();
+  function installHtmxLifecycle() {
+    /*
+     * Новый day DOM после:
+     *
+     * - #day-content outerHTML swap;
+     * - future #app-shell outerHTML swap.
+     *
+     * Получает autofit и ResizeObserver без повторной регистрации
+     * document-level event listeners.
+     */
+    document.body.addEventListener(
+      "htmx:load",
+      function (event) {
+        if (!(event.detail.elt instanceof Element)) {
+          return;
+        }
+
+        var loadedElement = event.detail.elt;
+
+        fitSubjectsIn(loadedElement);
+
+        getScheduleContainers(loadedElement).forEach(
+          observeScheduleContainer
+        );
+      }
+    );
+
+    /*
+     * При shell replacement старые schedule nodes удаляются из DOM.
+     * ResizeObserver должен прекратить их наблюдать, иначе после большого
+     * количества transitions возможны лишние references и callbacks.
+     */
+    document.body.addEventListener(
+      "htmx:beforeCleanupElement",
+      function (event) {
+        var element = event.detail && event.detail.elt;
+
+        if (element instanceof Element) {
+          unobserveScheduleContainers(element);
+        }
+      }
+    );
   }
 
+  /* ------------------------------------------------------------------------
+     Initialization
+     ------------------------------------------------------------------------ */
+
+function initialize() {
+  fitAllSubjects();
+  installResizeObserver();
+
+  /*
+   * Day и week swipe обслуживает отдельный общий module:
+   * /static/js/schedule-swipe.js.
+   *
+   * Здесь intentionally остаются только schedule-specific UI concerns:
+   * autofit, ResizeObserver, inline change details и HTMX cleanup.
+   */
+  installInlineChangeDetails();
+  installHtmxLifecycle();
+}
 
   if (document.readyState === "loading") {
     document.addEventListener(
       "DOMContentLoaded",
-      initialize
+      initialize,
+      { once: true }
     );
   } else {
     initialize();
   }
+})();
 
+/* ==========================================================================
+   SMART SCROLL & STATE PRESERVATION: .student-switch
+   ========================================================================== */
+
+(function () {
+  "use strict";
 
   /*
-   * HTMX replaces #day-content with a fresh .day-schedule element.
-   *
-   * Event delegation above needs no reinstallation. Here we only:
-   * - apply subject font fitting to the new content;
-   * - attach ResizeObserver to the new schedule container.
+   * Отдельный guard: этот runtime также должен переживать shell replacement
+   * и не должен добавить повторные HTMX/document listeners.
    */
-  document.body.addEventListener("htmx:load", function (event) {
-    if (!(event.detail.elt instanceof Element)) {
+  if (window.schoolStudentSwitchUiInstalled) {
+    return;
+  }
+
+  window.schoolStudentSwitchUiInstalled = true;
+
+  var savedScroll = null;
+  var animationId = null;
+  var wheelBoundContainers = new WeakSet();
+
+  function glideToCenter(container, activeChip) {
+    if (!container || !activeChip) {
       return;
     }
 
-    var loadedElement = event.detail.elt;
+    var containerRect = container.getBoundingClientRect();
+    var chipRect = activeChip.getBoundingClientRect();
 
-    fitSubjectsIn(loadedElement);
-
-    getScheduleContainers(loadedElement).forEach(
-      observeScheduleContainer
+    var offsetToCenter = (
+      (chipRect.left - containerRect.left)
+      - (container.clientWidth / 2)
+      + (chipRect.width / 2)
     );
-  });
-})();
 
-
-/* ==========================================================================
-   SMART SCROLL & STATE PRESERVATION (ГОРИЗОНТАЛЬНЫЕ МЕНЮ)
-   Идеальный бесшовный Glide с защитой от обнуления при показе скелетона
-   Метод не работает как мне хочется. Иконки каждый раз выезжают слева, даже если нажатие было на соседнюю кнопку. Проверить состояния и исправить. Возможно, нужно хранить состояние в data-атрибуте и проверять его при клике.
-   ========================================================================== */
-(function() {
-    let savedScroll = null;
-    let animationId = null;
-
-    // --- УНИВЕРСАЛЬНАЯ ФУНКЦИЯ ПЛАВНОГО СКРОЛЛА ---
-    function glideToCenter(container, activeChip) {
-        if (!container || !activeChip) return;
-
-        const containerRect = container.getBoundingClientRect();
-        const chipRect = activeChip.getBoundingClientRect();
-        
-        const offsetToCenter = (chipRect.left - containerRect.left) - (container.clientWidth / 2) + (chipRect.width / 2);
-        
-        // Если кнопка уже по центру — отменяем анимацию
-        if (Math.abs(offsetToCenter) < 3) return;
-
-        // Динамическое время: если кликнули соседнюю кнопку (сдвиг маленький), 
-        // анимация пройдет быстрее. Если дальнюю - плавно за 600мс.
-        const duration = Math.min(Math.max(Math.abs(offsetToCenter) * 1.5, 300), 600);
-
-        const startLeft = container.scrollLeft;
-        let startTime = null;
-
-        if (animationId) cancelAnimationFrame(animationId);
-
-        function glideStep(currentTime) {
-            if (!startTime) startTime = currentTime;
-            const elapsed = currentTime - startTime;
-            const progress = Math.min(elapsed / duration, 1);
-
-            // Easing (easeOutQuart): быстрый старт, плавное торможение
-            const ease = 1 - Math.pow(1 - progress, 4);
-            
-            container.scrollLeft = startLeft + (offsetToCenter * ease);
-
-            if (progress < 1) {
-                animationId = requestAnimationFrame(glideStep);
-            } else {
-                animationId = null;
-            }
-        }
-        animationId = requestAnimationFrame(glideStep);
+    if (Math.abs(offsetToCenter) < 3) {
+      return;
     }
 
-    // 1. ИСПРАВЛЕНИЕ: Запоминаем позицию в момент КЛИКА (до показа Скелетона!)
-    document.body.addEventListener("htmx:beforeRequest", function(e) {
-        const container = document.querySelector('.student-switch');
-        if (container) {
-            savedScroll = container.scrollLeft;
-        }
-    });
+    var duration = Math.min(
+      Math.max(Math.abs(offsetToCenter) * 1.5, 300),
+      600
+    );
 
-    // 2. HTMX: Моментально возвращаем скролл при вставке HTML (убиваем прыжок в ноль)
-    document.body.addEventListener("htmx:afterSwap", function(e) {
-        const containers = document.querySelectorAll('.student-switch');
-        if (savedScroll !== null && containers.length > 0) {
-            containers.forEach(c => c.scrollLeft = savedScroll);
-        }
-    });
+    var startLeft = container.scrollLeft;
+    var startTime = null;
 
-    // 3. HTMX: Запускаем умный перекат от старой позиции к новой
-    document.body.addEventListener("htmx:afterSettle", function(e) {
-        const container = document.querySelector('.student-switch');
-        const activeChip = container ? container.querySelector('.student-chip.current') : null;
-        
+    if (animationId !== null) {
+      window.cancelAnimationFrame(animationId);
+    }
+
+    function glideStep(currentTime) {
+      if (startTime === null) {
+        startTime = currentTime;
+      }
+
+      var elapsed = currentTime - startTime;
+      var progress = Math.min(elapsed / duration, 1);
+
+      /*
+       * easeOutQuart:
+       * быстрый старт, плавное торможение в финальной позиции.
+       */
+      var ease = 1 - Math.pow(1 - progress, 4);
+
+      container.scrollLeft = (
+        startLeft + (offsetToCenter * ease)
+      );
+
+      if (progress < 1) {
+        animationId = window.requestAnimationFrame(glideStep);
+      } else {
+        animationId = null;
+      }
+    }
+
+    animationId = window.requestAnimationFrame(glideStep);
+  }
+
+  function bindWheel(container) {
+    if (
+      !(container instanceof HTMLElement)
+      || wheelBoundContainers.has(container)
+    ) {
+      return;
+    }
+
+    wheelBoundContainers.add(container);
+
+    container.addEventListener(
+      "wheel",
+      function (event) {
+        if (event.deltaY === 0) {
+          return;
+        }
+
+        event.preventDefault();
+        container.scrollLeft += event.deltaY;
+      },
+      { passive: false }
+    );
+  }
+
+  function initializeStudentSwitches(root) {
+    if (!(root instanceof Element)) {
+      return;
+    }
+
+    var containers = [];
+
+    if (root.matches(".student-switch")) {
+      containers.push(root);
+    }
+
+    root.querySelectorAll(".student-switch").forEach(
+      function (container) {
+        containers.push(container);
+      }
+    );
+
+    containers.forEach(function (container) {
+      bindWheel(container);
+
+      var activeChip = container.querySelector(
+        ".student-chip.current"
+      );
+
+      glideToCenter(container, activeChip);
+    });
+  }
+
+  function restoreSavedScroll() {
+    if (savedScroll === null) {
+      return;
+    }
+
+    document
+      .querySelectorAll(".student-switch")
+      .forEach(function (container) {
+        container.scrollLeft = savedScroll;
+      });
+  }
+
+  function glideCurrentStudentSwitches() {
+    document
+      .querySelectorAll(".student-switch")
+      .forEach(function (container) {
+        var activeChip = container.querySelector(
+          ".student-chip.current"
+        );
+
         glideToCenter(container, activeChip);
-    });
+      });
+  }
 
-    // 4. ПОЛНАЯ ПЕРЕЗАГРУЗКА (Вход по ссылке / Смена через форму)
-    document.addEventListener("DOMContentLoaded", function() {
-        const containers = document.querySelectorAll('.student-switch');
-        
-        containers.forEach(container => {
-            const activeChip = container.querySelector('.student-chip.current');
-            
-            // Красивый выезд меню при первоначальном открытии страницы
-            glideToCenter(container, activeChip);
+  function initialize() {
+    initializeStudentSwitches(document.body);
 
-            // Транслируем скролл колесиком мыши (ПК) в горизонтальную прокрутку
-            container.addEventListener('wheel', function(e) {
-                if (e.deltaY !== 0) {
-                    e.preventDefault(); 
-                    container.scrollLeft += e.deltaY;
-                }
-            }, { passive: false });
-        });
-    });
+    /*
+     * Позиция фиксируется до request/skeleton swap.
+     * Это убирает резкий возврат horizontal menu в scrollLeft=0.
+     */
+    document.body.addEventListener(
+      "htmx:beforeRequest",
+      function () {
+        var container = document.querySelector(".student-switch");
+
+        if (container) {
+          savedScroll = container.scrollLeft;
+        }
+      }
+    );
+
+    /*
+     * После вставки нового DOM сразу восстанавливаем старую позицию:
+     * до htmx:afterSettle пользователь не должен увидеть jump влево.
+     */
+    document.body.addEventListener(
+      "htmx:afterSwap",
+      function () {
+        restoreSavedScroll();
+      }
+    );
+
+    /*
+     * После settle плавно доводим active chip до центра.
+     */
+    document.body.addEventListener(
+      "htmx:afterSettle",
+      function () {
+        glideCurrentStudentSwitches();
+      }
+    );
+
+    /*
+     * Новый shell/day content может содержать свежий student-switch.
+     * Wheel listener и initial centering добавляются только новому node.
+     */
+    document.body.addEventListener(
+      "htmx:load",
+      function (event) {
+        if (event.detail.elt instanceof Element) {
+          initializeStudentSwitches(event.detail.elt);
+        }
+      }
+    );
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener(
+      "DOMContentLoaded",
+      initialize,
+      { once: true }
+    );
+  } else {
+    initialize();
+  }
 })();

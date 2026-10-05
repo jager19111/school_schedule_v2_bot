@@ -1,0 +1,139 @@
+{# web/templates/schedule/_week_content.html #}
+{#
+  HTMX fragment недельного расписания.
+
+  Contract:
+  - week: WebWeekSummary;
+  - is_current_week: bool;
+  - smart_week_url: URL текущей умной недели;
+  - prev_week / next_week: ISO Monday dates;
+  - students / watch_targets: schedule target selector;
+  - selection_redirect: URL текущей недели с ?week=... .
+
+  Этот fragment используется:
+  - внутри full-page schedule/week.html;
+  - как hx-target="#week-content" при navigation по неделям.
+#}
+
+{% from "components/ui/icon.html" import icon %}
+
+<section
+  id="week-content"
+  class="week-schedule"
+>
+  {% include "components/schedule/target_switch.html" %}
+
+  <header class="day-header">
+    <nav
+      class="day-navigation week-navigation"
+      aria-label="Навигация по неделям"
+    >
+      <a
+        class="day-navigation__arrow icon-action"
+        data-week-direction="previous"
+        data-week-label="{{ prev_week_label }}"
+        href="/schedule/week?week={{ prev_week }}"
+        hx-get="/schedule/week?week={{ prev_week }}"
+        hx-target="#week-content"
+        hx-swap="outerHTML"
+        hx-push-url="true"
+        hx-indicator="#week-content"
+        hx-sync="#week-content:replace"
+        aria-label="Открыть предыдущую неделю"
+      >
+        {{ icon("caret-circle-left-duotone") }}
+      </a>
+
+      <div class="day-navigation__heading">
+        <h2 class="day-title">
+          {{ week.week_display }}
+        </h2>
+
+        <div class="day-navigation__today-slot">
+          {% if is_current_week %}
+          <span
+            class="day-navigation__today-status"
+            aria-label="Открыта текущая неделя"
+          >
+            <span aria-hidden="true">•</span>
+            Текущая
+          </span>
+          {% else %}
+          <a
+            class="day-navigation__today-action text-action"
+            data-week-navigation="current"
+            href="{{ smart_week_url }}"
+            hx-get="{{ smart_week_url }}"
+            hx-target="#week-content"
+            hx-swap="outerHTML"
+            hx-push-url="true"
+            hx-indicator="#week-content"
+            hx-sync="#week-content:replace"
+          >
+            Текущая
+          </a>
+          {% endif %}
+        </div>
+      </div>
+
+      <a
+        class="day-navigation__arrow icon-action"
+        data-week-direction="next"
+        data-week-label="{{ next_week_label }}"
+        href="/schedule/week?week={{ next_week }}"
+        hx-get="/schedule/week?week={{ next_week }}"
+        hx-target="#week-content"
+        hx-swap="outerHTML"
+        hx-push-url="true"
+        hx-indicator="#week-content"
+        hx-sync="#week-content:replace"
+        aria-label="Открыть следующую неделю"
+      >
+        {{ icon("caret-circle-right-duotone") }}
+      </a>
+    </nav>
+  </header>
+
+  <div class="week-list">
+    {% for day in week.days %}
+    <a
+      class="week-day{% if day.has_changes %} has-changes{% endif %}"
+      href="/schedule/day/{{ day.date_iso }}"
+      hx-get="/schedule/day/{{ day.date_iso }}"
+      hx-target="#app-shell"
+      hx-select="#app-shell"
+      hx-swap="outerHTML show:top"
+      hx-push-url="true"
+      hx-sync="#app-shell:replace"
+    >
+      <div class="week-day-name">
+        {{ day.weekday_display }}
+
+        <span class="week-day-date">
+          {{ day.date_short }}
+        </span>
+      </div>
+
+      <div class="week-day-info">
+        {{ day.lesson_count }} уроков
+
+        {% if day.extra_count %}
+          · {{ day.extra_count }} доп.
+        {% endif %}
+
+        {% if day.has_changes %}
+          ·
+            <span class="week-changes">
+            {{ icon(
+              "arrows-clockwise-duotone",
+              size="sm",
+              class="icon-changed"
+            ) }}
+            {{ day.exchange_count }}
+          </span>
+        {% endif %}
+      </div>
+    </a>
+    {% endfor %}
+  </div>
+</section>

@@ -26,6 +26,7 @@ from services.extra_classes_web_service import (
 )
 from services.web_sessions_service import WebSessionContext
 from web.deps import require_family_allowed
+from web.htmx import select_page_or_fragment_template
 from web.extra_classes_helpers import (
     WEEKDAYS_RU,
     build_web_extra_class,
@@ -40,7 +41,16 @@ from web.idempotency import IdempotencyStore
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-_STUDENT_COOKIE = "web_student"
+# Typed selection cookie хранится в schedule.py.
+#
+# Примеры значений:
+# - student:990027
+# - teacher:T001
+# - watch:42
+#
+# Extra classes применимы только к student target, но screen умеет
+# корректно fallback-нуть на первого доступного ученика для watch target.
+_SCHEDULE_TARGET_COOKIE = "web_schedule_target"
 
 def _extra_service(request: Request):
     return request.app.state.extra_classes_web_service
@@ -53,6 +63,61 @@ def _idempotency(request: Request) -> IdempotencyStore:
 
 def _is_htmx(request: Request) -> bool:
     return request.headers.get("HX-Request") == "true"
+
+async def _resolve_current_extra_student_id(
+    request: Request,
+    context: WebSessionContext,
+    explicit_student_id: Optional[int],
+) -> Optional[int]:
+    """
+    Возвращает student_id для экрана дополнительных занятий.
+
+    Приоритет:
+
+    1. Явный ?student=<id>.
+       Такой ID затем обязательно валидируется через ExtraClassesWebService.
+
+    2. Текущий typed schedule target из web_schedule_target.
+       Если выбран student:<id>, кружки открываются именно для него.
+
+    3. Первый доступный student target.
+       Это fallback для watch/teacher target и старых browser sessions,
+       где typed cookie ещё отсутствует.
+
+    Важно: функция только выбирает кандидат student_id. Доступ и права
+    всегда проверяются ниже через ExtraClassesWebService.resolve_access().
+    """
+    if explicit_student_id is not None:
+        return explicit_student_id
+
+    selection_key = request.cookies.get(
+        _SCHEDULE_TARGET_COOKIE,
+        "",
+    ).strip() or None
+
+    resolution = await (
+        request.app.state.schedule_targets_service
+        .resolve_for_web_user(
+            user_id=context.user_id,
+            requested_selection_key=selection_key,
+        )
+    )
+
+    selected_target = resolution.selected_target
+
+    if (
+        selected_target is not None
+        and selected_target.student_id is not None
+    ):
+        return int(selected_target.student_id)
+
+    # Teacher/watch target не может быть источником extra classes.
+    # В этом случае безопасно ищем первый доступный student target.
+    for target in resolution.targets:
+        if target.student_id is not None:
+            return int(target.student_id)
+
+    return None
 
 async def _render_unavailable(
     request: Request,
@@ -73,10 +138,10 @@ async def _render_unavailable(
         actor_user_id=context.user_id,
     )
 
-    template = (
-        "extra/_extra_unavailable.html"
-        if _is_htmx(request)
-        else "extra/extra.html"
+    template = select_page_or_fragment_template(
+        request,
+        page_template="extra/extra.html",
+        fragment_template="extra/_extra_unavailable.html",
     )
 
     return _templates(request).TemplateResponse(
@@ -93,30 +158,30 @@ async def _resolve_access(
     context: WebSessionContext,
     student_id: Optional[int],
 ):
-    """Доступ actor -> student для доп. занятий (cookie target по умолчанию)."""
-    if student_id is None:
-        raw = request.cookies.get(_STUDENT_COOKIE, "")
-        try:
-            student_id = int(raw) if raw else None
-        except ValueError:
-            student_id = None
-        if student_id is None:
-            # Первый доступный target actor'а (модель selector).
-            targets = await request.app.state.schedule_targets_service.get_targets_for_user(
-                user_id=context.user_id
-            )
-            if not targets or targets[0].student_id is None:
-                raise HTTPException(
-                    status_code=403,
-                    detail="Доп. занятия недоступны для этого профиля.",
-                )
-            student_id = targets[0].student_id
+    """
+    Разрешает actor → student access для extra classes.
+
+    Если route не получил explicit ?student=<id>, student определяется
+    через typed schedule target web_schedule_target.
+
+    Никакой student_id не считается доверенным только потому, что он пришёл
+    из URL или cookie: ExtraClassesWebService.resolve_access() выполняет
+    окончательную server-side permission validation.
+    """
+    resolved_student_id = await _resolve_current_extra_student_id(
+        request,
+        context,
+        student_id,
+    )
+
+    if resolved_student_id is None:
+        return None
 
     access = await _extra_service(request).resolve_access(
-        actor_user_id=context.user_id, student_id=student_id
+        actor_user_id=context.user_id,
+        student_id=resolved_student_id,
     )
-    if access is None:
-        raise HTTPException(status_code=403, detail="Нет доступа к занятиям ученика.")
+
     return access
 
 async def _student_chips(
@@ -249,64 +314,40 @@ async def extra_classes_list(
     Explicit ?student=... или valid cookie selection продолжает идти
     через resolve_access(): подстановка чужого student_id остаётся 403.
     """
-    selected_student_id = student
-
-    if selected_student_id is None:
-        raw_student_id = request.cookies.get(
-            _STUDENT_COOKIE,
-            "",
-        )
-
-        try:
-            selected_student_id = (
-                int(raw_student_id)
-                if raw_student_id
-                else None
-            )
-        except ValueError:
-            selected_student_id = None
-
-    if selected_student_id is None:
-        targets = await (
-            request.app.state.schedule_targets_service
-            .get_targets_for_user(
-                user_id=context.user_id,
-            )
-        )
-
-        student_target = next(
-            (
-                target
-                for target in targets
-                if target.student_id is not None
-            ),
-            None,
-        )
-
-        if student_target is None:
-            return await _render_unavailable(
-                request,
-                context,
-            )
-
-        selected_student_id = student_target.student_id
-
     access = await _resolve_access(
         request,
         context,
-        selected_student_id,
+        student,
     )
 
+    if access is None:
+        # Явный ?student=<id> является security-sensitive input.
+        #
+        # Если пользователь передал конкретный ID без доступа, не делаем
+        # silent fallback на другого ребёнка.
+        if student is not None:
+            raise HTTPException(
+                status_code=403,
+                detail="Нет доступа к занятиям ученика.",
+            )
+
+        # Без explicit student это normal UI state:
+        # teacher/watch target либо отсутствующий student profile.
+        return await _render_unavailable(
+            request,
+            context,
+        )
+        
     items = await _extra_service(request).list_items(access)
     view = [
         extra_class_to_web(row)
         for row in items
     ]
 
-    template = (
-        "extra/_extra_content.html"
-        if _is_htmx(request)
-        else "extra/extra.html"
+    template = select_page_or_fragment_template(
+        request,
+        page_template="extra/extra.html",
+        fragment_template="extra/_extra_content.html",
     )
 
     return _templates(request).TemplateResponse(
