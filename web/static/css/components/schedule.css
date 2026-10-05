@@ -13,7 +13,7 @@
   --schedule-card-accent-width: 5px;
   --schedule-list-gap: 7px;
   --schedule-entry-gap: 3px;
-  --schedule-room-max-width: 85px;
+  --schedule-room-max-width: 110px; /* ФИКС: Даем длинным названиям (спортзал) дышать */
   --schedule-room-min-height: 20px;
   --schedule-room-padding-y: 3px;
   --schedule-room-padding-x: 7px;
@@ -805,10 +805,11 @@
 .lesson-card__chevron {
   display: flex;
   justify-content: flex-end; /* Прижимаем вправо */
-  margin-top: -4px; /* Строго фиксированный отступ от последнего кабинета */
-  margin: -4px; /* Строго фиксированный отступ от последнего кабинета */
-  color: var(--color-changed); /* Оранжевый цвет как на скрине */
+  margin-top: -4px; /* Строго фиксированный отступ от угла карточки */
+  margin: -4px; /* Строго фиксированный отступ от угла карточки */
+  color: var(--color-changed); /* Оранжевый цвет */
   pointer-events: none; /* Пропускает клики сквозь себя на основную кнопку */
+  align-items: center;
 }
 
 .lesson-card__chevron .phosphor-icon {
@@ -840,6 +841,9 @@
   width: var(--touch-target);
   min-width: var(--touch-target);
   min-height: var(--touch-target);
+  /* ФИКС: Приглушаем огромные стрелки, чтобы они не спорили с датой.
+     При нажатии они всё равно будут становиться синими благодаря .icon-action */
+  color: var(--color-text-muted);
 }
 
 .day-navigation__arrow .phosphor-icon {

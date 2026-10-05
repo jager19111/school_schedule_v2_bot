@@ -26,35 +26,30 @@ from web.mappers import (
     invites_to_web,
     permissions_to_web,
     student_cards_to_web,
+    class_items_to_web,  # <-- НОВОЕ
+    main_groups_to_web,  # <-- НОВОЕ
 )
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-
 def _profile_service(request: Request):
     return request.app.state.profile_service
-
 
 def _students_service(request: Request):
     return request.app.state.students_service
 
-
 def _schedule_service(request: Request):
     return request.app.state.schedule_service
-
 
 def _templates(request: Request):
     return request.app.state.templates
 
-
 def _bot_username(request: Request) -> Optional[str]:
     return getattr(request.app.state.web_settings, "bot_username", None)
 
-
 def _is_htmx(request: Request) -> bool:
     return request.headers.get("HX-Request") == "true"
-
 
 async def _family_ctx(
     request: Request, context: WebSessionContext
@@ -75,7 +70,6 @@ async def _family_ctx(
         "is_admin": bool(is_admin),
         "members": members or [],
     }
-
 
 async def _family_view(
     request: Request,
@@ -116,11 +110,11 @@ async def _family_view(
         ),
         "invites": invites_to_web(invites),
         "invite_result": invite_result,
-        "classes": sorted(dicts.classes.items(), key=lambda kv: kv[1]),
-        "groups": sorted(dicts.groups.items(), key=lambda kv: kv[1]),
+        # ФИКС: Используем мапперы для стандартизации и фильтрации
+        "classes": class_items_to_web(dicts.classes),
+        "groups": main_groups_to_web(dicts.groups),
         "csrf_token": context.csrf_token,
     }
-
 
 def _render_family(request: Request, context: WebSessionContext, view: dict):
     """Fragment для HTMX, полная страница для обычного запроса."""
@@ -131,11 +125,9 @@ def _render_family(request: Request, context: WebSessionContext, view: dict):
     )
     return _templates(request).TemplateResponse(request, template, view)
 
-
 # ==============================================================
 # Экран «Семья»
 # ==============================================================
-
 
 @router.get("/family", response_class=HTMLResponse)
 async def family_page(
@@ -145,11 +137,9 @@ async def family_page(
     view = await _family_view(request, context)
     return _render_family(request, context, view)
 
-
 # ==============================================================
 # Приглашения (ТЗ 34; admin-only — проверяет сам сервис)
 # ==============================================================
-
 
 @router.post("/family/invites")
 async def create_invite(
@@ -171,13 +161,11 @@ async def create_invite(
         expires_in_hours=24,
     )
     if invite is None:
-        # Сервис уже проверил admin-права: без объяснения деталей.
         raise HTTPException(status_code=403, detail="Только администратор семьи может создавать приглашения.")
 
     result = invite_result_to_web(invite, kind="family", bot_username=_bot_username(request))
     view = await _family_view(request, context, invite_result=result)
     return _render_family(request, context, view)
-
 
 @router.post("/family/invites/{invite_id}/revoke")
 async def revoke_invite(
@@ -198,18 +186,15 @@ async def revoke_invite(
     view = await _family_view(request, context)
     return _render_family(request, context, view)
 
-
 # ==============================================================
 # Student profiles: создание / правка / удаление / claim-ссылка
 # ==============================================================
-
 
 def _require_admin(fctx: dict) -> None:
     if fctx is None:
         raise HTTPException(status_code=403, detail="Вы не состоите в семье.")
     if not fctx["is_admin"]:
         raise HTTPException(status_code=403, detail="Только администратор семьи.")
-
 
 @router.get("/family/students/new", response_class=HTMLResponse)
 async def new_student_form(
@@ -225,12 +210,12 @@ async def new_student_form(
         {
             "mode": "create",
             "student": None,
-            "classes": sorted(dicts.classes.items(), key=lambda kv: kv[1]),
-            "groups": sorted(dicts.groups.items(), key=lambda kv: kv[1]),
+            # ФИКС: Используем мапперы для формы
+            "classes": class_items_to_web(dicts.classes),
+            "groups": main_groups_to_web(dicts.groups),
             "csrf_token": context.csrf_token,
         },
     )
-
 
 @router.post("/family/students")
 async def create_student(
@@ -260,12 +245,9 @@ async def create_student(
     # Полный возврат на экран семьи: обновятся и карточки, и selector.
     if _is_htmx(request):
         from fastapi.responses import Response
-
         return Response(status_code=200, headers={"HX-Redirect": "/family"})
     from fastapi.responses import Response
-
     return Response(status_code=303, headers={"Location": "/family"})
-
 
 async def _student_for_admin(
     request: Request, context: WebSessionContext, student_id: int
@@ -281,7 +263,6 @@ async def _student_for_admin(
         raise HTTPException(status_code=403, detail="Только администратор семьи.")
     return student
 
-
 @router.get("/family/students/{student_id}/edit", response_class=HTMLResponse)
 async def edit_student_form(
     request: Request,
@@ -296,12 +277,12 @@ async def edit_student_form(
         {
             "mode": "edit",
             "student": student,
-            "classes": sorted(dicts.classes.items(), key=lambda kv: kv[1]),
-            "groups": sorted(dicts.groups.items(), key=lambda kv: kv[1]),
+            # ФИКС: Используем мапперы для формы
+            "classes": class_items_to_web(dicts.classes),
+            "groups": main_groups_to_web(dicts.groups),
             "csrf_token": context.csrf_token,
         },
     )
-
 
 @router.post("/family/students/{student_id}/edit")
 async def update_student(
@@ -321,9 +302,7 @@ async def update_student(
     if not getattr(response, "success", False):
         raise HTTPException(status_code=403, detail="Не удалось сохранить профиль.")
     from fastapi.responses import Response
-
     return Response(status_code=200, headers={"HX-Redirect": "/family"})
-
 
 @router.post("/family/students/{student_id}/delete")
 async def delete_student(
@@ -341,9 +320,7 @@ async def delete_student(
             detail="Нельзя удалить ученика с подключённым Telegram.",
         )
     from fastapi.responses import Response
-
     return Response(status_code=200, headers={"HX-Redirect": "/family"})
-
 
 @router.post("/family/students/{student_id}/claim")
 async def create_claim_link(
@@ -366,11 +343,9 @@ async def create_claim_link(
     view = await _family_view(request, context, invite_result=result)
     return _render_family(request, context, view)
 
-
 # ==============================================================
 # Права взрослых на доп. занятия student profile
 # ==============================================================
-
 
 async def _permissions_view(
     request: Request, context: WebSessionContext, student_id: int, admin_user_id: int
@@ -400,7 +375,6 @@ async def _permissions_view(
         "csrf_token": context.csrf_token,
     }
 
-
 @router.get("/family/students/{student_id}/permissions", response_class=HTMLResponse)
 async def student_permissions(
     request: Request,
@@ -411,7 +385,6 @@ async def student_permissions(
     return _templates(request).TemplateResponse(
         request, "family/_permissions.html", view
     )
-
 
 @router.post("/family/students/{student_id}/permissions/{adult_user_id}")
 async def toggle_permission(

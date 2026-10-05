@@ -742,20 +742,36 @@ def _schedule_component_fixtures() -> list[WebLesson]:
 async def _nika_stale_warning(request: Request) -> str | None:
     """
     NIKA outage (ТЗ 53): источник с ошибкой при живом кеше.
-
-    Только отображение существующего NikaSourceHealthDTO — без
-    дополнительной NIKA-логики. «Последнее обновление» —
-    last_changed_at в школьной таймзоне (TimeService.format_base).
+    Умная проверка: предупреждение показывается только если сайт 
+    недоступен дольше 2 часов.
     """
+    from datetime import datetime, timezone, timedelta
+    import logging
+
     try:
         health = await _schedule_service(request).schedule_repo.get_nika_health_status()
     except Exception as exc:
-        logger.warning("get_nika_health_status failed: %s", exc)
+        logging.getLogger(__name__).warning("get_nika_health_status failed: %s", exc)
         return None
 
+    # Строгое обращение к контракту NikaSourceHealthDTO (никаких getattr)
     if not health.last_error:
         return None
 
+    # 1. Проверяем таймаут: 2 часа с момента последней УСПЕШНОЙ проверки
+    if health.last_checked_at:
+        try:
+            last_ok = datetime.fromisoformat(health.last_checked_at)
+            if last_ok.tzinfo is None:
+                last_ok = last_ok.replace(tzinfo=timezone.utc)
+                
+            # Если сбой длится меньше 2 часов — молчим, данные ещё актуальны
+            if datetime.now(timezone.utc) - last_ok < timedelta(hours=2):
+                return None
+        except ValueError:
+            pass
+
+    # 2. Формируем спокойный и понятный текст
     formatted = (
         _time_service(request).format_base(health.last_changed_at)
         if health.last_changed_at
@@ -763,8 +779,8 @@ async def _nika_stale_warning(request: Request) -> str | None:
     )
 
     return (
-        f"⚠️ Последнее обновление расписания: {formatted}. "
-        "Расписание может быть неактуальным."
+        f"⚠️ Сайт расписания временно недоступен. "
+        f"Показана сохранённая копия (от {formatted})."
     )
     
 async def _resolve_target(

@@ -1,9 +1,7 @@
 # web/routes/settings.py
 from __future__ import annotations
 
-
 import logging
-
 
 from fastapi import (
     APIRouter,
@@ -15,7 +13,6 @@ from fastapi.responses import (
     HTMLResponse,
     RedirectResponse,
 )
-
 
 from core.mappers.watch_target_mapper import WatchTargetMapper
 from services.schedule_service import ScheduleService
@@ -31,32 +28,27 @@ from web.deps import (
 from web.events import SessionRevoked
 from web.mappers import (
     class_items_to_web,
+    main_groups_to_web,  # <-- НОВОЕ: Импортируем наш фильтр
     school_items_to_web,
     web_devices_to_web,
 )
 
-
 logger = logging.getLogger(__name__)
 router = APIRouter()
-
 
 def _templates(request: Request):
     return request.app.state.templates
 
-
 def _schedule_service(request: Request) -> ScheduleService:
     return request.app.state.schedule_service
-
 
 def _watch_targets_service(
     request: Request,
 ) -> WatchTargetsService:
     return request.app.state.watch_targets_service
 
-
 def _is_htmx(request: Request) -> bool:
     return request.headers.get("HX-Request") == "true"
-
 
 def _ctx(
     request: Request,
@@ -69,7 +61,6 @@ def _ctx(
     }
     base.update(extra)
     return base
-
 
 async def _devices_context(
     request: Request,
@@ -94,7 +85,6 @@ async def _devices_context(
             "error": error,
         },
     )
-
 
 async def _watch_targets_context(
     request: Request,
@@ -156,7 +146,6 @@ async def _watch_targets_context(
         },
     )
 
-
 async def _watch_target_form_context(
     request: Request,
     context: WebSessionContext,
@@ -211,7 +200,8 @@ async def _watch_target_form_context(
             "classes": class_items_to_web(
                 dictionaries.classes,
             ),
-            "groups": school_items_to_web(
+            # ФИКС: Применяем умный фильтр групп
+            "groups": main_groups_to_web(
                 dictionaries.groups,
             ),
             "selected_class_id": selected_class_id,
@@ -221,7 +211,6 @@ async def _watch_target_form_context(
         },
     )
 
-
 def _watch_targets_template_name(
     request: Request,
 ) -> str:
@@ -230,7 +219,6 @@ def _watch_targets_template_name(
         if _is_htmx(request)
         else "settings/watch_targets.html"
     )
-
 
 def _watch_target_form_template_name(
     request: Request,
@@ -295,7 +283,6 @@ async def settings_page(
         _ctx(request, context, {}),
     )
 
-
 @router.get(
     "/settings/watch-targets",
     response_class=HTMLResponse,
@@ -316,7 +303,6 @@ async def watch_targets_page(
         ),
     )
 
-
 @router.get(
     "/settings/watch-targets/new",
     response_class=HTMLResponse,
@@ -336,7 +322,6 @@ async def new_watch_target_page(
             context,
         ),
     )
-
 
 @router.post(
     "/settings/watch-targets",
@@ -447,7 +432,6 @@ async def create_watch_target(
             context,
         ),
     )
-
 
 @router.post(
     "/settings/watch-targets/{target_id}/delete",

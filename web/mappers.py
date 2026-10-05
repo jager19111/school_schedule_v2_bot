@@ -1117,6 +1117,35 @@ def school_items_to_web(
         key=lambda item: item.name,
     )
 
+def main_groups_to_web(
+    items: Dict[str, str],
+) -> list[WebSchoolItem]:
+    """
+    Отбирает только основные подгруппы для UI (скрывая технологию).
+    Использует логику whitelist: фундаментальные ID "0" и "1".
+    Фолбэк: если их нет, ищет цифры 1 или 2 в названии.
+    """
+    main_ids = {"0", "1"}
+    result: list[WebSchoolItem] = []
+
+    # 1. Пробуем найти строго по фундаментальным ID
+    for g_id, g_name in items.items():
+        if str(g_id) in main_ids:
+            result.append(
+                WebSchoolItem(id=str(g_id), name=str(g_name))
+            )
+
+    # 2. Фолбэк: если школа использует другие ID, ищем по названию
+    if not result:
+        for g_id, g_name in items.items():
+            name_lower = str(g_name).lower()
+            if "1" in name_lower or "2" in name_lower:
+                if "3" not in name_lower:  # Исключаем 3 группу
+                    result.append(
+                        WebSchoolItem(id=str(g_id), name=str(g_name))
+                    )
+
+    return sorted(result, key=lambda item: item.name)
 
 def _search_school_items(
     items: Dict[str, str],

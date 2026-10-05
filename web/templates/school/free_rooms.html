@@ -8,6 +8,7 @@
 
 {% set nav = "school" %}
 {% block title %}Свободные кабинеты{% endblock %}
+
 {% block header %}
 <span>
   {{ icon("door-open-duotone") }} Свободные кабинеты
@@ -15,37 +16,5 @@
 {% endblock %}
 
 {% block content %}
-<section class="free-rooms">
-  <div class="free-status">
-    {{ icon("clock-duotone", class="icon-muted") }} {{ free_rooms.status_line }}
-  </div>
-
-  {% if free_rooms.is_empty %}
-  <div class="empty-day">
-    {{ icon("x-circle-duotone", class="icon-danger") }} Все кабинеты заняты (или школа закрыта).
-  </div>
-  {% else %}
-  <div class="school-grid">
-    {% for room in free_rooms.rooms %}
-    <a class="school-item text-action" href="/school/room/{{ room.id }}"
-       hx-get="/school/room/{{ room.id }}" hx-target="#main" hx-swap="innerHTML"
-       hx-push-url="/school/room/{{ room.id }}">{{ room.name }}</a>
-    {% endfor %}
-  </div>
-  <div class="permutation-note">
-    {{ icon("info-duotone", class="icon-muted") }} Нажмите на кабинет, чтобы проверить его занятость до конца дня.
-  </div>
-  {% endif %}
-
-  <nav class="day-nav">
-    <a class="nav-btn today-btn text-action" href="/school/free-rooms"
-       hx-get="/school/free-rooms" hx-target="#main" hx-swap="innerHTML"
-       hx-push-url="/school/free-rooms">
-      {{ icon("arrows-clockwise-duotone", size="sm") }} Обновить
-    </a>
-    <a class="nav-btn text-action" href="/school">
-      {{ icon("caret-circle-left-duotone", size="sm") }} К школе
-    </a>
-  </nav>
-</section>
+  {% include "school/_free_rooms_content.html" %}
 {% endblock %}

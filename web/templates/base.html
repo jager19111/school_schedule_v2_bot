@@ -20,11 +20,11 @@
   
   {# ПРАВИЛЬНЫЙ ПОРЯДОК ПОДКЛЮЧЕНИЯ CSS #}
   <!-- app.css дает оболочку, system font и навигацию -->
-  <link rel="stylesheet" href="{{ url_for('static', path='css/app.css') }}?v=5">
+  <link rel="stylesheet" href="{{ url_for('static', path='css/app.css') }}?v=6">
   <!-- schedule.css является ЕДИНСТВЕННЫМ владельцем .lesson-card -->
-  <link rel="stylesheet" href="{{ url_for('static', path='css/components/schedule.css') }}?v=5">
+  <link rel="stylesheet" href="{{ url_for('static', path='css/components/schedule.css') }}?v=6">
   <!-- extra.css добавляет footer ниже card. --> 
-  <link rel="stylesheet" href="{{ url_for('static', path='css/components/extra.css') }}?v=5">
+  <link rel="stylesheet" href="{{ url_for('static', path='css/components/extra.css') }}?v=6">
   {% block extra_head %}{% endblock %}
 </head>
 {# ТЗ 16.1: CSRF во ВСЕ HTMX-запросы.
@@ -33,6 +33,7 @@
    (используется app.js как health-check для polling fallback, ТЗ 51.12). #}
 <body
   {% if csrf_token is defined and csrf_token %}
+    ontouchstart=""
     hx-ext="sse"
     sse-connect="/api/v1/schedule/stream"
     hx-headers='{"X-CSRF-Token": "{{ csrf_token }}"}'
@@ -119,7 +120,7 @@
 {# Все production JS локальны (ТЗ 48.1). #}
 <script src="/static/js/htmx.min.js"></script>
 <script src="/static/js/htmx-ext-sse.min.js?v=3"></script>
-<script src="/static/js/app.js?v=5"></script>
+<script src="/static/js/app.js?v=6"></script>
 {% block extra_scripts %}{% endblock %}
 </body>
 </html>

@@ -1323,3 +1323,98 @@
     );
   });
 })();
+
+
+/* ==========================================================================
+   SMART SCROLL & STATE PRESERVATION (ГОРИЗОНТАЛЬНЫЕ МЕНЮ)
+   Идеальный бесшовный Glide с защитой от обнуления при показе скелетона
+   Метод не работает как мне хочется. Иконки каждый раз выезжают слева, даже если нажатие было на соседнюю кнопку. Проверить состояния и исправить. Возможно, нужно хранить состояние в data-атрибуте и проверять его при клике.
+   ========================================================================== */
+(function() {
+    let savedScroll = null;
+    let animationId = null;
+
+    // --- УНИВЕРСАЛЬНАЯ ФУНКЦИЯ ПЛАВНОГО СКРОЛЛА ---
+    function glideToCenter(container, activeChip) {
+        if (!container || !activeChip) return;
+
+        const containerRect = container.getBoundingClientRect();
+        const chipRect = activeChip.getBoundingClientRect();
+        
+        const offsetToCenter = (chipRect.left - containerRect.left) - (container.clientWidth / 2) + (chipRect.width / 2);
+        
+        // Если кнопка уже по центру — отменяем анимацию
+        if (Math.abs(offsetToCenter) < 3) return;
+
+        // Динамическое время: если кликнули соседнюю кнопку (сдвиг маленький), 
+        // анимация пройдет быстрее. Если дальнюю - плавно за 600мс.
+        const duration = Math.min(Math.max(Math.abs(offsetToCenter) * 1.5, 300), 600);
+
+        const startLeft = container.scrollLeft;
+        let startTime = null;
+
+        if (animationId) cancelAnimationFrame(animationId);
+
+        function glideStep(currentTime) {
+            if (!startTime) startTime = currentTime;
+            const elapsed = currentTime - startTime;
+            const progress = Math.min(elapsed / duration, 1);
+
+            // Easing (easeOutQuart): быстрый старт, плавное торможение
+            const ease = 1 - Math.pow(1 - progress, 4);
+            
+            container.scrollLeft = startLeft + (offsetToCenter * ease);
+
+            if (progress < 1) {
+                animationId = requestAnimationFrame(glideStep);
+            } else {
+                animationId = null;
+            }
+        }
+        animationId = requestAnimationFrame(glideStep);
+    }
+
+    // 1. ИСПРАВЛЕНИЕ: Запоминаем позицию в момент КЛИКА (до показа Скелетона!)
+    document.body.addEventListener("htmx:beforeRequest", function(e) {
+        const container = document.querySelector('.student-switch');
+        if (container) {
+            savedScroll = container.scrollLeft;
+        }
+    });
+
+    // 2. HTMX: Моментально возвращаем скролл при вставке HTML (убиваем прыжок в ноль)
+    document.body.addEventListener("htmx:afterSwap", function(e) {
+        const containers = document.querySelectorAll('.student-switch');
+        if (savedScroll !== null && containers.length > 0) {
+            containers.forEach(c => c.scrollLeft = savedScroll);
+        }
+    });
+
+    // 3. HTMX: Запускаем умный перекат от старой позиции к новой
+    document.body.addEventListener("htmx:afterSettle", function(e) {
+        const container = document.querySelector('.student-switch');
+        const activeChip = container ? container.querySelector('.student-chip.current') : null;
+        
+        glideToCenter(container, activeChip);
+    });
+
+    // 4. ПОЛНАЯ ПЕРЕЗАГРУЗКА (Вход по ссылке / Смена через форму)
+    document.addEventListener("DOMContentLoaded", function() {
+        const containers = document.querySelectorAll('.student-switch');
+        
+        containers.forEach(container => {
+            const activeChip = container.querySelector('.student-chip.current');
+            
+            // Красивый выезд меню при первоначальном открытии страницы
+            glideToCenter(container, activeChip);
+
+            // Транслируем скролл колесиком мыши (ПК) в горизонтальную прокрутку
+            container.addEventListener('wheel', function(e) {
+                if (e.deltaY !== 0) {
+                    e.preventDefault(); 
+                    container.scrollLeft += e.deltaY;
+                }
+            }, { passive: false });
+        });
+    });
+})();

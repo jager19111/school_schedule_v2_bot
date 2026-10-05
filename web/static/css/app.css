@@ -310,7 +310,9 @@ body {
   justify-content: center;
   flex-shrink: 0;
   line-height: 1;
-  vertical-align: middle;
+  /* ФИКС: Оптическое центрирование иконки относительно текста. 
+     Работает везде: в кнопках, заголовках и обычных абзацах. */
+  vertical-align: -0.125em; 
 }
 
 .phosphor-icon svg {
@@ -404,12 +406,20 @@ body {
 
 .header-title {
   flex: 1 1 auto;
+  display: flex;
+  align-items: baseline; /* ФИКС: Текст разного размера теперь стоит на одной ровной линии */
+  gap: var(--space-3); /* ФИКС: Возвращаем "пробел" (6px) между Расписанием и подзаголовком */
   min-width: 0;
-  overflow: hidden;
-  font-size: 17px;
-  font-weight: var(--weight-bold);
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  /* Удалили overflow и text-overflow, так как для Flex-контейнера они не работают, 
+     они уже прописаны внутри самих вложенных span-ов */
+}
+
+/* Защита и выравнивание для внутренних <span> (как в разделе "Семья") */
+.header-title > span {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2); /* Системный отступ между иконкой и текстом (4px) */
+  min-width: 0;
 }
 
 /*
@@ -431,8 +441,12 @@ body {
   font-size: var(--font-size-toolbar-icon);
   line-height: 1;
 }
+
 .header-title__main {
-  flex: 0 0 auto;
+  flex: 0 0 auto; /* Запрещаем сжиматься главному слову "Расписание" */
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2); /* Системный отступ для иконок в главном заголовке */
   font-size: clamp(20px, 5.4vw, 24px);
   font-weight: var(--weight-black);
   letter-spacing: -0.02em;
@@ -440,6 +454,10 @@ body {
 }
 
 .header-title__context {
+  flex: 0 1 auto; /* Позволяем подзаголовку сжиматься, если экран слишком узкий */
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2); /* Системный отступ для иконок в подзаголовке */
   min-width: 0;
   overflow: hidden;
   color: var(--color-text-secondary);
@@ -576,9 +594,18 @@ body {
 /* Shared student context control used by day/family-aware screens. */
 .student-switch {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap; /* ФИКС: Запрещаем перенос на новые строки */
   gap: var(--space-3);
   margin-bottom: var(--space-6);
+  overflow-x: auto; /* ФИКС: Включаем горизонтальный скролл (свайп) */
+  -webkit-overflow-scrolling: touch; /* Плавная инерция на iOS */
+  scrollbar-width: none; /* Скрываем скроллбар в Firefox */
+  padding-bottom: 2px; /* Защита от обрезания теней фокуса */
+}
+
+/* Скрываем уродливый скроллбар в Chrome/Safari/iOS */
+.student-switch::-webkit-scrollbar {
+  display: none; 
 }
 
 .student-switch.single {
@@ -589,10 +616,11 @@ body {
 }
 
 .student-chip {
+  flex-shrink: 0; /* ФИКС: Запрещаем кнопкам сплющиваться при скролле */
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: var(--space-3); /* НОВОЕ: Отступ на случай, если внутри чипа появится иконка */
+  gap: var(--space-3);
   min-height: var(--touch-target-sm);
   padding: 7px var(--space-5);
   border: var(--border-width-default) solid var(--color-border);
@@ -710,6 +738,31 @@ body {
   font-size: var(--font-size-md);
   color: var(--color-text-muted);
   text-align: center;
+}
+
+/*
+  ==========================================================================
+    PAGE FOOTER ACTIONS (End of content navigation)
+  ==========================================================================
+*/
+.page-footer-actions {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap; /* Строго запрещаем перенос на новую строку */
+  gap: var(--space-4);
+  margin-top: var(--space-8);
+  margin-bottom: var(--space-6); /* Даем немного "воздуха" снизу до нижнего тулбара */
+  
+  /* Убрали position: sticky и fixed. 
+     Теперь кнопки живут в естественном потоке (Best Practice). */
+}
+
+.page-footer-actions .nav-btn {
+  flex: 1 1 0; /* Заставляем кнопки делиться пространством строго 50/50 */
+  min-width: 0; /* Защита от распирания длинным текстом */
+  
+  /* Убрали тени и pointer-events: auto, так как они больше не висят над контентом */
+  box-shadow: none; 
 }
 
 /* WEEK LIST */

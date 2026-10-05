@@ -13,6 +13,7 @@
   <div
     class="stale-warning"
     role="alert"
+    style="display: flex; align-items: center; gap: 6px;"
   >
     {{ icon("warning-duotone") }} {{ error }}
   </div>
@@ -20,72 +21,59 @@
 
   {% if not dictionaries_unavailable %}
   <form
+    class="student-form"
     method="post"
     action="/settings/watch-targets"
     hx-post="/settings/watch-targets"
     hx-target="#main"
     hx-swap="innerHTML"
+    hx-disabled-elt="find button"
   >
-    <section class="settings-section">
-      <label
-        for="watch-target-class"
-        class="settings-section__title"
+    <label class="visually-hidden" for="watch-target-class">Класс</label>
+    <select
+      id="watch-target-class"
+      name="class_id"
+      required
+    >
+      <option value="" disabled {% if not selected_class_id %}selected{% endif %}>
+        Выберите класс
+      </option>
+
+      {% for school_class in classes %}
+      <option
+        value="{{ school_class.id }}"
+        {% if school_class.id == selected_class_id %}selected{% endif %}
       >
-        Класс
-      </label>
+        {{ school_class.name }}
+      </option>
+      {% endfor %}
+    </select>
 
-      <select
-        id="watch-target-class"
-        name="class_id"
-        required
+    <label class="visually-hidden" for="watch-target-group">Группа</label>
+    <select
+      id="watch-target-group"
+      name="group_id"
+      required
+    >
+      <option
+        value="ALL"
+        {% if not selected_group_id or selected_group_id == "ALL" %}selected{% endif %}
       >
-        <option value="">
-          Выберите класс
-        </option>
+        Весь класс
+      </option>
 
-        {% for school_class in classes %}
-        <option
-          value="{{ school_class.id }}"
-          {% if school_class.id == selected_class_id %}selected{% endif %}
-        >
-          {{ school_class.name }}
-        </option>
-        {% endfor %}
-      </select>
-    </section>
-
-    <section class="settings-section">
-      <label
-        for="watch-target-group"
-        class="settings-section__title"
+      {% for group in groups %}
+      <option
+        value="{{ group.id }}"
+        {% if group.id == selected_group_id %}selected{% endif %}
       >
-        Группа
-      </label>
-
-      <select
-        id="watch-target-group"
-        name="group_id"
-      >
-        <option
-          value="ALL"
-          {% if selected_group_id == "ALL" %}selected{% endif %}
-        >
-          Весь класс
-        </option>
-
-        {% for group in groups %}
-        <option
-          value="{{ group.id }}"
-          {% if group.id == selected_group_id %}selected{% endif %}
-        >
-          {{ group.name }}
-        </option>
-        {% endfor %}
-      </select>
-    </section>
+        {{ group.name }}
+      </option>
+      {% endfor %}
+    </select>
 
     <nav
-      class="day-nav"
+      class="page-footer-actions"
       aria-label="Действия формы"
     >
       <button
@@ -109,7 +97,7 @@
   </form>
   {% else %}
   <nav
-    class="day-nav"
+    class="page-footer-actions"
     aria-label="Навигация по настройкам"
   >
     <a

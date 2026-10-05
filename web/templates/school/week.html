@@ -103,11 +103,13 @@
     {% endfor %}
   </div>
 
-  <nav class="day-nav school-day-schedule__footer-nav" aria-label="Разделы школы">
-    <a class="nav-btn text-action" href="/school/{{ kind }}/{{ item_id }}">
-      {{ icon("caret-circle-left-duotone") }} День
+  <nav class="page-footer-actions" aria-label="Разделы школы">
+    <a class="nav-btn text-action" 
+    href="/school/{{ kind }}/{{ item_id }}">
+      {{ icon("caret-circle-left-duotone", size="sm") }} День
     </a>
-    <a class="nav-btn text-action" href="/school/{{ kind }}/list">
+    <a class="nav-btn text-action" 
+    href="/school/{{ kind }}/list">
       К списку
     </a>
   </nav>

@@ -13,7 +13,7 @@
 "use strict";
 
 
-const CACHE_VERSION = "school-schedule-shell-v4";
+const CACHE_VERSION = "school-schedule-shell-v5";
 
 const SHELL_ASSETS = [
   "/offline.html",

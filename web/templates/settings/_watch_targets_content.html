@@ -13,6 +13,7 @@
   <div
     class="stale-warning"
     role="alert"
+    style="display: flex; align-items: center; gap: 6px;"
   >
     {{ icon("warning-duotone") }} {{ error }}
   </div>
@@ -103,6 +104,7 @@
         <div
           class="empty-day__icon"
           aria-hidden="true"
+          style="display: inline-flex;"
         >
           {{ icon("star-duotone", size="xl", class="icon-muted") }}
         </div>
@@ -118,8 +120,9 @@
       </section>
     {% endif %}
 
+    <!-- ИЗМЕНЕНО НА page-footer-actions -->
     <nav
-      class="day-nav"
+      class="page-footer-actions"
       aria-label="Действия с отслеживаемыми классами"
     >
       <a
@@ -145,8 +148,9 @@
       </a>
     </nav>
   {% else %}
+    <!-- ИЗМЕНЕНО НА page-footer-actions -->
     <nav
-      class="day-nav"
+      class="page-footer-actions"
       aria-label="Навигация по настройкам"
     >
       <a

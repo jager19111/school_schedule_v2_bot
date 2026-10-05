@@ -123,14 +123,36 @@ async def _item_name(request: Request, kind_name: str, item_id: str) -> str:
 
 
 async def _nika_stale_warning(request: Request) -> str | None:
+    """
+    NIKA outage (ТЗ 53): источник с ошибкой при живом кеше.
+    Умная проверка: предупреждение показывается только если сайт 
+    недоступен дольше 2 часов.
+    """
+    from datetime import datetime, timezone, timedelta
+
     try:
         health = await _schedule_service(request).get_nika_health_status()
     except Exception:
         return None
 
+    # Строгое обращение к контракту NikaSourceHealthDTO
     if not health.last_error:
         return None
 
+    # 1. Проверяем таймаут: 2 часа с момента последней УСПЕШНОЙ проверки
+    if health.last_checked_at:
+        try:
+            last_ok = datetime.fromisoformat(health.last_checked_at)
+            if last_ok.tzinfo is None:
+                last_ok = last_ok.replace(tzinfo=timezone.utc)
+                
+            # Если сбой длится меньше 2 часов — молчим, данные ещё актуальны
+            if datetime.now(timezone.utc) - last_ok < timedelta(hours=2):
+                return None
+        except ValueError:
+            pass
+
+    # 2. Формируем спокойный и понятный текст
     formatted = (
         _time_service(request).format_base(health.last_changed_at)
         if health.last_changed_at
@@ -138,10 +160,9 @@ async def _nika_stale_warning(request: Request) -> str | None:
     )
 
     return (
-        f"⚠️ Последнее обновление расписания: {formatted}. "
-        "Расписание может быть неактуальным."
+        f"⚠️ Сайт расписания временно недоступен. "
+        f"Показана сохранённая копия (от {formatted})."
     )
-
 
 def _ctx(request: Request, context: WebSessionContext, extra: dict) -> dict:
     base = {"csrf_token": context.csrf_token, "app": request.app.state.web_settings}
@@ -650,7 +671,6 @@ async def delete_whole_class_watch_target(
 # Свободные кабинеты сейчас (ТЗ 32)
 # ==============================================================
 
-
 @router.get("/school/free-rooms", response_class=HTMLResponse)
 async def free_rooms_now(
     request: Request,
@@ -659,7 +679,15 @@ async def free_rooms_now(
     service = _schedule_service(request)
     status_dto, free_rooms = await service.get_currently_free_rooms()
     view = free_rooms_to_web(status_dto, free_rooms)
+    
+    # ФИКС: Отдаем только фрагмент при HTMX-запросах (кнопка "Обновить" или свайп "Назад")
+    template_name = (
+        "school/_free_rooms_content.html"
+        if _is_htmx(request)
+        else "school/free_rooms.html"
+    )
+    
     return _templates(request).TemplateResponse(
-        request, "school/free_rooms.html",
+        request, template_name,
         _ctx(request, context, {"free_rooms": view}),
     )
