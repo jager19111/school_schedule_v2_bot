@@ -360,7 +360,7 @@
   box-shadow: inset 0 0 0 2px var(--color-primary-border), var(--shadow-card);
   
   /* 2. ВИЗУАЛЬНАЯ МАССА: Заливаем всю карточку нежно-голубым фоном */
-  background-color: var(--color-primary-bg);
+  background-color: var(--color-primary-bg) !important;
 }
 
 /* Защита hover/active стейта для текущей карточки, чтобы фон не пропадал при тапе на мобильных */
@@ -820,14 +820,13 @@
 */
 .lesson-card__chevron {
   display: flex;
-  justify-content: flex-end; /* Прижимаем вправо */
-  margin-top: -4px; /* Строго фиксированный отступ от угла карточки */
-  margin: -4px; /* Строго фиксированный отступ от угла карточки */
-  color: var(--color-changed); /* Оранжевый цвет */
-  pointer-events: none; /* Пропускает клики сквозь себя на основную кнопку */
+  justify-content: flex-end;
+  /* Убрали дублирующийся margin: -4px. Оставили только сдвиг вверх и вправо */
+  margin: -4px -4px 0 0; 
+  color: var(--color-changed);
+  pointer-events: none;
   align-items: center;
 }
-
 .lesson-card__chevron .phosphor-icon {
   transition: transform var(--duration-normal) var(--ease-standard);
   display: inline-flex;
@@ -944,12 +943,6 @@
     ==========================================================================
 */
 
-.day-schedule .student-switch,
-.week-schedule .student-switch {
-  /* Задаем единый отступ между чипами (8px) и снизу (10px) для всех экранов расписания */
-  gap: var(--space-4);
-  margin-bottom: var(--space-5);
-}
 
 .day-schedule .day-header,
 .week-schedule .day-header {

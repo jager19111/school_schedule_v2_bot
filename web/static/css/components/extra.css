@@ -9,7 +9,7 @@
 .extra-page {
   display: flex;
   flex-direction: column;
-  gap: var(--space-7);
+  /* УДАЛИЛИ gap: var(--space-7); чтобы он не суммировался с margin-bottom чипов */
 }
 
 .extra-day-group {
@@ -18,14 +18,14 @@
   gap: 7px;
 }
 
+/* Так как мы убрали общий gap у страницы, возвращаем отступ строго МЕЖДУ днями */
 .extra-day-group + .extra-day-group {
-  margin-top: var(--space-1);
+  margin-top: var(--space-7);
 }
 
 .extra-day-group .search-group-title {
   margin: 0;
 }
-
 /* --------------------------------------------------------------------------
    Extra class management wrapper
    -------------------------------------------------------------------------- */
