@@ -52,6 +52,26 @@ def is_app_shell_request(request: Request) -> bool:
         and request.headers.get("HX-Target") == APP_SHELL_TARGET
     )
 
+def is_history_restore_request(request: Request) -> bool:
+    """
+    Возвращает True, когда HTMX восстанавливает history entry,
+    отсутствующий в client-side history cache.
+
+    HTMX отправляет такой request с:
+
+        HX-Request: true
+        HX-History-Restore-Request: true
+
+    В этом режиме server обязан вернуть full page template, а не local
+    fragment. Иначе history restore может заменить часть document fragment
+    response-ом и визуально потерять header/shell после серии Back.
+    """
+    return (
+        is_htmx_request(request)
+        and request.headers.get(
+            "HX-History-Restore-Request"
+        ) == "true"
+    )
 
 def select_page_or_fragment_template(
     request: Request,
@@ -74,7 +94,10 @@ def select_page_or_fragment_template(
     Это сохраняет progressive enhancement: каждый href остаётся рабочим
     без JavaScript и без HTMX.
     """
-    if is_app_shell_request(request):
+    if (
+        is_app_shell_request(request)
+        or is_history_restore_request(request)
+    ):
         return page_template
 
     if is_htmx_request(request):

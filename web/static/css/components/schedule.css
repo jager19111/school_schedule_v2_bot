@@ -1312,3 +1312,17 @@
 .schedule-showcase--show-skeleton #schedule-skeleton {
   display: flex !important;
 }
+
+
+
+/*
+ * Navigation lock во время active HTMX request.
+ *
+ * Заменяет hx-sync="replace": второй быстрый tap не abort-ит предыдущий
+ * request, а просто не может начать новую navigation до afterSettle.
+ */
+.week-swipe-stage.is-week-swipe-requesting .week-navigation,
+.day-swipe-stage.is-day-swipe-requesting .day-navigation {
+  pointer-events: none;
+  opacity: 0.72;
+}

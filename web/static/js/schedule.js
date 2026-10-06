@@ -417,27 +417,52 @@ function initialize() {
 
   window.schoolStudentSwitchUiInstalled = true;
 
-  var savedScroll = null;
-  var animationId = null;
-  var wheelBoundContainers = new WeakSet();
+var savedScroll = null;
+var animationId = null;
+var wheelBoundContainers = new WeakSet();
+
+/*
+ * Centering нужен только после явного выбора target.
+ *
+ * Day/week navigation меняет content, но не меняет selected target.
+ * Поэтому после обычных arrows/swipes carousel не должен заново
+ * анимироваться и визуально мельтешить.
+ */
+var pendingTargetSelectionCentering = false;
 
   function glideToCenter(container, activeChip) {
     if (!container || !activeChip) {
       return;
     }
 
-    var containerRect = container.getBoundingClientRect();
-    var chipRect = activeChip.getBoundingClientRect();
+  var containerRect = container.getBoundingClientRect();
+  var chipRect = activeChip.getBoundingClientRect();
 
-    var offsetToCenter = (
-      (chipRect.left - containerRect.left)
-      - (container.clientWidth / 2)
-      + (chipRect.width / 2)
-    );
+  /*
+  * Если active chip уже полностью виден, не двигаем carousel.
+  *
+  * Раньше список всегда центрировал выбранный chip, даже когда он уже
+  * находился рядом с текущей позицией. Это выглядело как лишняя длинная
+  * анимация при выборе соседнего ученика.
+  */
+  var isFullyVisible = (
+    chipRect.left >= containerRect.left
+    && chipRect.right <= containerRect.right
+  );
 
-    if (Math.abs(offsetToCenter) < 3) {
-      return;
-    }
+  if (isFullyVisible) {
+    return;
+  }
+
+  var offsetToCenter = (
+    (chipRect.left - containerRect.left)
+    - (container.clientWidth / 2)
+    + (chipRect.width / 2)
+  );
+
+  if (Math.abs(offsetToCenter) < 3) {
+    return;
+  }
 
     var duration = Math.min(
       Math.max(Math.abs(offsetToCenter) * 1.5, 300),
@@ -503,7 +528,7 @@ function initialize() {
     );
   }
 
-  function initializeStudentSwitches(root) {
+  function initializeStudentSwitches(root, shouldCenterActive) {
     if (!(root instanceof Element)) {
       return;
     }
@@ -527,7 +552,9 @@ function initialize() {
         ".student-chip.current"
       );
 
-      glideToCenter(container, activeChip);
+      if (shouldCenterActive) {
+        glideToCenter(container, activeChip);
+      }
     });
   }
 
@@ -556,7 +583,36 @@ function initialize() {
   }
 
   function initialize() {
-    initializeStudentSwitches(document.body);
+    initializeStudentSwitches(
+      document.body,
+      true
+    );
+    /*
+     * Запоминаем именно факт user selection target.
+     *
+     * POST selection response делает hx-swap="none", затем app.js
+     * вызывает shell revalidation. Centering будет выполнен только
+     * после shell swap, а не после каждого day/week fragment swap.
+     */
+    document.addEventListener(
+      "click",
+      function (event) {
+        if (!(event.target instanceof Element)) {
+          return;
+        }
+
+        var chip = event.target.closest(
+          ".schedule-target-switch .student-chip"
+        );
+
+        if (
+          chip
+          && !chip.classList.contains("current")
+        ) {
+          pendingTargetSelectionCentering = true;
+        }
+      }
+    );
 
     /*
      * Позиция фиксируется до request/skeleton swap.
@@ -589,7 +645,22 @@ function initialize() {
      */
     document.body.addEventListener(
       "htmx:afterSettle",
-      function () {
+      function (event) {
+        var target = event.detail && event.detail.target;
+
+        /*
+        * Center only after target selection app-shell refresh.
+        * Day/week arrows не должны перезапускать carousel animation.
+        */
+        if (
+          !pendingTargetSelectionCentering
+          || !(target instanceof Element)
+          || target.id !== "app-shell"
+        ) {
+          return;
+        }
+
+        pendingTargetSelectionCentering = false;
         glideCurrentStudentSwitches();
       }
     );
@@ -602,7 +673,10 @@ function initialize() {
       "htmx:load",
       function (event) {
         if (event.detail.elt instanceof Element) {
-          initializeStudentSwitches(event.detail.elt);
+          initializeStudentSwitches(
+            event.detail.elt,
+            false
+          );
         }
       }
     );

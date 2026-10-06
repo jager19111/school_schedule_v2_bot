@@ -4,7 +4,11 @@
   и как содержимое полной страницы.
 #}
 {% from "components/ui/icon.html" import icon %}
-<section id="day-content" class="day-schedule">
+<section
+  id="day-content"
+  class="day-schedule"
+  data-contextual-week-url="{{ day_navigation.week_url }}"
+>
 
   {% include "components/schedule/target_switch.html" %}
 

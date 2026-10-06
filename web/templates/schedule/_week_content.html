@@ -38,7 +38,6 @@
         hx-swap="outerHTML"
         hx-push-url="true"
         hx-indicator="#week-content"
-        hx-sync="#week-content:replace"
         aria-label="Открыть предыдущую неделю"
       >
         {{ icon("caret-circle-left-duotone") }}
@@ -68,7 +67,6 @@
             hx-swap="outerHTML"
             hx-push-url="true"
             hx-indicator="#week-content"
-            hx-sync="#week-content:replace"
           >
             Текущая
           </a>
@@ -86,7 +84,6 @@
         hx-swap="outerHTML"
         hx-push-url="true"
         hx-indicator="#week-content"
-        hx-sync="#week-content:replace"
         aria-label="Открыть следующую неделю"
       >
         {{ icon("caret-circle-right-duotone") }}
@@ -97,7 +94,7 @@
   <div class="week-list">
     {% for day in week.days %}
     <a
-      class="week-day{% if day.has_changes %} has-changes{% endif %}"
+      class="week-day text-action{% if day.has_changes %} has-changes{% endif %}"
       href="/schedule/day/{{ day.date_iso }}"
       hx-get="/schedule/day/{{ day.date_iso }}"
       hx-target="#app-shell"

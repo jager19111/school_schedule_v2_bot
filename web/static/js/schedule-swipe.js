@@ -32,6 +32,8 @@
   var activeRequest = null;
   var slowLoadingTimer = null;
   var animationFrame = null;
+  var suppressGestureCardClickUntil = 0;
+  var suppressGestureCardClickTarget = null;
 
   var INTERACTIVE_SELECTOR = [
     "button",
@@ -94,6 +96,91 @@
     }) || null;
   }
 
+  function syncContextualWeekNavigation(root) {
+    if (!(root instanceof Element)) {
+      return;
+    }
+
+    /*
+    * При hx-swap="outerHTML" event.detail.target может указывать на
+    * старый detached element. Поэтому приоритетно берём current node,
+    * реально находящийся в document.
+    */
+    var dayContent = document.querySelector(
+      "#day-content[data-contextual-week-url]"
+    );
+
+    /*
+    * Fallback нужен только для initial/manual вызовов до того, как element
+    * оказался в document.
+    */
+    if (!(dayContent instanceof Element)) {
+      if (
+        root.matches(
+          "#day-content[data-contextual-week-url]"
+        )
+      ) {
+        dayContent = root;
+      } else {
+        dayContent = root.querySelector(
+          "#day-content[data-contextual-week-url]"
+        );
+      }
+    }
+
+    if (!(dayContent instanceof Element)) {
+      return;
+    }
+
+    var weekUrl = dayContent.dataset.contextualWeekUrl;
+    var weekButton = document.getElementById(
+      "bottom-week-nav"
+    );
+
+    if (
+      !weekUrl
+      || !(weekButton instanceof HTMLAnchorElement)
+    ) {
+      return;
+    }
+
+    /*
+    * Server уже сформировал корректный URL недели:
+    *
+    * /schedule/week?week=2026-10-12
+    *
+    * Простая смена hx-get attribute недостаточна: HTMX хранит internal
+    * trigger/request configuration для уже обработанного DOM node.
+    *
+    * Поэтому при изменении URL заменяем link новым node и вызываем
+    * htmx.process() только для replacement node.
+    */
+    if (
+      weekButton.getAttribute("hx-get") === weekUrl
+      && weekButton.getAttribute("href") === weekUrl
+    ) {
+      return;
+    }
+
+    var replacement = weekButton.cloneNode(true);
+
+    if (!(replacement instanceof HTMLAnchorElement)) {
+      return;
+    }
+
+    replacement.href = weekUrl;
+    replacement.setAttribute("hx-get", weekUrl);
+
+    weekButton.replaceWith(replacement);
+
+    if (
+      typeof window.htmx !== "undefined"
+      && typeof window.htmx.process === "function"
+    ) {
+      window.htmx.process(replacement);
+    }
+  }
+
   function stageFor(config) {
     var stage = document.querySelector(config.stage);
 
@@ -153,11 +240,11 @@
     var neighbor = neighborFor(config, stage);
 
     if (panel) {
-      panel.style.transform = "";
+      panel.removeAttribute("style");
     }
 
     if (neighbor) {
-      neighbor.style.transform = "";
+      neighbor.removeAttribute("style");
     }
   }
 
@@ -204,6 +291,13 @@
 
     if (neighbor) {
       neighbor.style.transition = "";
+    }
+    if (panel) {
+      panel.removeAttribute("style");
+    }
+
+    if (neighbor) {
+      neighbor.removeAttribute("style");
     }
   }
 
@@ -297,10 +391,33 @@
 }
 
   function isExcludedStart(target, stage) {
-    if (target.closest(INTERACTIVE_SELECTOR)) {
+    var interactive = target.closest(
+      INTERACTIVE_SELECTOR
+    );
+
+    /*
+    * Swipe должен работать:
+    *
+    * - по week-day cards;
+    * - по обычным lesson cards;
+    * - по orange changed lesson cards;
+    * - даже если touch начался на detail toggle внутри lesson card.
+    *
+    * Normal tap сохраняет штатное поведение.
+    * Click после реального horizontal drag подавляется отдельно.
+    */
+    var isWeekDay = target.closest(".week-day") !== null;
+    var isLessonCard = target.closest(
+      ".lesson-card-wrapper"
+    ) !== null;
+
+    if (
+      interactive
+      && !isWeekDay
+      && !isLessonCard
+    ) {
       return true;
     }
-
     var current = target;
 
     while (
@@ -451,6 +568,9 @@
       dragActive: false,
       button: null,
       offsetX: 0,
+      gestureCard: event.target.closest(
+        ".week-day, .lesson-card-wrapper"
+      ),
     };
 
     try {
@@ -542,6 +662,11 @@
       return;
     }
 
+    if (swipe.gestureCard instanceof Element) {
+      suppressGestureCardClickTarget = swipe.gestureCard;
+      suppressGestureCardClickUntil = Date.now() + 450;
+    }
+
     var deltaX = event.clientX - swipe.startX;
     var commit = (
       !cancelled
@@ -562,6 +687,33 @@
   document.addEventListener("pointercancel", function (event) {
     releasePointer(event, true);
   });
+
+  document.addEventListener(
+    "click",
+    function (event) {
+      if (
+        Date.now() > suppressGestureCardClickUntil
+        || !(event.target instanceof Element)
+      ) {
+        return;
+      }
+
+      var card = event.target.closest(
+        ".week-day, .lesson-card-wrapper"
+      );
+
+      if (card !== suppressGestureCardClickTarget) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+
+      var suppressGestureCardClickUntil = 0;
+      var suppressGestureCardClickTarget = null;
+    },
+    true
+  );
 
   function configForNavigationTrigger(trigger) {
     if (!(trigger instanceof Element)) {
@@ -607,12 +759,28 @@
       };
 
       scheduleSlowLoading(stage, config);
+
+      if (stage instanceof Element) {
+        stage.classList.add(
+          config === WEEK
+            ? "is-week-swipe-requesting"
+            : "is-day-swipe-requesting"
+        );
+      }
     }
   );
 
   document.body.addEventListener(
     "htmx:afterSwap",
     function (event) {
+      if (
+        event.detail
+        && event.detail.target instanceof Element
+      ) {
+        syncContextualWeekNavigation(
+          event.detail.target
+        );
+      }
       if (!isActiveRequest(event) || activeRequest.swapped) {
         return;
       }
@@ -642,6 +810,15 @@
       }
 
       clearSlowLoading(stage, config);
+
+      if (stage instanceof Element) {
+        stage.classList.remove(
+          config === WEEK
+            ? "is-week-swipe-requesting"
+            : "is-day-swipe-requesting"
+        );
+      }
+
       activeRequest = null;
     }
   );
@@ -658,8 +835,77 @@
 
       var config = activeRequest.config;
 
-      resetStage(config, stageFor(config));
+      var stage = stageFor(config);
+
+      resetStage(config, stage);
+
+      if (stage instanceof Element) {
+        stage.classList.remove(
+          config === WEEK
+            ? "is-week-swipe-requesting"
+            : "is-day-swipe-requesting"
+        );
+      }
+
       activeRequest = null;
     });
   });
+    document.body.addEventListener(
+      "htmx:beforeHistorySave",
+      function () {
+        CONFIGS.forEach(function (config) {
+        /*
+        * CSP-safe history snapshot.
+
+        * Любой style="" внутри app-shell может быть восстановлен HTMX через
+        * runtime style mutation при Browser Back/Forward. CSP style-src 'self'
+        * блокирует такую операцию, включая пустой style="" attribute.
+        *
+        * В production app-shell inline style не используется: layout живёт
+        * в external CSS, swipe transforms уже очищены выше.
+        */
+        document
+          .querySelectorAll("#app-shell [style]")
+          .forEach(function (element) {
+            element.removeAttribute("style");
+          });
+          var stage = stageFor(config);
+          var panel = panelFor(config, stage);
+          var neighbor = neighborFor(config, stage);
+
+          if (panel) {
+            panel.removeAttribute("style");
+          }
+
+          if (neighbor) {
+            neighbor.removeAttribute("style");
+          }
+
+          if (stage) {
+            stage.classList.remove(
+              config.activeClass,
+              config.draggingClass,
+              config.settlingClass,
+              config.slowClass,
+              config === WEEK
+                ? "is-week-swipe-requesting"
+                : "is-day-swipe-requesting"
+            );
+          }
+        });
+      }
+    );
+
+  if (document.readyState === "loading") {
+    document.addEventListener(
+      "DOMContentLoaded",
+      function () {
+        syncContextualWeekNavigation(document.body);
+      },
+      { once: true }
+    );
+  } else {
+    syncContextualWeekNavigation(document.body);
+  }
+
 })();

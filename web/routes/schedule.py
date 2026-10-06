@@ -172,8 +172,25 @@ def _selection_response(
     redirect_url = _safe_next_url(next_url)
 
     if request.headers.get("HX-Request") == "true":
-        response = Response(status_code=200)
-        response.headers["HX-Redirect"] = redirect_url
+        """
+        HTMX selection не делает HX-Redirect.
+
+        HX-Redirect приводит к полной navigation document:
+        - создаётся новый SSE stream;
+        - student switch начинает с scrollLeft=0;
+        - active chip затем едет от начала списка.
+
+        Вместо этого:
+        1. Cookie устанавливается в HTTP response.
+        2. HTMX получает custom event schedule:revalidate.
+        3. app.js делает мягкую app-shell revalidation текущего URL.
+        """
+        response = Response(
+            status_code=200,
+            headers={
+                "HX-Trigger": "schedule:revalidate",
+            },
+        )
     else:
         response = Response(
             status_code=303,
@@ -250,6 +267,16 @@ def _day_navigation(
         selected_date + timedelta(days=1)
     ).isoformat()
 
+    # Monday недели, в которую входит selected day.
+    #
+    # weekday():
+    # Monday = 0
+    # Sunday = 6
+    week_start_iso = (
+        selected_date
+        - timedelta(days=selected_date.weekday())
+    ).isoformat()
+    
     return {
         "previous_url": (
             f"/schedule/day/{previous_date_iso}"
@@ -264,6 +291,9 @@ def _day_navigation(
             next_date_iso
         ),
         "today_url": "/",
+        "week_url": (
+            f"/schedule/week?week={week_start_iso}"
+        ),
         "is_today": selected_date_iso == today_iso,
     }
 

@@ -24,7 +24,7 @@
     class="student-chip text-action{% if student.is_current %} current{% endif %}"
     {% if not student.is_current %}
     hx-post="/api/v1/schedule/select/student/{{ student.student_id }}?next_url={{ selection_redirect|urlencode }}"
-    hx-indicator="#page-loading"
+    hx-swap="none"
     {% endif %}
     aria-pressed="{{ 'true' if student.is_current else 'false' }}"
   >
@@ -38,7 +38,7 @@
     class="student-chip watch-target-chip text-action{% if target.is_current %} current{% endif %}"
     {% if not target.is_current %}
     hx-post="/api/v1/schedule/select/watch/{{ target.watch_target_id }}?next_url={{ selection_redirect|urlencode }}"
-    hx-indicator="#page-loading"
+    hx-swap="none"
     {% endif %}
     aria-pressed="{{ 'true' if target.is_current else 'false' }}"
   >

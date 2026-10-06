@@ -18,9 +18,9 @@
   <meta name="apple-mobile-web-app-title" content="Расписание">
 
   {# Встроенные indicator styles HTMX выключены: styles определяет app.css. #}
- <meta
+<meta
   name="htmx-config"
-  content='{"includeIndicatorStyles": false, "attributesToSettle": ["class", "width", "height"]}'
+  content='{"includeIndicatorStyles": false, "attributesToSettle": ["class", "width", "height"], "historyCacheSize": 30}'
 >
 
   <link rel="manifest" href="/manifest.webmanifest">
@@ -142,10 +142,17 @@
       <span class="nav-label">Сегодня</span>
     </a>
 
+    {% set contextual_week_url = (
+      day_navigation.week_url
+      if day_navigation is defined and day_navigation.week_url is defined
+      else "/schedule/week"
+    ) %}
+
     <a
-      href="/schedule/week"
+      id="bottom-week-nav"
+      href="{{ contextual_week_url }}"
       class="nav-item icon-action{% if nav == 'week' %} active{% endif %}"
-      hx-get="/schedule/week"
+      hx-get="{{ contextual_week_url }}"
       hx-target="#app-shell"
       hx-select="#app-shell"
       hx-swap="outerHTML show:top"
