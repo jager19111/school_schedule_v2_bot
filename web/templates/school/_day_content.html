@@ -159,7 +159,7 @@
       hx-sync="#app-shell:replace"
     >
       {{ icon("calendar-dots-duotone", size="sm") }}
-      Неделя
+      <span>Неделя</span>
     </a>
 
     <a
@@ -173,7 +173,7 @@
       hx-sync="#app-shell:replace"
     >
       {{ icon("caret-circle-left-duotone", size="sm") }}
-      {{ back_label }}
+      <span>{{ back_label }}</span> <!-- Обернули в span -->
     </a>
   </nav>
 </section>

@@ -92,7 +92,7 @@
   <div class="week-list">
     {% for day in week.days %}
     <a
-      class="week-day{% if day.has_changes %} has-changes{% endif %}"
+      class="week-day text-action{% if day.has_changes %} has-changes{% endif %}{% if day.lesson_count == 0 and not day.extra_count %} week-day--empty{% endif %}"
       href="/school/{{ kind }}/{{ item_id }}/day/{{ day.date_iso }}{{ origin_query }}"
       hx-get="/school/{{ kind }}/{{ item_id }}/day/{{ day.date_iso }}{{ origin_query }}"
       hx-target="#app-shell"
@@ -141,7 +141,7 @@
       hx-sync="#app-shell:replace"
     >
       {{ icon("caret-circle-left-duotone", size="sm") }}
-      День
+      <span>День</span> <!-- Обернули в span -->
     </a>
 
     <a
@@ -155,7 +155,7 @@
       hx-sync="#app-shell:replace"
     >
       {{ icon("caret-circle-left-duotone", size="sm") }}
-      {{ back_label }}
+      <span>{{ back_label }}</span> <!-- Обернули в span -->
     </a>
   </nav>
 </section>

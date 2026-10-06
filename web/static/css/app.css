@@ -845,6 +845,22 @@ body {
   background: var(--color-changed-bg); /* Легкая оранжевая заливка фона */
 }
 
+/* 
+ * ФИКС ПУСТЫХ ДНЕЙ (0 уроков)
+ * Убираем акцентную синюю полосу, гасим фон и отключаем тень, 
+ * чтобы карточка визуально "провалилась" на задний план.
+ */
+.week-day.week-day--empty {
+  border-left-color: var(--color-border);
+  background: var(--color-surface-subtle);
+  box-shadow: none;
+}
+
+/* Приглушаем черный цвет названия дня (Понедельник, Вторник) */
+.week-day.week-day--empty .week-day-name {
+  color: var(--color-text-muted);
+}
+
 /* Эффект нажатия для карточки с изменениями */
 @media (hover: none) and (pointer: coarse) {
   .week-day.has-changes:active {

@@ -174,6 +174,9 @@
   letter-spacing: 0.03em;
   white-space: nowrap;
   text-transform: uppercase;
+  /* Жесткое центрирование внутри левой колонки */
+  width: 100%;
+  text-align: center;
 }
 /*
   ==========================================================================
@@ -1333,5 +1336,5 @@
 .week-swipe-stage.is-week-swipe-requesting .week-navigation,
 .day-swipe-stage.is-day-swipe-requesting .day-navigation {
   pointer-events: none;
-  opacity: 0.72;
+
 }

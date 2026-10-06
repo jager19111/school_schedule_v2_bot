@@ -94,7 +94,8 @@
   <div class="week-list">
     {% for day in week.days %}
     <a
-      class="week-day text-action{% if day.has_changes %} has-changes{% endif %}"
+      class="week-day text-action{% if day.has_changes %} has-changes{% endif %}{% if day.lesson_count == 0 and not day.extra_count %} week-day--empty{% endif %}"
+      href="/schedule/day/{{ day.date_iso }}"
       href="/schedule/day/{{ day.date_iso }}"
       hx-get="/schedule/day/{{ day.date_iso }}"
       hx-target="#app-shell"

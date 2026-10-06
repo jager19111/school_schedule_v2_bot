@@ -134,7 +134,7 @@ def _school_back_navigation(
     ):
         return {
             "back_url": "/school/free-rooms",
-            "back_label": "К свободным кабинетам",
+            "back_label": "Назад",
         }
 
     return {
