@@ -30,7 +30,18 @@
 <section class="school-list ">
   <div class="school-grid">
     {% for item in items %}
-    <a class="school-item text-action" href="/school/{{ kind }}/{{ item.id }}">{{ item.name }}</a>
+    <a
+      class="school-item text-action"
+      href="/school/{{ kind }}/{{ item.id }}"
+      hx-get="/school/{{ kind }}/{{ item.id }}"
+      hx-target="#app-shell"
+      hx-select="#app-shell"
+      hx-swap="outerHTML show:top"
+      hx-push-url="true"
+      hx-sync="#app-shell:replace"
+    >
+      {{ item.name }}
+    </a>
     {% else %}
     <div class="empty-day">
       {{ icon("info-duotone", class="icon-muted") }} Список пуст (расписание школы ещё не загружено).

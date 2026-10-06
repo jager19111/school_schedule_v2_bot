@@ -144,14 +144,36 @@
   </div>
   {% endif %}
 
-<nav class="page-footer-actions" aria-label="Разделы школы">
-    <a class="nav-btn text-action" 
-    href="/school/{{ kind }}/{{ item_id }}/week">
-      {{ icon("calendar-dots-duotone", size="sm") }} Неделя
+  <nav
+    class="page-footer-actions"
+    aria-label="Разделы школы"
+  >
+    <a
+      class="nav-btn text-action"
+      href="{{ day_navigation.week_url }}"
+      hx-get="{{ day_navigation.week_url }}"
+      hx-target="#app-shell"
+      hx-select="#app-shell"
+      hx-swap="outerHTML show:top"
+      hx-push-url="true"
+      hx-sync="#app-shell:replace"
+    >
+      {{ icon("calendar-dots-duotone", size="sm") }}
+      Неделя
     </a>
-    <a class="nav-btn text-action" 
-    href="/school/{{ kind }}/list">
-      {{ icon("caret-circle-left-duotone", size="sm") }} К списку
+
+    <a
+      class="nav-btn text-action"
+      href="{{ back_url }}"
+      hx-get="{{ back_url }}"
+      hx-target="#app-shell"
+      hx-select="#app-shell"
+      hx-swap="outerHTML show:top"
+      hx-push-url="true"
+      hx-sync="#app-shell:replace"
+    >
+      {{ icon("caret-circle-left-duotone", size="sm") }}
+      {{ back_label }}
     </a>
   </nav>
 </section>

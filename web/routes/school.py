@@ -65,12 +65,90 @@ def _today_iso(request: Request) -> str:
 def _is_htmx(request: Request) -> bool:
     return request.headers.get("HX-Request") == "true"
 
+def _is_app_shell_navigation(request: Request) -> bool:
+    """
+    True только для top-level HTMX navigation.
+
+    Такие запросы target'ят #app-shell, поэтому server обязан вернуть
+    full template с #app-shell, а не локальный content fragment.
+    """
+    return (
+        _is_htmx(request)
+        and request.headers.get("HX-Target") == "app-shell"
+    )
+
+def _room_origin(
+    *,
+    kind_name: str,
+    origin: str | None,
+) -> str | None:
+    """
+    Разрешает origin только для room detail.
+
+    Не используем произвольный next/back URL: origin — закрытый allowlist.
+    """
+    if (
+        kind_name == "room"
+        and origin == "free-rooms"
+    ):
+        return "free-rooms"
+
+    return None
+
+
+def _origin_query(origin: str | None) -> str:
+    """
+    Query suffix для URL без существующих query parameters.
+    """
+    return (
+        "?origin=free-rooms"
+        if origin == "free-rooms"
+        else ""
+    )
+
+
+def _week_origin_query(origin: str | None) -> str:
+    """
+    Query suffix для week URL, где ?week= уже существует.
+    """
+    return (
+        "&origin=free-rooms"
+        if origin == "free-rooms"
+        else ""
+    )
+
+
+def _school_back_navigation(
+    *,
+    kind_name: str,
+    origin: str | None,
+) -> dict[str, str]:
+    """
+    Готовый back link для template.
+
+    Template не вычисляет происхождение экрана и не конструирует URL.
+    """
+    if (
+        kind_name == "room"
+        and origin == "free-rooms"
+    ):
+        return {
+            "back_url": "/school/free-rooms",
+            "back_label": "К свободным кабинетам",
+        }
+
+    return {
+        "back_url": f"/school/{kind_name}/list",
+        "back_label": "К списку",
+    }
+        
 def _school_day_navigation(
     *,
     kind_name: str,
     item_id: str,
     selected_date_iso: str,
     today_iso: str,
+    origin: str | None,
 ) -> dict[str, str | bool]:
     """
     Навигация между датами school schedule.
@@ -79,7 +157,10 @@ def _school_day_navigation(
     готовые labels, а JavaScript не работает с календарной арифметикой.
     """
     selected_date = date.fromisoformat(selected_date_iso)
-
+    week_start_iso = (
+        selected_date
+        - timedelta(days=selected_date.weekday())
+    ).isoformat()
     previous_date_iso = (
         selected_date - timedelta(days=1)
     ).isoformat()
@@ -89,13 +170,16 @@ def _school_day_navigation(
     ).isoformat()
 
     root_url = f"/school/{kind_name}/{item_id}"
-
+    origin_query = _origin_query(origin)
+    week_origin_query = _week_origin_query(origin)
     return {
         "previous_url": (
             f"{root_url}/day/{previous_date_iso}"
+            f"{origin_query}"
         ),
         "next_url": (
             f"{root_url}/day/{next_date_iso}"
+            f"{origin_query}"
         ),
         "previous_label": day_navigation_label(
             previous_date_iso
@@ -103,7 +187,14 @@ def _school_day_navigation(
         "next_label": day_navigation_label(
             next_date_iso
         ),
-        "today_url": root_url,
+        "today_url": (
+            f"{root_url}{origin_query}"
+        ),
+        "week_url": (
+            f"{root_url}/week"
+            f"?week={week_start_iso}"
+            f"{week_origin_query}"
+        ),
         "is_today": selected_date_iso == today_iso,
     }
 
@@ -328,6 +419,7 @@ async def school_item_today(
     kind_name: str,
     item_id: str,
     context: WebSessionContext = Depends(require_family_allowed),
+    origin: str | None = None,
 ):
     """День по умолчанию: сегодня (кабинет — smart date из сервиса)."""
     _kind(kind_name)
@@ -345,7 +437,14 @@ async def school_item_today(
         date_iso = await _schedule_service(
             request
         ).get_smart_room_target_date(room_id=item_id)
-    return await _render_school_day(request, context, kind_name, item_id, date_iso)
+    return await _render_school_day(
+        request,
+        context,
+        kind_name,
+        item_id,
+        date_iso,
+        origin=origin,
+    )
 
 
 @router.get("/school/{kind_name}/{item_id}/day/{date_iso}", response_class=HTMLResponse)
@@ -355,12 +454,20 @@ async def school_item_day(
     item_id: str,
     date_iso: str,
     context: WebSessionContext = Depends(require_family_allowed),
+    origin: str | None = None,
 ):
     try:
         date.fromisoformat(date_iso)
     except ValueError:
         raise HTTPException(status_code=404, detail="Некорректная дата.")
-    return await _render_school_day(request, context, kind_name, item_id, date_iso)
+    return await _render_school_day(
+        request,
+        context,
+        kind_name,
+        item_id,
+        date_iso,
+        origin=origin,
+    )
 
 
 async def _render_school_day(
@@ -369,8 +476,14 @@ async def _render_school_day(
     kind_name: str,
     item_id: str,
     date_iso: str,
+    *,
+    origin: str | None = None,
 ):
     kind = _kind(kind_name)
+    origin = _room_origin(
+        kind_name=kind_name,
+        origin=origin,
+    )
     service = _schedule_service(request)
     title = await _item_name(request, kind_name, item_id)
 
@@ -410,12 +523,16 @@ async def _render_school_day(
         item_id=item_id,
         selected_date_iso=view.date_iso,
         today_iso=today_iso,
+        origin=origin,
     )
 
     template_name = (
-        "school/_day_content.html"
-        if request.headers.get("HX-Request") == "true"
-        else "school/day.html"
+        "school/day.html"
+        if (
+            not _is_htmx(request)
+            or _is_app_shell_navigation(request)
+        )
+        else "school/_day_content.html"
     )
 
     return _templates(request).TemplateResponse(
@@ -430,6 +547,12 @@ async def _render_school_day(
                 "kind": kind_name,
                 "item_id": item_id,
                 "item_title": title,
+                "origin": origin,
+                "origin_query": _origin_query(origin),
+                **_school_back_navigation(
+                    kind_name=kind_name,
+                    origin=origin,
+                ),
                 **(
                     await _class_watch_context(
                         request,
@@ -462,8 +585,13 @@ async def school_item_week(
     item_id: str,
     context: WebSessionContext = Depends(require_family_allowed),
     week: str | None = None,
+    origin: str | None = None,
 ):
     kind = _kind(kind_name)
+    origin = _room_origin(
+        kind_name=kind_name,
+        origin=origin,
+    )
     service = _schedule_service(request)
     title = await _item_name(request, kind_name, item_id)
 
@@ -476,7 +604,12 @@ async def school_item_week(
             raise HTTPException(status_code=404, detail="Некорректная неделя.")
     else:
         week_start = smart_week
-        
+
+    week_day_url = (
+        f"/school/{kind_name}/{item_id}"
+        f"/day/{week_start}"
+        f"{_origin_query(origin)}"
+    )        
     is_current_week = (week_start == smart_week)
 
     if kind_name == "class":
@@ -497,13 +630,24 @@ async def school_item_week(
         {
             "week": view,
             "is_current_week": is_current_week,                            # <-- НОВОЕ
-            "smart_week_url": f"/school/{kind_name}/{item_id}/week",
+            "smart_week_url": (
+                f"/school/{kind_name}/{item_id}/week"
+                f"{_origin_query(origin)}"
+            ),
+            "week_day_url": week_day_url,
             "kind": kind_name,
             "item_id": item_id,
             "item_title": title,
             "kind_icon": kind["icon"],
             "prev_week": prev_week,
             "next_week": next_week,
+            "origin": origin,
+            "origin_query": _origin_query(origin),
+            "week_origin_query": _week_origin_query(origin),
+            **_school_back_navigation(
+                kind_name=kind_name,
+                origin=origin,
+            ),
             **(
                 await _class_watch_context(
                     request,
@@ -682,9 +826,12 @@ async def free_rooms_now(
     
     # ФИКС: Отдаем только фрагмент при HTMX-запросах (кнопка "Обновить" или свайп "Назад")
     template_name = (
-        "school/_free_rooms_content.html"
-        if _is_htmx(request)
-        else "school/free_rooms.html"
+        "school/free_rooms.html"
+        if (
+            not _is_htmx(request)
+            or _is_app_shell_navigation(request)
+        )
+        else "school/_free_rooms_content.html"
     )
     
     return _templates(request).TemplateResponse(

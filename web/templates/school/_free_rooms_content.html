@@ -1,7 +1,10 @@
 {# web/templates/school/_free_rooms_content.html #}
 {% from "components/ui/icon.html" import icon %}
 
-<section class="free-rooms">
+<section
+  id="free-rooms-content"
+  class="free-rooms"
+>
   <div class="free-status free-status--with-icon">
     {{ icon("clock-duotone", class="icon-muted") }}
     {{ free_rooms.status_line }}
@@ -17,11 +20,13 @@
     {% for room in free_rooms.rooms %}
     <a
       class="school-item text-action"
-      href="/school/room/{{ room.id }}"
-      hx-get="/school/room/{{ room.id }}"
-      hx-target="#main"
-      hx-swap="innerHTML"
+      href="/school/room/{{ room.id }}?origin=free-rooms"
+      hx-get="/school/room/{{ room.id }}?origin=free-rooms"
+      hx-target="#app-shell"
+      hx-select="#app-shell"
+      hx-swap="outerHTML show:top"
       hx-push-url="true"
+      hx-sync="#app-shell:replace"
     >
       {{ room.name }}
     </a>
@@ -39,8 +44,8 @@
       class="nav-btn today-btn text-action"
       href="/school/free-rooms"
       hx-get="/school/free-rooms"
-      hx-target="#main"
-      hx-swap="innerHTML"
+      hx-target="#free-rooms-content"
+      hx-swap="outerHTML"
       hx-push-url="true"
     >
       {{ icon("arrows-clockwise-duotone", size="sm") }}
@@ -50,6 +55,12 @@
     <a
       class="nav-btn text-action"
       href="/school"
+      hx-get="/school"
+      hx-target="#app-shell"
+      hx-select="#app-shell"
+      hx-swap="outerHTML show:top"
+      hx-push-url="true"
+      hx-sync="#app-shell:replace"
     >
       {{ icon("caret-circle-left-duotone", size="sm") }}
       К школе

@@ -12,7 +12,18 @@
 
 {% block content %}
 <section class="school-index">
-  <form class="search-form" action="/school/search" method="get" role="search">
+  <form
+    class="search-form"
+    action="/school/search"
+    method="get"
+    role="search"
+    hx-get="/school/search"
+    hx-target="#app-shell"
+    hx-select="#app-shell"
+    hx-swap="outerHTML show:top"
+    hx-push-url="true"
+    hx-sync="#app-shell:replace"
+  >
     <label class="visually-hidden" for="school-q">Поиск</label>
     <input id="school-q" class="search-input" type="search" name="q"
            placeholder="Класс, учитель, кабинет…" autocomplete="off">
@@ -20,16 +31,52 @@
   </form>
 
   <nav class="school-menu">
-    <a class="school-menu-item text-action" href="/school/class/list">
+    <a
+      class="school-menu-item text-action"
+      href="/school/class/list"
+      hx-get="/school/class/list"
+      hx-target="#app-shell"
+      hx-select="#app-shell"
+      hx-swap="outerHTML show:top"
+      hx-push-url="true"
+      hx-sync="#app-shell:replace"
+    >
       {{ icon("student-duotone", class="nav-icon") }}<span>Классы</span>
     </a>
-    <a class="school-menu-item text-action" href="/school/teacher/list">
+    <a
+      class="school-menu-item text-action"
+      href="/school/teacher/list"
+      hx-get="/school/teacher/list"
+      hx-target="#app-shell"
+      hx-select="#app-shell"
+      hx-swap="outerHTML show:top"
+      hx-push-url="true"
+      hx-sync="#app-shell:replace"
+    >
       {{ icon("chalkboard-teacher-duotone", class="nav-icon") }}<span>Учителя</span>
     </a>
-    <a class="school-menu-item text-action" href="/school/room/list">
+    <a
+      class="school-menu-item text-action"
+      href="/school/room/list"
+      hx-get="/school/room/list"
+      hx-target="#app-shell"
+      hx-select="#app-shell"
+      hx-swap="outerHTML show:top"
+      hx-push-url="true"
+      hx-sync="#app-shell:replace"
+    >
       {{ icon("door-duotone", class="nav-icon") }}<span>Кабинеты</span>
     </a>
-    <a class="school-menu-item text-action" href="/school/free-rooms">
+    <a
+      class="school-menu-item text-action"
+      href="/school/free-rooms"
+      hx-get="/school/free-rooms"
+      hx-target="#app-shell"
+      hx-select="#app-shell"
+      hx-swap="outerHTML show:top"
+      hx-push-url="true"
+      hx-sync="#app-shell:replace"
+    >
       {{ icon("door-open-duotone", class="nav-icon") }}<span>Свободные кабинеты</span>
     </a>
   </nav>

@@ -2,9 +2,8 @@
 {#
   Weekly summary school entity.
 
-  Page-level navigation deliberately uses normal href links:
-  week/day transition changes both #main and app header/title.
-  This prevents stale header caused by hx-target="#main".
+  Week/day/list navigation заменяет #app-shell целиком:
+  header, title и content меняются согласованно без document reload.
 #}
 
 {% extends "base.html" %}
@@ -36,7 +35,13 @@
     <nav class="day-navigation week-navigation" aria-label="Навигация по неделям">
       <a
         class="day-navigation__arrow icon-action"
-        href="/school/{{ kind }}/{{ item_id }}/week?week={{ prev_week }}"
+        href="/school/{{ kind }}/{{ item_id }}/week?week={{ prev_week }}{{ week_origin_query }}"
+        hx-get="/school/{{ kind }}/{{ item_id }}/week?week={{ prev_week }}{{ week_origin_query }}"
+        hx-target="#app-shell"
+        hx-select="#app-shell"
+        hx-swap="outerHTML show:top"
+        hx-push-url="true"
+        hx-sync="#app-shell:replace"
         aria-label="Предыдущая неделя"
       >
         {{ icon("caret-circle-left-duotone") }}
@@ -55,6 +60,12 @@
           <a
             class="day-navigation__today-action text-action"
             href="{{ smart_week_url }}"
+            hx-get="{{ smart_week_url }}"
+            hx-target="#app-shell"
+            hx-select="#app-shell"
+            hx-swap="outerHTML show:top"
+            hx-push-url="true"
+            hx-sync="#app-shell:replace"
           >
             Текущая
           </a>
@@ -64,7 +75,13 @@
 
       <a
         class="day-navigation__arrow icon-action"
-        href="/school/{{ kind }}/{{ item_id }}/week?week={{ next_week }}"
+        href="/school/{{ kind }}/{{ item_id }}/week?week={{ next_week }}{{ week_origin_query }}"
+        hx-get="/school/{{ kind }}/{{ item_id }}/week?week={{ next_week }}{{ week_origin_query }}"
+        hx-target="#app-shell"
+        hx-select="#app-shell"
+        hx-swap="outerHTML show:top"
+        hx-push-url="true"
+        hx-sync="#app-shell:replace"
         aria-label="Следующая неделя"
       >
         {{ icon("caret-circle-right-duotone") }}
@@ -76,7 +93,13 @@
     {% for day in week.days %}
     <a
       class="week-day{% if day.has_changes %} has-changes{% endif %}"
-      href="/school/{{ kind }}/{{ item_id }}/day/{{ day.date_iso }}"
+      href="/school/{{ kind }}/{{ item_id }}/day/{{ day.date_iso }}{{ origin_query }}"
+      hx-get="/school/{{ kind }}/{{ item_id }}/day/{{ day.date_iso }}{{ origin_query }}"
+      hx-target="#app-shell"
+      hx-select="#app-shell"
+      hx-swap="outerHTML show:top"
+      hx-push-url="true"
+      hx-sync="#app-shell:replace"
     >
       <div class="week-day-name">
         {{ day.weekday_display }}
@@ -103,14 +126,36 @@
     {% endfor %}
   </div>
 
-  <nav class="page-footer-actions" aria-label="Разделы школы">
-    <a class="nav-btn text-action" 
-    href="/school/{{ kind }}/{{ item_id }}">
-      {{ icon("caret-circle-left-duotone", size="sm") }} День
+  <nav
+    class="page-footer-actions"
+    aria-label="Разделы школы"
+  >
+    <a
+      class="nav-btn text-action"
+      href="{{ week_day_url }}"
+      hx-get="{{ week_day_url }}"
+      hx-target="#app-shell"
+      hx-select="#app-shell"
+      hx-swap="outerHTML show:top"
+      hx-push-url="true"
+      hx-sync="#app-shell:replace"
+    >
+      {{ icon("caret-circle-left-duotone", size="sm") }}
+      День
     </a>
-    <a class="nav-btn text-action" 
-    href="/school/{{ kind }}/list">
-      К списку
+
+    <a
+      class="nav-btn text-action"
+      href="{{ back_url }}"
+      hx-get="{{ back_url }}"
+      hx-target="#app-shell"
+      hx-select="#app-shell"
+      hx-swap="outerHTML show:top"
+      hx-push-url="true"
+      hx-sync="#app-shell:replace"
+    >
+      {{ icon("caret-circle-left-duotone", size="sm") }}
+      {{ back_label }}
     </a>
   </nav>
 </section>
