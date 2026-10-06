@@ -801,7 +801,8 @@
 .lesson-change-row__old {
   color: var(--color-text-muted);
   text-decoration-line: line-through;
-  text-decoration-color: var(--color-border-subtle);
+  /* ФИКС: Красим саму линию в семантический красный (или оранжевый) цвет */
+  text-decoration-color: var(--color-danger);
   text-decoration-thickness: var(--border-width-default);
 }
 
