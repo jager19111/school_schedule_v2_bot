@@ -32,15 +32,15 @@
   {# Порядок CSS намеренный: shell → schedule components → extra components. #}
   <link
     rel="stylesheet"
-    href="{{ url_for('static', path='css/app.css') }}?v=6"
+    href="{{ url_for('static', path='css/app.css') }}?v=8"
   >
   <link
     rel="stylesheet"
-    href="{{ url_for('static', path='css/components/schedule.css') }}?v=6"
+    href="{{ url_for('static', path='css/components/schedule.css') }}?v=8"
   >
   <link
     rel="stylesheet"
-    href="{{ url_for('static', path='css/components/extra.css') }}?v=6"
+    href="{{ url_for('static', path='css/components/extra.css') }}?v=8"
   >
 
   {% block extra_head %}{% endblock %}
@@ -262,15 +262,15 @@
    shell заменяется через HTMX, а scripts и document-level listeners должны
    остаться живыми при переходах между top-level screens.
    ========================================================================= #}
-<script src="/static/js/htmx.min.js"></script>
-<script src="/static/js/htmx-ext-sse.min.js?v=3"></script>
-<script src="/static/js/app.js?v=7"></script>
+<script src="/static/js/htmx.min.js?v=8"></script>
+<script src="/static/js/htmx-ext-sse.min.js?v=8"></script>
+<script src="/static/js/app.js?v=8"></script>
 
 {# Общий UI runtime: autofit, swipe, lesson details, student switch. #}
-<script src="/static/js/schedule.js?v=7"></script>
-<script src="/static/js/schedule-swipe.js?v=1"></script>
+<script src="/static/js/schedule.js?v=8"></script>
+<script src="/static/js/schedule-swipe.js?v=8"></script>
 {# Extra-class forms: preview и reminder stepper; безопасный no-op вне forms. #}
-<script src="/static/js/extra.js?v=7"></script>
+<script src="/static/js/extra.js?v=8"></script>
 
 {# Для будущих действительно page-specific scripts. #}
 {% block extra_scripts %}{% endblock %}

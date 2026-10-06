@@ -23,40 +23,54 @@
 "use strict";
 
 /*
- * Версия меняется при любом изменении списка SHELL_ASSETS.
+ * Меняется при каждом frontend/PWA release, в котором изменяется:
+ *
+ * - любой asset из SHELL_ASSETS;
+ * - URL/version asset из base.html;
+ * - состав SHELL_ASSETS;
+ * - cache policy;
+ * - offline fallback;
+ * - manifest или PWA icons.
  *
  * При activate старые school-schedule-shell-* caches удаляются.
  */
-const CACHE_VERSION = "school-schedule-shell-v7";
+const CACHE_VERSION = "school-schedule-shell-v8";
 
 /*
  * URL должны ТОЧНО совпадать с URL из base.html.
  *
  * Query string является частью Cache Storage key:
  *
- * /static/js/app.js?v=7
- * !==
- * /static/js/app.js?v=5
  */
 const SHELL_ASSETS = [
   "/offline.html",
   "/manifest.webmanifest",
 
-  "/static/css/app.css?v=6",
-  "/static/css/components/schedule.css?v=6",
-  "/static/css/components/extra.css?v=6",
+  "/static/css/app.css?v=8",
+  "/static/css/components/schedule.css?v=8",
+  "/static/css/components/extra.css?v=8",
 
-  "/static/js/htmx.min.js",
-  "/static/js/htmx-ext-sse.min.js?v=3",
-  "/static/js/app.js?v=7",
-  "/static/js/schedule.js?v=7",
-  "/static/js/extra.js?v=7",
+  "/static/js/htmx.min.js?v=8",
+  "/static/js/htmx-ext-sse.min.js?v=8",
+  "/static/js/app.js?v=8",
+  "/static/js/schedule.js?v=8",
+  "/static/js/extra.js?v=8",
+  "/static/js/schedule-swipe.js?v=8",
 
   "/static/icons/icon-192.png",
   "/static/icons/icon-512.png",
   "/static/icons/icon-maskable-512.png",
   "/static/icons/apple-touch-icon.png",
 ];
+
+const SHELL_ASSET_URLS = new Set(
+  SHELL_ASSETS.map(function (path) {
+    return new URL(
+      path,
+      self.location.origin,
+    ).href;
+  })
+);
 
 function isPersonalRoute(url) {
   return (
@@ -72,11 +86,7 @@ function isPersonalRoute(url) {
 }
 
 function isStaticShellAsset(url) {
-  return (
-    url.pathname.startsWith("/static/")
-    || url.pathname === "/manifest.webmanifest"
-    || url.pathname === "/offline.html"
-  );
+  return SHELL_ASSET_URLS.has(url.href);
 }
 
 self.addEventListener("install", function (event) {
@@ -175,17 +185,24 @@ self.addEventListener("fetch", function (event) {
         }
 
         return fetch(request).then(function (response) {
-          if (response.ok) {
-            const copy = response.clone();
-
-            caches.open(CACHE_VERSION).then(function (cache) {
-              return cache.put(request, copy);
-            });
+          if (!response.ok) {
+            return response;
           }
 
-          return response;
+          const copy = response.clone();
+
+          return caches
+            .open(CACHE_VERSION)
+            .then(function (cache) {
+              return cache.put(request, copy);
+            })
+            .then(function () {
+              return response;
+            });
         });
       })
     );
+
+    return;
   }
 });
