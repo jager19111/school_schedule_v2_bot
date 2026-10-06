@@ -1088,7 +1088,7 @@ class ScheduleService:
     ) -> FullWeekScheduleDTO:
         start_date = self.time_service.date_from_iso(week_start_iso)
         days = []
-        for i in range(6):
+        for i in range(7):
             current_date_iso = (start_date + timedelta(days=i)).isoformat()
             days.append(await get_daily_schedule(current_date_iso))
         return FullWeekScheduleDTO(week_start_iso=week_start_iso, days=days)
@@ -1145,7 +1145,7 @@ class ScheduleService:
     ) -> WeekSummaryDTO:
         start_date = self.time_service.date_from_iso(week_start_iso)
         days = []
-        for i in range(6):
+        for i in range(7):
             current_date_iso = (start_date + timedelta(days=i)).isoformat()
             day_dto = await get_daily_schedule(current_date_iso)
             days.append(

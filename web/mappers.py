@@ -58,8 +58,8 @@ from web.schemas import (
 )
 
 _WEEKDAYS_FULL = [
-    "понедельник", "вторник", "среда", "четверг",
-    "пятница", "суббота", "воскресенье",
+    "Понедельник", "Вторник", "Среда", "Четверг",
+    "Пятница", "Суббота", "Воскресенье",
 ]
 _WEEKDAYS_SHORT = ["ПН", "ВТ", "СР", "ЧТ", "ПТ", "СБ", "ВС"]
 _MONTHS_GEN = [
@@ -927,7 +927,7 @@ def week_summary_to_web(dto: WeekSummaryDTO) -> WebWeekSchedule:
         days.append(
             WebDaySummary(
                 date_iso=day.date_iso,
-                weekday_display=_WEEKDAYS_SHORT[d.weekday()],
+                weekday_display=_WEEKDAYS_FULL[d.weekday()],
                 date_short=f"{d.day:02d}.{d.month:02d}",
                 lesson_count=int(day.lesson_count),
                 extra_count=int(day.extra_count),
