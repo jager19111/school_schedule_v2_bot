@@ -34,10 +34,9 @@ from aiogram.dispatcher.event.bases import SkipHandler
 from aiogram.fsm.context import FSMContext
 from aiogram.types import (
     CallbackQuery,
-    InlineKeyboardButton,
-    InlineKeyboardMarkup,
     Message,
 )
+from config import Config
 
 from bot.callbacks import (
     DayChangesCD, ScheduleDayCD, ScheduleTargetCD, ScheduleWatchCD, 
@@ -265,7 +264,13 @@ async def open_schedule_hub_poster(
     watch_targets_service: WatchTargetsService, extra_classes_service: ExtraClassesService,
     schedule_repo: ScheduleRepository, image_service: ImageGenerationService,
     image_prefs: ImagePreferencesService,
+    config: Config, # <--- ДОБАВИТЬ СЮДА
 ) -> None:
+    # --- ВРЕМЕННЫЙ ПАТЧ ОБНОВЛЕНИЯ МЕНЮ ---
+    if message.text in {"📅 Моё расписание", "📅 Мое расписание"}:
+        from bot.handlers.registration import _show_main_menu
+        await _show_main_menu(message, text="<i>🔄 Синхронизация меню...</i>", config=config)
+    # --------------------------------------
     actor_user_id = message.from_user.id
     if not await image_prefs.prefers_image(actor_user_id):
         raise SkipHandler()

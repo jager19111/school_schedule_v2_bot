@@ -21,6 +21,7 @@ from aiogram import Router, F
 from dataclasses import dataclass
 from collections.abc import Mapping
 from typing import Any
+from config import Config
 
 from aiogram.types import Message, CallbackQuery
 from aiogram.filters import Command, CommandObject
@@ -155,7 +156,7 @@ class _FamilyInviteFSMContext:
             pending_name=pending_name,
         )
         
-from config import Config
+
 
 async def _show_main_menu(
     message: Message,

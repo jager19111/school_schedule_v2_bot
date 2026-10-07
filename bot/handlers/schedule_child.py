@@ -22,7 +22,7 @@ from bot.callbacks import (
     ScheduleTargetCD,
     ScheduleWatchCD, MorningStudentSummaryCD, MorningTeacherSummaryCD, ScheduleWeekCD, DayChangesCD
 )
-
+from config import Config
 from bot.keyboards.keyboard import Keyboards
 from bot.utils.ui_renderer import UIRenderer
 from core.models.dto import ScheduleViewTargetDTO, ScheduleTargetViewModel, SchoolDictionariesDTO, MorningLessonDTO, MorningSummaryDTO
@@ -473,6 +473,7 @@ async def open_schedule_hub(
     schedule_service: ScheduleService,
     students_service: StudentsService,
     watch_targets_service: WatchTargetsService,
+    config: Config, # <--- ДОБАВИТЬ СЮДА
 ) -> None:
     """
     Единственная точка входа в расписание.
@@ -480,6 +481,11 @@ async def open_schedule_hub(
     Если доступна одна цель — открывается сразу.
     Если доступно несколько целей — пользователь выбирает.
     """
+    # --- ВРЕМЕННЫЙ ПАТЧ ОБНОВЛЕНИЯ МЕНЮ ---
+    if message.text in {"📅 Моё расписание", "📅 Мое расписание"}:
+        from bot.handlers.registration import _show_main_menu
+        await _show_main_menu(message, text="<i>🔄 Синхронизация меню...</i>", config=config)
+    # --------------------------------------
     actor_user_id = message.from_user.id
     actor = await profile_service.get_user_profile_dto(actor_user_id)
     if not actor.is_fully_registered:
