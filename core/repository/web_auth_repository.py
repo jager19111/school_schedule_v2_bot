@@ -108,14 +108,16 @@ class WebAuthRepository(BaseRepository):
         idle_expires_at_utc: str,
         absolute_expires_at_utc: str,
         user_agent: Optional[str],
+        surface: str = "browser",
     ) -> int:
         now_utc = self._now_utc_str()
         await self._execute(
             """
             INSERT INTO web_sessions
                 (session_hash, user_id, created_at, last_seen_at,
-                 idle_expires_at, absolute_expires_at, revoked_at, user_agent)
-            VALUES (?, ?, ?, ?, ?, ?, NULL, ?)
+                 idle_expires_at, absolute_expires_at, revoked_at,
+                 user_agent, surface)
+            VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?)
             """,
             (
                 session_hash,
@@ -125,6 +127,7 @@ class WebAuthRepository(BaseRepository):
                 idle_expires_at_utc,
                 absolute_expires_at_utc,
                 (user_agent or "")[:300] or None,
+                surface,
             ),
         )
         row = await self._fetch_one(
@@ -146,7 +149,7 @@ class WebAuthRepository(BaseRepository):
         """
         return await self._fetch_one(
             """
-            SELECT id, user_id, created_at, last_seen_at, user_agent
+            SELECT id, user_id, created_at, last_seen_at, user_agent, surface
             FROM web_sessions
             WHERE session_hash = ?
               AND revoked_at IS NULL

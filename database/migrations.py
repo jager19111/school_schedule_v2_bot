@@ -157,6 +157,48 @@ def _create_web_auth_tables(conn: sqlite3.Connection) -> str | None:
         ON web_sessions(user_id, revoked_at, absolute_expires_at)
     """)
     return "web_auth_tables"
+
+# --- ДОБАВЛЕНО (Phase MA: Telegram Mini App) ---
+def _create_telegram_app_tables(conn: sqlite3.Connection) -> str | None:
+    """
+    browser_handoff_codes + web_sessions.surface.
+
+    Идемпотентно:
+    - проверяем наличие таблицы и колонки до выполнения запросов;
+    - возвращаем None, если миграция уже была применена (защита от логов при рестарте).
+    """
+    # Если pragma вернула колонки, значит таблица уже существует
+    table_exists = len(_columns_of(conn, "browser_handoff_codes")) > 0
+    surface_exists = "surface" in _columns_of(conn, "web_sessions")
+
+    # Если всё на месте — молча выходим
+    if table_exists and surface_exists:
+        return None
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS browser_handoff_codes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            code_hash TEXT NOT NULL UNIQUE,
+            user_id INTEGER NOT NULL,
+            target_path TEXT NOT NULL DEFAULT '/',
+            created_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            used INTEGER NOT NULL DEFAULT 0,
+            used_at TEXT
+        )
+    """)
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_browser_handoff_codes_expires
+        ON browser_handoff_codes(expires_at)
+    """)
+
+    if not surface_exists:
+        conn.execute(
+            "ALTER TABLE web_sessions ADD COLUMN surface TEXT NOT NULL DEFAULT 'browser'"
+        )
+        
+    return "telegram_app_tables_applied"
+# --------------------------------------------
 # --------------------------------------------
 
 # Добавьте _add_audit_logs_table в массив MIGRATIONS
@@ -166,6 +208,7 @@ MIGRATIONS = [
     _add_image_schedule_preference,
     _add_audit_logs_table,
     _create_web_auth_tables, # <-- ДОБАВЛЕНО (Phase 1: Web)
+    _create_telegram_app_tables,  # <-- ДОБАВЛЕНО (Phase MA)
 ]
 
 def apply_migrations_sync(db_path: str) -> list[str]:

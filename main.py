@@ -261,6 +261,7 @@ async def cleanup_web_auth_sessions(
     *,
     web_sessions_service: WebSessionsService,
     notification_service: NotificationService,
+    browser_handoff_service=None,
 ) -> None:
     """
     Очистка истёкших magic links и web-сеансов.
@@ -271,6 +272,12 @@ async def cleanup_web_auth_sessions(
     """
     try:
         await web_sessions_service.cleanup()
+        if browser_handoff_service is not None:
+            removed = await browser_handoff_service.cleanup()
+            if removed:
+                logger.info(
+                    "Browser handoff codes cleaned: %s", removed
+                )
     except Exception:
         logger.exception("WebAuth cleanup failed")
 
@@ -406,6 +413,7 @@ async def main():
     web_task = None
     web_app = None
     web_sessions_service = None
+    browser_handoff_service = None
     web_event_bus = None
     
     # ------------------------------------------------
@@ -515,7 +523,25 @@ async def main():
             web_sessions_service = WebSessionsService(
                 web_auth_repo, time_service, csrf_secret=config.WEB_CSRF_SECRET
             )
+            # --- ДОБАВЛЕНО (Phase MA: Telegram Mini App) ---
+            from core.repository.browser_handoff_repository import (
+                BrowserHandoffRepository,
+            )
+            from services.browser_handoff_service import BrowserHandoffService
+            from services.telegram_webauth_service import TelegramWebAuthService
 
+            browser_handoff_repo = BrowserHandoffRepository(
+                db_path=db_connection, time_service=time_service
+            )
+            browser_handoff_service = BrowserHandoffService(
+                browser_handoff_repo,
+                time_service,
+            )
+            telegram_webauth_service = TelegramWebAuthService(
+                time_service,
+                bot_token=config.BOT_TOKEN,
+            )
+            
             # Phase 2.1: Таргет сервис с student_repo
             schedule_targets_service = ScheduleTargetsService(
                 profile_service=profile_service,
@@ -568,6 +594,8 @@ async def main():
             web_app = create_web_app(
                 web_settings=web_settings,
                 sessions_service=web_sessions_service,
+                telegram_webauth_service=telegram_webauth_service,
+                browser_handoff_service=browser_handoff_service,
                 profile_service=profile_service,
                 schedule_service=schedule_service,
                 students_service=students_service,
@@ -847,6 +875,7 @@ async def main():
                 kwargs={
                     "web_sessions_service": web_sessions_service,
                     "notification_service": notification_service,
+                    "browser_handoff_service": browser_handoff_service,
                 },
                 id="web_auth_cleanup_job",
                 replace_existing=True,

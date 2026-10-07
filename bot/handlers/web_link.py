@@ -8,6 +8,7 @@ from aiogram.types import CallbackQuery
 
 from bot import callbacks
 from bot.utils.ui_renderer import UIRenderer
+from bot.keyboards.keyboard import Keyboards
 from config import Config
 from services.profiles_service import ProfileService
 from services.web_sessions_service import WebSessionsService
@@ -36,6 +37,18 @@ async def open_web_version(
         await callback.answer("Сначала завершите регистрацию.", show_alert=True)
         return
 
+    # Phase MA: Открытие через Telegram Mini App (Web App)
+    if getattr(config, "WEB_TG_APP_ENABLED", True):
+        web_app_url = f"{config.WEB_PUBLIC_URL.rstrip('/')}/tg/app"
+        
+        text = UIRenderer.render_web_app_instructions()
+        kb = Keyboards.get_web_app_kb(web_app_url)
+        
+        await callback.message.answer(text, reply_markup=kb, parse_mode="HTML")
+        await callback.answer()
+        return
+
+    # Legacy fallback (WEB_TG_APP_ENABLED=0): прежний одноразовый magic link
     link = await web_sessions_service.create_login_link(
         user_id=callback.from_user.id,
         base_url=config.WEB_PUBLIC_URL,

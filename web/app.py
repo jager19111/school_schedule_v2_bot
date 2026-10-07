@@ -40,6 +40,9 @@ from services.schedule_targets_service import ScheduleTargetsService
 from services.students_service import StudentsService
 from services.time_service import TimeService
 from services.web_sessions_service import WebSessionsService
+from services.browser_handoff_service import BrowserHandoffService
+from services.telegram_webauth_service import TelegramWebAuthService
+
 from services.watch_targets_service import WatchTargetsService
 from web.events import ApplicationEventBus
 from web.idempotency import IdempotencyStore
@@ -82,6 +85,8 @@ def create_web_app(
     *,
     web_settings: WebSettings,
     sessions_service: WebSessionsService,
+    telegram_webauth_service: TelegramWebAuthService,
+    browser_handoff_service: BrowserHandoffService,
     profile_service: ProfileService,
     schedule_service: ScheduleService,
     students_service: StudentsService,
@@ -182,6 +187,8 @@ def create_web_app(
     # --- app.state: зависимости, доступные всем route'ам ---
     app.state.web_settings = web_settings
     app.state.sessions_service = sessions_service
+    app.state.telegram_webauth_service = telegram_webauth_service
+    app.state.browser_handoff_service = browser_handoff_service
     app.state.profile_service = profile_service
     app.state.schedule_service = schedule_service
     app.state.students_service = students_service
@@ -241,6 +248,7 @@ def create_web_app(
     from web.routes.school import router as school_router
     from web.routes.stream import router as stream_router
     from web.routes.settings import router as settings_router
+    from web.routes.telegram_app import router as telegram_app_router
 
     app.include_router(health_router)
     app.include_router(auth_router)
@@ -251,7 +259,8 @@ def create_web_app(
     app.include_router(extra_router)
     app.include_router(pwa_router)
     app.include_router(stream_router)
-
+    app.include_router(auth_router)
+    app.include_router(telegram_app_router)
     # При shutdown web-сервера закрываем SSE best effort
     # (финальное закрытие ресурсов — в main.py, ТЗ 7.4).
     # vscode зачеркивает Метод "on_event" и пишет: в классе "FastAPI" не рекомендуется к использованию on_event is deprecated, use lifespan event handlers instead.Read more about it in the

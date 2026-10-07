@@ -1,3 +1,4 @@
+# config.py
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -94,7 +95,9 @@ class Config:
     WEB_ALLOWED_FAMILY_IDS: str = os.getenv("WEB_ALLOWED_FAMILY_IDS", "")
     WEB_COOKIE_SECURE: bool = os.getenv("WEB_COOKIE_SECURE", "1") == "1"
     # --------------------------------
-
+    # --- Telegram Mini App ---
+    WEB_TG_APP_ENABLED: bool = os.getenv("WEB_TG_APP_ENABLED", "0") == "1"
+    
     HELP_PUBLIC_URL = os.getenv("HELP_PUBLIC_URL", "").strip() or None
     AUTHOR_CONTACT_URL = os.getenv("AUTHOR_CONTACT_URL", "").strip() or None
     DONATION_URL = os.getenv("DONATION_URL", "").strip() or None

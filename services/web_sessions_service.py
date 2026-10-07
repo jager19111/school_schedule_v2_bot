@@ -166,6 +166,7 @@ class WebSessionsService:
         *,
         user_id: int,
         user_agent: Optional[str] = None,
+        surface: str = "browser",
     ) -> tuple[str, WebSessionContext]:
         """
         Создаёт новую сессию.
@@ -182,12 +183,14 @@ class WebSessionsService:
             idle_expires_at_utc=self._fmt(now + _SESSION_IDLE_TTL),
             absolute_expires_at_utc=self._fmt(now + _SESSION_ABSOLUTE_TTL),
             user_agent=user_agent,
+            surface=surface,
         )
         return raw, WebSessionContext(
             session_id=session_id,
             session_hash=session_hash,
             user_id=user_id,
             csrf_token=self._csrf_token(session_hash),
+            surface=surface,
         )
 
     async def resolve_session(self, raw_token: str) -> Optional[WebSessionContext]:
@@ -225,6 +228,7 @@ class WebSessionsService:
             session_hash=session_hash,
             user_id=int(row["user_id"]),
             csrf_token=self._csrf_token(session_hash),
+            surface=str(row.get("surface") or "browser"),
         )
 
     async def revoke_session(self, *, raw_token: str, user_id: int) -> bool:
@@ -329,3 +333,15 @@ class WebSessionsService:
 
     async def cleanup(self) -> dict:
         return await self.repo.cleanup_web_auth(now_utc=self._now_str())
+
+
+    # ==========================================================
+    # Telegram miniapp
+    # ==========================================================
+@dataclass(frozen=True, slots=True)
+class WebSessionContext:
+    session_id: int
+    session_hash: str
+    user_id: int
+    csrf_token: str
+    surface: str = "browser"

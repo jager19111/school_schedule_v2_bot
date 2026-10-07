@@ -1314,3 +1314,22 @@ class Keyboards:
                 ],
             ],
         )
+        
+        
+# Telegram miniapp
+
+    @staticmethod
+    def get_web_app_kb(web_app_url: str) -> InlineKeyboardMarkup:
+        """Клавиатура с кнопкой Telegram Mini App."""
+        from aiogram.types import WebAppInfo # Можно импортировать локально или глобально в начале файла
+        
+        return InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="🌐 Открыть расписание",
+                        web_app=WebAppInfo(url=web_app_url),
+                    )
+                ]
+            ]
+        )

@@ -25,6 +25,9 @@ logger = logging.getLogger(__name__)
 
 _CSP = (
     "default-src 'self'; "
+    # Telegram Mini App SDK (tg/app.html) — единственный внешний script.
+    "script-src 'self' https://telegram.org; "
+    
     "script-src 'self'; "
     "style-src 'self'; "
     "img-src 'self' data:; "
@@ -167,6 +170,8 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             return "exchange"
         if path.startswith(self.SSE_PREFIX):
             return "sse_establish"
+        if path == "/tg/bootstrap":
+            return "exchange"
         if request.method in ("POST", "PUT", "PATCH", "DELETE"):
             return "mutation"
         return "get"
@@ -191,7 +196,15 @@ class CSRFMiddleware(BaseHTTPMiddleware):
     сам одноразовый login token с TTL 5 минут). Health-эндпоинты — GET.
     """
 
-    EXEMPT_PATHS = frozenset({"/api/v1/auth/exchange"})
+    EXEMPT_PATHS = frozenset(
+        {
+            "/api/v1/auth/exchange",
+            # Mini App bootstrap: сессии ещё нет (или она уже есть, но
+            # свежая страница tg/app.html не знает её csrf_token).
+            # Защиту обеспечивает подпись Telegram initData.
+            "/tg/bootstrap",
+        }
+    )
     MUTATING = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 
     def __init__(self, app, sessions_service) -> None:
