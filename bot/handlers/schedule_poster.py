@@ -273,7 +273,13 @@ async def open_schedule_hub_poster(
     actor = await profile_service.get_user_profile_dto(actor_user_id)
     if not actor.is_fully_registered:
         raise SkipHandler()
-    
+
+    # --- ВРЕМЕННЫЙ ПАТЧ ОБНОВЛЕНИЯ МЕНЮ ---
+    if message.text in {"📅 Моё расписание", "📅 Мое расписание"}:
+        from bot.handlers.registration import _show_main_menu
+        await _show_main_menu(message, text="<i>🔄 Синхронизация меню...</i>")
+    # --------------------------------------
+        
     # --- ВЕТВЬ УЧИТЕЛЯ ---
     if actor.role == "teacher":
         teacher = await _get_teacher_profile(user_id=actor_user_id, profile_service=profile_service)
