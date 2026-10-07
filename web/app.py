@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import logging
+from contextlib import asynccontextmanager  # <--- Добавлено для lifespan
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Awaitable, Callable, List, Optional
@@ -103,12 +104,27 @@ def create_web_app(
     FastAPI НЕ владеет соединением и не закрывает его при shutdown
     (владелец — main.py, ТЗ 7.4).
     """
+
+    # --- Создаем шину событий и SSE-менеджер ДО FastAPI для передачи в lifespan ---
+    event_bus = ApplicationEventBus()
+    sse_manager = SSEConnectionManager(event_bus)
+
+    # --- ИСПРАВЛЕНИЕ: Замена устаревшего on_event("shutdown") на lifespan ---
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        # Startup логика (до yield)
+        yield
+        # Shutdown логика (после yield)
+        # При shutdown web-сервера закрываем SSE best effort
+        sse_manager.close_all()
+
     app = FastAPI(
         title="School Schedule Web",
         version="0.7.0",
         docs_url=None,      # docs не выставляем наружу
         redoc_url=None,
         openapi_url=None,   # private deployment; включим осознанно позже
+        lifespan=lifespan,  # <--- Передаем lifespan менеджер
     )
 
     @app.exception_handler(StarletteHTTPException)
@@ -130,20 +146,13 @@ def create_web_app(
         is_api_request = request.url.path.startswith("/api/")
         is_htmx_request = request.headers.get("HX-Request") == "true"
         is_page_request = not is_api_request and not is_htmx_request
-        # P7.3: server-authoritative forced logout.
-        #
-        # session_revoked event запускает HTMX GET
-        # /api/v1/live/revalidate. К этому моменту session уже отозвана
-        # server-side, dependency возвращает 401 ещё до вызова route.
-        #
-        # Обычный JSON 401 не заставляет HTMX надёжно сменить page.
-        # HX-Redirect на successful control response гарантирует full
-        # navigation к public auth gate.
-        if (
-            request.url.path == "/api/v1/live/revalidate"
-            and is_htmx_request
-            and exc.status_code == 401
-        ):
+
+        # --- ИСПРАВЛЕНИЕ: Обобщено правило для ЛЮБЫХ HTMX-запросов (Дефект 1) ---
+        # P7.3+: server-authoritative forced logout для ЛЮБОГО HTMX
+        # запроса. Обычный JSON 401 не заставляет HTMX сменить page;
+        # HX-Redirect на successful control response гарантирует
+        # full navigation к public auth gate.
+        if is_htmx_request and exc.status_code == 401:
             return Response(
                 status_code=200,
                 headers={
@@ -151,6 +160,7 @@ def create_web_app(
                     "Cache-Control": "no-store",
                 },
             )
+
         if is_page_request and exc.status_code == 401:
             return RedirectResponse(
                 url="/auth",
@@ -202,8 +212,6 @@ def create_web_app(
     # --- Phase 7: event bus + SSE connection manager ---
     # Шина создаётся здесь (web-специфика); main.py публикует в неё
     # ScheduleChanged после commit NIKA-обновления (см. integration doc).
-    event_bus = ApplicationEventBus()
-    sse_manager = SSEConnectionManager(event_bus)
     app.state.event_bus = event_bus
     app.state.sse_manager = sse_manager
 
@@ -263,14 +271,6 @@ def create_web_app(
     app.include_router(extra_router)
     app.include_router(pwa_router)
     app.include_router(stream_router)
-    app.include_router(auth_router)
     app.include_router(telegram_app_router)
-    # При shutdown web-сервера закрываем SSE best effort
-    # (финальное закрытие ресурсов — в main.py, ТЗ 7.4).
-    # vscode зачеркивает Метод "on_event" и пишет: в классе "FastAPI" не рекомендуется к использованию on_event is deprecated, use lifespan event handlers instead.Read more about it in the
-
-    @app.on_event("shutdown")
-    async def _close_sse() -> None:  # pragma: no cover
-        sse_manager.close_all()
 
     return app

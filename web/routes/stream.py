@@ -89,9 +89,18 @@ async def schedule_stream(
             + _SESSION_REVALIDATION_INTERVAL
         )
 
+        # ---  Максимальное время жизни потока ---
+        MAX_STREAM_LIFETIME_SEC = 3600
+        started_at = loop.time()
+        # --------------------------------------------------
+        
         try:
             while True:
                 now = loop.time()
+                # Прерываем цикл, если прошёл час ---
+                if now - started_at > MAX_STREAM_LIFETIME_SEC:
+                    break
+                # -----------
                 wait_seconds = max(
                     0.0,
                     next_heartbeat_at - now,
