@@ -26,33 +26,27 @@
         </p>
 
         <div
-        class="student-switch"
-        role="group"
-        aria-label="Настройка семьи"
+          class="invite-create-buttons"
+          role="group"
+          aria-label="Настройка семьи"
         >
-        <button
+          <button
             type="button"
-            class="student-chip current"
+            class="settings-card__action settings-card__action--toggle text-action"
             hx-get="/family/students/new"
             hx-target="#day-content"
             hx-swap="outerHTML"
-        >
+          >
             Добавить виртуальный профиль
-        </button>
+          </button>
 
-        <a
-            href="/family"
-            class="student-chip current"
-        >
+          <a href="/family" class="settings-card__action settings-card__action--toggle text-action">
             Пригласить ребёнка из Telegram
-        </a>
+          </a>
 
-        <a
-            href="/family"
-            class="student-chip current"
-        >
+          <a href="/family" class="settings-card__action settings-card__action--toggle text-action">
             Открыть Семью
-        </a>
+          </a>
         </div>
 
       {% else %}
@@ -62,16 +56,14 @@
         </p>
 
         <div
-        class="student-switch single"
-        role="group"
-        aria-label="Семья"
+          class="invite-create-buttons"
+          style="justify-content: center;"
+          role="group"
+          aria-label="Семья"
         >
-        <a
-            href="/family"
-            class="student-chip current"
-        >
+          <a href="/family" class="settings-card__action settings-card__action--toggle text-action">
             Открыть Семью
-        </a>
+          </a>
         </div>
       {% endif %}
 
@@ -89,18 +81,16 @@
         Когда ребёнок появится, его расписание станет доступно здесь.
       </p>
 
-        <div
-        class="student-switch single"
+      <div
+        class="invite-create-buttons"
+        style="justify-content: center;"
         role="group"
         aria-label="Семья"
-        >
-        <a
-            href="/family"
-            class="student-chip current"
-        >
-            Открыть Семью
+      >
+        <a href="/family" class="student-chip current">
+          Открыть Семью
         </a>
-        </div>
+      </div>
 
     {% else %}
       <div class="empty-day__icon" aria-hidden="true">
@@ -115,18 +105,16 @@
         Завершите настройку профиля в Telegram-боте.
       </p>
 
-        <div
-        class="student-switch single"
+      <div
+        class="invite-create-buttons"
+        style="justify-content: center;"
         role="group"
         aria-label="Настройки"
-        >
-        <a
-            href="/settings"
-            class="student-chip current"
-        >
-            Открыть настройки
+      >
+        <a href="/settings" class="student-chip current">
+          Открыть настройки
         </a>
-        </div>
+      </div>
     {% endif %}
   </section>
 </section>

@@ -12,66 +12,75 @@
 >
   <div class="empty-day">
     {% if unavailable_reason == "no_children" %}
-      <p>
+      <p class="empty-day__text">
         Пока не удалось найти детей, для которых можно посмотреть
         дополнительные занятия.
       </p>
-
-      <p>
+      <p class="empty-day__text" style="margin-top: 8px;">
         Сначала добавьте ребёнка в разделе «Семья».
       </p>
 
-      <a
-        href="/family"
-        class="student-chip current text-action"
-      >
-        Открыть «Семью»
-      </a>
+      <div class="invite-create-buttons" style="justify-content: center; margin-top: 24px;">
+        <a
+          href="/family"
+          class="settings-card__action settings-card__action--toggle text-action"
+          style="text-decoration: none;"
+        >
+          Открыть «Семью»
+        </a>
+      </div>
 
     {% elif unavailable_reason == "teacher" %}
-      <p>
+      <p class="empty-day__text">
         Дополнительные занятия доступны ученикам и родителям.
       </p>
-
-      <p>
+      <p class="empty-day__text" style="margin-top: 8px;">
         Для просмотра школьных уроков используйте раздел расписания.
       </p>
 
-      <a
-        href="/"
-        class="student-chip current text-action"
-      >
-        Открыть расписание
-      </a>
+      <div class="invite-create-buttons" style="justify-content: center; margin-top: 24px;">
+        <a
+          href="/"
+          class="settings-card__action settings-card__action--toggle text-action"
+          style="text-decoration: none;"
+        >
+          Открыть расписание
+        </a>
+      </div>
 
     {% elif unavailable_reason == "child_no_profile" %}
-      <p>
+      <p class="empty-day__text">
         Для этого профиля ещё не найден ученик.
       </p>
-
-      <p>
+      <p class="empty-day__text" style="margin-top: 8px;">
         Завершите настройку профиля в Telegram-боте, затем обновите
         веб-страницу.
       </p>
 
-      <a
-        href="/settings"
-        class="student-chip current text-action"
-      >
-        Открыть настройки
-      </a>
+      <div class="invite-create-buttons" style="justify-content: center; margin-top: 24px;">
+        <a
+          href="/settings"
+          class="settings-card__action settings-card__action--toggle text-action"
+          style="text-decoration: none;"
+        >
+          Открыть настройки
+        </a>
+      </div>
 
     {% else %}
-      <p>
+      <p class="empty-day__text">
         Дополнительные занятия пока недоступны для этого профиля.
       </p>
 
-      <a
-        href="/"
-        class="student-chip current text-action"
-      >
-        Открыть расписание
-      </a>
+      <div class="invite-create-buttons" style="justify-content: center; margin-top: 24px;">
+        <a
+          href="/"
+          class="settings-card__action settings-card__action--toggle text-action"
+          style="text-decoration: none;"
+        >
+          Открыть расписание
+        </a>
+      </div>
     {% endif %}
   </div>
 </section>

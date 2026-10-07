@@ -141,7 +141,7 @@
   <div class="day-subtitle">Активных приглашений нет.</div>
   {% endif %}
 
-  <div class="invite-create">
+  <div class="invite-create-buttons">
     <div class="day-subtitle">Создать приглашение (одноразовое, 24 часа):</div>
     <div class="invite-create-buttons">
       {# Мы добавили третий элемент в кортеж — имя иконки из инвентаря #}
@@ -156,7 +156,7 @@
     </div>
   </div>
 
-  <div class="invite-create">
+  <div class="invite-create-buttons">
     <button type="button" class="nav-btn small text-action"
             hx-get="/family/students/new"
             hx-target="#family-content" hx-swap="outerHTML">

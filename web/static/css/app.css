@@ -1097,6 +1097,7 @@ body {
 .invite-create-buttons {
   display: flex;
   flex-wrap: wrap;
+  justify-content: center;
   gap: var(--space-4);
   margin-top: var(--space-4);
 }
@@ -1297,6 +1298,11 @@ body {
 }
 
 .settings-card__action {
+/* НОВОЕ: Идеальное центрирование */
+  display: inline-flex;
+  align-items: center;       /* По вертикали */
+  justify-content: center;   /* По горизонтали */
+  line-height: 1;            /* Убиваем лишний системный интервал вокруг текста */
   flex: 0 0 auto;
   min-height: 40px;
   padding: var(--space-4) 11px;
@@ -1307,6 +1313,7 @@ body {
   font-size: var(--font-size-body);
   font-weight: var(--weight-bold);
   cursor: pointer;
+  text-decoration: none;
 }
 
 .settings-card__action--danger {
