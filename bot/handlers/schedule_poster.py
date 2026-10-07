@@ -264,13 +264,8 @@ async def open_schedule_hub_poster(
     watch_targets_service: WatchTargetsService, extra_classes_service: ExtraClassesService,
     schedule_repo: ScheduleRepository, image_service: ImageGenerationService,
     image_prefs: ImagePreferencesService,
-    config: Config, # <--- ДОБАВИТЬ СЮДА
 ) -> None:
-    # --- ВРЕМЕННЫЙ ПАТЧ ОБНОВЛЕНИЯ МЕНЮ ---
-    if message.text in {"📅 Моё расписание", "📅 Мое расписание"}:
-        from bot.handlers.registration import _show_main_menu
-        await _show_main_menu(message, text="<i>🔄 Синхронизация меню...</i>", config=config)
-    # --------------------------------------
+
     actor_user_id = message.from_user.id
     if not await image_prefs.prefers_image(actor_user_id):
         raise SkipHandler()
@@ -279,6 +274,12 @@ async def open_schedule_hub_poster(
     if not actor.is_fully_registered:
         raise SkipHandler()
 
+    # --- ВРЕМЕННЫЙ ПАТЧ ОБНОВЛЕНИЯ МЕНЮ ---
+    if message.text in {"📅 Моё расписание", "📅 Мое расписание"}:
+        from bot.handlers.registration import _show_main_menu
+        await _show_main_menu(message, text="<i>🔄 Синхронизация меню...</i>")
+    # --------------------------------------
+    
     # --- ВЕТВЬ УЧИТЕЛЯ ---
     if actor.role == "teacher":
         teacher = await _get_teacher_profile(user_id=actor_user_id, profile_service=profile_service)

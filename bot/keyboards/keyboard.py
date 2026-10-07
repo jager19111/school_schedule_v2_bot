@@ -111,20 +111,8 @@ class Keyboards:
     @staticmethod
     def get_main_menu(web_app_url: str | None = None) -> ReplyKeyboardMarkup:
         """Универсальная нижняя клавиатура для всех ролей."""
-        top_row = [KeyboardButton(text='📅 Расписание')]
-        
-        # Если ссылка передана, кнопка сразу откроет WebView. 
-        # Если нет — сработает как обычная текстовая кнопка.
-        if web_app_url:
-            top_row.append(KeyboardButton(
-                text='🌐 Веб-расписание', 
-                web_app=WebAppInfo(url=web_app_url)
-            ))
-        else:
-            top_row.append(KeyboardButton(text='🌐 Веб-расписание'))
-
         keyboard = [
-            top_row,
+            [KeyboardButton(text='📅 Расписание'), KeyboardButton(text='🌐 Веб-расписание')],
             [KeyboardButton(text='🏫 Поиск по школе')],
             [KeyboardButton(text='➕ Доп. занятия'), KeyboardButton(text='⚙️ Настройки')]
         ]

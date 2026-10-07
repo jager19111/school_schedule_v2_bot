@@ -162,7 +162,6 @@ async def _show_main_menu(
     message: Message,
     *,
     text: str | None = None,
-    config: Config | None = None,
 ) -> None:
     """
     Показывает постоянное нижнее меню.
@@ -171,18 +170,11 @@ async def _show_main_menu(
     успешное действие уже описано в основном renderer,
     а здесь пользователь получает только ориентир по навигации.
     """
-    web_app_url = None
-    
-    # Формируем ссылку, только если передан конфиг и PWA включено
-    if config and getattr(config, "WEB_TG_APP_ENABLED", True):
-        web_app_url = f"{config.WEB_PUBLIC_URL.rstrip('/')}/tg/app"
-
     await message.answer(
         text or (
             "⬇️ <b>Главное меню</b>\n"
         ),
-        # Передаем url в клавиатуру (если config не передан, уйдет None и отрисуется просто текст)
-        reply_markup=Keyboards.get_main_menu(web_app_url=web_app_url),
+        reply_markup=Keyboards.get_main_menu(),
         parse_mode="HTML",
     )
 
