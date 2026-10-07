@@ -1,23 +1,23 @@
 /* web/static/js/app.js
  *
- * Общий PWA/runtime glue без business logic.
+- Общий PWA/runtime glue без business logic.
  *
- * Возможности:
- * - регистрация Service Worker;
- * - SSE invalidation;
- * - foreground revalidation для standalone PWA;
- * - Safari BFCache handling;
- * - polling fallback при отсутствии SSE;
- * - logout cache cleanup.
+- Возможности:
+- регистрация Service Worker;
+- SSE invalidation;
+- foreground revalidation для standalone PWA;
+- Safari BFCache handling;
+- polling fallback при отсутствии SSE;
+- logout cache cleanup.
  *
- * Важно:
- * revalidation НЕ использует window.location.reload().
- * Вместо этого обновляется только #app-shell через HTMX, поэтому:
+- Важно:
+- revalidation НЕ использует window.location.reload().
+- Вместо этого обновляется только #app-shell через HTMX, поэтому:
  *
- * - document не выгружается;
- * - #live-monitor и SSE connection сохраняются;
- * - global JS listeners не регистрируются заново;
- * - PWA не показывает full-page flash при foreground.
+- document не выгружается;
+- #live-monitor и SSE connection сохраняются;
+- global JS listeners не регистрируются заново;
+- PWA не показывает full-page flash при foreground.
  */
 
 (function () {
@@ -34,6 +34,8 @@
   var pendingScheduleRevalidation = false;
   var shellRevalidationInFlight = false;
   var sseOpen = false;
+  var lastWhiteScreenReloadAt = 0;
+
 
   function isStandalone() {
     return (
@@ -91,11 +93,11 @@
 
     if (!source || !canUseShellRevalidation()) {
       /*
-       * На public/auth pages app shell может отсутствовать.
+- На public/auth pages app shell может отсутствовать.
        *
-       * Здесь намеренно нет window.location.reload(): если protected shell
-       * отсутствует, приложение не должно самопроизвольно перезагружать
-       * текущий document.
+- Здесь намеренно нет window.location.reload(): если protected shell
+- отсутствует, приложение не должно самопроизвольно перезагружать
+- текущий document.
        */
       return false;
     }
@@ -109,15 +111,15 @@
     pendingScheduleRevalidation = false;
 
     /*
-     * htmx.ajax отправляет обычный HTMX request:
+- htmx.ajax отправляет обычный HTMX request:
      *
-     * HX-Request: true
-     * HX-Target: app-shell
+- HX-Request: true
+- HX-Target: app-shell
      *
-     * Server-side select_page_or_fragment_template() вернёт full page.
-     * Option select извлечёт только #app-shell из response.
+- Server-side select_page_or_fragment_template() вернёт full page.
+- Option select извлечёт только #app-shell из response.
      *
-     * URL/history не меняются: revalidation обновляет уже открытую страницу.
+- URL/history не меняются: revalidation обновляет уже открытую страницу.
      */
     window.htmx.ajax(
       "GET",
@@ -138,9 +140,9 @@
 
   function revalidateCurrentScreen() {
     /*
-     * Background tab нельзя обновлять immediately: браузер может заморозить
-     * document, а пользователь не увидит результат. Сохраняем invalidation
-     * до следующего foreground.
+- Background tab нельзя обновлять immediately: браузер может заморозить
+- document, а пользователь не увидит результат. Сохраняем invalidation
+- до следующего foreground.
      */
     if (document.visibilityState !== "visible") {
       queueScheduleRevalidation();
@@ -148,9 +150,9 @@
     }
 
     /*
-     * Открытая form важнее instant refresh. Form должна быть явно помечена:
+- Открытая form важнее instant refresh. Form должна быть явно помечена:
      *
-     * data-live-refresh="defer"
+- data-live-refresh="defer"
      */
     if (hasProtectedLiveForm()) {
       queueScheduleRevalidation();
@@ -159,8 +161,8 @@
 
     if (!runShellRevalidation()) {
       /*
-       * Если shell отсутствует, просто сохраняем pending state.
-       * Это безопаснее full document reload.
+- Если shell отсутствует, просто сохраняем pending state.
+- Это безопаснее full document reload.
        */
       queueScheduleRevalidation();
     }
@@ -168,10 +170,10 @@
 
   function sseConnected() {
     /*
-     * Основной источник состояния — собственные SSE lifecycle events.
+- Основной источник состояния — собственные SSE lifecycle events.
      *
-     * body.htmx-request остаётся fallback для текущей версии htmx SSE
-     * extension и для initial transition до первого htmx:sseOpen.
+- body.htmx-request остаётся fallback для текущей версии htmx SSE
+- extension и для initial transition до первого htmx:sseOpen.
      */
     var host = document.body;
 
@@ -186,19 +188,42 @@
   }
 
   function registerServiceWorker() {
-    if (!("serviceWorker" in navigator)) {
-      return;
-    }
+    // Читаем метку surface из body, которую устанавливает бэкенд для Mini App
+    var isTelegramSurface = document.body.dataset.surface === "telegram";
 
-    window.addEventListener("load", function () {
+    // Регистрируем Service Worker только если это не Telegram и браузер его поддерживает
+    if (!isTelegramSurface && "serviceWorker" in navigator) {
+      window.addEventListener("load", function () {
+        navigator.serviceWorker
+          .register("/service-worker.js", { scope: "/" })
+          .catch(function () {
+            /*
+- PWA enhancement не должен ломать application.
+             */
+          });
+      });
+    }
+  }
+
+  function cleanupTelegramServiceWorker() {
+    // Одна из ранних версий Mini App успела зарегистрировать SW
+    // в хранилище Telegram WebView. Убираем его, чтобы WebView не
+    // проверял обновления и не получал закешированный shell.
+    if (
+      document.body.dataset.surface === "telegram"
+      && "serviceWorker" in navigator
+    ) {
       navigator.serviceWorker
-        .register("/service-worker.js", { scope: "/" })
+        .getRegistrations()
+        .then(function (registrations) {
+          registrations.forEach(function (registration) {
+            registration.unregister();
+          });
+        })
         .catch(function () {
-          /*
-           * PWA enhancement не должен ломать application.
-           */
+          /* best-effort cleanup */
         });
-    });
+    }
   }
 
   function isShellRevalidationRequest(event) {
@@ -213,11 +238,11 @@
 
   function setupShellRevalidationLifecycle() {
     /*
-     * htmx.ajax() является asynchronous.
+- htmx.ajax() является asynchronous.
      *
-     * Снимаем in-flight lock только после фактического request completion,
-     * а не через timeout. Это защищает PWA от concurrent SSE, foreground
-     * и polling revalidation requests.
+- Снимаем in-flight lock только после фактического request completion,
+- а не через timeout. Это защищает PWA от concurrent SSE, foreground
+- и polling revalidation requests.
      */
     document.body.addEventListener(
       "htmx:afterRequest",
@@ -234,8 +259,8 @@
         }
 
         /*
-         * Во время текущего request мог прийти ещё один ScheduleChanged.
-         * После успешного swap запускаем один дополнительный refresh.
+- Во время текущего request мог прийти ещё один ScheduleChanged.
+- После успешного swap запускаем один дополнительный refresh.
          */
         if (
           pendingScheduleRevalidation
@@ -271,8 +296,8 @@
 
   function setupSseLifecycle() {
     /*
-     * htmx-ext-sse dispatches lifecycle events. Храним собственное состояние,
-     * не полагаясь только на CSS class htmx-request.
+- htmx-ext-sse dispatches lifecycle events. Храним собственное состояние,
+- не полагаясь только на CSS class htmx-request.
      */
     document.body.addEventListener(
       "htmx:sseOpen",
@@ -303,12 +328,12 @@
     setupSseLifecycle();
 
     /*
-     * SSE event:
+- SSE event:
      *
-     * schedule_changed
-     * → #live-monitor GET /api/v1/live/revalidate
-     * → successful response
-     * → мягкая revalidation current #app-shell.
+- schedule_changed
+- → #live-monitor GET /api/v1/live/revalidate
+- → successful response
+- → мягкая revalidation current #app-shell.
      */
     if (monitor) {
       monitor.addEventListener(
@@ -331,9 +356,9 @@
     }
 
     /*
-     * Контракт для будущих integrations:
+- Контракт для будущих integrations:
      *
-     * document.dispatchEvent(new Event("schedule:revalidate"))
+- document.dispatchEvent(new Event("schedule:revalidate"))
      */
     document.addEventListener(
       "schedule:revalidate",
@@ -341,8 +366,8 @@
     );
 
     /*
-     * Polling нужен только standalone PWA:
-     * browser tab рассчитывает на normal SSE reconnect.
+- Polling нужен только standalone PWA:
+- browser tab рассчитывает на normal SSE reconnect.
      */
     window.setInterval(function () {
       if (!isStandalone()) {
@@ -365,20 +390,47 @@
         return;
       }
 
+/*
+      - ЗАЩИТА ОТ "БЕЛОГО ЭКРАНА" В PWA (с Cooldown)
+      - ОС может выгрузить DOM из памяти при нехватке ресурсов в спящем режиме.
+      - Перезагружаем страницу, но не чаще чем раз в 10 секунд (защита от цикла).
+      */
+      if (isStandalone() && document.getElementById("app-shell") === null) {
+        if (Date.now() - lastWhiteScreenReloadAt > 10000) {
+          lastWhiteScreenReloadAt = Date.now();
+          window.location.reload();
+        }
+        return;
+      }
       /*
-       * Background tab получила invalidation.
-       */
-      if (pendingScheduleRevalidation) {
+      - Если это обычная вкладка браузера (не PWA), то интернет никуда 
+      - не пропадал, обновляем данные сразу без задержек.
+      */
+      if (!isStandalone() && pendingScheduleRevalidation) {
         revalidateCurrentScreen();
         return;
       }
 
       /*
-       * Standalone PWA может потерять SSE из-за OS freeze, смены сети или
-       * background suspension. При foreground revalidate всегда выполняется.
-       */
+      - ЗАДЕРЖКА НА ВОССТАНОВЛЕНИЕ СЕТИ ДЛЯ PWA
+      - После "сна" смартфона модулю Wi-Fi/LTE нужно время на переподключение.
+      */
       if (isStandalone()) {
-        revalidateCurrentScreen();
+        window.setTimeout(function () {
+          revalidateCurrentScreen();
+        }, 1000); 
+      }
+    }
+  );
+
+  /*
+  - АВТО-ОБНОВЛЕНИЕ ПРИ ВОЗВРАТЕ ИНТЕРНЕТА
+  */
+  window.addEventListener(
+    "online",
+    function () {
+      if (isStandalone() || pendingScheduleRevalidation) {
+        window.setTimeout(revalidateCurrentScreen, 500);
       }
     }
   );
@@ -386,9 +438,6 @@
   window.addEventListener(
     "pageshow",
     function (event) {
-      /*
-       * Safari BFCache может вернуть старый DOM document.
-       */
       if (
         event.persisted
         && (
@@ -396,16 +445,13 @@
           || isStandalone()
         )
       ) {
-        revalidateCurrentScreen();
+        window.setTimeout(revalidateCurrentScreen, 300);
       }
     }
   );
 
   /*
-   * Logout: удалить shell caches.
-   *
-   * Персональные routes не кэшируются Service Worker, но очистка Cache
-   * Storage остаётся дополнительной защитой при logout.
+- Logout: удалить shell caches.
    */
   document.addEventListener(
     "htmx:afterRequest",
@@ -437,7 +483,36 @@
     }
   );
 
+  // --- Динамическая подмена бейджа для общих кук (iOS Safari + PWA) ---
+  function applyPwaDeviceOverride() {
+    if (!isStandalone()) {
+      return;
+    }
+
+    var currentCard = document.querySelector('.device-card--current');
+    if (!currentCard) return;
+
+    var title = currentCard.querySelector('.device-card__title');
+    var badge = currentCard.querySelector('.device-badge--browser');
+    var tpl = document.getElementById('pwa-badge-template');
+    
+    if (badge && title && tpl) {
+      title.textContent = 'Установленное PWA';
+      badge.className = 'device-badge device-badge--pwa';
+      badge.innerHTML = tpl.innerHTML;
+    }
+  }
+
+  document.body.addEventListener("htmx:load", applyPwaDeviceOverride);
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", applyPwaDeviceOverride);
+  } else {
+    applyPwaDeviceOverride();
+  }
+
   registerServiceWorker();
+  cleanupTelegramServiceWorker();
 
   if (document.readyState === "loading") {
     document.addEventListener(

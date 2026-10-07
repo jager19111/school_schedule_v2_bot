@@ -44,6 +44,7 @@ async def get_session_context(
     context = await sessions.resolve_session(raw)
     if context is None:
         raise HTTPException(status_code=401, detail="Сессия недействительна.")
+    request.state.web_surface = context.surface
     return context
 
 

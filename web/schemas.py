@@ -322,6 +322,7 @@ class WebDeviceSession(BaseModel):
     created_at_display: str
     last_seen_at_display: str
     is_current: bool
+    surface: str = "browser"
     
 # ==============================================================
 # Отслеживаемые классы

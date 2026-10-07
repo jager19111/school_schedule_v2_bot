@@ -258,7 +258,7 @@ async def _build_teacher_day_poster(
 # ПЕРЕХВАТ ТОЧЕК ВХОДА И УМНЫХ ДНЕЙ (INTERCEPTORS)
 # ==========================================================
 
-@router.message(F.text.in_({"📅 Моё расписание", "📅 Мое расписание"}), _image_generation_enabled)
+@router.message(F.text.in_({"📅 Моё расписание", "📅 Мое расписание", "📅 Расписание"}), _image_generation_enabled)
 async def open_schedule_hub_poster(
     message: Message, state: FSMContext, profile_service: ProfileService,
     schedule_service: ScheduleService, students_service: StudentsService,

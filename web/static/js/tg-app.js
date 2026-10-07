@@ -25,10 +25,15 @@
     if (titleEl) titleEl.textContent = "Авторизация...";
     if (descEl) descEl.textContent = "Связываемся с сервером...";
 
+    // ---> ИЗМЕНЕНИЯ ЗДЕСЬ: добавили platform: tg.platform в JSON.stringify <---
     fetch("/tg/bootstrap", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ initData: tg.initData, init_data: tg.initData })
+      body: JSON.stringify({ 
+        initData: tg.initData, 
+        init_data: tg.initData,
+        platform: tg.platform 
+      })
     })
     .then(function (response) {
       if (!response.ok) {

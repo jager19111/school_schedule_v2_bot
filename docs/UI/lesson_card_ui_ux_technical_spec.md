@@ -2121,41 +2121,286 @@ blur;
 zoom;
 сложный carousel framework.
 
+```
 
-Прячем список детей под спойлер
+## Рекомендуемый TODO-план DayPager
 
-┌─────────────────────────────────────┐
-│ Расписание  6а · 2 группа           │  ← app header
-├─────────────────────────────────────┤
-│ [Лиза] [Ребёнок 2] [Ребёнок 3]      │  ← collapsible context strip
-├─────────────────────────────────────┤
-│ ←   Вторник, 13 октября   →          │  ← part of moving day panel
-│          • Сегодня                   │
-│                                     │
-│ [уроки]                              │
-└─────────────────────────────────────┘
+# Этап P1 — подготовить fragment contract
+[ ] Зафиксировать единый DayFragment contract для personal и school screens.
+[ ] Разделить outer pager slot и внутренний day fragment.
+[ ] Убрать зависимость pager от duplicate id="day-content".
+[ ] Добавить data attributes:
+    - data-day-url;
+    - data-previous-url;
+    - data-next-url;
+    - data-week-url;
+    - data-pager-identity.
+[ ] Не переносить календарную арифметику в JavaScript.
+[ ] Сохранить обычные href links как progressive enhancement fallback.
 
-child context strip
-→ может отдельно скрываться при scroll;
+# Этап P2 — pager без drag
+[ ] Создать web/static/js/day-pager.js.
+[ ] Поднять three-slot DOM: previous/current/next.
+[ ] Загрузить current fragment.
+[ ] После current load preload previous и next.
+[ ] Реализовать bounded memory: только три DOM slots.
+[ ] Добавить AbortController и navigation token.
+[ ] Реализовать transition кнопками previous/next без HTMX outerHTML swap.
+[ ] Обновлять history только после completed navigation.
 
-date navigation
-→ остаётся внутри moving day panel;
+Это самый важный этап: сначала доказать корректность state machine без gesture animation.
 
-interactive horizontal swipe
-→ не конфликтует со sticky behavior.
+# Этап P3 — native drag
+
+[ ] Pointer Events.
+[ ] Horizontal direction lock.
+[ ] CSS transform translate3d().
+[ ] Drag following finger.
+[ ] Threshold commit.
+[ ] Velocity commit.
+[ ] Snap-back animation.
+[ ] pointercancel / lost pointer capture.
+[ ] block interaction с inactive pages.
+[ ] prefers-reduced-motion.
+
+# Этап P4 — integration
+
+[ ] popstate rebuild.
+[ ] SSE invalidates neighbours.
+[ ] Profile/child switch destroys pager state.
+[ ] School mode:
+    - class;
+    - teacher;
+    - room;
+    - origin=free-rooms.
+[ ] Day → Week contextual button.
+[ ] Week → Day contextual button.
+[ ] PWA offline failure state для missing neighbour.
+[ ] Browser/PWA smoke tests.
+
+# Критерии готовности
+
+[ ] При drag соседний день реально следует за пальцем.
+[ ] Нет white screen, skeleton flash или late DOM replacement после release.
+[ ] Release ниже threshold возвращает exact current screen.
+[ ] Быстрый swipe не запускает duplicate navigation.
+[ ] 10 быстрых свайпов не создают race condition.
+[ ] В DOM максимум три day slots.
+[ ] Нет duplicate IDs.
+[ ] Previous/next days недоступны через Tab и screen reader.
+[ ] Back/Forward открывают правильную дату.
+[ ] Switch child/class/teacher/room отменяет старые request.
+[ ] SSE change не показывает stale preloaded neighbor как актуальный.
+[ ] Room origin=free-rooms не теряется.
+[ ] Offline missing neighbour показывает понятный fallback, а не blank screen.
+
+# Мой совет по приоритету
+Это хорошая после-8D задача, но я бы не начинал её до того, как вы:
+
+1. Зафиксируете текущий app-shell/PWA state отдельным commit.
+2. Добавите хотя бы базовые automated smoke tests для day/week URLs.
+3. Стабилизируете PWA update workflow.
+
+[ ] Не полагаться на service worker в pager-коде.
+[ ] Не использовать window.open / target="_blank" в pager.
+[ ] touch-action: pan-y на pager surface —
+    чтобы не конфликтовать с Telegram горизонтальными жестами.
+[ ] Не начинать drag в зоне ~20px от левого/правого края экрана —
+    iOS edge-swipe back должен остаться системным.
+[ ] Проверить popstate в Telegram WebView отдельно:
+    BackButton Telegram и history.back() должны сходиться к одной истории.
+[ ] prefers-reduced-motion проверить в обоих окружениях.
+[ ] Тестировать drag на реальном iPhone внутри Telegram.
+
+
+
+# TODO Miniapp + переход в браузер
+Рекомендуемый roadmap
+Этап T1 — surface model
+
+[ ] Добавить WebSurface / surface_mode в server-side session context.
+[ ] Ввести browser и telegram mode.
+[ ] Передавать surface в _ctx().
+[ ] Не доверять query parameter как auth/security signal.
+[ ] Добавить data-surface в <html> или <body>.
+Этап T2 — Mini App bootstrap
+
+[ ] Добавить /tg/app.
+[ ] Добавить Telegram Web Apps SDK.
+[ ] Добавить POST /auth/telegram/bootstrap.
+[ ] Валидировать initData на server.
+[ ] Создавать Telegram WebView session.
+[ ] После success открывать existing home schedule route.
+[ ] Добавить graceful fallback вне Telegram.
+Этап T3 — общий shell
+
+[ ] Не дублировать schedule/school templates.
+[ ] Оставить один base.html.
+[ ] Вынести browser/PWA и Telegram-specific UI в include fragments.
+[ ] Условно подключать pwa-runtime и telegram-webapp runtime.
+[ ] Добавить theme/safe-area adaptation.
+[ ] Подключить Telegram BackButton к browser history.
+Этап T4 — external browser handoff
+
+[ ] Создать browser_handoff_codes.
+[ ] Создать BrowserHandoffService.
+[ ] POST /auth/browser-handoff.
+[ ] GET /auth/browser/consume.
+[ ] Одноразовый code: 60–120 секунд.
+[ ] Хранить только hash code.
+[ ] Atomically consume.
+[ ] Set-Cookie только во внешнем browser.
+[ ] 303 redirect на чистый URL.
+[ ] Cache-Control: no-store.
+[ ] Referrer-Policy: no-referrer.
+Этап T5 — bot UX migration
+
+[ ] Заменить token link на Web App button.
+[ ] Основная кнопка: «🌐 Открыть расписание».
+[ ] В Mini App показать «Открыть в браузере».
+[ ] Оставить legacy magic link как support fallback.
+[ ] Добавить rate limit на fallback token generation.
+[ ] Убрать длинную инструкцию из обычного happy path.
+Итог
+Да, используйте текущий web UI как основу Mini App.
+
+Правильная продуктовая формула:
+
+text
+Одна бизнес-логика.
+Один набор server-rendered pages.
+Один app-shell.
+Два доверенных auth bootstrap flow.
+Два shell capability режима.
+То есть:
+
+text
+Telegram Mini App
+= удобный быстрый вход из Telegram.
+
+Browser/PWA
+= полноценное standalone-приложение.
+А переход между ними должен передавать не текущий видимый token, а короткоживущий одноразовый browser handoff code. Это даст вам удобство Telegram, не потеряв PWA и не породив второй, расходящийся интерфейс.
+
+
+План реализации по этапам
+Этап MA-1 — Data layer (0.5 дня)
+
+text
+[ ] migration: browser_handoff_codes
+    (code_hash UNIQUE, telegram_user_id, target_path,
+     issued_at, expires_at, used_at)
+[ ] core/repository/browser_handoff_repository.py
+[ ] atomic consume в одном SQL UPDATE ... WHERE used_at IS NULL
+[ ] cleanup expired записей (в существующий cleanup_service)
+Этап MA-2 — Service layer (1 день)
+
+text
+[ ] services/telegram_webauth_service.py
+    - validate initData (HMAC-SHA256 по алгоритму Telegram, проверка hash)
+    - проверка auth_date freshness (например, ±24h)
+    - telegram_user_id → ваш внутренний user (через существующую
+      связь user_id в web_auth/user repository)
+    - создание WebSessionContext с surface_mode="telegram"
+[ ] services/browser_handoff_service.py
+    - issue_handoff(telegram_user_id, target_path)
+    - consume_handoff(raw_code) → telegram_user_id, target_path
+    - allowlist target_path: {"/", "/school", "/school/free-rooms", ...}
+    - TTL 60–120 сек, single-use
+    - в логи только fingerprint, не raw code
+Этап MA-3 — Surface model (0.5 дня)
+
+text
+[ ] web/telegram/surface.py: WebSurface dataclass
+    (mode, can_install_pwa, can_open_external_browser,
+     can_register_service_worker, is_embedded)
+[ ] web/telegram/context.py: surface из session
+[ ] прокинуть surface в _ctx() всех routes
+    (в вашем случае — через web_sessions_service или deps)
+[ ] в base.html:
+    - {% if surface.can_register_service_worker %} → app.js / SW
+    - {% if surface.mode == "telegram" %} → telegram-webapp.js
+Этап MA-4 — Mini App routes + templates (1 день)
+
+text
+[ ] web/routes/telegram_app.py:
+    GET  /tg/app            — entry, редирект на / после bootstrap
+    POST /tg/bootstrap      — принимает initData, валидирует, создаёт session
+    POST /tg/browser-handoff — выдаёт external_url с одноразовым code
+    GET  /tg/browser/consume — consume → browser cookie → 303 на чистый URL
+[ ] web/templates/tg/app.html — экран «Открыть в браузере» + CTA
+[ ] Cache-Control: no-store, Referrer-Policy: no-referrer на consume
+[ ] после bootstrap НЕ создавать PWA service worker
+Этап MA-5 — Telegram JS adapter (0.5 дня)
+
+text
+[ ] web/static/js/telegram-webapp.js
+    - ready(), expand(), theme params
+    - BackButton ↔ history.back()
+    - openLink() только по user click
+[ ] bump_pwa_version.py прогон
+Этап MA-6 — Bot integration (0.5 дня)
+
+text
+[ ] bot/handlers/web_link.py:
+    - кнопка WebApp: https://test.domen.xyz/tg/app
+      (тип keyboard button web_app, а не url)
+    - убрать длинную инструкцию из happy path
+    - оставить legacy token link как /webfallback
+[ ] главное меню (⚙️ Настройки → 🌐 Веб-версия):
+    заменить на Web App кнопку
+[ ] в уведомлениях об изменениях (notifications/dispatcher):
+    добавить inline кнопку "Открыть" → /tg/app
+      — это ваш главный сценарий "быстрый просмотр из уведомления"
+Этап MA-7 — Тесты и приёмка (1 день)
+
+text
+[ ] test_telegram_init_data: валидная/невалидная подпись, старый auth_date
+[ ] test_browser_handoff: повторное использование code → 404/410
+[ ] test_tg_routes: bootstrap без initData, consume expired
+[ ] ручная проверка: iPhone ТГ → Mini App → «Открыть в браузере» → PWA install
+[ ] проверить, что legacy token flow не сломан
+Итого реалистично 4–5 рабочих дней.
 
 
 
 
-| Приоритет | Улучшение                                            | Польза                                             |
-| --------- | ---------------------------------------------------- | -------------------------------------------------- |
-| 1         | Скрыть selector для одного ребёнка                   | Больше места для расписания                        |
-| 2         | Привести chips multi-child к финальному visual style | Чёткий active child context                        |
-| 3         | Уточнить empty-day state                             | Понятно, что уроков именно нет, а не loading error |
-| 4         | Полировка current lesson card                        | Быстрее понять, что происходит сейчас              |
-| 5         | Полировка changed/cancelled/added states             | Быстрее заметить изменения                         |
-| 6         | Проверить room/teacher/class school views            | Единый visual pattern всех schedule targets        |
-| 7         | Определить desktop behavior                          | Не обязательно swipe; arrows остаются достаточными |
+
+## TODO PWA Push Notifications — не приоритет до стабилизации Mini App и PWA adoption.
+
+Telegram остаётся основным и обязательным каналом уведомлений
+об изменениях расписания.
+
+PWA Web Push — будущая opt-in функция для пользователей,
+установивших приложение на Home Screen.
+
+Не заменять Telegram PWA Push-уведомлениями.
+Не включать PWA Push по умолчанию.
+Не показывать permission prompt автоматически.
+Не отправлять одинаковые уведомления в Telegram и PWA без
+явной user preference.
+
+[ ] Сейчас: Telegram-only notification delivery.
+[ ] Подготовить NotificationChannel enum.
+[ ] Подготовить user notification preferences.
+[ ] Реализовать Mini App + browser handoff.
+[ ] Довести PWA installation flow.
+[ ] Измерить долю установивших PWA пользователей.
+[ ] Только затем: opt-in Web Push MVP.
+[ ] Добавить web_push_subscriptions.
+[ ] Добавить VAPID.
+[ ] Добавить push + notificationclick в worker.
+[ ] Добавить unsubscribe и invalid subscription cleanup.
+[ ] Добавить Telegram/PWA deduplication policy.
+
+PWA Push: оценка 5–7 рабочих дней (production),
+из них ~1.5 дня — реальная iOS-отладка.
+
+Приоритет: после Mini App/browser handoff
+и стабилизации PWA install flow.
+
+
+
 
 
 

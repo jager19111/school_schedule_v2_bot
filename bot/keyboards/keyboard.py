@@ -9,6 +9,7 @@ import math
 from typing import List
 from datetime import datetime, timedelta, timezone, date
 
+from aiogram.types import WebAppInfo
 from bot import callbacks
 from services.help_service import HelpLinksDTO
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
@@ -42,7 +43,7 @@ class Keyboards:
         role используется только для решения, нужно ли показывать
         кнопку возврата в Settings.
         """
-        buttons = [[InlineKeyboardButton(text='👨\u200d👩\u200d👧 Семья и приглашения', callback_data=callbacks.HelpCD(section='family').pack())], [InlineKeyboardButton(text='🧒 Ученику', callback_data=callbacks.HelpCD(section='child').pack()), InlineKeyboardButton(text='👨\u200d👩\u200d👧 Родителю', callback_data=callbacks.HelpCD(section='parent').pack())], [InlineKeyboardButton(text='👁 Наблюдателю', callback_data=callbacks.HelpCD(section='observer').pack()), InlineKeyboardButton(text='👩\u200d🏫 Учителю', callback_data=callbacks.HelpCD(section='teacher').pack())], [InlineKeyboardButton(text='🔔 Уведомления', callback_data=callbacks.HelpCD(section='notifications').pack()), InlineKeyboardButton(text='🎨 Доп. занятия', callback_data=callbacks.HelpCD(section='extras').pack())], [InlineKeyboardButton(text='🔐 Данные и приватность', callback_data=callbacks.HelpCD(section='privacy').pack())]]
+        buttons = [[InlineKeyboardButton(text='👨\u200d👩\u200d👧 Семья и приглашения', callback_data=callbacks.HelpCD(section='family').pack())], [InlineKeyboardButton(text='🧒 Ученику', callback_data=callbacks.HelpCD(section='child').pack()), InlineKeyboardButton(text='👨\u200d👩\u200d👧 Родителю', callback_data=callbacks.HelpCD(section='parent').pack())], [InlineKeyboardButton(text='👁 Наблюдателю', callback_data=callbacks.HelpCD(section='observer').pack()), InlineKeyboardButton(text='👩\u200d🏫 Учителю', callback_data=callbacks.HelpCD(section='teacher').pack())], [InlineKeyboardButton(text='🔔 Уведомления', callback_data=callbacks.HelpCD(section='notifications').pack()), InlineKeyboardButton(text='🎨 Доп. занятия', callback_data=callbacks.HelpCD(section='extras').pack())],[InlineKeyboardButton(text='🔐 Данные и приватность', callback_data=callbacks.HelpCD(section='privacy').pack()),InlineKeyboardButton(text='🌐 Веб-версия', callback_data=callbacks.HelpCD(section='web').pack())]]
         if section == 'support':
             support_buttons = []
             if links.author_contact_url:
@@ -105,10 +106,28 @@ class Keyboards:
                     buttons.append([InlineKeyboardButton(text=g_name, callback_data=callbacks.RegistrationGroupCD(group_id=g_id).pack())])
         return InlineKeyboardMarkup(inline_keyboard=buttons)
 
+
+
     @staticmethod
-    def get_main_menu() -> ReplyKeyboardMarkup:
+    def get_main_menu(web_app_url: str | None = None) -> ReplyKeyboardMarkup:
         """Универсальная нижняя клавиатура для всех ролей."""
-        keyboard = [[KeyboardButton(text='📅 Моё расписание')], [KeyboardButton(text='🏫 Поиск по школе')], [KeyboardButton(text='➕ Доп. занятия'), KeyboardButton(text='⚙️ Настройки')]]
+        top_row = [KeyboardButton(text='📅 Расписание')]
+        
+        # Если ссылка передана, кнопка сразу откроет WebView. 
+        # Если нет — сработает как обычная текстовая кнопка.
+        if web_app_url:
+            top_row.append(KeyboardButton(
+                text='🌐 Веб-расписание', 
+                web_app=WebAppInfo(url=web_app_url)
+            ))
+        else:
+            top_row.append(KeyboardButton(text='🌐 Веб-расписание'))
+
+        keyboard = [
+            top_row,
+            [KeyboardButton(text='🏫 Поиск по школе')],
+            [KeyboardButton(text='➕ Доп. занятия'), KeyboardButton(text='⚙️ Настройки')]
+        ]
         return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
 
     @staticmethod
@@ -1321,7 +1340,6 @@ class Keyboards:
     @staticmethod
     def get_web_app_kb(web_app_url: str) -> InlineKeyboardMarkup:
         """Клавиатура с кнопкой Telegram Mini App."""
-        from aiogram.types import WebAppInfo # Можно импортировать локально или глобально в начале файла
         
         return InlineKeyboardMarkup(
             inline_keyboard=[

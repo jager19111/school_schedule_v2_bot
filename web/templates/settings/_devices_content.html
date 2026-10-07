@@ -1,5 +1,5 @@
-  {# web/templates/settings/_devices_content.html #}
-  <section
+{# web/templates/settings/_devices_content.html #}
+<section
   id="settings-content"
   class="settings-page"
 >
@@ -39,13 +39,31 @@
     >
       Это устройство
     </h3>
-
+    {% from "components/ui/icon.html" import icon %}
     {% for device in devices %}
       {% if device.is_current %}
       <article class="device-card device-card--current">
         <div class="device-card__content">
+          
+          <!-- ВЕРНУЛИ ВЫВОД НАЗВАНИЯ УСТРОЙСТВА -->
           <div class="device-card__title">
             {{ device.user_agent }}
+          </div>
+
+          <div class="device-card__meta">
+            {% if device.surface == "telegram" %}
+              <span class="device-badge device-badge--telegram">
+                {{ icon("paper-plane-tilt-duotone") }} Telegram
+              </span>
+            {% elif device.surface == "pwa" %}
+              <span class="device-badge device-badge--pwa">
+                {{ icon("device-mobile-duotone") }} Приложение (PWA)
+              </span>
+            {% else %}
+              <span class="device-badge device-badge--browser">
+                {{ icon("globe-duotone") }} Браузер
+              </span>
+            {% endif %}
           </div>
 
           <div class="device-card__meta">
@@ -88,8 +106,22 @@
 
         <article class="device-card">
           <div class="device-card__content">
+            
+            <!-- ВЕРНУЛИ ВЫВОД НАЗВАНИЯ УСТРОЙСТВА И УБРАЛИ ЛИШНИЙ </div> -->
             <div class="device-card__title">
               {{ device.user_agent }}
+            </div>
+
+            <div class="device-card__meta">
+              {% if device.surface == "telegram" %}
+                <span class="device-badge device-badge--telegram">
+                  {{ icon("paper-plane-tilt-duotone") }} Telegram
+                </span>
+              {% else %}
+                <span class="device-badge device-badge--browser">
+                  {{ icon("globe-duotone") }} Браузер
+                </span>
+              {% endif %}
             </div>
 
             <div class="device-card__meta">
@@ -159,3 +191,8 @@
     </div>
   </section>
 </section>
+
+<!-- Скрытый шаблон для бейджа PWA (для подмены в JS) -->
+<template id="pwa-badge-template">
+  {{ icon("device-mobile-duotone") }} Приложение (PWA)
+</template>

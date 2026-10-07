@@ -55,6 +55,8 @@ class HelpService:
             "extras",
             "privacy",
             "support",
+            "web",
+            
         }
 
         normalized_section = (

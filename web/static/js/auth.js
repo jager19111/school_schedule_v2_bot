@@ -15,10 +15,8 @@
 (function () {
     "use strict";
 
-
     var statusEl = document.getElementById("status");
     var helpEl = document.getElementById("auth-help");
-
 
     function setStatus(text) {
         if (statusEl) {
@@ -26,20 +24,17 @@
         }
     }
 
-
     function showHelp() {
         if (helpEl) {
             helpEl.hidden = false;
         }
     }
 
-
     function hideHelp() {
         if (helpEl) {
             helpEl.hidden = true;
         }
     }
-
 
     function readTokenFromFragment() {
         var hash = window.location.hash || "";
@@ -50,7 +45,6 @@
 
         return hash.substring("#token=".length) || null;
     }
-
 
     function clearFragment() {
         /*
@@ -67,15 +61,12 @@
         );
     }
 
-
     function showAccessHelp() {
         setStatus(
             "Вход доступен по одноразовой ссылке из Telegram-бота."
         );
-
         showHelp();
     }
-
 
     function showInvalidLink() {
         setStatus(
@@ -83,10 +74,16 @@
             + "истекла или недействительна. Вернитесь в Telegram-бота "
             + "и запросите новую ссылку."
         );
-
         showHelp();
     }
 
+    // Проверка на запуск в режиме PWA (с экрана "Домой")
+    function isStandalone() {
+        return (
+            window.matchMedia("(display-mode: standalone)").matches
+            || window.navigator.standalone === true
+        );
+    }
 
     function exchange(token) {
         setStatus("Проверяем защищённую ссылку…");
@@ -98,7 +95,8 @@
                 "Content-Type": "application/json"
             },
             body: JSON.stringify({
-                token: token
+                token: token,
+                is_standalone: isStandalone() // <--- Добавили флаг PWA
             }),
             credentials: "same-origin",
             cache: "no-store"
@@ -112,7 +110,6 @@
                      */
                     clearFragment();
                     showInvalidLink();
-
                     return null;
                 }
 
@@ -121,7 +118,6 @@
                         "Временная ошибка входа. Попробуйте открыть "
                         + "ссылку ещё раз немного позже."
                     );
-
                     return null;
                 }
 
@@ -133,7 +129,6 @@
                 }
 
                 clearFragment();
-
                 setStatus("Вход выполнен. Открываем расписание…");
 
                 /*
@@ -157,7 +152,6 @@
                 );
             });
     }
-
 
     var token = readTokenFromFragment();
 

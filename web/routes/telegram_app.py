@@ -18,7 +18,7 @@ import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, RedirectResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from services.browser_handoff_service import BrowserHandoffService
 from services.telegram_webauth_service import TelegramWebAuthService
@@ -46,8 +46,16 @@ def _webauth_service(request: Request) -> TelegramWebAuthService:
 
 
 class BootstrapRequest(BaseModel):
-    init_data: str = Field(min_length=16, max_length=16384)
+    model_config = ConfigDict(populate_by_name=True)
 
+    # SDK Telegram передаёт camelCase initData; API принимает
+    # каноничное имя Telegram, snake_case оставлен для совместимости.
+    init_data: str = Field(
+        alias="initData",
+        min_length=16,
+        max_length=16384,
+    )
+    platform: str | None = None
 
 class BootstrapResponse(BaseModel):
     ok: bool = True
@@ -85,6 +93,23 @@ async def tg_bootstrap(
             detail="Не удалось подтвердить вход через Telegram. "
             "Откройте приложение заново из бота.",
         )
+# --- НОВЫЙ БЛОК: Определяем красивое имя устройства ---
+    platform_names = {
+        "android": "Android",
+        "ios": "iOS",
+        "macos": "macOS",
+        "tdesktop": "Desktop",
+        "weba": "Web",
+        "webk": "Web",
+        "unigram": "Unigram"
+    }
+    
+    friendly_platform = platform_names.get(payload.platform)
+    if friendly_platform:
+        tg_user_agent = f"Telegram Mini App ({friendly_platform})"
+    else:
+        tg_user_agent = "Telegram Mini App"
+    # ------------------------------------------------------
     # Уже есть живая telegram-сессия (повторное открытие Mini App) —
     # переиспользуем, не создаём новую строку в web_sessions.
     existing_raw = request.cookies.get(SESSION_COOKIE_NAME)
@@ -100,7 +125,7 @@ async def tg_bootstrap(
             
     raw, context = await sessions.create_session(
         user_id=identity.user_id,
-        user_agent=request.headers.get("user-agent"),
+        user_agent=tg_user_agent,
         surface="telegram",
     )
     settings = request.app.state.web_settings
@@ -145,11 +170,25 @@ async def tg_browser_handoff(
 @router.get("/tg/browser/consume", response_class=HTMLResponse)
 async def tg_browser_consume(
     request: Request,
-    response: Response,
     code: str = "",
     handoff: BrowserHandoffService = Depends(_handoff_service),
     sessions: WebSessionsService = Depends(get_sessions_service),
 ):
+    # Повторное нажатие из того же браузера: живая browser-сессия
+    # уже есть — переиспользуем, код не расходуем.
+    existing_raw = request.cookies.get(SESSION_COOKIE_NAME)
+    if existing_raw:
+        existing = await sessions.resolve_session(existing_raw)
+        if existing is not None and existing.surface == "browser":
+            return RedirectResponse(
+                url="/",
+                status_code=303,
+                headers={
+                    "Cache-Control": "no-store",
+                    "Referrer-Policy": "no-referrer",
+                },
+            )
+
     payload = await handoff.consume_handoff(code)
     if payload is None:
         return _templates(request).TemplateResponse(
@@ -169,7 +208,16 @@ async def tg_browser_consume(
         surface="browser",
     )
     settings = request.app.state.web_settings
-    response.set_cookie(
+
+    redirect = RedirectResponse(
+        url=payload.target_path,
+        status_code=303,
+        headers={
+            "Cache-Control": "no-store",
+            "Referrer-Policy": "no-referrer",
+        },
+    )
+    redirect.set_cookie(
         SESSION_COOKIE_NAME,
         raw,
         max_age=settings.session_cookie_max_age,
@@ -178,11 +226,4 @@ async def tg_browser_consume(
         secure=settings.cookie_secure,
         path="/",
     )
-    return RedirectResponse(
-        url=payload.target_path,
-        status_code=303,
-        headers={
-            "Cache-Control": "no-store",
-            "Referrer-Policy": "no-referrer",
-        },
-    )
+    return redirect

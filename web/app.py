@@ -216,6 +216,10 @@ def create_web_app(
     def _next_date(value: str) -> str:
         return prev_next_dates(value)[1]
 
+    def _request_surface(request: Request) -> str:
+        return getattr(request.state, "web_surface", "browser")
+
+    templates.env.globals["request_surface"] = _request_surface
     templates.env.filters["prev_date"] = _prev_date
     templates.env.filters["next_date"] = _next_date
     app.state.templates = templates

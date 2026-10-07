@@ -32,15 +32,15 @@
   {# Порядок CSS намеренный: shell → schedule components → extra components. #}
   <link
     rel="stylesheet"
-    href="{{ url_for('static', path='css/app.css') }}?v=8"
+    href="{{ url_for('static', path='css/app.css') }}?v=10"
   >
   <link
     rel="stylesheet"
-    href="{{ url_for('static', path='css/components/schedule.css') }}?v=8"
+    href="{{ url_for('static', path='css/components/schedule.css') }}?v=10"
   >
   <link
     rel="stylesheet"
-    href="{{ url_for('static', path='css/components/extra.css') }}?v=8"
+    href="{{ url_for('static', path='css/components/extra.css') }}?v=10"
   >
 
   {% block extra_head %}{% endblock %}
@@ -50,7 +50,10 @@
    ТЗ 51.5: SSE подключается к body и НЕ должен пересоздаваться
    при HTMX-замене #app-shell. 
 #}
+{% from "components/ui/icon.html" import icon %}
+{% set surface_mode = request_surface(request) %}
 <body
+    data-surface="{{ surface_mode }}"
   {% if csrf_token is defined and csrf_token %}
     {#ontouchstart="" {#если перестанет работать action button на айфоне #}
     hx-ext="sse"
@@ -58,7 +61,7 @@
     hx-headers='{"X-CSRF-Token": "{{ csrf_token }}"}'
   {% endif %}
 >
-{% from "components/ui/icon.html" import icon %}
+
 
 {# =========================================================================
    APP SHELL
@@ -86,6 +89,19 @@
     <div class="header-title">
       {% block header %}Расписание{% endblock %}
     </div>
+  {# Telegram miniapp #} 
+    {% if surface_mode == "telegram" %}
+    <a
+      href="/"
+      id="tg-open-browser"
+      class="header-settings"
+      aria-label="Открыть в браузере"
+      title="Открыть в браузере"
+    >
+      {{ icon("link-duotone", size="xl", class="header-settings__icon") }}
+      <span class="visually-hidden">Открыть в браузере</span>
+    </a>
+    {% endif %}
 
     {# Settings — top-level screen, поэтому заменяется весь app shell. #}
     <a
@@ -262,17 +278,26 @@
    shell заменяется через HTMX, а scripts и document-level listeners должны
    остаться живыми при переходах между top-level screens.
    ========================================================================= #}
-<script src="/static/js/htmx.min.js?v=8"></script>
-<script src="/static/js/htmx-ext-sse.min.js?v=8"></script>
-<script src="/static/js/app.js?v=8"></script>
+<script src="/static/js/htmx.min.js?v=10"></script>
+<script src="/static/js/htmx-ext-sse.min.js?v=10"></script>
+<script src="/static/js/app.js?v=10"></script>
 
 {# Общий UI runtime: autofit, swipe, lesson details, student switch. #}
-<script src="/static/js/schedule.js?v=8"></script>
-<script src="/static/js/schedule-swipe.js?v=8"></script>
+<script src="/static/js/schedule.js?v=10"></script>
+<script src="/static/js/schedule-swipe.js?v=10"></script>
 {# Extra-class forms: preview и reminder stepper; безопасный no-op вне forms. #}
-<script src="/static/js/extra.js?v=8"></script>
+<script src="/static/js/extra.js?v=10"></script>
+
+{% if surface_mode == "telegram" %}
+{# Telegram surface: SDK обязателен и на внутренних экранах —
+   после location.replace("/") из /tg/app объект window.Telegram
+   исчезает без этого тега. CSP: script-src https://telegram.org. #}
+<script src="https://telegram.org/js/telegram-web-app.js?v=10"></script>
+<script src="/static/js/telegram-webapp.js?v=10"></script>
+{% endif %}
 
 {# Для будущих действительно page-specific scripts. #}
 {% block extra_scripts %}{% endblock %}
+
 </body>
 </html>

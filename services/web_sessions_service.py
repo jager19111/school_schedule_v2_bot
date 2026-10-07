@@ -72,10 +72,11 @@ class WebDeviceInfo:
     """Элемент списка активных устройств (без secrets)."""
 
     session_id: int
-    user_agent: str
+    user_agent: Optional[str]
     created_at: Optional[str]
     last_seen_at: Optional[str]
     current: bool
+    surface: str = "browser"
 
 
 class WebSessionsService:
@@ -266,6 +267,7 @@ class WebSessionsService:
                 created_at=_to_str(r.get("created_at")),
                 last_seen_at=_to_str(r.get("last_seen_at")),
                 current=str(r.get("session_hash")) == current_session_hash,
+                surface=str(r.get("surface") or "browser"),
             )
             for r in rows
         ]

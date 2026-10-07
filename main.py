@@ -638,7 +638,7 @@ async def main():
         # Teacher router содержит только teacher_sched:* callbacks.
         dp.include_router(schedule_teacher.router)
         # Единственная message entry point:
-        # «📅 Моё расписание» для child / parent / observer / teacher.
+        # «📅 Расписание» для child / parent / observer / teacher.
         dp.include_router(schedule_child.router)
 
         dp.include_router(settings.router)

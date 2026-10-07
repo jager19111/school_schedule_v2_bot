@@ -1482,6 +1482,7 @@ def web_devices_to_web(
                     or "—"
                 ),
                 is_current=device.current,
+                surface=device.surface,
             )
         )
 

@@ -4,7 +4,7 @@
 # Формат строк на проводе не изменён.
 #
 # Дополнительно: logger.warning на роутинном пути открытия расписания
-# (каждый вход в "Моё расписание" с одной целью) переведён в debug.
+# (каждый вход в "Расписание" с одной целью) переведён в debug.
 
 import logging
 from typing import Optional
@@ -464,6 +464,7 @@ def _build_schedule_target_view_models(
 @router.message(F.text.in_({
     "📅 Моё расписание",
     "📅 Мое расписание",
+    "📅 Расписание"
 }))
 async def open_schedule_hub(
     message: Message,

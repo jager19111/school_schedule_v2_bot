@@ -194,7 +194,7 @@ class WebAuthRepository(BaseRepository):
     ) -> List[Dict[str, Any]]:
         return await self._fetch_all(
             """
-            SELECT id, session_hash, created_at, last_seen_at, user_agent
+            SELECT id, session_hash, created_at, last_seen_at, user_agent, surface
             FROM web_sessions
             WHERE user_id = ?
               AND revoked_at IS NULL

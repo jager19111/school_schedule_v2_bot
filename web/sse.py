@@ -55,7 +55,7 @@ class SSEConnection:
 
 
 class SSEConnectionManager:
-    MAX_CONNECTIONS_PER_USER = 5
+    MAX_CONNECTIONS_PER_USER = 10
 
     def __init__(self, event_bus: ApplicationEventBus) -> None:
         self._bus = event_bus

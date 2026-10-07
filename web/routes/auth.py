@@ -40,6 +40,7 @@ def _session_ref(context) -> str:
 
 class ExchangeRequest(BaseModel):
     token: str = Field(min_length=8, max_length=256)
+    is_standalone: bool = False
 
 
 class ExchangeResponse(BaseModel):
@@ -67,6 +68,7 @@ class WebSessionItem(BaseModel):
     created_at: str | None
     last_seen_at: str | None
     current: bool
+    surface: str = "browser"
 
 
 @router.get("/auth", response_class=HTMLResponse)
@@ -112,6 +114,15 @@ async def exchange(
         user_id=user_id,
         user_agent=request.headers.get("user-agent"),
     )
+# --- ИЗМЕНЕНИЕ ЗДЕСЬ: Определяем surface ---
+    surface = "pwa" if payload.is_standalone else "browser"
+
+    raw, context = await sessions.create_session(
+        user_id=user_id,
+        user_agent=request.headers.get("user-agent"),
+        surface=surface, # <--- Передаем "pwa" или "browser"
+    )
+    # -------------------------------------------
     settings = request.app.state.web_settings
     response.set_cookie(
         SESSION_COOKIE_NAME,
@@ -237,6 +248,10 @@ async def list_sessions(
         user_id=context.user_id,
         current_session_hash=context.session_hash,
     )
+    
+    # ДОБАВЬТЕ ЭТОТ ПРИНТ ДЛЯ ОТЛАДКИ:
+    for d in devices:
+        print(f"DEBUG DEVICE: UA='{d.user_agent}', Surface='{d.surface}'")
     return [
         WebSessionItem(
             session_id=d.session_id,
@@ -244,6 +259,7 @@ async def list_sessions(
             created_at=d.created_at,
             last_seen_at=d.last_seen_at,
             current=d.current,
+            surface=d.surface,
         )
         for d in devices
     ]
