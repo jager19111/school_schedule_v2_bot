@@ -19,7 +19,7 @@
     aria-pressed="true"
     title="Убрать из отслеживаемых классов"
   >
-    {{ icon("star-duotone", class="icon-primary") }}
+    {{ icon("star-duotone") }}
   </button>
   {% else %}
   <button
@@ -34,16 +34,18 @@
     aria-pressed="false"
     title="Добавить в отслеживаемые классы"
   >
-    {{ icon("star-duotone", class="icon-muted") }}
+    {{ icon("star-duotone") }}
   </button>
   {% endif %}
 
   {% if class_watch_error %}
-  <span
+  <!-- Всплывающая плашка (Toast). Удаляется мгновенно при клике (onclick) -->
+  <div
     class="class-watch-toggle__error"
     role="alert"
   >
-    {{ icon("warning-duotone") }} {{ class_watch_error }}
-  </span>
+    {{ icon("warning-duotone", class="icon-warning") }} 
+    <span>{{ class_watch_error }}</span>
+  </div>
   {% endif %}
 </span>

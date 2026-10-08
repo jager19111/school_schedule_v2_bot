@@ -32,15 +32,15 @@
   {# Порядок CSS намеренный: shell → schedule components → extra components. #}
   <link
     rel="stylesheet"
-    href="{{ url_for('static', path='css/app.css') }}?v=10"
+    href="{{ url_for('static', path='css/app.css') }}?v=11"
   >
   <link
     rel="stylesheet"
-    href="{{ url_for('static', path='css/components/schedule.css') }}?v=10"
+    href="{{ url_for('static', path='css/components/schedule.css') }}?v=11"
   >
   <link
     rel="stylesheet"
-    href="{{ url_for('static', path='css/components/extra.css') }}?v=10"
+    href="{{ url_for('static', path='css/components/extra.css') }}?v=11"
   >
 
   {% block extra_head %}{% endblock %}
@@ -267,6 +267,19 @@
     hidden
     aria-hidden="true"
   ></div>
+  {# Связь потеряна: показывается app.js при сетевых ошибках HTMX.
+     Вне #app-shell — переживает HTMX-переходы между экранами.
+     nginx-спиннер при этом отвечает только за полную навигацию. #}
+  <div
+    id="connection-lost"
+    class="connection-lost"
+    hidden
+    role="alert"
+    aria-live="polite"
+  >
+    Связь с сервером потеряна.
+    Проверьте интернет и попробуйте ещё раз.
+  </div>
 {% endif %}
 
 {# =========================================================================
@@ -278,22 +291,22 @@
    shell заменяется через HTMX, а scripts и document-level listeners должны
    остаться живыми при переходах между top-level screens.
    ========================================================================= #}
-<script src="/static/js/htmx.min.js?v=10"></script>
-<script src="/static/js/htmx-ext-sse.min.js?v=10"></script>
-<script src="/static/js/app.js?v=10"></script>
+<script src="/static/js/htmx.min.js?v=11"></script>
+<script src="/static/js/htmx-ext-sse.min.js?v=11"></script>
+<script src="/static/js/app.js?v=11"></script>
 
 {# Общий UI runtime: autofit, swipe, lesson details, student switch. #}
-<script src="/static/js/schedule.js?v=10"></script>
-<script src="/static/js/schedule-swipe.js?v=10"></script>
+<script src="/static/js/schedule.js?v=11"></script>
+<script src="/static/js/schedule-swipe.js?v=11"></script>
 {# Extra-class forms: preview и reminder stepper; безопасный no-op вне forms. #}
-<script src="/static/js/extra.js?v=10"></script>
+<script src="/static/js/extra.js?v=11"></script>
 
 {% if surface_mode == "telegram" %}
 {# Telegram surface: SDK обязателен и на внутренних экранах —
    после location.replace("/") из /tg/app объект window.Telegram
    исчезает без этого тега. CSP: script-src https://telegram.org. #}
-<script src="https://telegram.org/js/telegram-web-app.js?v=10"></script>
-<script src="/static/js/telegram-webapp.js?v=10"></script>
+<script src="https://telegram.org/js/telegram-web-app.js?v=11"></script>
+<script src="/static/js/telegram-webapp.js?v=11"></script>
 {% endif %}
 
 {# Для будущих действительно page-specific scripts. #}

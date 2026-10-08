@@ -187,6 +187,101 @@
     );
   }
 
+    /*
+   * CONNECTION LOST BANNER
+   *
+   * nginx-спиннер (proxy_intercept_errors) виден только при полной
+   * навигации; HTMX-клики получают 503 без UI-фидбека. Этот баннер
+   * закрывает разрыв для живой сессии.
+   *
+   * Показ: htmx:sendError / responseError (0, 502, 503, 504),
+   * с debounce — hx-sync abort тоже fires sendError.
+   * Скрытие: успешный afterRequest или sseOpen.
+   */
+  var CONNECTION_LOST_DELAY_MS = 1200;
+  var connectionLostTimer = null;
+
+  function showConnectionLost() {
+    var banner = document.getElementById("connection-lost");
+    if (banner) {
+      banner.hidden = false;
+    }
+  }
+
+  function hideConnectionLost() {
+    var banner = document.getElementById("connection-lost");
+    if (banner) {
+      banner.hidden = true;
+    }
+  }
+
+  function scheduleConnectionLost() {
+    if (connectionLostTimer !== null) {
+      return;
+    }
+    connectionLostTimer = window.setTimeout(function () {
+      connectionLostTimer = null;
+      showConnectionLost();
+    }, CONNECTION_LOST_DELAY_MS);
+  }
+
+  function cancelConnectionLost() {
+    if (connectionLostTimer !== null) {
+      window.clearTimeout(connectionLostTimer);
+      connectionLostTimer = null;
+    }
+    hideConnectionLost();
+  }
+
+  function isServerUnreachable(event) {
+    var xhr = event.detail && event.detail.xhr;
+    if (!xhr) {
+      return true;
+    }
+    /* 0 — network error (в т.ч. Response.error() из Service Worker);
+       502/503/504 — nginx без живого upstream (intercept_errors). */
+    return (
+      xhr.status === 0
+      || xhr.status === 502
+      || xhr.status === 503
+      || xhr.status === 504
+    );
+  }
+
+  function clearStuckRequestIndicator() {
+    /* Защита от залипания skeleton при abort'е hx-sync запросов. */
+    document.body.classList.remove("htmx-request");
+  }
+
+  function setupConnectionLostBanner() {
+    document.body.addEventListener(
+      "htmx:sendError",
+      function () {
+        clearStuckRequestIndicator();
+        scheduleConnectionLost();
+      }
+    );
+
+    document.body.addEventListener(
+      "htmx:responseError",
+      function (event) {
+        if (isServerUnreachable(event)) {
+          clearStuckRequestIndicator();
+          scheduleConnectionLost();
+        }
+      }
+    );
+
+    document.body.addEventListener(
+      "htmx:afterRequest",
+      function (event) {
+        if (!event.detail.failed) {
+          cancelConnectionLost();
+        }
+      }
+    );
+  }
+  
   function registerServiceWorker() {
     // Читаем метку surface из body, которую устанавливает бэкенд для Mini App
     var isTelegramSurface = document.body.dataset.surface === "telegram";
@@ -303,6 +398,7 @@
       "htmx:sseOpen",
       function () {
         sseOpen = true;
+        cancelConnectionLost();
       }
     );
 
@@ -317,6 +413,19 @@
       "htmx:sseError",
       function () {
         sseOpen = false;
+        /*
+         * SSE падает по трём причинам: сервер недоступен, сессия
+         * отозвана (EventSource получает 401 на reconnect), краткий
+         * рестарт деплоя. Баннер напрямую НЕ показываем — через 10 сек
+         * revalidation разводит сценарии сама:
+         * сервер недоступен -> sendError/503 -> баннер;
+         * сессия отозвана  -> 401 -> HX-Redirect /auth.
+         */
+        window.setTimeout(function () {
+          if (!sseOpen) {
+            revalidateCurrentScreen();
+          }
+        }, 10000);
       }
     );
   }
@@ -513,6 +622,7 @@
 
   registerServiceWorker();
   cleanupTelegramServiceWorker();
+  setupConnectionLostBanner();
 
   if (document.readyState === "loading") {
     document.addEventListener(
@@ -529,4 +639,22 @@
     revalidate: revalidateCurrentScreen,
     sseConnected: sseConnected
   };
+
+
+    /* --- УВЕДОМЛЕНИЯ (TOASTS) --- */
+
+  // 1. Мгновенное закрытие уведомления при тапе (клике) по нему
+  document.addEventListener("click", function(event) {
+    const toast = event.target.closest(".class-watch-toggle__error");
+    if (toast) {
+      toast.remove();
+    }
+  });
+
+  // 2. Автоматическая очистка старых уведомлений при любой HTMX-навигации (перелистывание дней)
+  document.body.addEventListener("htmx:beforeRequest", function() {
+    document.querySelectorAll(".class-watch-toggle__error").forEach(function(toast) {
+      toast.remove();
+    });
+  });
 })();

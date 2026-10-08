@@ -34,7 +34,7 @@
  *
  * При activate старые school-schedule-shell-* caches удаляются.
  */
-const CACHE_VERSION = "school-schedule-shell-v10";
+const CACHE_VERSION = "school-schedule-shell-v11";
 
 /*
  * URL должны ТОЧНО совпадать с URL из base.html.
@@ -46,16 +46,16 @@ const SHELL_ASSETS = [
   "/offline.html",
   "/manifest.webmanifest",
 
-  "/static/css/app.css?v=10",
-  "/static/css/components/schedule.css?v=10",
-  "/static/css/components/extra.css?v=10",
+  "/static/css/app.css?v=11",
+  "/static/css/components/schedule.css?v=11",
+  "/static/css/components/extra.css?v=11",
 
-  "/static/js/htmx.min.js?v=10",
-  "/static/js/htmx-ext-sse.min.js?v=10",
-  "/static/js/app.js?v=10",
-  "/static/js/schedule.js?v=10",
-  "/static/js/extra.js?v=10",
-  "/static/js/schedule-swipe.js?v=10",
+  "/static/js/htmx.min.js?v=11",
+  "/static/js/htmx-ext-sse.min.js?v=11",
+  "/static/js/app.js?v=11",
+  "/static/js/schedule.js?v=11",
+  "/static/js/extra.js?v=11",
+  "/static/js/schedule-swipe.js?v=11",
 
   "/static/icons/icon-192.png",
   "/static/icons/icon-512.png",
