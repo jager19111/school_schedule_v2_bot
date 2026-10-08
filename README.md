@@ -10,6 +10,81 @@
 * **Генерация постеров (v2.2):** PNG-постеры расписания через Chromium (`PlaywrightRenderer`, строго async API) с fallback на чистый `PillowRenderer` для слабых серверов. Semaphore=2, двухуровневый кэш с file_id, graceful degradation к тексту.
 * **Garbage Collection:** Автоматическая очистка старых дампов `raw_nika_cache` (>7 дней) и "мягкое" отключение уведомлений для пользователей, неактивных более 60 дней.
 
+
+
+
+## Telegram Mini App (`/tg/*`)
+
+Telegram Mini App работает как дублер основного сайта: те же
+templates, сервисы и расписания, отдельный только auth-bootstrap.
+
+### Маршруты
+
+| Маршрут | Назначение |
+|---|---|
+| `GET /tg/app` | Entry-экран Mini App (public). Загружает SDK, читает `initData`, отправляет на `/tg/bootstrap` |
+| `POST /tg/bootstrap` | Валидация подписи `initData` (HMAC, bot token) → session с `surface="telegram"` |
+| `POST /tg/browser-handoff` | Кнопка «Открыть в браузере»: выдаёт одноразовый код (TTL 120 сек) — только для telegram-сессии |
+| `GET /tg/browser/consume` | Внешний браузер: consume кода → browser-сессия → 303 на чистый URL |
+
+### Поток
+Бот (WebApp-кнопка) → /tg/app → initData → /tg/bootstrap
+→ session surface=telegram (WebView)
+→ [скрепка] /tg/browser-handoff → openLink()
+→ внешний браузер /tg/browser/consume?code=...
+→ browser-сессия → PWA
+
+
+### Файлы
+
+- `web/routes/telegram_app.py` — все `/tg/*` маршруты
+- `web/telegram/` — слой surface (только для Mini App)
+- `services/telegram_webauth_service.py` — валидация initData
+- `services/browser_handoff_service.py` — одноразовые коды перехода
+- `core/repository/browser_handoff_repository.py` — SQL-слой кодов
+- `web/templates/tg/`, `web/static/js/tg-app.js` — UI bootstrap
+- `web/static/js/telegram-webapp.js` — адаптер (BackButton/openLink/theme)
+
+### Инварианты
+
+- `surface` в `web_sessions` (`telegram` / `browser`) — источник
+  истины для условного рендера и guard'ов; не доверять query-параметрам.
+- Handoff-код: одноразовый, в БД только SHA-256, target — allowlist
+  (`ALLOWED_TARGET_PATHS`), TTL 120 сек.
+- Повторное открытие Mini App переиспользует telegram-сессию;
+  повторный handoff из того же браузера переиспользует browser-сессию.
+- SW не регистрируется в WebView (`data-surface` на `<body>`,
+  guard в `app.js`).
+- `Set-Cookie` в `/tg/browser-handoff`-подобных роутах ставится на
+  **возвращаемый** `RedirectResponse`, не на инжектированный `response`
+  (см. `test_consume_sets_cookie_on_redirect`).
+- CSRF: `/tg/bootstrap` в `EXEMPT_PATHS` (защита — подпись initData);
+  `/tg/browser-handoff` требует `X-CSRF-Token`.
+
+### Отключение
+
+`WEB_TG_APP_ENABLED=0` — бот возвращается к legacy magic-link
+(`/auth#token=...`), маршруты `/tg/*` остаются рабочими.
+
+### Тесты
+pytest -q tests/web/test_telegram_init_data.py
+tests/web/test_browser_handoff.py
+tests/web/test_tg_app_regression.py
+
+
+Регрессия «PWA замерзает при отозванной сессии» ловится
+`test_htmx_401_returns_hx_redirect`; «сессия создана, но браузер
+не вошёл» — `test_consume_sets_cookie_on_redirect`.
+
+
+
+
+
+
+
+
+
+
 ## Требования
 * Python 3.10+ (CI зафиксирован на 3.12)
 * `aiogram` 3.x

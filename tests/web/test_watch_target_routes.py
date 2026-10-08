@@ -52,7 +52,7 @@ def _watch_target(
     )
 
 
-def test_select_student_sets_typed_cookie_and_hx_redirect(
+def test_select_student_sets_typed_cookie_and_triggers_revalidate(
     web_client: TestClient,
     web_test_app: FastAPI,
 ):
@@ -71,9 +71,9 @@ def test_select_student_sets_typed_cookie_and_hx_redirect(
     )
 
     assert response.status_code == 200
-    assert response.headers["HX-Redirect"] == (
-        "/schedule/week"
-    )
+    
+    # ИСПРАВЛЕНИЕ: Проверяем триггер вместо редиректа
+    assert response.headers["hx-trigger"] == "schedule:revalidate"
 
     assert response.cookies.get(
         "web_schedule_target",
@@ -107,13 +107,14 @@ def test_select_watch_target_sets_typed_cookie(
     )
 
     assert response.status_code == 200
-    assert response.headers["HX-Redirect"] == "/"
+    
+    # ИСПРАВЛЕНИЕ: Проверяем триггер вместо редиректа
+    assert response.headers["hx-trigger"] == "schedule:revalidate"
 
     assert response.cookies.get(
         "web_schedule_target",
     ) == "watch:701"
-
-
+    
 def test_select_foreign_watch_target_returns_403(
     web_client: TestClient,
     web_test_app: FastAPI,

@@ -356,12 +356,14 @@ async def test_failed_admin_transfer_does_not_disband_family() -> None:
         audit_service=audit,
     )
 
-    success, successor_id = await service.reset_user_profile(
+    # ИСПРАВЛЕНИЕ: сохраняем ответ в одну переменную
+    result = await service.reset_user_profile(
         user_id=401,
     )
 
-    assert success is False
-    assert successor_id is None
+    # ИСПРАВЛЕНИЕ: обращаемся к свойствам DTO
+    assert result.success is False
+    assert result.new_admin_user_id is None
     assert repository.disband_called is False
     assert audit.calls == []
 
@@ -753,7 +755,7 @@ async def test_create_family_and_link_requires_parent_role(
     assert user_row["family_id"] is None
     
 @pytest.mark.asyncio
-async def test_reset_non_admin_profile_returns_success_tuple(
+async def test_reset_non_admin_profile_returns_success_dto(
     profile_repository: ProfileRepository,
     create_test_user,
 ) -> None:
@@ -772,7 +774,10 @@ async def test_reset_non_admin_profile_returns_success_tuple(
         user_id=1101,
     )
 
-    assert result == (True, None)
+    # ИСПРАВЛЕНИЕ: проверяем атрибуты DTO по отдельности
+    assert result.success is True
+    assert result.new_admin_user_id is None
+    assert result.family_disbanded is False
     
 class _MissingUserResetRepository:
     async def get_profile_reset_impact(
@@ -790,7 +795,7 @@ class _MissingUserResetRepository:
 
 
 @pytest.mark.asyncio
-async def test_reset_non_admin_failure_returns_false_tuple() -> None:
+async def test_reset_non_admin_failure_returns_false_dto() -> None:
     audit = _AuditSpy()
 
     service = ProfileService(
@@ -802,5 +807,8 @@ async def test_reset_non_admin_failure_returns_false_tuple() -> None:
         user_id=1102,
     )
 
-    assert result == (False, None)
+    # ИСПРАВЛЕНИЕ: проверяем атрибуты DTO по отдельности
+    assert result.success is False
+    assert result.new_admin_user_id is None
+    assert result.family_disbanded is False
     assert audit.calls == []
