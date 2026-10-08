@@ -35,7 +35,7 @@ import logging
 import aiohttp
 import aiosqlite
 
-from aiogram.types import BotCommand
+from aiogram.types import BotCommand, MenuButtonWebApp, WebAppInfo
 from zoneinfo import ZoneInfo
 from aiogram import Bot, Dispatcher
 from aiogram.enums import ParseMode
@@ -935,6 +935,16 @@ async def main():
             logger.info("Web UI: %s", config.WEB_PUBLIC_URL)
         # -------------------------
 
+        # --- Настраиваем кнопку Mini App слева от поля ввода ---
+        if getattr(config, "WEB_TG_APP_ENABLED", True) and hasattr(config, "WEB_PUBLIC_URL"):
+            web_app_url = f"{config.WEB_PUBLIC_URL.rstrip('/')}/tg/app"
+            await bot.set_chat_menu_button(
+                menu_button=MenuButtonWebApp(
+                    text="📅 Расписание", 
+                    web_app=WebAppInfo(url=web_app_url)
+                )
+            )
+    # -------------------------------------------------------
         # 9. Запуск поллинга
         logger.info("🚀 Бот (v2) готов к работе!")
         await dp.start_polling(bot)

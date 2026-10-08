@@ -79,6 +79,11 @@ async def handle_web_schedule_text(
     config: Config,
     web_sessions_service: Optional[WebSessionsService] = None,
 ) -> None:
+    # --- ВРЕМЕННЫЙ ПАТЧ ОБНОВЛЕНИЯ МЕНЮ ---
+    from bot.handlers.registration import _show_main_menu
+    await _show_main_menu(message, text="<i>🔄 Синхронизация меню...</i>")
+    # --------------------------------------
+    
     # Защита: если WEB_ENABLED=0 в .env, сервис не инициализируется
     if web_sessions_service is None:
         await message.answer("Веб-версия сейчас отключена на сервере 🛠")

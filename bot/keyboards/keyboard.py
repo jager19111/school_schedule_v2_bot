@@ -109,11 +109,10 @@ class Keyboards:
 
 
     @staticmethod
-    def get_main_menu(web_app_url: str | None = None) -> ReplyKeyboardMarkup:
-        """Универсальная нижняя клавиатура для всех ролей."""
+    def get_main_menu() -> ReplyKeyboardMarkup:
+        """Универсальная нижняя клавиатура для всех ролей (чистая сетка 2x2)."""
         keyboard = [
-            [KeyboardButton(text='📅 Расписание'), KeyboardButton(text='🌐 Веб-расписание')],
-            [KeyboardButton(text='🏫 Поиск по школе')],
+            [KeyboardButton(text='📅 Расписание')], [KeyboardButton(text='🏫 Поиск по школе')],
             [KeyboardButton(text='➕ Доп. занятия'), KeyboardButton(text='⚙️ Настройки')]
         ]
         return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
