@@ -43,7 +43,7 @@ import uuid
 from typing import Optional, List, Dict, Any, Tuple
 
 from core.repository.base_repository import BaseRepository
-from core.models.dto import FamilyDisbandResultDTO
+from core.models.dto import FamilyDisbandResultDTO, BroadcastUserDTO
 
 logger = logging.getLogger(__name__)
 
@@ -2162,3 +2162,38 @@ class ProfileRepository(BaseRepository):
             (family_id, excluding_user_id),
         )
         return int(row["user_id"]) if row else None
+    
+    
+    async def get_users_for_broadcast(
+        self,
+        roles: list[str] | None,
+    ) -> list[BroadcastUserDTO]:
+        """
+        Пользователи для admin-рассылки.
+
+        Фильтрация notifications_blocked выполняет ProfileService
+        (считает skipped); is_notifications_enabled не выбирается
+        намеренно.
+        """
+        if roles is None:
+            rows = await self._fetch_all(
+                "SELECT user_id, notifications_blocked FROM users"
+            )
+        else:
+            placeholders = ",".join("?" for _ in roles)
+            rows = await self._fetch_all(
+                f"""
+                SELECT user_id, notifications_blocked
+                FROM users
+                WHERE role IN ({placeholders})
+                """,
+                tuple(roles),
+            )
+
+        return [
+            BroadcastUserDTO(
+                user_id=int(row["user_id"]),
+                notifications_blocked=bool(row["notifications_blocked"]),
+            )
+            for row in rows
+        ]

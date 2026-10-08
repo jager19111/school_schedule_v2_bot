@@ -198,18 +198,70 @@ def _create_telegram_app_tables(conn: sqlite3.Connection) -> str | None:
         )
         
     return "telegram_app_tables_applied"
-# --------------------------------------------
-# --------------------------------------------
 
-# Добавьте _add_audit_logs_table в массив MIGRATIONS
+# --- ДОБАВЛЕНО (Broadcast: админ-рассылки) ---
+def _create_broadcast_tables(conn: sqlite3.Connection) -> str | None:
+    """
+    broadcasts + broadcast_deliveries.
+    Статусы broadcasts: pending (создано на превью) -> sending -> done;
+    pending -> cancelled (кнопкой или stale-cleanup).
+    Идемпотентность запуска: переход pending -> sending атомарен
+    в UPDATE ... WHERE status='pending'.
+    """
+    # ЗАМЕЧАНИЕ УЧТЕНО: Проверка на идемпотентность (чтобы не спамить в лог при рестартах)
+    cursor = conn.execute("PRAGMA table_info(broadcasts)")
+    if cursor.fetchone() is not None:
+        return None
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS broadcasts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            admin_user_id INTEGER NOT NULL,
+            audience TEXT NOT NULL,
+            text TEXT NOT NULL,
+            photo_file_id TEXT,
+            button_text TEXT,
+            button_url TEXT,
+            recipient_count INTEGER NOT NULL DEFAULT 0,
+            status TEXT NOT NULL DEFAULT 'draft',
+            created_at TEXT NOT NULL,
+            started_at TEXT,
+            finished_at TEXT
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS broadcast_deliveries (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            broadcast_id INTEGER NOT NULL,
+            user_id INTEGER NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+                -- pending | sent | failed | skipped
+            error_code TEXT,
+            sent_at TEXT
+        )
+    """)
+    conn.execute("""
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_broadcast_deliveries_unique
+        ON broadcast_deliveries(broadcast_id, user_id)
+    """)
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_broadcasts_status_created
+        ON broadcasts(status, created_at)
+    """)
+    return "broadcast_tables"
+# ---------------------------------------------
+
 MIGRATIONS = [
     _add_family_invites_short_code,
     _apply_schedule_cache_v3,
     _add_image_schedule_preference,
     _add_audit_logs_table,
-    _create_web_auth_tables, # <-- ДОБАВЛЕНО (Phase 1: Web)
-    _create_telegram_app_tables,  # <-- ДОБАВЛЕНО (Phase MA)
+    _create_web_auth_tables,
+    _create_telegram_app_tables,
+    _create_broadcast_tables, # <-- ДОБАВЛЕНО
 ]
+# --------------------------------------------
+
 
 def apply_migrations_sync(db_path: str) -> list[str]:
     """Применяет все миграции. Возвращает список применённых."""

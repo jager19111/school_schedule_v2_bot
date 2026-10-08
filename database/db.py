@@ -447,7 +447,45 @@ class Database:
                 )
             """)
 
-            # --- ДОБАВЛЕНО (Phase 1: Web Auth Tables + Handoff) ---
+# --- Broadcast: админ-рассылки ---
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS broadcasts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    admin_user_id INTEGER NOT NULL,
+                    audience TEXT NOT NULL,
+                    text TEXT NOT NULL,
+                    photo_file_id TEXT,
+                    button_text TEXT,
+                    button_url TEXT,
+                    recipient_count INTEGER NOT NULL DEFAULT 0,
+                    status TEXT NOT NULL DEFAULT 'draft',
+                    created_at TEXT NOT NULL,
+                    started_at TEXT,
+                    finished_at TEXT
+                )
+            """)
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS broadcast_deliveries (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    broadcast_id INTEGER NOT NULL,
+                    user_id INTEGER NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'pending',
+                        -- pending | sent | failed | skipped
+                    error_code TEXT,
+                    sent_at TEXT
+                )
+            """)
+            await db.execute("""
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_broadcast_deliveries_unique
+                ON broadcast_deliveries(broadcast_id, user_id)
+            """)
+            await db.execute("""
+                CREATE INDEX IF NOT EXISTS idx_broadcasts_status_created
+                ON broadcasts(status, created_at)
+            """)
+            # ---------------------------------------------
+            
+            # --- Web Auth Tables + Handoff ---
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS web_login_tokens (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,

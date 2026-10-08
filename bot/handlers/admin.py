@@ -95,11 +95,13 @@ async def cmd_admin_help(message: Message, admin_service: AdminService) -> None:
         "🔸 /stats — Статистика пользователей, anti-flood и web-аутентификации\n"
         "🔸 /user <i>[id]</i> — Подробная информация о конкретном пользователе (Telegram + БД)\n"
         "🔸 /users — Скачать CSV-отчет со всеми пользователями бота\n"
+        "🔸 /message <i>[teachers|parents]</i> — Рассылка пользователям (текст, фото, кнопка)\n"
         "🔸 /source_status — Состояние кэша NIKA (актуальность расписания, здоровье парсера)\n"
         "🔸 /img_stats — Статистика графического движка (рендер картинок, circuit breaker)\n"
         "🔸 /stress <i>[кол-во] [chat_id]</i> — Стресс-тест боевого пайплайна уведомлений\n"
         "🔸 /stress_render <i>[кол-во]</i> — Стресс-тест боевого рендера расписания. По умолчанию 100 рендеров\n"
         "🔸 /debug_ui <i>[morning|change|lesson]</i> — Тестовый рендер всех видов уведомлений в чат\n\n"
+        
         "<i>Все команды работают в режиме read-only и безопасны для production (кроме направленного /stress).</i>"
     )
     await message.answer(text, parse_mode="HTML")

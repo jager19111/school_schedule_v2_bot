@@ -1339,3 +1339,32 @@ class Keyboards:
                 ]
             ]
         )
+        
+        
+        
+    # ================= ADMIN BROADCAST =================
+
+    @staticmethod
+    def get_broadcast_photo_prompt() -> InlineKeyboardMarkup:
+        return InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text='🖼 Да', callback_data=callbacks.BROADCAST_PHOTO_YES),
+             InlineKeyboardButton(text='➡️ Без фото', callback_data=callbacks.BROADCAST_PHOTO_NO)],
+        ])
+
+    @staticmethod
+    def get_broadcast_button_prompt() -> InlineKeyboardMarkup:
+        return InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text='🔗 Да', callback_data=callbacks.BROADCAST_BUTTON_YES),
+             InlineKeyboardButton(text='➡️ Без кнопки', callback_data=callbacks.BROADCAST_BUTTON_NO)],
+        ])
+
+    @staticmethod
+    def get_broadcast_confirm_kb(*, broadcast_id: int) -> InlineKeyboardMarkup:
+        return InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text='✅ Отправить',
+                                  callback_data=callbacks.BroadcastConfirmCD(broadcast_id=broadcast_id).pack())],
+            [InlineKeyboardButton(text='✏️ Изменить',
+                                  callback_data=callbacks.BroadcastEditCD(broadcast_id=broadcast_id).pack()),
+             InlineKeyboardButton(text='❌ Отменить',
+                                  callback_data=callbacks.BroadcastCancelCD(broadcast_id=broadcast_id).pack())],
+        ])

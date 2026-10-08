@@ -15,7 +15,7 @@ from core.models.dto import (
     ParentStudentNotificationSettingsViewModel,
     ProfileResetImpactDTO,
     SchoolDictionariesDTO,
-    StudentTelegramSettingsDTO,
+    StudentTelegramSettingsDTO, BroadcastAudience, BroadcastAudienceDTO,
     StudentTelegramSettingsViewModel, ProfileResetResultDTO,
     UserProfileDTO,     FamilyInviteCodeLookupDTO,
 )
@@ -968,5 +968,37 @@ class ProfileService:
             excluding_user_id=excluding_user_id,
         )
 
+    _BROADCAST_FAMILY_ROLES = ("parent", "observer", "child")
 
+    async def get_broadcast_audience(
+        self,
+        audience: "BroadcastAudience",
+    ) -> "BroadcastAudienceDTO":
+        """
+        Аудитория admin-рассылки: не заблокировавшие бота.
 
+        teachers -> учителя; family -> parent+observer+child;
+        all -> все роли. notifications_blocked=1 -> skipped.
+        """
+        if audience == BroadcastAudience.TEACHERS:
+            roles: list[str] | None = ["teacher"]
+        elif audience == BroadcastAudience.FAMILY:
+            roles = list(self._BROADCAST_FAMILY_ROLES)
+        else:
+            roles = None
+
+        users = await self.repo.get_users_for_broadcast(roles)
+
+        recipient_ids: list[int] = []
+        skipped = 0
+
+        for user in users:
+            if user.notifications_blocked:
+                skipped += 1
+            else:
+                recipient_ids.append(user.user_id)
+
+        return BroadcastAudienceDTO(
+            recipient_ids=tuple(recipient_ids),
+            skipped=skipped,
+        )

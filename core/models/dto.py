@@ -1270,7 +1270,10 @@ class AuditAction(str, Enum):
     EXTRA_CLASS_ADDED = "extra_class_added"
     EXTRA_CLASS_DELETED = "extra_class_deleted"
     WATCH_TARGET_ADDED = "watch_target_added"
-
+    # Рассылка
+    BROADCAST_SENT = "broadcast_sent"
+        
+        
 @dataclass(frozen=True, slots=True)
 class AuditLogDTO:
     actor_id: int
@@ -1294,3 +1297,58 @@ class ExtraClassAuditDTO(AuditLogDTO):
 class SettingsAuditDTO(AuditLogDTO):
     setting_name: str
     new_value: str
+    
+# ==============================================================
+# Broadcast (admin рассылки)
+# ==============================================================
+
+
+class BroadcastAudience(str, Enum):
+    ALL = "all"             # все активные пользователи
+    TEACHERS = "teachers"   # role == teacher
+    FAMILY = "family"       # parent + observer + child
+
+@dataclass(frozen=True, slots=True)
+class BroadcastCreatedDTO:
+    """Черновик создан, показан предпросмотр."""
+    broadcast_id: int
+    audience: BroadcastAudience
+    recipient_count: int
+
+@dataclass(frozen=True, slots=True)
+class BroadcastReportDTO:
+    """Итоговый отчёт рассылки для админа."""
+    broadcast_id: int
+    audience: BroadcastAudience
+    recipient_count: int
+    sent: int
+    failed: int
+    skipped: int
+    
+@dataclass(frozen=True, slots=True)
+class BroadcastUserDTO:
+    """
+    Транспортная модель пользователя для фильтрации аудитории рассылки.
+
+    notifications_blocked — единственный системный маркер недоставки:
+    ставится при TelegramForbiddenError (и dormant-cleanup),
+    снимается при активности. is_notifications_enabled — личный
+    выключатель пользователя и в рассылках НЕ участвует.
+    """
+    user_id: int
+    notifications_blocked: bool
+
+
+@dataclass(frozen=True, slots=True)
+class BroadcastAudienceDTO:
+    """
+    Аудитория рассылки: не заблокировавшие бота.
+
+    skipped — notifications_blocked=1. Пользователи, заблокировавшие
+    бота после последнего касания, попадут в failed первого broadcast
+    и автоматически перейдут в skipped для последующих (self-healing).
+    Незавершённые регистрации (role default 'child') включаются
+    осознанно: блокировка бота — механизм отказа.
+    """
+    recipient_ids: tuple[int, ...]
+    skipped: int

@@ -14,7 +14,7 @@ from core.models.dto import (ClassListDTO, AdminStatsDTO, DayScheduleDTO, ExtraC
                             AdultStudentExtraClassesPermissionDTO, StudentTelegramSettingsDTO, NikaSourceHealthDTO, FreeRoomsStatusDTO,  
                             StudentProfileViewModel, WatchTargetViewModel, ExtraClassViewModel, FamilyMemberViewModel, StudentTelegramSettingsViewModel,
                             ParentStudentNotificationSettingsViewModel, DayChangesDetailDTO, LessonDTO, MorningLessonDTO, DailyChangeSummaryDTO,
-                            SettingsAuditDTO, FamilyAuditDTO, ExtraClassAuditDTO, AuditLogDTO, WebAuthStatsDTO
+                            SettingsAuditDTO, FamilyAuditDTO, ExtraClassAuditDTO, AuditLogDTO, WebAuthStatsDTO, BroadcastAudience, BroadcastReportDTO
 )
 
 from datetime import datetime
@@ -2066,7 +2066,158 @@ class UIRenderer:
             "приложения нажмите на иконку 🔗 «Открыть в браузере», "
             "затем «Поделиться» и выберите <b>«На экран Домой»</b>." 
         )
-        
+
+    # ================= ADMIN BROADCAST =================
+
+    _BROADCAST_AUDIENCE_LABELS = {
+        BroadcastAudience.ALL: "всем пользователям",
+        BroadcastAudience.TEACHERS: "учителям",
+        BroadcastAudience.FAMILY: "родителям и детям",
+    }
+
+    @staticmethod
+    def broadcast_audience_label(audience: BroadcastAudience) -> str:
+        return UIRenderer._BROADCAST_AUDIENCE_LABELS.get(
+            audience,
+            str(audience.value),
+        )
+
+    @staticmethod
+    def render_broadcast_usage() -> str:
+        return (
+            "⚠️ <b>Использование:</b>\n"
+            "<code>/message</code> — всем\n"
+            "<code>/message teachers</code> — учителям\n"
+            "<code>/message parents</code> — родителям и детям"
+        )
+
+    @staticmethod
+    def render_broadcast_no_recipients() -> str:
+        return "⚠️ В выбранной аудитории нет активных получателей."
+
+    @staticmethod
+    def render_broadcast_prompt(
+        *,
+        audience: BroadcastAudience,
+        recipient_count: int,
+    ) -> str:
+        return (
+            "✉️ <b>Введите текст сообщения</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            f"Получатели: {UIRenderer.broadcast_audience_label(audience)}"
+            f" ({recipient_count})\n\n"
+            "Поддерживается HTML-разметка, эмодзи и ссылки.\n\n"
+            "💡 Используйте /cancel для отмены"
+        )
+
+    @staticmethod
+    def render_broadcast_cancelled() -> str:
+        return "❌ Рассылка отменена."
+
+    @staticmethod
+    def render_broadcast_text_command_hint() -> str:
+        return (
+            "⚠️ Похоже, это команда. Для отмены — /cancel. "
+            "Отправьте текст сообщения."
+        )
+
+    @staticmethod
+    def render_broadcast_text_expected() -> str:
+        return "Отправьте текст сообщения (или /cancel)."
+
+    @staticmethod
+    def render_broadcast_text_too_long(
+        *,
+        length: int,
+        limit: int,
+    ) -> str:
+        return f"⚠️ Текст {length} символов, максимум — {limit}. Сократите."
+
+    @staticmethod
+    def render_broadcast_photo_prompt(
+        *,
+        caption_limit_warning: bool,
+    ) -> str:
+        note = (
+            "\n\n⚠️ Текст больше 1024 символов: с фото он не "
+            "отправится (лимит подписи к фото)."
+            if caption_limit_warning
+            else ""
+        )
+        return "🖼 <b>Прикрепить фото?</b>" + note
+
+    @staticmethod
+    def render_broadcast_photo_expected() -> str:
+        return "⚠️ Ожидалось фото. Отправьте фото или /cancel."
+
+    @staticmethod
+    def render_broadcast_button_prompt() -> str:
+        return (
+            "🔗 <b>Добавить кнопку-ссылку?</b>\n"
+            "Например, «Открыть новость» или «Открыть расписание»."
+        )
+
+    @staticmethod
+    def render_broadcast_button_url_prompt() -> str:
+        return "🔗 Отправьте ссылку (http:// или https://)."
+
+    @staticmethod
+    def render_broadcast_button_url_invalid() -> str:
+        return "⚠️ Нужна полная ссылка, начинающаяся с http:// или https://"
+
+    @staticmethod
+    def render_broadcast_button_text_prompt(*, limit: int) -> str:
+        return f"🔗 Введите текст кнопки (до {limit} символов):"
+
+    @staticmethod
+    def render_broadcast_button_text_invalid(*, limit: int) -> str:
+        return f"⚠️ Текст кнопки — от 1 до {limit} символов."
+
+    @staticmethod
+    def render_broadcast_preview_header() -> str:
+        return (
+            "👁 <b>Предпросмотр</b> — так сообщение увидят получатели:"
+        )
+
+    @staticmethod
+    def render_broadcast_preview_rejected() -> str:
+        return (
+            "⚠️ Telegram отклонил разметку (HTML). "
+            "Исправьте текст и отправьте заново."
+        )
+
+    @staticmethod
+    def render_broadcast_launched() -> str:
+        return (
+            "🚀 <b>Рассылка запущена</b>\n\n"
+            "Отчёт придёт отдельным сообщением после завершения."
+        )
+
+    @staticmethod
+    def render_broadcast_edit_prompt() -> str:
+        return (
+            "✏️ Введите новый текст сообщения "
+            "(фото и кнопку нужно будет задать заново):"
+        )
+
+    @staticmethod
+    def render_broadcast_stale() -> str:
+        return "Рассылка уже отправлена, отменена или недоступна."
+
+    @staticmethod
+    def render_broadcast_task_failed() -> str:
+        return "🛑 <b>Ошибка рассылки</b>\n\nПодробности в логах сервера."
+
+    @staticmethod
+    def render_broadcast_report(report: BroadcastReportDTO) -> str:
+        return (
+            "📊 <b>Рассылка завершена</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            f"Получателей: {report.recipient_count}\n"
+            f"✅ Доставлено: {report.sent}\n"
+            f"❌ Ошибки доставки: {report.failed}\n"
+            f"⏭ Пропущено (заблокировали бота): {report.skipped}"
+        )     
         
         
         

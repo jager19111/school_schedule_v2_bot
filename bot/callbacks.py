@@ -485,3 +485,30 @@ class ScheduleForceTextCD(CallbackData, prefix="sh_ftxt"):
 
 class TeacherForceTextCD(CallbackData, prefix="th_ftxt"):
     pass
+
+
+# ==============================================================
+# Broadcast (admin рассылки)
+# ==============================================================
+
+class BroadcastConfirmCD(CallbackData, prefix="bcs"):
+    """Подтверждение отправки: атомарный draft -> sending."""
+    broadcast_id: int
+
+
+class BroadcastEditCD(CallbackData, prefix="bce"):
+    """Вернуться к редактированию черновика."""
+    broadcast_id: int
+
+
+class BroadcastCancelCD(CallbackData, prefix="bcx"):
+    """Отменить черновик."""
+    broadcast_id: int
+
+
+# Шаг «прикрепить фото?» и «добавить кнопку?» — простые действия
+# без параметров: broadcast_id ещё не создан (черновик живёт в FSM).
+BROADCAST_PHOTO_YES = "bpy"
+BROADCAST_PHOTO_NO = "bpn"
+BROADCAST_BUTTON_YES = "bby"
+BROADCAST_BUTTON_NO = "bbn"

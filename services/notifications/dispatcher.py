@@ -5,7 +5,7 @@ import logging
 import time
 from typing import Optional
 from aiogram import Bot
-from aiogram.types import InlineKeyboardMarkup
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.exceptions import (
     TelegramBadRequest,
     TelegramForbiddenError,
@@ -161,3 +161,138 @@ class NotificationDispatcher:
             sent = await self.send(chat_id=admin_id, text=text)
             if not sent:
                 logger.warning("Send error: Admin alert not delivered (admin_id=%s, key=%s)", admin_id, alert_key)
+                
+                
+                
+    async def send_broadcast(
+        self,
+        *,
+        chat_id: int,
+        text: str,
+        photo_file_id: str | None = None,
+        button_text: str | None = None,
+        button_url: str | None = None,
+    ) -> bool:
+        """
+        Paced-отправка broadcast-сообщения (текст или фото+caption,
+        опциональная URL-кнопка).
+
+        Делит общий глобальный троттлинг со всеми уведомлениями бота:
+        рассылка + утренняя сводка не могут вместе превысить лимиты
+        Telegram. Классификация ошибок идентична send().
+        """
+        keyboard = None
+        if button_text and button_url:
+            keyboard = InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [
+                        InlineKeyboardButton(
+                            text=button_text,
+                            url=button_url,
+                        )
+                    ]
+                ]
+            )
+
+        async with self._send_lock:
+            for attempt in range(1, self.MAX_SEND_ATTEMPTS + 1):
+                now_mono = time.monotonic()
+
+                wait_global = (
+                    self._global_last_send_at
+                    + self.GLOBAL_SEND_INTERVAL_SEC
+                    - now_mono
+                )
+                wait_chat = (
+                    self._chat_last_send_at.get(chat_id, 0.0)
+                    + self.PER_CHAT_SEND_INTERVAL_SEC
+                    - now_mono
+                )
+                wait = max(wait_global, wait_chat, 0.0)
+
+                if wait > 0:
+                    await asyncio.sleep(wait)
+
+                try:
+                    if photo_file_id:
+                        await self.bot.send_photo(
+                            chat_id=chat_id,
+                            photo=photo_file_id,
+                            caption=text,
+                            reply_markup=keyboard,
+                            parse_mode="HTML",
+                        )
+                    else:
+                        await self.bot.send_message(
+                            chat_id=chat_id,
+                            text=text,
+                            reply_markup=keyboard,
+                            parse_mode="HTML",
+                        )
+                    finished_at = time.monotonic()
+                    self._global_last_send_at = finished_at
+                    self._chat_last_send_at[chat_id] = finished_at
+                    self._prune_chat_send_times()
+                    return True
+
+                except TelegramRetryAfter as exc:
+                    logger.warning(
+                        "Broadcast send: 429 flood control "
+                        "(chat_id=%s, retry_after=%ss, attempt=%d/%d)",
+                        chat_id,
+                        exc.retry_after,
+                        attempt,
+                        self.MAX_SEND_ATTEMPTS,
+                    )
+                    if attempt < self.MAX_SEND_ATTEMPTS:
+                        await asyncio.sleep(
+                            float(exc.retry_after) + 0.5
+                        )
+
+                except TelegramForbiddenError:
+                    logger.warning(
+                        "Broadcast send: chat %s blocked the bot.",
+                        chat_id,
+                    )
+                    try:
+                        await self.repo.mark_user_notifications_blocked(
+                            user_id=chat_id,
+                        )
+                    except Exception as exc:
+                        logger.error(
+                            "Broadcast: failed to mark blocked "
+                            "chat %s: %s",
+                            chat_id,
+                            exc,
+                        )
+                    return False
+
+                except TelegramBadRequest as exc:
+                    logger.warning(
+                        "Broadcast send: rejected (chat_id=%s, error=%s)",
+                        chat_id,
+                        exc,
+                    )
+                    return False
+
+                except (
+                    TelegramNetworkError,
+                    asyncio.TimeoutError,
+                    OSError,
+                ) as exc:
+                    logger.warning(
+                        "Broadcast send: network error chat %s "
+                        "(attempt %d/%d): %s",
+                        chat_id,
+                        attempt,
+                        self.MAX_SEND_ATTEMPTS,
+                        exc,
+                    )
+                    await asyncio.sleep(0.5 * attempt)
+
+            logger.error(
+                "Broadcast send: giving up chat %s after %d attempts",
+                chat_id,
+                self.MAX_SEND_ATTEMPTS,
+            )
+            return False

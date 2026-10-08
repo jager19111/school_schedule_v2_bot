@@ -54,6 +54,8 @@ from core.repository.extra_classes_repository import ExtraClassesRepository
 from core.repository.watch_target_repository import WatchTargetRepository
 from core.repository.student_repository import StudentRepository
 from core.repository.audit_repository import AuditRepository
+from core.repository.broadcast_repository import BroadcastRepository
+
 
 from services.profiles_service import ProfileService
 from services.schedule_service import ScheduleService
@@ -68,6 +70,9 @@ from services.audit_service import AuditService
 from services.help_service import HelpService
 from services.backup_service import BackupService
 from services.web_sessions_service import WebSessionsService
+from services.broadcast_service import BroadcastService
+
+
 from services.image_render.setup import setup_image_generation
 from services.image_render.warmup import warmup_day_posters
 from database.migrations import apply_migrations
@@ -102,6 +107,7 @@ from bot.handlers import (
     fallback,
     debug_notifications,
     schedule_poster,
+    admin_broadcast,
 )
 
 from core.logger_config import setup_logging
@@ -299,6 +305,24 @@ async def cleanup_web_auth_sessions(
                 "WebAuth cleanup admin alert failed"
             )
 
+async def cleanup_broadcast_drafts(
+    *,
+    broadcast_service: BroadcastService,
+    time_service: TimeService,
+) -> None:
+    try:
+        # Исправлено: добавлен минус для расчета cutoff
+        cutoff = time_service.utc_str_from(
+            TimeService.to_utc(time_service.get_now_base()) - datetime.timedelta(days=1)
+        )
+        removed = await broadcast_service.cleanup_stale_drafts(
+            older_than_utc=cutoff,
+        )
+        if removed:
+            logger.info("Stale broadcast drafts cleaned: %s", removed)
+    except Exception:
+        logger.exception("Broadcast drafts cleanup failed")
+
 async def run_wal_checkpoint(db_connection: aiosqlite.Connection) -> None:
     """
     Ночной WAL-checkpoint
@@ -415,7 +439,6 @@ async def main():
     web_sessions_service = None
     browser_handoff_service = None
     web_event_bus = None
-    
     # ------------------------------------------------
 
     try:
@@ -453,6 +476,8 @@ async def main():
         watch_target_repo = WatchTargetRepository(db_path=db_connection, time_service=time_service)
         student_repo = StudentRepository(db_path=db_connection, time_service=time_service)
         audit_repo = AuditRepository(db_path=db_connection, time_service=time_service)
+        broadcast_repo = BroadcastRepository(db_path=db_connection, time_service=time_service)
+
         # =====================================================================
         # ВНИМАНИЕ / TODO НА БУДУЩЕЕ (Изучить Dishka):
         # Количество зависимостей растет, ручная сборка начинает раздувать main.py.
@@ -483,6 +508,7 @@ async def main():
             dispatcher=notification_dispatcher,
             time_service=time_service,
         )
+        broadcast_service = BroadcastService(broadcast_repo, profile_service, notification_dispatcher, audit_service)
         cleanup_job = UserCleanupJob(user_repo, time_service=time_service, dormant_days=60)
         admin_service = AdminService(admin_repo=admin_repo, schedule_repo=schedule_repo, admin_ids=config.ADMIN_IDS)
         help_service = HelpService(public_help_url=config.HELP_PUBLIC_URL, author_contact_url=config.AUTHOR_CONTACT_URL, donation_url=config.DONATION_URL)
@@ -625,8 +651,6 @@ async def main():
         # 6. Регистрация роутеров команд
         dp.include_router(registration.router)
         dp.include_router(help.router)
-        
-        # --- ДОБАВЛЕНО (Phase 1: Кнопка генерации ссылки) ---
         dp.include_router(web_link.router)
         # ----------------------------------------------------
 
@@ -650,6 +674,7 @@ async def main():
         dp.include_router(extra_classes.router)
         dp.include_router(admin.router)
         dp.include_router(search.router)
+        dp.include_router(admin_broadcast.router)
         dp.include_router(debug_notifications.router)   # после admin, до fallback
         # Catch-all: любой неопознанный коллбэк получает тихий toast
         # вместо вечного спиннера. Должен быть ПОСЛЕДНИМ роутером.
@@ -674,10 +699,10 @@ async def main():
             student_repo=student_repo,
             db_path=config.DB_PATH,
             notification_service=notification_service,
+            broadcast_service=broadcast_service,
             antiflood=antiflood_middleware,
             config=config,
             audit_service=audit_service,
-            # Этап 3 (ТЗ v2.2): постеры расписания
             image_service=image_service,
             image_prefs=image_prefs,
             web_sessions_service=web_sessions_service,
@@ -884,6 +909,23 @@ async def main():
                 misfire_grace_time=900,
             )
 
+        # Очистка застрявших черновиков админ-рассылок
+        scheduler.add_job(
+            cleanup_broadcast_drafts,
+            trigger="cron",
+            hour=4,
+            minute=40,
+            kwargs={
+                "broadcast_service": broadcast_service,
+                "time_service": time_service,
+            },
+            id="broadcast_drafts_cleanup_job",
+            replace_existing=True,
+            coalesce=True,
+            max_instances=1,
+            misfire_grace_time=900,
+        )
+
         scheduler.start()
         logger.info("Планировщик задач успешно запущен.")
 
@@ -937,11 +979,13 @@ async def main():
                 await image_service.shutdown()
             except Exception:
                 logger.exception("Image service shutdown failed")
+                
         await database.close()
+        
         if not http_session.closed:
             await http_session.close()
+            
         await bot.session.close()
-
 
 if __name__ == "__main__":
     asyncio.run(main())
