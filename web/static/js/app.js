@@ -657,4 +657,38 @@
       toast.remove();
     });
   });
+
+/* --- ДЕЛЕГИРОВАНИЕ КЛИКОВ (СЕМЬЯ) --- */
+document.addEventListener("click", function(event) {
+  // 1. Блокируем сворачивание аккордеона при клике на вложенную кнопку (например, "Отозвать")
+  if (event.target.closest("summary") && event.target.closest("button")) {
+    event.preventDefault();
+  }
+
+  // 2. Копирование длинной ссылки
+  const linkBtn = event.target.closest(".js-copy-invite");
+  if (linkBtn) {
+    const link = linkBtn.dataset.link;
+    if (!link || linkBtn.classList.contains("copied")) return;
+    
+    navigator.clipboard.writeText(link).then(() => {
+      linkBtn.classList.add("copied");
+      setTimeout(() => linkBtn.classList.remove("copied"), 2500);
+    });
+    return;
+  }
+
+  // 3. Копирование короткого кода
+  const codeBtn = event.target.closest(".js-copy-code");
+  if (codeBtn) {
+    const code = codeBtn.dataset.code;
+    if (!code || codeBtn.classList.contains("copied")) return;
+
+    navigator.clipboard.writeText(code).then(() => {
+      codeBtn.classList.add("copied");
+      setTimeout(() => codeBtn.classList.remove("copied"), 2000);
+    });
+  }
+});
+
 })();

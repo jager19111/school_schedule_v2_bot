@@ -32,15 +32,15 @@
   {# Порядок CSS намеренный: shell → schedule components → extra components. #}
   <link
     rel="stylesheet"
-    href="{{ url_for('static', path='css/app.css') }}?v=11"
+    href="{{ url_for('static', path='css/app.css') }}?v=12"
   >
   <link
     rel="stylesheet"
-    href="{{ url_for('static', path='css/components/schedule.css') }}?v=11"
+    href="{{ url_for('static', path='css/components/schedule.css') }}?v=12"
   >
   <link
     rel="stylesheet"
-    href="{{ url_for('static', path='css/components/extra.css') }}?v=11"
+    href="{{ url_for('static', path='css/components/extra.css') }}?v=12"
   >
 
   {% block extra_head %}{% endblock %}
@@ -291,22 +291,22 @@
    shell заменяется через HTMX, а scripts и document-level listeners должны
    остаться живыми при переходах между top-level screens.
    ========================================================================= #}
-<script src="/static/js/htmx.min.js?v=11"></script>
-<script src="/static/js/htmx-ext-sse.min.js?v=11"></script>
-<script src="/static/js/app.js?v=11"></script>
+<script src="/static/js/htmx.min.js?v=12"></script>
+<script src="/static/js/htmx-ext-sse.min.js?v=12"></script>
+<script src="/static/js/app.js?v=12"></script>
 
 {# Общий UI runtime: autofit, swipe, lesson details, student switch. #}
-<script src="/static/js/schedule.js?v=11"></script>
-<script src="/static/js/schedule-swipe.js?v=11"></script>
+<script src="/static/js/schedule.js?v=12"></script>
+<script src="/static/js/schedule-swipe.js?v=12"></script>
 {# Extra-class forms: preview и reminder stepper; безопасный no-op вне forms. #}
-<script src="/static/js/extra.js?v=11"></script>
+<script src="/static/js/extra.js?v=12"></script>
 
 {% if surface_mode == "telegram" %}
 {# Telegram surface: SDK обязателен и на внутренних экранах —
    после location.replace("/") из /tg/app объект window.Telegram
    исчезает без этого тега. CSP: script-src https://telegram.org. #}
-<script src="https://telegram.org/js/telegram-web-app.js?v=11"></script>
-<script src="/static/js/telegram-webapp.js?v=11"></script>
+<script src="https://telegram.org/js/telegram-web-app.js?v=12"></script>
+<script src="/static/js/telegram-webapp.js?v=12"></script>
 {% endif %}
 
 {# Для будущих действительно page-specific scripts. #}

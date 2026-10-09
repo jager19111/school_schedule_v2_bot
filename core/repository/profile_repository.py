@@ -745,6 +745,7 @@ class ProfileRepository(BaseRepository):
             SELECT
                 invite.id,
                 invite.token,
+                invite.short_code,
                 invite.family_id,
                 invite.intended_role,
                 invite.expires_at,

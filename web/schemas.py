@@ -286,6 +286,7 @@ class WebInviteItem(BaseModel):
     role_label: str
     short_code: str
     expires_display: str
+    deep_link: Optional[str] = None
 
 
 class WebInviteResult(BaseModel):

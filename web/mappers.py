@@ -1358,19 +1358,31 @@ def student_cards_to_web(
     return result
 
 
-def invites_to_web(invites: Iterable[FamilyInviteDTO]) -> List[WebInviteItem]:
+def invites_to_web(
+    invites: Iterable[FamilyInviteDTO], 
+    *, 
+    bot_username: Optional[str] = None # <--- ДОБАВЛЕНО
+) -> List[WebInviteItem]:
     """FamilyInviteDTO -> typed family invite rows."""
 
     result: list[WebInviteItem] = []
 
     for invite in invites:
         role = invite.intended_role or ""
+        
+        # --- ДОБАВЛЕНО: Генерация deep_link ---
+        deep_link = None
+        if bot_username and invite.token:
+            deep_link = f"https://t.me/{bot_username}?start=join_{invite.token}"
+        # ----------------------------------------
+        
         result.append(
             WebInviteItem(
                 invite_id=invite.id,
                 role_label=INVITE_ROLE_LABELS.get(role, "Участник"),
                 short_code=invite.short_code or "—",
                 expires_display=_format_dt(invite.expires_at),
+                deep_link=deep_link,  # <--- ДОБАВЛЕНО
             )
         )
 

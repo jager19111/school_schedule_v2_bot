@@ -102,6 +102,11 @@ async def _family_view(
         invites = active or []
 
     members_web = family_members_to_web(fctx["members"], current_user_id=context.user_id)
+    
+    # --- ИЗМЕНЕНИЕ ЗДЕСЬ: Получаем bot_username из web_settings ---
+    bot_username = request.app.state.web_settings.bot_username
+    # -----------------------------------------------------------------
+
     return {
         "no_family": False,
         "is_admin": fctx["is_admin"],
@@ -109,9 +114,12 @@ async def _family_view(
         "students": student_cards_to_web(
             students, classes=dict(dicts.classes), groups=dict(dicts.groups)
         ),
-        "invites": invites_to_web(invites),
+        
+        # --- ИЗМЕНЕНИЕ ЗДЕСЬ: Передаем bot_username в маппер ---
+        "invites": invites_to_web(invites, bot_username=bot_username),
+        # ----------------------------------------------------------
+        
         "invite_result": invite_result,
-        # ФИКС: Используем мапперы для стандартизации и фильтрации
         "classes": class_items_to_web(dicts.classes),
         "groups": main_groups_to_web(dicts.groups),
         "csrf_token": context.csrf_token,
