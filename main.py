@@ -940,7 +940,7 @@ async def main():
             web_app_url = f"{config.WEB_PUBLIC_URL.rstrip('/')}/tg/app"
             await bot.set_chat_menu_button(
                 menu_button=MenuButtonWebApp(
-                    text="📅 Расписание", 
+                    text="🌐 Расписание", 
                     web_app=WebAppInfo(url=web_app_url)
                 )
             )
