@@ -304,7 +304,9 @@ async def confirm_restart(
     callback: CallbackQuery,
     state: FSMContext,
     profile_service: ProfileService,
-    bot: Bot,  
+    bot: Bot,
+    web_sessions_service: Optional[WebSessionsService] = None,
+    web_event_bus: Optional[ApplicationEventBus] = None,
 ) -> None:
     """
     Выполняет перерегистрацию только после явного подтверждения.
@@ -349,6 +351,29 @@ async def confirm_restart(
             show_alert=True,
         )
         return
+
+    # --- НОВЫЙ БЛОК: Отзыв веб-сессий ---
+    # Перерегистрация = полный выход со всех web-устройств.
+    # Live SSE закрываются через SessionRevoked; открытые PWA/Mini App
+    # принудительно выйдут через 401 -> HX-Redirect /auth.
+    revoked_web_sessions = 0
+    if web_sessions_service is not None:
+        revoked_web_sessions = (
+            await web_sessions_service.revoke_all_sessions(
+                user_id=user_id,
+            )
+        )
+        if (
+            revoked_web_sessions > 0
+            and web_event_bus is not None
+        ):
+            await web_event_bus.publish(
+                SessionRevoked(
+                    user_id=user_id,
+                    session_id=None,
+                )
+            )
+    # ------------------------------------
     
     # Уведомление новому администратору при авто-наследовании.
     if reset_result.new_admin_user_id is not None:
@@ -389,16 +414,25 @@ async def confirm_restart(
 
     await state.clear()
 
+    # --- ИЗМЕНЕННЫЙ БЛОК: Текст успешного завершения ---
+    sessions_note = (
+        f"\n\n🌐 Завершено веб-сеансов: {revoked_web_sessions}."
+        if revoked_web_sessions
+        else ""
+    )
+    
     try:
         await callback.message.edit_text(
-            "✅ Профиль сброшен.\n\n"
-            "Отправьте /start, чтобы пройти регистрацию заново."
+            "✅ Профиль сброшен."
+            f"{sessions_note}"
+            "\n\nОтправьте /start, чтобы пройти регистрацию заново."
         )
     except TelegramBadRequest as exc:
         logger.debug(
             "Restart confirmation message update skipped: %s",
             exc,
         )
+    # ---------------------------------------------------
 
     await _safe_callback_answer(
         callback,

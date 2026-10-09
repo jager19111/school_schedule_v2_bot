@@ -143,10 +143,15 @@ def create_web_app(
         - strict JSON 401/403;
         - без HTML redirect, чтобы client мог сам корректно обработать ошибку.
         """
-        is_api_request = request.url.path.startswith("/api/")
+    
+        is_api_request = (
+            request.url.path.startswith("/api/") 
+            or request.url.path in ("/tg/bootstrap", "/tg/browser-handoff")
+        )
         is_htmx_request = request.headers.get("HX-Request") == "true"
         is_page_request = not is_api_request and not is_htmx_request
 
+            
         # --- ИСПРАВЛЕНИЕ: Обобщено правило для ЛЮБЫХ HTMX-запросов (Дефект 1) ---
         # P7.3+: server-authoritative forced logout для ЛЮБОГО HTMX
         # запроса. Обычный JSON 401 не заставляет HTMX сменить page;

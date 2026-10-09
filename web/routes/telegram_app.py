@@ -22,12 +22,14 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from services.browser_handoff_service import BrowserHandoffService
 from services.telegram_webauth_service import TelegramWebAuthService
+from services.profiles_service import ProfileService
+
 from services.web_sessions_service import (
     SESSION_COOKIE_NAME,
     WebSessionContext,
     WebSessionsService,
 )
-from web.deps import get_session_context, get_sessions_service
+from web.deps import get_session_context, get_sessions_service, get_profile_service
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -85,6 +87,7 @@ async def tg_bootstrap(
     response: Response,
     webauth: TelegramWebAuthService = Depends(_webauth_service),
     sessions: WebSessionsService = Depends(get_sessions_service),
+    profile_service: ProfileService = Depends(get_profile_service), 
 ) -> BootstrapResponse:
     identity = webauth.validate_init_data(payload.init_data)
     if identity is None:
@@ -93,7 +96,21 @@ async def tg_bootstrap(
             detail="Не удалось подтвердить вход через Telegram. "
             "Откройте приложение заново из бота.",
         )
-# --- НОВЫЙ БЛОК: Определяем красивое имя устройства ---
+        
+    # Регистрационный гейт ---
+    # Стоит ДО reuse-ветки: сессия могла быть создана до сброса профиля
+    profile = await profile_service.get_user_profile_dto(identity.user_id)
+    if profile is None or not profile.is_fully_registered:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "Сначала завершите регистрацию в боте: "
+                "выберите роль и класс/семью или учителя."
+            ),
+        )
+    # ----------------------------------------
+        
+# --- Существующий блок: Определяем красивое имя устройства ---
     platform_names = {
         "android": "Android",
         "ios": "iOS",
@@ -110,6 +127,7 @@ async def tg_bootstrap(
     else:
         tg_user_agent = "Telegram Mini App"
     # ------------------------------------------------------
+    
     # Уже есть живая telegram-сессия (повторное открытие Mini App) —
     # переиспользуем, не создаём новую строку в web_sessions.
     existing_raw = request.cookies.get(SESSION_COOKIE_NAME)
@@ -145,7 +163,6 @@ async def tg_bootstrap(
         surface="telegram",
     )
 
-
 @router.post("/tg/browser-handoff", response_model=BrowserHandoffResponse)
 async def tg_browser_handoff(
     request: Request,
@@ -173,6 +190,7 @@ async def tg_browser_consume(
     code: str = "",
     handoff: BrowserHandoffService = Depends(_handoff_service),
     sessions: WebSessionsService = Depends(get_sessions_service),
+    profile_service: ProfileService = Depends(get_profile_service), # <-- ДОБАВЛЕНО
 ):
     # Повторное нажатие из того же браузера: живая browser-сессия
     # уже есть — переиспользуем, код не расходуем.
@@ -180,6 +198,16 @@ async def tg_browser_consume(
     if existing_raw:
         existing = await sessions.resolve_session(existing_raw)
         if existing is not None and existing.surface == "browser":
+            
+            # --- НОВЫЙ БЛОК: Регистрационный гейт ДО reuse ---
+            profile = await profile_service.get_user_profile_dto(existing.user_id)
+            if profile is None or not profile.is_fully_registered:
+                raise HTTPException(
+                    status_code=403,
+                    detail="Сначала завершите регистрацию в боте.",
+                )
+            # -------------------------------------------------
+            
             return RedirectResponse(
                 url="/",
                 status_code=303,
@@ -201,6 +229,15 @@ async def tg_browser_consume(
                 "Referrer-Policy": "no-referrer",
             },
         )
+
+    # --- Регистрационный гейт ПОСЛЕ consume ---
+    profile = await profile_service.get_user_profile_dto(payload.user_id)
+    if profile is None or not profile.is_fully_registered:
+        raise HTTPException(
+            status_code=403,
+            detail="Сначала завершите регистрацию в боте.",
+        )
+    # ------------------------------------------------------
 
     raw, _context = await sessions.create_session(
         user_id=payload.user_id,
